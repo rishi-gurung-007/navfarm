@@ -1,5 +1,6 @@
 'use client';
 
+import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -38,7 +39,7 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { CostingCalculation } from './costing-calculation';
-import { formatExact, formatQuantity } from "@/lib/utils";
+import { formatExact, formatQuantity } from '@/lib/utils';
 
 type Row = Record<string, any>;
 
@@ -75,7 +76,7 @@ export const TRANSACTION_TYPE_LABELS: Record<string, string> = {
 };
 
 export const formatTransactionType = (type?: string) => {
-  if (!type) return '—';
+  if (!type) return NA;
   const upper = type.toUpperCase();
   if (TRANSACTION_TYPE_LABELS[upper]) return TRANSACTION_TYPE_LABELS[upper];
   return upper.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
@@ -96,11 +97,8 @@ export const isInboundEntry = (entry: {
 };
 
 /** `quantity` tells a Transfer's receiving leg ("Receipt") from its shipping leg ("Transfer"). */
-export const formatEntryType = (
-  entryType?: string,
-  quantity?: unknown,
-) => {
-  if (!entryType) return '—';
+export const formatEntryType = (entryType?: string, quantity?: unknown) => {
+  if (!entryType) return NA;
   const upper = entryType.toUpperCase();
   if (upper === 'POSITIVE') return 'Positive (+)';
   if (upper === 'NEGATIVE') return 'Negative (-)';
@@ -120,7 +118,7 @@ export const DOCUMENT_TYPE_LABELS: Record<string, string> = {
 };
 
 export const formatDocumentType = (type?: string) => {
-  if (!type) return '—';
+  if (!type) return NA;
   return DOCUMENT_TYPE_LABELS[type.toUpperCase()] || type.replace(/_/g, ' ');
 };
 
@@ -245,7 +243,7 @@ export default function InventoryLedgerDetail({
     entry.warehouse_code ||
     entry.warehouse?.warehouse_name ||
     entry.warehouse_name ||
-    (entry.warehouse_id ? `LOC-${entry.warehouse_id.slice(0, 6)}` : '—');
+    (entry.warehouse_id ? `LOC-${entry.warehouse_id.slice(0, 6)}` : NA);
 
   const locationNameDisplay =
     entry.warehouse?.location_name ||
@@ -565,7 +563,7 @@ export default function InventoryLedgerDetail({
                 Unit of Measure Code
               </p>
               <p className="mt-0.5 font-semibold font-mono" style={S.primary}>
-                {entry.uom || '—'}
+                {entry.uom || NA}
               </p>
             </div>
 
@@ -577,7 +575,7 @@ export default function InventoryLedgerDetail({
                 Description
               </p>
               <p className="mt-0.5 text-sm font-medium" style={S.primary}>
-                {entry.item_description || '—'}
+                {entry.item_description || NA}
               </p>
             </div>
 
@@ -626,10 +624,7 @@ export default function InventoryLedgerDetail({
               <div className="mt-0.5">
                 <StatusBadge
                   status={isPositive ? 'POSITIVE' : entry.entry_type}
-                  label={formatEntryType(
-                    entry.entry_type,
-                    entry.quantity,
-                  )}
+                  label={formatEntryType(entry.entry_type, entry.quantity)}
                 />
               </div>
             </div>
@@ -762,7 +757,7 @@ export default function InventoryLedgerDetail({
                 className="mt-0.5 font-mono"
                 style={entry.expiry_date ? S.primary : S.muted}
               >
-                {entry.expiry_date || '—'}
+                {entry.expiry_date || NA}
               </p>
             </div>
 
@@ -846,12 +841,12 @@ export default function InventoryLedgerDetail({
                       className="py-2.5 px-3 font-mono font-semibold"
                       style={S.primary}
                     >
-                      {lot.lot_no || lot.serial_no || '—'}
+                      {lot.lot_no || lot.serial_no || NA}
                     </TableCell>
                     <TableCell className="py-2.5 px-3 font-mono" style={S.sub}>
                       {lot.expiry_date
                         ? String(lot.expiry_date).slice(0, 10)
-                        : '—'}
+                        : NA}
                     </TableCell>
                     <TableCell
                       className="py-2.5 px-3 font-mono text-right font-semibold"
@@ -999,13 +994,13 @@ export default function InventoryLedgerDetail({
                       >
                         {issue.posting_date
                           ? String(issue.posting_date).slice(0, 10)
-                          : '—'}
+                          : NA}
                       </TableCell>
                       <TableCell
                         className="py-2.5 px-3 font-mono font-medium"
                         style={S.primary}
                       >
-                        {issue.document_no || '—'}
+                        {issue.document_no || NA}
                       </TableCell>
                       <TableCell className="py-2.5 px-3" style={S.sub}>
                         {formatTransactionType(
@@ -1016,13 +1011,13 @@ export default function InventoryLedgerDetail({
                         className="py-2.5 px-3 font-mono text-[11px]"
                         style={S.sub}
                       >
-                        {issue.lot_no || issue.serial_no || '—'}
+                        {issue.lot_no || issue.serial_no || NA}
                       </TableCell>
                       <TableCell
                         className="py-2.5 px-3 font-mono"
                         style={S.sub}
                       >
-                        {issue.warehouse_code || '—'}
+                        {issue.warehouse_code || NA}
                       </TableCell>
                       <TableCell
                         className="py-2.5 px-3 font-mono text-right font-semibold"
@@ -1187,10 +1182,10 @@ export default function InventoryLedgerDetail({
                             {app.application_no
                               ? app.application_no
                               : app.application_id
-                              ? app.application_id.length > 20
-                                ? `${app.application_id.slice(0, 12)}…`
-                                : app.application_id
-                              : '—'}
+                                ? app.application_id.length > 20
+                                  ? `${app.application_id.slice(0, 12)}…`
+                                  : app.application_id
+                                : NA}
                           </span>
                           {app.application_id && (
                             <button
@@ -1217,7 +1212,7 @@ export default function InventoryLedgerDetail({
                         className="py-2.5 px-3 font-mono"
                         style={S.primary}
                       >
-                        {app.application_date || '—'}
+                        {app.application_date || NA}
                       </TableCell>
                       <TableCell
                         className="py-2.5 px-3 font-mono font-medium"
@@ -1251,7 +1246,7 @@ export default function InventoryLedgerDetail({
                             SN: {app.serial_no}
                           </Badge>
                         ) : (
-                          '—'
+                          NA
                         )}
                       </TableCell>
                       <TableCell

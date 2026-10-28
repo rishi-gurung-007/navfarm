@@ -14,7 +14,9 @@ import { FarmScoped } from '../../../common/farm-scope';
 export class AlertRuleController {
   constructor(private readonly rules: AlertRuleService) {}
   @Get() @RequirePermission('NOTIFICATION', 'ALERT_RULE', 'view')
-  async list(@Query() query: QueryAlertRuleDto, @Req() req: any) { return { data: await this.rules.findAll(query, req.user.tenantId) }; }
+  async list(@Query() query: QueryAlertRuleDto, @Req() req: any) { const page = await this.rules.findAll(query, req.user.tenantId);
+    // total/limit/offset are what the list screen pages on; data stays an array.
+    return { data: page.data, total: page.total, limit: page.limit, offset: page.offset }; }
   // Rows 50 and 54: the Role Master codes a rule's recipient pickers offer. Declared before ':id'.
   @Get('role-options') @RequirePermission('NOTIFICATION', 'ALERT_RULE', 'view')
   async roleOptions(@Query('companyId') companyId: string | undefined, @Req() req: any) { return { data: await this.rules.roleOptions(req.user.tenantId, companyId) }; }

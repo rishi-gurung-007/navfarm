@@ -21,7 +21,7 @@ it("shows the saved plan quantities and human text for unavailable capacity", as
   render(<FeedForecastProvider><FeedPlanPanel /></FeedForecastProvider>);
   const table = await screen.findByRole("table", { name: "feedPlanTableLabel" });
   const cells = within(table).getAllByRole("cell").map((cell) => cell.textContent);
-  expect(cells).toEqual(["GRA100", "2026-10-12", "FD-01", "Grower", "6,000", "7,200", "4,000", "2,500", "4,700", "1,200", "millCapNotConfigured", "millCapNoStatus"]);
+  expect(cells).toEqual(["GRA100", "2026-10-12", "FD-01", "Grower", "KG", "6,000", "7,200", "4,000", "2,500", "4,700", "1,200", "millCapNotConfigured", "millCapNoStatus"]);
   expect(cells).not.toContain("-");
   expect(cells).not.toContain("NaN");
 });
@@ -44,7 +44,7 @@ it("distinguishes a saved calculation with no feed order from no saved calculati
   expect(screen.queryByText("feedPlanEmpty")).toBeNull();
 });
 
-it("generates and opens retained feed plan versions with a dialog header and footer", async () => {
+it("generates and opens retained feed plan versions with a dialog header", async () => {
   (api.get as jest.Mock).mockImplementation(async (url: string) => {
     if (url.includes("/versions/plan-1")) return { data: {
       plan_id: "plan-1", plan_code: "PLAN-GRA100-202642-R01", plan_type: "TENTATIVE", production_date: "2026-10-16",
@@ -71,7 +71,8 @@ it("generates and opens retained feed plan versions with a dialog header and foo
   fireEvent.click(versionButton);
   const dialog = await screen.findByRole("dialog", { name: "PLAN-GRA100-202642-R01" });
   expect(within(dialog).getByRole("table", { name: "feedPlanVersionLines" })).toBeTruthy();
-  expect(within(dialog.querySelector("footer") as HTMLElement).getByRole("button", { name: "close" })).toBeTruthy();
+  // Only the header's × closes it; the footer Close button was removed.
+  expect(dialog.querySelector("footer")).toBeNull();
 });
 
 it("shows Mill Capacity Available and Plan vs Mill Capacity for the selected production date (Engine r42-r43)", async () => {

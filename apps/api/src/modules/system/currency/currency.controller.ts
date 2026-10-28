@@ -40,8 +40,8 @@ export class CurrencyController {
   @RequirePermission('MASTER_DATA', 'CURRENCY', 'view')
   @ApiOperation({ summary: 'List currencies matching filters' })
   async listCurrencies(@Query() query: QueryCurrencyDto) {
-    const data = await this.currencyService.listCurrencies(query);
-    return { success: true, message: 'Currencies retrieved successfully.', data };
+    const page = await this.currencyService.listCurrencies(query);
+    return { success: true, message: 'Currencies retrieved successfully.', data: page.data, total: page.total, limit: page.limit, offset: page.offset };
   }
 
   @Get('rates')

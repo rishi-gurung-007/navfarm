@@ -16,7 +16,7 @@ const row = (over: Partial<ReportRow> = {}): ReportRow => ({
   key: 'group|r1|silo-1|2026-09-23', farmId: 'farm-1', batchId: 'batch-1', batchGroupId: 'group-1',
   batchNo: 'WG-2026-38', shedId: 'shed-1', shedCode: 'GRS/SHED-003', stageCode: 'WEANER',
   itemId: 'r1', itemNo: 'FEED-R1', itemName: 'Weaner Diet R1', currentItemId: 'r1', currentItemNo: 'FEED-R1', currentItemName: 'Weaner Diet R1',
-  sourceType: 'SILO', sourceCode: 'GRS/SILO-001', sourceName: 'Weaner silo', sourceLocationId: 'silo-1', feedType: 'BULK',
+  sourceType: 'SILO', sourceCode: 'GRS/SILO-001', sourceName: 'Weaner silo', sourceCapacityKg: 8000, sourceLocationId: 'silo-1', feedType: 'BULK',
   date: '2026-09-23', dateTo: '2026-09-23', days: 1, currentInventoryKg: 1500, openingSystemBalanceKg: 1500,
   confirmedReceiptsKg: 0, heads: 1000, feedRateKg: 2, perDayIntakeKg: 2000, intakeKg: 2000, dailyUseKg: 2000,
   projectedClosingBalanceKg: 0, recommendedQtyKg: 4500, firstShortageDate: '2026-09-23', deliveryDate: '2026-09-23',
@@ -43,8 +43,8 @@ describe('FeedForecastGrid — Engine row 70', () => {
     const headers = within(screen.getByRole('table')).getAllByRole('columnheader').map((header) => header.textContent);
 
     expect(headers).toEqual([
-      'ffColBatch', 'ffColStage', 'ffColHouse', 'ffColSiloCode', 'ffColSiloName', 'ffColRequiredFeedItem', 'ffColCurrentSiloItem',
-      'ffColHeadCount', 'ffColFeedRate', 'ffColOpeningSystemBalance', 'ffColConfirmedReceipts',
+      'ffColBatch', 'ffColStage', 'ffColHouse', 'ffColSiloCode', 'ffColSiloName', 'ffColSiloCapacity', 'ffColRequiredFeedItem', 'ffColCurrentSiloItem',
+      'ffColHeadCount', 'ffColUom', 'ffColFeedRate', 'ffColOpeningSystemBalance', 'ffColConfirmedReceipts',
       'ffColOpenTransfers', 'ffColPlannedFeedAdded', 'ffColPlannedFeedReference', 'ffColDailyUse',
       '23/09/26', 'ffColFirstShortage', 'ffColRecommendedQty', 'ffColDeliveryDate',
     ]);
@@ -55,12 +55,13 @@ describe('FeedForecastGrid — Engine row 70', () => {
     render(<FeedForecastGrid rows={[row()]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
     const cells = within(screen.getByRole('table')).getAllByRole('cell').map((cell) => cell.textContent);
 
-    expect(cells.slice(0, 7)).toEqual([
+    expect(cells.slice(0, 8)).toEqual([
       'WG-2026-38',
       'WEANER',
       'GRS/SHED-003',
       'GRS/SILO-001',
       'Weaner silo',
+      '8,000.00',
       'Weaner Diet R1',
       'Weaner Diet R1',
     ]);
@@ -185,9 +186,15 @@ describe('FeedForecastGrid — Engine row 70', () => {
     render(<FeedForecastGrid rows={[row()]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell').map((cell) => cell.textContent);
     expect(cells).toEqual([
-      'WG-2026-38', 'WEANER', 'GRS/SHED-003', 'GRS/SILO-001', 'Weaner silo', 'Weaner Diet R1', 'Weaner Diet R1',
-      '1,000', '2.00', '1,500.00', '0.00', '0.00', '0.00', 'ffNoPlannedFeed', '2,000.00', '0.00', '23/09/26', '4,500.00', '23/09/26',
+      'WG-2026-38', 'WEANER', 'GRS/SHED-003', 'GRS/SILO-001', 'Weaner silo', '8,000.00', 'Weaner Diet R1', 'Weaner Diet R1',
+      '1,000', 'KG', '2.00', '1,500.00', '0.00', '0.00', '0.00', 'ffNoPlannedFeed', '2,000.00', '0.00', '23/09/26', '4,500.00', '23/09/26',
     ]);
+  });
+
+  it('shows Silo Capacity only for a row fed from a silo', () => {
+    render(<FeedForecastGrid rows={[row({ sourceType: 'STORE', sourceCode: 'GRS/STORE', sourceName: 'Farm store', sourceCapacityKg: null })]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell').map((cell) => cell.textContent);
+    expect(cells[5]).toBe('N/A');
   });
 
   it('shows planned feed separately with the requisition reference on its delivery date', () => {

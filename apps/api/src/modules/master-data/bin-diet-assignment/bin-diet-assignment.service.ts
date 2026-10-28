@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
+import { count as sqlCount, and, asc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
@@ -108,9 +108,19 @@ export class BinDietAssignmentService {
       const column = columnOf[key];
       if (column) conditions.push(inArray(column, values));
     }
-    return this.joinedQuery().where(and(...conditions))
+    const limit = query.limit || 50;
+    const offset = query.offset || 0;
+    const data = await this.joinedQuery().where(and(...conditions))
       .orderBy(asc(schema.binDietAssignment.production_date), asc(schema.locationMaster.location_code))
-      .limit(query.limit || 50).offset(query.offset || 0);
+      .limit(limit).offset(offset);
+    // Counted over the same joins, because an assignment whose bin or feed item
+    // has gone is not in the list and must not be in its total either.
+    const [counted] = await this.db.select({ total: sqlCount() })
+      .from(schema.binDietAssignment)
+      .innerJoin(schema.locationMaster, eq(schema.binDietAssignment.bin_location_id, schema.locationMaster.location_id))
+      .innerJoin(schema.itemMaster, eq(schema.binDietAssignment.feed_item_id, schema.itemMaster.item_id))
+      .where(and(...conditions));
+    return { data, total: Number(counted?.total ?? 0), limit, offset };
   }
 
   async create(dto: CreateBinDietAssignment, tenantId: string, user?: { userId?: string }) {

@@ -1,17 +1,40 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { itemKindCondition } from './item-kind-filter';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, ne, and, like, or, isNull, getTableColumns, count, sql } from 'drizzle-orm';
+import {
+  eq,
+  ne,
+  and,
+  like,
+  or,
+  isNull,
+  getTableColumns,
+  count,
+  sql,
+} from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { CreateItemDto, UpdateItemDto, QueryItemDto, CreateItemFromTemplateDto } from './dto/item.dto';
+import {
+  CreateItemDto,
+  UpdateItemDto,
+  QueryItemDto,
+  CreateItemFromTemplateDto,
+} from './dto/item.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
-import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import {
+  listFilterConditions,
+  listOrderBy,
+} from '../../../common/master-list-query';
 import { assertCodeUnchanged } from '../../../common/master-code';
 import { isFeedTypeCode } from '../../../common/feed-form';
 import { lotBalances } from '../../inventory/inventory-ledger/lot-balance';
@@ -21,7 +44,8 @@ const toMysqlTimestamp = (date: Date = new Date()) => {
 };
 
 /** The item types a withdrawal period applies to. Every other type stores none. */
-const carriesWithdrawal = (itemType?: string | null) => itemType === 'MEDICINE' || itemType === 'VACCINE';
+const carriesWithdrawal = (itemType?: string | null) =>
+  itemType === 'MEDICINE' || itemType === 'VACCINE';
 
 @Injectable()
 export class ItemService {
@@ -46,43 +70,79 @@ export class ItemService {
    * company counter lazily and continue after the highest existing matching
    * code instead of restarting at one.
    */
-  private async ensureCompanyItemSeries(tenantId: string, companyId: string | null) {
+  private async ensureCompanyItemSeries(
+    tenantId: string,
+    companyId: string | null,
+  ) {
     if (!companyId) return;
-    const [existing] = await this.db.select().from(schema.noSeries).where(and(
-      eq(schema.noSeries.tenant_id, tenantId),
-      eq(schema.noSeries.company_id, companyId),
-      eq(schema.noSeries.code, 'ITEM'),
-      isNull(schema.noSeries.deleted_at),
-    )).limit(1);
+    const [existing] = await this.db
+      .select()
+      .from(schema.noSeries)
+      .where(
+        and(
+          eq(schema.noSeries.tenant_id, tenantId),
+          eq(schema.noSeries.company_id, companyId),
+          eq(schema.noSeries.code, 'ITEM'),
+          isNull(schema.noSeries.deleted_at),
+        ),
+      )
+      .limit(1);
     if (existing) return;
 
-    const [template] = await this.db.select().from(schema.noSeries).where(and(
-      eq(schema.noSeries.tenant_id, tenantId),
-      isNull(schema.noSeries.company_id),
-      eq(schema.noSeries.code, 'ITEM'),
-      isNull(schema.noSeries.deleted_at),
-    )).limit(1);
-    if (!template) throw new NotFoundException("Number series 'ITEM' is not configured for this tenant.");
+    const [template] = await this.db
+      .select()
+      .from(schema.noSeries)
+      .where(
+        and(
+          eq(schema.noSeries.tenant_id, tenantId),
+          isNull(schema.noSeries.company_id),
+          eq(schema.noSeries.code, 'ITEM'),
+          isNull(schema.noSeries.deleted_at),
+        ),
+      )
+      .limit(1);
+    if (!template)
+      throw new NotFoundException(
+        "Number series 'ITEM' is not configured for this tenant.",
+      );
 
-    const codes = await this.db.select({ code: schema.itemMaster.item_code }).from(schema.itemMaster).where(and(
-      eq(schema.itemMaster.tenant_id, tenantId),
-      eq(schema.itemMaster.company_id, companyId),
-    ));
+    const codes = await this.db
+      .select({ code: schema.itemMaster.item_code })
+      .from(schema.itemMaster)
+      .where(
+        and(
+          eq(schema.itemMaster.tenant_id, tenantId),
+          eq(schema.itemMaster.company_id, companyId),
+        ),
+      );
     const prefix = template.prefix || 'ITM';
     const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = new RegExp(`^${escapedPrefix}${template.separator || '-'}(\\d+)$`, 'i');
+    const pattern = new RegExp(
+      `^${escapedPrefix}${template.separator || '-'}(\\d+)$`,
+      'i',
+    );
     const currentSeq = codes.reduce((max, row) => {
       const match = row.code.match(pattern);
       return match ? Math.max(max, Number(match[1])) : max;
     }, 0);
 
-    await this.db.insert(schema.noSeries).values({
-      id: randomUUID(), tenant_id: tenantId, company_id: companyId,
-      code: 'ITEM', description: template.description, document_type: template.document_type,
-      prefix: template.prefix, separator: template.separator,
-      seq_length: template.seq_length, current_seq: currentSeq,
-      reset_frequency: template.reset_frequency, manual_nos: true,
-    }).onDuplicateKeyUpdate({ set: { description: template.description } });
+    await this.db
+      .insert(schema.noSeries)
+      .values({
+        id: randomUUID(),
+        tenant_id: tenantId,
+        company_id: companyId,
+        code: 'ITEM',
+        description: template.description,
+        document_type: template.document_type,
+        prefix: template.prefix,
+        separator: template.separator,
+        seq_length: template.seq_length,
+        current_seq: currentSeq,
+        reset_frequency: template.reset_frequency,
+        manual_nos: true,
+      })
+      .onDuplicateKeyUpdate({ set: { description: template.description } });
   }
 
   /**
@@ -95,19 +155,25 @@ export class ItemService {
    * Matched exactly, never upper-cased — the stored value is what
    * assertWithdrawalDays() compares against 'MEDICINE'/'VACCINE'.
    */
-  private async assertItemTypeExists(itemType: string, tenantId: string, companyId: string | null) {
+  private async assertItemTypeExists(
+    itemType: string,
+    tenantId: string,
+    companyId: string | null,
+  ) {
     const [type] = await this.db
       .select({ id: schema.itemTypeMaster.item_type_id })
       .from(schema.itemTypeMaster)
-      .where(and(
-        eq(schema.itemTypeMaster.tenant_id, tenantId),
-        eq(schema.itemTypeMaster.type_code, itemType),
-        eq(schema.itemTypeMaster.is_active, true),
-        isNull(schema.itemTypeMaster.deleted_at),
-        companyId
-          ? eq(schema.itemTypeMaster.company_id, companyId)
-          : isNull(schema.itemTypeMaster.company_id),
-      ))
+      .where(
+        and(
+          eq(schema.itemTypeMaster.tenant_id, tenantId),
+          eq(schema.itemTypeMaster.type_code, itemType),
+          eq(schema.itemTypeMaster.is_active, true),
+          isNull(schema.itemTypeMaster.deleted_at),
+          companyId
+            ? eq(schema.itemTypeMaster.company_id, companyId)
+            : isNull(schema.itemTypeMaster.company_id),
+        ),
+      )
       .limit(1);
 
     if (!type) {
@@ -118,19 +184,31 @@ export class ItemService {
   /** Feed Form (Bulk/Bagged) belongs to feed items only; a value on any other type is a 400. */
   private assertFeedForm(itemType: string, feedForm?: string | null) {
     if (feedForm != null && !isFeedTypeCode(itemType)) {
-      throw new BadRequestException('Feed Form applies to feed items only; choose a feed Item Type first.');
+      throw new BadRequestException(
+        'Feed Form applies to feed items only; choose a feed Item Type first.',
+      );
     }
   }
 
   /** withdrawal_days is mandatory for MEDICINE/VACCINE item types per spec. */
-  private assertWithdrawalDays(itemType: string, withdrawalDays?: number | null) {
+  private assertWithdrawalDays(
+    itemType: string,
+    withdrawalDays?: number | null,
+  ) {
     if (carriesWithdrawal(itemType) && withdrawalDays == null) {
-      throw new BadRequestException('Withdrawal Days is mandatory for Medicine and Vaccine items.');
+      throw new BadRequestException(
+        'Withdrawal Days is mandatory for Medicine and Vaccine items.',
+      );
     }
   }
 
   /** GL accounts must exist in synced Chart of Accounts (gl_account_master) */
-  private async assertGlAccountExists(accountRef: string | null | undefined, tenantId: string, companyId: string | null, errorMsg: string) {
+  private async assertGlAccountExists(
+    accountRef: string | null | undefined,
+    tenantId: string,
+    companyId: string | null,
+    errorMsg: string,
+  ) {
     if (!accountRef) return;
     const conditions: any[] = [
       eq(schema.glAccountMaster.tenant_id, tenantId),
@@ -141,12 +219,7 @@ export class ItemService {
       ),
     ];
     if (companyId) {
-      conditions.push(
-        or(
-          eq(schema.glAccountMaster.company_id, companyId),
-          isNull(schema.glAccountMaster.company_id),
-        )!,
-      );
+      conditions.push(eq(schema.glAccountMaster.company_id, companyId)); // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
     }
     const [acc] = await this.db
       .select({ id: schema.glAccountMaster.gl_account_id })
@@ -164,26 +237,44 @@ export class ItemService {
    * is the same rule for a caller that does not use the form, so a lot-tracked
    * item cannot point at the BREED series.
    */
-  private async assertTrackingSeriesKind(isLotTracked?: boolean | null, isSerialTracked?: boolean | null, trackingSeriesId?: string | null) {
+  private async assertTrackingSeriesKind(
+    isLotTracked?: boolean | null,
+    isSerialTracked?: boolean | null,
+    trackingSeriesId?: string | null,
+  ) {
     if (!trackingSeriesId || (!isLotTracked && !isSerialTracked)) return;
     const expected = isLotTracked ? 'LOT' : 'SERIAL';
     const [series] = await this.db
       .select({ document_type: schema.noSeries.document_type })
       .from(schema.noSeries)
-      .where(and(eq(schema.noSeries.id, trackingSeriesId), isNull(schema.noSeries.deleted_at)))
+      .where(
+        and(
+          eq(schema.noSeries.id, trackingSeriesId),
+          isNull(schema.noSeries.deleted_at),
+        ),
+      )
       .limit(1);
     if (!series) {
-      throw new NotFoundException(`Number Series '${trackingSeriesId}' not found.`);
+      throw new NotFoundException(
+        `Number Series '${trackingSeriesId}' not found.`,
+      );
     }
     if (series.document_type !== expected) {
-      throw new BadRequestException(`A ${expected === 'LOT' ? 'lot' : 'serial'}-tracked item needs a ${expected} number series.`);
+      throw new BadRequestException(
+        `A ${expected === 'LOT' ? 'lot' : 'serial'}-tracked item needs a ${expected} number series.`,
+      );
     }
   }
 
   /** standard_cost is mandatory when valuation_method is STANDARD, per spec. */
-  private assertStandardCost(valuationMethod?: string | null, standardCost?: number | null) {
+  private assertStandardCost(
+    valuationMethod?: string | null,
+    standardCost?: number | null,
+  ) {
     if (valuationMethod === 'STANDARD' && standardCost == null) {
-      throw new BadRequestException('Enter a Standard Cost — it is required when the Valuation Method is Standard.');
+      throw new BadRequestException(
+        'Enter a Standard Cost — it is required when the Valuation Method is Standard.',
+      );
     }
   }
 
@@ -202,7 +293,14 @@ export class ItemService {
    */
   private async recordUomConversion(
     tx: any,
-    args: { tenantId: string; companyId: string | null; fromUom?: string | null; toUom?: string | null; factor?: number | string | null; userId?: string | null },
+    args: {
+      tenantId: string;
+      companyId: string | null;
+      fromUom?: string | null;
+      toUom?: string | null;
+      factor?: number | string | null;
+      userId?: string | null;
+    },
   ) {
     const { tenantId, companyId, fromUom, toUom, factor } = args;
     if (!fromUom || !toUom || factor == null || factor === '') return;
@@ -210,10 +308,15 @@ export class ItemService {
       eq(schema.uomConversionMaster.tenant_id, tenantId),
       eq(schema.uomConversionMaster.from_uom, fromUom.toUpperCase()),
       eq(schema.uomConversionMaster.to_uom, toUom.toUpperCase()),
-      companyId ? eq(schema.uomConversionMaster.company_id, companyId) : isNull(schema.uomConversionMaster.company_id),
+      companyId
+        ? eq(schema.uomConversionMaster.company_id, companyId)
+        : isNull(schema.uomConversionMaster.company_id),
     ];
-    const [existing] = await tx.select({ id: schema.uomConversionMaster.conversion_id })
-      .from(schema.uomConversionMaster).where(and(...pair)).limit(1);
+    const [existing] = await tx
+      .select({ id: schema.uomConversionMaster.conversion_id })
+      .from(schema.uomConversionMaster)
+      .where(and(...pair))
+      .limit(1);
     if (existing) return;
     await tx.insert(schema.uomConversionMaster).values({
       conversion_id: randomUUID(),
@@ -233,9 +336,15 @@ export class ItemService {
   }
 
   /** tracking_series_id is mandatory when the item is lot- or serial-tracked, per spec. */
-  private assertTrackingSeries(isLotTracked?: boolean | null, isSerialTracked?: boolean | null, trackingSeriesId?: string | null) {
+  private assertTrackingSeries(
+    isLotTracked?: boolean | null,
+    isSerialTracked?: boolean | null,
+    trackingSeriesId?: string | null,
+  ) {
     if ((isLotTracked || isSerialTracked) && !trackingSeriesId) {
-      throw new BadRequestException('Item Tracking No. Series is required when Item Tracking is LOT or SERIAL.');
+      throw new BadRequestException(
+        'Item Tracking No. Series is required when Item Tracking is LOT or SERIAL.',
+      );
     }
   }
 
@@ -253,11 +362,18 @@ export class ItemService {
       const [company] = await this.db
         .select()
         .from(schema.companyMaster)
-        .where(and(eq(schema.companyMaster.company_id, companyId), isNull(schema.companyMaster.deleted_at)))
+        .where(
+          and(
+            eq(schema.companyMaster.company_id, companyId),
+            isNull(schema.companyMaster.deleted_at),
+          ),
+        )
         .limit(1);
 
       if (!company) {
-        throw new NotFoundException(`Company with ID '${companyId}' not found.`);
+        throw new NotFoundException(
+          `Company with ID '${companyId}' not found.`,
+        );
       }
     }
 
@@ -266,11 +382,18 @@ export class ItemService {
       const [category] = await this.db
         .select()
         .from(schema.itemCategoryMaster)
-        .where(and(eq(schema.itemCategoryMaster.category_id, dto.category_id), isNull(schema.itemCategoryMaster.deleted_at)))
+        .where(
+          and(
+            eq(schema.itemCategoryMaster.category_id, dto.category_id),
+            isNull(schema.itemCategoryMaster.deleted_at),
+          ),
+        )
         .limit(1);
 
       if (!category) {
-        throw new NotFoundException(`Item Category with ID '${dto.category_id}' not found.`);
+        throw new NotFoundException(
+          `Item Category with ID '${dto.category_id}' not found.`,
+        );
       }
     }
 
@@ -280,8 +403,16 @@ export class ItemService {
     this.assertWithdrawalDays(dto.item_type, dto.withdrawal_days);
     this.assertFeedForm(dto.item_type, dto.feed_form);
     this.assertStandardCost(dto.valuation_method, dto.standard_cost);
-    this.assertTrackingSeries(dto.is_lot_tracked, dto.is_serial_tracked, dto.tracking_series_id);
-    await this.assertTrackingSeriesKind(dto.is_lot_tracked, dto.is_serial_tracked, dto.tracking_series_id);
+    this.assertTrackingSeries(
+      dto.is_lot_tracked,
+      dto.is_serial_tracked,
+      dto.tracking_series_id,
+    );
+    await this.assertTrackingSeriesKind(
+      dto.is_lot_tracked,
+      dto.is_serial_tracked,
+      dto.tracking_series_id,
+    );
 
     // NOB/LOB are no longer asked on the form — derive them from the company's
     // operational areas (an explicit dto value, if a caller still sends one,
@@ -289,17 +420,39 @@ export class ItemService {
     // (operational areas split across LOBs) simply stores null rather than
     // blocking the create — a farm must never be blocked from adding an item
     // because the taxonomy is ambiguous.
-    const resolvedNobLob = await this.nobLobResolution.resolve(tenantId, companyId, {
-      nob_id: dto.nob_id,
-      lob_id: dto.lob_id,
-    });
+    const resolvedNobLob = await this.nobLobResolution.resolve(
+      tenantId,
+      companyId,
+      {
+        nob_id: dto.nob_id,
+        lob_id: dto.lob_id,
+      },
+    );
 
     // 4. One company-wide ITEM sequence is shared by all Item Types.
     await this.ensureCompanyItemSeries(tenantId, companyId);
-    const seriesCode = await this.numberSeriesService.resolveSeriesFor('ITEM', undefined, tenantId, companyId) || 'ITEM';
+    const seriesCode =
+      (await this.numberSeriesService.resolveSeriesFor(
+        'ITEM',
+        undefined,
+        tenantId,
+        companyId,
+      )) || 'ITEM';
     const itemCode = dto.item_code?.trim()
-      ? await this.numberSeriesService.manualCode('ITEM', dto.item_code, tenantId, companyId, undefined)
-      : await this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, undefined, dto as unknown as Record<string, unknown>);
+      ? await this.numberSeriesService.manualCode(
+          'ITEM',
+          dto.item_code,
+          tenantId,
+          companyId,
+          undefined,
+        )
+      : await this.numberSeriesService.generateNext(
+          seriesCode,
+          tenantId,
+          companyId,
+          undefined,
+          dto as unknown as Record<string, unknown>,
+        );
 
     const itemId = randomUUID();
     const newItem = {
@@ -335,13 +488,17 @@ export class ItemService {
       storage_temp_min: dto.storage_temp_min?.toString() || null,
       storage_temp_max: dto.storage_temp_max?.toString() || null,
       // Medicines and vaccines only (2026-09-15); anything sent for another type is dropped.
-      withdrawal_days: carriesWithdrawal(dto.item_type) ? dto.withdrawal_days ?? null : null,
+      withdrawal_days: carriesWithdrawal(dto.item_type)
+        ? (dto.withdrawal_days ?? null)
+        : null,
       is_qr_enabled: dto.is_qr_enabled || false,
       qr_trigger_event: dto.qr_trigger_event || null,
       item_image_url: dto.item_image_url || null,
       is_active: true,
       status: 'ACTIVE',
-      extension_config: dto.extension_config ? JSON.stringify(dto.extension_config) : null,
+      extension_config: dto.extension_config
+        ? JSON.stringify(dto.extension_config)
+        : null,
       created_by: userPayload?.userId || null,
       updated_by: userPayload?.userId || null,
     };
@@ -365,11 +522,18 @@ export class ItemService {
           const [attrDef] = await tx
             .select()
             .from(schema.itemAttributeMaster)
-            .where(and(eq(schema.itemAttributeMaster.attribute_id, attr.attribute_id), isNull(schema.itemAttributeMaster.deleted_at)))
+            .where(
+              and(
+                eq(schema.itemAttributeMaster.attribute_id, attr.attribute_id),
+                isNull(schema.itemAttributeMaster.deleted_at),
+              ),
+            )
             .limit(1);
 
           if (!attrDef) {
-            throw new NotFoundException(`Attribute definition with ID '${attr.attribute_id}' not found.`);
+            throw new NotFoundException(
+              `Attribute definition with ID '${attr.attribute_id}' not found.`,
+            );
           }
 
           await tx.insert(schema.itemAttributeValues).values({
@@ -398,7 +562,12 @@ export class ItemService {
   /**
    * Generates next item number atomically from linked No. Series and creates draft item.
    */
-  async createFromTemplate(dto: CreateItemFromTemplateDto, tenantId: string, companyId: string | null, userPayload?: any) {
+  async createFromTemplate(
+    dto: CreateItemFromTemplateDto,
+    tenantId: string,
+    companyId: string | null,
+    userPayload?: any,
+  ) {
     const effectiveCompanyId = dto.company_id || companyId || null;
 
     // 1. Verify template exists and is active
@@ -409,7 +578,9 @@ export class ItemService {
       .limit(1);
 
     if (!template) {
-      throw new NotFoundException(`Item Template with ID '${dto.template_id}' not found.`);
+      throw new NotFoundException(
+        `Item Template with ID '${dto.template_id}' not found.`,
+      );
     }
 
     if (!template.is_active) {
@@ -417,11 +588,16 @@ export class ItemService {
     }
 
     if (!template.no_series_id) {
-      throw new BadRequestException('No. Series is mandatory on Item Template.');
+      throw new BadRequestException(
+        'No. Series is mandatory on Item Template.',
+      );
     }
 
     // 2. Preview next item number without advancing last_no_used (increments only upon item save)
-    let currentNumberInfo = await this.numberSeriesService.previewNextNumberById(template.no_series_id);
+    let currentNumberInfo =
+      await this.numberSeriesService.previewNextNumberById(
+        template.no_series_id,
+      );
 
     let next_number = currentNumberInfo.next_number;
     let series = currentNumberInfo.series;
@@ -433,11 +609,15 @@ export class ItemService {
       const [existingCode] = await this.db
         .select()
         .from(schema.itemMaster)
-        .where(and(
-          eq(schema.itemMaster.tenant_id, tenantId),
-          eq(schema.itemMaster.item_code, next_number),
-          effectiveCompanyId ? eq(schema.itemMaster.company_id, effectiveCompanyId) : isNull(schema.itemMaster.company_id),
-        ))
+        .where(
+          and(
+            eq(schema.itemMaster.tenant_id, tenantId),
+            eq(schema.itemMaster.item_code, next_number),
+            effectiveCompanyId
+              ? eq(schema.itemMaster.company_id, effectiveCompanyId)
+              : isNull(schema.itemMaster.company_id),
+          ),
+        )
         .limit(1);
 
       if (!existingCode) {
@@ -445,14 +625,26 @@ export class ItemService {
       }
 
       // If it's an uncompleted draft or soft-deleted draft, delete the stale draft to reuse this number
-      if (!existingCode.item_name || !existingCode.item_name.trim() || existingCode.status === 'DRAFT' || existingCode.deleted_at) {
-        await this.db.delete(schema.itemMaster).where(eq(schema.itemMaster.item_id, existingCode.item_id));
+      if (
+        !existingCode.item_name ||
+        !existingCode.item_name.trim() ||
+        existingCode.status === 'DRAFT' ||
+        existingCode.deleted_at
+      ) {
+        await this.db
+          .delete(schema.itemMaster)
+          .where(eq(schema.itemMaster.item_id, existingCode.item_id));
         break;
       }
 
       // If an active item already exists with this code (e.g. series out of sync), advance the series
-      await this.numberSeriesService.recordNumberUsedById(template.no_series_id, next_number);
-      currentNumberInfo = await this.numberSeriesService.previewNextNumberById(template.no_series_id);
+      await this.numberSeriesService.recordNumberUsedById(
+        template.no_series_id,
+        next_number,
+      );
+      currentNumberInfo = await this.numberSeriesService.previewNextNumberById(
+        template.no_series_id,
+      );
       next_number = currentNumberInfo.next_number;
       series = currentNumberInfo.series;
     }
@@ -532,9 +724,14 @@ export class ItemService {
     const [item] = await this.db
       .select()
       .from(schema.itemMaster)
-      .where(includeBlocked
-        ? eq(schema.itemMaster.item_id, id)
-        : and(eq(schema.itemMaster.item_id, id), isNull(schema.itemMaster.deleted_at)))
+      .where(
+        includeBlocked
+          ? eq(schema.itemMaster.item_id, id)
+          : and(
+              eq(schema.itemMaster.item_id, id),
+              isNull(schema.itemMaster.deleted_at),
+            ),
+      )
       .limit(1);
 
     if (!item) {
@@ -552,7 +749,10 @@ export class ItemService {
       .from(schema.itemAttributeValues)
       .leftJoin(
         schema.itemAttributeMaster,
-        eq(schema.itemAttributeValues.attribute_id, schema.itemAttributeMaster.attribute_id)
+        eq(
+          schema.itemAttributeValues.attribute_id,
+          schema.itemAttributeMaster.attribute_id,
+        ),
       )
       .where(eq(schema.itemAttributeValues.item_id, id));
 
@@ -566,11 +766,11 @@ export class ItemService {
     // No isNull(deleted_at) filter here — remove() sets both is_active=false and deleted_at, and
     // the list view is meant to show both states (Active/Inactive badge) so a blocked item can be
     // found again and restored, rather than vanishing from the list entirely.
-    const conditions: any[] = [
-      eq(schema.itemMaster.tenant_id, tenantId),
-    ];
+    const conditions: any[] = [eq(schema.itemMaster.tenant_id, tenantId)];
 
-    conditions.push(...masterScopeConditions(this.cls, schema.itemMaster, query.companyId));
+    conditions.push(
+      ...masterScopeConditions(this.cls, schema.itemMaster, query.companyId),
+    );
     if (query.categoryId) {
       conditions.push(eq(schema.itemMaster.category_id, query.categoryId));
     }
@@ -578,7 +778,9 @@ export class ItemService {
       // Item kinds (29 Sep): a tenant names its own item types, so ?itemType=LIVING_ASSET
       // has to reach Porta Farm's "LA-001"/"Living Asset" as well as the literal code.
       // Anything that is not one of our kinds keeps its exact match.
-      conditions.push(itemKindCondition(query.itemType, tenantId, this.cls, query.companyId));
+      conditions.push(
+        itemKindCondition(query.itemType, tenantId, this.cls, query.companyId),
+      );
     }
     if (query.nobId) {
       conditions.push(eq(schema.itemMaster.nob_id, query.nobId));
@@ -587,19 +789,21 @@ export class ItemService {
       conditions.push(eq(schema.itemMaster.lob_id, query.lobId));
     }
     if (query.isActive !== undefined) {
-      const activeVal = String(query.isActive) === 'true' || query.isActive === true;
+      const activeVal =
+        String(query.isActive) === 'true' || query.isActive === true;
       conditions.push(eq(schema.itemMaster.is_active, activeVal));
     }
     if (query.isBlocked !== undefined) {
-      const blockedVal = String(query.isBlocked) === 'true' || query.isBlocked === true;
+      const blockedVal =
+        String(query.isBlocked) === 'true' || query.isBlocked === true;
       conditions.push(eq(schema.itemMaster.is_blocked, blockedVal));
     }
     if (query.search) {
       conditions.push(
         or(
           like(schema.itemMaster.item_code, `%${query.search}%`),
-          like(schema.itemMaster.item_name, `%${query.search}%`)
-        )
+          like(schema.itemMaster.item_name, `%${query.search}%`),
+        ),
       );
     }
 
@@ -608,14 +812,23 @@ export class ItemService {
     delete filter['template_code'];
 
     if (query.itemTemplateId) {
-      conditions.push(eq(schema.itemMaster.item_template_id, query.itemTemplateId));
+      conditions.push(
+        eq(schema.itemMaster.item_template_id, query.itemTemplateId),
+      );
     }
 
     if (templateFilter) {
       if (typeof templateFilter === 'string' && templateFilter.includes('*')) {
-        conditions.push(like(schema.itemTemplate.template_code, `%${templateFilter.replace(/\*/g, '')}%`));
+        conditions.push(
+          like(
+            schema.itemTemplate.template_code,
+            `%${templateFilter.replace(/\*/g, '')}%`,
+          ),
+        );
       } else if (typeof templateFilter === 'string') {
-        conditions.push(like(schema.itemTemplate.template_code, `%${templateFilter}%`));
+        conditions.push(
+          like(schema.itemTemplate.template_code, `%${templateFilter}%`),
+        );
       }
     }
 
@@ -631,10 +844,16 @@ export class ItemService {
         category_name: schema.itemCategoryMaster.category_name,
         template_code: schema.itemTemplate.template_code,
         // Lets the form lock Valuation Method once any ledger entry exists.
-        has_inventory: sql<number>`exists (select 1 from ${schema.inventoryLedger} where ${schema.inventoryLedger.item_id} = ${schema.itemMaster.item_id})`.mapWith(Boolean),
+        has_inventory:
+          sql<number>`exists (select 1 from ${schema.inventoryLedger} where ${schema.inventoryLedger.item_id} = ${schema.itemMaster.item_id})`.mapWith(
+            Boolean,
+          ),
         // Tracking (lot / serial) can change only while nothing carries lot or serial numbers for the item:
         // no stock on hand, and no open document naming it. See trackingBlockers.
-        on_hand_qty: sql<number>`(select coalesce(sum(${schema.inventoryLedger.remaining_quantity}), 0) from ${schema.inventoryLedger} where ${schema.inventoryLedger.item_id} = ${schema.itemMaster.item_id} and ${schema.inventoryLedger.quantity} > 0 and ${schema.inventoryLedger.entry_type} in ('POSITIVE', 'TRANSFER'))`.mapWith(Number),
+        on_hand_qty:
+          sql<number>`(select coalesce(sum(${schema.inventoryLedger.remaining_quantity}), 0) from ${schema.inventoryLedger} where ${schema.inventoryLedger.item_id} = ${schema.itemMaster.item_id} and ${schema.inventoryLedger.quantity} > 0 and ${schema.inventoryLedger.entry_type} in ('POSITIVE', 'TRANSFER'))`.mapWith(
+            Number,
+          ),
         open_documents: sql<number>`(
           (select count(*) from ${schema.goodsReceiptLine} gl join ${schema.goodsReceipt} g on g.receipt_id = gl.receipt_id where gl.item_id = ${schema.itemMaster.item_id} and g.status = 'DRAFT' and g.deleted_at is null)
           + (select count(*) from ${schema.stockTransferLine} tl join ${schema.stockTransfer} t on t.transfer_id = tl.transfer_id where tl.item_id = ${schema.itemMaster.item_id} and t.status in ('DRAFT', 'IN_TRANSIT'))
@@ -645,14 +864,19 @@ export class ItemService {
       .from(schema.itemMaster)
       .leftJoin(
         schema.itemCategoryMaster,
-        eq(schema.itemCategoryMaster.category_id, schema.itemMaster.category_id),
+        eq(
+          schema.itemCategoryMaster.category_id,
+          schema.itemMaster.category_id,
+        ),
       )
       .leftJoin(
         schema.itemTemplate,
         eq(schema.itemTemplate.id, schema.itemMaster.item_template_id),
       )
       .where(and(...conditions))
-      .orderBy(listOrderBy(schema.itemMaster, query, schema.itemMaster.item_code))
+      .orderBy(
+        listOrderBy(schema.itemMaster, query, schema.itemMaster.item_code),
+      )
       .limit(limit)
       .offset(offset);
 
@@ -666,7 +890,10 @@ export class ItemService {
       .where(and(...conditions));
 
     // The form locks Tracking while stock is on hand or an open document names the item.
-    const rows = data.map((row) => ({ ...row, tracking_locked: row.on_hand_qty > 0.0001 || row.open_documents > 0 }));
+    const rows = data.map((row) => ({
+      ...row,
+      tracking_locked: row.on_hand_qty > 0.0001 || row.open_documents > 0,
+    }));
     return { data: rows, total: Number(counted?.total ?? 0), limit, offset };
   }
 
@@ -686,41 +913,112 @@ export class ItemService {
    * receipts, transfers on the way or in draft, draft adjustments, draft batches) whose lines carry
    * them too. Finished history does not block: past entries keep the lot or serial they were posted with.
    */
-  async trackingBlockers(itemId: string): Promise<{ onHand: number; byLot: Array<{ lot: string | null; quantity: number }>; openDocuments: string[] }> {
+  async trackingBlockers(itemId: string): Promise<{
+    onHand: number;
+    byLot: Array<{ lot: string | null; quantity: number }>;
+    openDocuments: string[];
+  }> {
     // Stock on hand is what the receipts still hold; which lot each unit sits in is read off the lots
     // themselves (a lot's stock is not any receipt's remaining quantity).
-    const [owner] = await this.db.select({ tenant_id: schema.itemMaster.tenant_id }).from(schema.itemMaster).where(eq(schema.itemMaster.item_id, itemId)).limit(1);
+    const [owner] = await this.db
+      .select({ tenant_id: schema.itemMaster.tenant_id })
+      .from(schema.itemMaster)
+      .where(eq(schema.itemMaster.item_id, itemId))
+      .limit(1);
     const [held] = await this.db
-      .select({ quantity: sql<string>`COALESCE(SUM(${schema.inventoryLedger.remaining_quantity}), 0)` })
+      .select({
+        quantity: sql<string>`COALESCE(SUM(${schema.inventoryLedger.remaining_quantity}), 0)`,
+      })
       .from(schema.inventoryLedger)
-      .where(and(
-        eq(schema.inventoryLedger.item_id, itemId),
-        sql`${schema.inventoryLedger.quantity} > 0`,
-        sql`${schema.inventoryLedger.remaining_quantity} > 0`,
-        sql`${schema.inventoryLedger.entry_type} in ('POSITIVE', 'TRANSFER')`,
-      ));
+      .where(
+        and(
+          eq(schema.inventoryLedger.item_id, itemId),
+          sql`${schema.inventoryLedger.quantity} > 0`,
+          sql`${schema.inventoryLedger.remaining_quantity} > 0`,
+          sql`${schema.inventoryLedger.entry_type} in ('POSITIVE', 'TRANSFER')`,
+        ),
+      );
     const total = Number(held?.quantity ?? 0);
-    const lots = owner ? (await lotBalances(this.db, { tenantId: owner.tenant_id, itemId })).filter((l) => l.quantity > 0.0001) : [];
-    const byLot: Array<{ lot: string | null; quantity: number }> = lots.map((l) => ({ lot: l.lot_no, quantity: l.quantity }));
-    const withoutLot = Math.round((total - lots.reduce((n, l) => n + l.quantity, 0)) * 1e4) / 1e4;
+    const lots = owner
+      ? (
+          await lotBalances(this.db, { tenantId: owner.tenant_id, itemId })
+        ).filter((l) => l.quantity > 0.0001)
+      : [];
+    const byLot: Array<{ lot: string | null; quantity: number }> = lots.map(
+      (l) => ({ lot: l.lot_no, quantity: l.quantity }),
+    );
+    const withoutLot =
+      Math.round((total - lots.reduce((n, l) => n + l.quantity, 0)) * 1e4) /
+      1e4;
     if (withoutLot > 0.0001) byLot.push({ lot: null, quantity: withoutLot });
 
     const open: string[] = [];
     const drafts = await Promise.all([
-      this.db.select({ no: schema.goodsReceipt.receipt_no }).from(schema.goodsReceiptLine)
-        .innerJoin(schema.goodsReceipt, eq(schema.goodsReceipt.receipt_id, schema.goodsReceiptLine.receipt_id))
-        .where(and(eq(schema.goodsReceiptLine.item_id, itemId), eq(schema.goodsReceipt.status, 'DRAFT'), isNull(schema.goodsReceipt.deleted_at))),
-      this.db.select({ no: schema.stockTransfer.transfer_no }).from(schema.stockTransferLine)
-        .innerJoin(schema.stockTransfer, eq(schema.stockTransfer.transfer_id, schema.stockTransferLine.transfer_id))
-        .where(and(eq(schema.stockTransferLine.item_id, itemId), sql`${schema.stockTransfer.status} in ('DRAFT', 'IN_TRANSIT')`)),
-      this.db.select({ no: schema.stockAdjustment.adjustment_no }).from(schema.stockAdjustmentLine)
-        .innerJoin(schema.stockAdjustment, eq(schema.stockAdjustment.adjustment_id, schema.stockAdjustmentLine.adjustment_id))
-        .where(and(eq(schema.stockAdjustmentLine.item_id, itemId), eq(schema.stockAdjustment.status, 'DRAFT'))),
-      this.db.select({ no: schema.batchHeader.batch_no }).from(schema.batchInputLine)
-        .innerJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.batchInputLine.batch_id))
-        .where(and(eq(schema.batchInputLine.item_id, itemId), eq(schema.batchHeader.status, 'DRAFT'))),
+      this.db
+        .select({ no: schema.goodsReceipt.receipt_no })
+        .from(schema.goodsReceiptLine)
+        .innerJoin(
+          schema.goodsReceipt,
+          eq(
+            schema.goodsReceipt.receipt_id,
+            schema.goodsReceiptLine.receipt_id,
+          ),
+        )
+        .where(
+          and(
+            eq(schema.goodsReceiptLine.item_id, itemId),
+            eq(schema.goodsReceipt.status, 'DRAFT'),
+            isNull(schema.goodsReceipt.deleted_at),
+          ),
+        ),
+      this.db
+        .select({ no: schema.stockTransfer.transfer_no })
+        .from(schema.stockTransferLine)
+        .innerJoin(
+          schema.stockTransfer,
+          eq(
+            schema.stockTransfer.transfer_id,
+            schema.stockTransferLine.transfer_id,
+          ),
+        )
+        .where(
+          and(
+            eq(schema.stockTransferLine.item_id, itemId),
+            sql`${schema.stockTransfer.status} in ('DRAFT', 'IN_TRANSIT')`,
+          ),
+        ),
+      this.db
+        .select({ no: schema.stockAdjustment.adjustment_no })
+        .from(schema.stockAdjustmentLine)
+        .innerJoin(
+          schema.stockAdjustment,
+          eq(
+            schema.stockAdjustment.adjustment_id,
+            schema.stockAdjustmentLine.adjustment_id,
+          ),
+        )
+        .where(
+          and(
+            eq(schema.stockAdjustmentLine.item_id, itemId),
+            eq(schema.stockAdjustment.status, 'DRAFT'),
+          ),
+        ),
+      this.db
+        .select({ no: schema.batchHeader.batch_no })
+        .from(schema.batchInputLine)
+        .innerJoin(
+          schema.batchHeader,
+          eq(schema.batchHeader.batch_id, schema.batchInputLine.batch_id),
+        )
+        .where(
+          and(
+            eq(schema.batchInputLine.item_id, itemId),
+            eq(schema.batchHeader.status, 'DRAFT'),
+          ),
+        ),
     ]);
-    for (const rows of drafts) for (const r of rows) if (!open.includes(r.no)) open.push(r.no);
+    for (const rows of drafts)
+      for (const r of rows) if (!open.includes(r.no)) open.push(r.no);
     return { onHand: total, byLot, openDocuments: open };
   }
 
@@ -736,11 +1034,17 @@ export class ItemService {
     dto: UpdateItemDto,
   ): Promise<void> {
     const trackingChanged =
-      (dto.is_lot_tracked !== undefined && !!dto.is_lot_tracked !== !!item.is_lot_tracked) ||
-      (dto.is_serial_tracked !== undefined && !!dto.is_serial_tracked !== !!item.is_serial_tracked) ||
+      (dto.is_lot_tracked !== undefined &&
+        !!dto.is_lot_tracked !== !!item.is_lot_tracked) ||
+      (dto.is_serial_tracked !== undefined &&
+        !!dto.is_serial_tracked !== !!item.is_serial_tracked) ||
       // Supplying a series the item never had is not a tracking change; replacing an existing one is.
-      (dto.tracking_series_id !== undefined && !!item.tracking_series_id && (dto.tracking_series_id || null) !== item.tracking_series_id);
-    const valuationChanged = dto.valuation_method !== undefined && (dto.valuation_method || null) !== (item.valuation_method || null);
+      (dto.tracking_series_id !== undefined &&
+        !!item.tracking_series_id &&
+        (dto.tracking_series_id || null) !== item.tracking_series_id);
+    const valuationChanged =
+      dto.valuation_method !== undefined &&
+      (dto.valuation_method || null) !== (item.valuation_method || null);
     if (!trackingChanged && !valuationChanged) return;
 
     if (valuationChanged && (await this.hasInventory(item.item_id))) {
@@ -750,19 +1054,35 @@ export class ItemService {
     }
     if (!trackingChanged) return;
 
-    const { onHand, byLot, openDocuments } = await this.trackingBlockers(item.item_id);
+    const { onHand, byLot, openDocuments } = await this.trackingBlockers(
+      item.item_id,
+    );
     const reasons: string[] = [];
     if (onHand > 0.0001) {
-      const lots = byLot.map((l) => `${l.lot ?? 'no lot'}: ${l.quantity}`).join(', ');
-      reasons.push(`${onHand} ${item.uom_primary} is on hand (${lots}) — consume it or adjust it out first`);
+      const lots = byLot
+        .map((l) => `${l.lot ?? 'no lot'}: ${l.quantity}`)
+        .join(', ');
+      reasons.push(
+        `${onHand} ${item.uom_primary} is on hand (${lots}) — consume it or adjust it out first`,
+      );
     }
-    if (openDocuments.length > 0) reasons.push(`open documents still name it: ${openDocuments.join(', ')} — post or cancel them first`);
+    if (openDocuments.length > 0)
+      reasons.push(
+        `open documents still name it: ${openDocuments.join(', ')} — post or cancel them first`,
+      );
     if (reasons.length) {
-      throw new BadRequestException(`Tracking cannot be changed for ${item.item_code} while ${reasons.join('; and ')}.`);
+      throw new BadRequestException(
+        `Tracking cannot be changed for ${item.item_code} while ${reasons.join('; and ')}.`,
+      );
     }
   }
 
-  async update(id: string, dto: UpdateItemDto, tenantId: string, userPayload?: any) {
+  async update(
+    id: string,
+    dto: UpdateItemDto,
+    tenantId: string,
+    userPayload?: any,
+  ) {
     const item = await this.findOne(id);
     await this.assertCostingAndTrackingUnlocked(item, dto);
 
@@ -770,11 +1090,18 @@ export class ItemService {
       const [category] = await this.db
         .select()
         .from(schema.itemCategoryMaster)
-        .where(and(eq(schema.itemCategoryMaster.category_id, dto.category_id), isNull(schema.itemCategoryMaster.deleted_at)))
+        .where(
+          and(
+            eq(schema.itemCategoryMaster.category_id, dto.category_id),
+            isNull(schema.itemCategoryMaster.deleted_at),
+          ),
+        )
         .limit(1);
 
       if (!category) {
-        throw new NotFoundException(`Item Category with ID '${dto.category_id}' not found.`);
+        throw new NotFoundException(
+          `Item Category with ID '${dto.category_id}' not found.`,
+        );
       }
     }
 
@@ -793,56 +1120,112 @@ export class ItemService {
       const [dup] = await this.db
         .select({ id: schema.itemMaster.item_id })
         .from(schema.itemMaster)
-        .where(and(
-          eq(schema.itemMaster.tenant_id, tenantId),
-          eq(schema.itemMaster.item_code, trimmedCode),
-          ne(schema.itemMaster.item_id, id),
-          isNull(schema.itemMaster.deleted_at),
-          item.company_id ? eq(schema.itemMaster.company_id, item.company_id) : isNull(schema.itemMaster.company_id),
-        ))
+        .where(
+          and(
+            eq(schema.itemMaster.tenant_id, tenantId),
+            eq(schema.itemMaster.item_code, trimmedCode),
+            ne(schema.itemMaster.item_id, id),
+            isNull(schema.itemMaster.deleted_at),
+            item.company_id
+              ? eq(schema.itemMaster.company_id, item.company_id)
+              : isNull(schema.itemMaster.company_id),
+          ),
+        )
         .limit(1);
       if (dup) {
-        throw new ConflictException(`Item code '${trimmedCode}' already exists in this scope.`);
+        throw new ConflictException(
+          `Item code '${trimmedCode}' already exists in this scope.`,
+        );
       }
       updates.item_code = trimmedCode;
     }
 
     const effectiveItemType = dto.item_type ?? item.item_type;
-    const effectiveWithdrawalDays = dto.withdrawal_days !== undefined ? dto.withdrawal_days : item.withdrawal_days;
+    const effectiveWithdrawalDays =
+      dto.withdrawal_days !== undefined
+        ? dto.withdrawal_days
+        : item.withdrawal_days;
     this.assertWithdrawalDays(effectiveItemType, effectiveWithdrawalDays);
     this.assertFeedForm(effectiveItemType, dto.feed_form);
 
-    const effectiveValuationMethod = dto.valuation_method !== undefined ? dto.valuation_method : item.valuation_method;
-    const effectiveStandardCost = dto.standard_cost !== undefined ? dto.standard_cost : (item.standard_cost != null ? Number(item.standard_cost) : null);
+    const effectiveValuationMethod =
+      dto.valuation_method !== undefined
+        ? dto.valuation_method
+        : item.valuation_method;
+    const effectiveStandardCost =
+      dto.standard_cost !== undefined
+        ? dto.standard_cost
+        : item.standard_cost != null
+          ? Number(item.standard_cost)
+          : null;
     this.assertStandardCost(effectiveValuationMethod, effectiveStandardCost);
 
-    const effectiveIsLotTracked = dto.is_lot_tracked !== undefined ? dto.is_lot_tracked : item.is_lot_tracked;
-    const effectiveIsSerialTracked = dto.is_serial_tracked !== undefined ? dto.is_serial_tracked : item.is_serial_tracked;
-    const effectiveTrackingSeriesId = dto.tracking_series_id !== undefined ? dto.tracking_series_id : item.tracking_series_id;
-    this.assertTrackingSeries(effectiveIsLotTracked, effectiveIsSerialTracked, effectiveTrackingSeriesId);
-    if (dto.tracking_series_id !== undefined || dto.is_lot_tracked !== undefined || dto.is_serial_tracked !== undefined) {
-      await this.assertTrackingSeriesKind(effectiveIsLotTracked, effectiveIsSerialTracked, effectiveTrackingSeriesId);
+    const effectiveIsLotTracked =
+      dto.is_lot_tracked !== undefined
+        ? dto.is_lot_tracked
+        : item.is_lot_tracked;
+    const effectiveIsSerialTracked =
+      dto.is_serial_tracked !== undefined
+        ? dto.is_serial_tracked
+        : item.is_serial_tracked;
+    const effectiveTrackingSeriesId =
+      dto.tracking_series_id !== undefined
+        ? dto.tracking_series_id
+        : item.tracking_series_id;
+    this.assertTrackingSeries(
+      effectiveIsLotTracked,
+      effectiveIsSerialTracked,
+      effectiveTrackingSeriesId,
+    );
+    if (
+      dto.tracking_series_id !== undefined ||
+      dto.is_lot_tracked !== undefined ||
+      dto.is_serial_tracked !== undefined
+    ) {
+      await this.assertTrackingSeriesKind(
+        effectiveIsLotTracked,
+        effectiveIsSerialTracked,
+        effectiveTrackingSeriesId,
+      );
     }
 
     // Chart of Accounts validation
-    const effectiveInventoryGl = dto.inventory_gl_account !== undefined ? dto.inventory_gl_account : item.inventory_gl_account;
+    const effectiveInventoryGl =
+      dto.inventory_gl_account !== undefined
+        ? dto.inventory_gl_account
+        : item.inventory_gl_account;
     if (effectiveInventoryGl) {
-      await this.assertGlAccountExists(effectiveInventoryGl, tenantId, item.company_id, 'Inventory GL Account not found in Chart of Accounts.');
+      await this.assertGlAccountExists(
+        effectiveInventoryGl,
+        tenantId,
+        item.company_id,
+        'Inventory GL Account not found in Chart of Accounts.',
+      );
     }
 
-    const effectiveCogsGl = dto.cogs_gl_account !== undefined ? dto.cogs_gl_account : item.cogs_gl_account;
+    const effectiveCogsGl =
+      dto.cogs_gl_account !== undefined
+        ? dto.cogs_gl_account
+        : item.cogs_gl_account;
     if (effectiveCogsGl) {
-      await this.assertGlAccountExists(effectiveCogsGl, tenantId, item.company_id, 'COGS GL Account not found in Chart of Accounts.');
+      await this.assertGlAccountExists(
+        effectiveCogsGl,
+        tenantId,
+        item.company_id,
+        'COGS GL Account not found in Chart of Accounts.',
+      );
     }
 
     // Required fields when saving or activating a draft item
     if (item.status === 'DRAFT' || dto.status === 'ACTIVE') {
-      const effectiveName = dto.item_name !== undefined ? dto.item_name : item.item_name;
+      const effectiveName =
+        dto.item_name !== undefined ? dto.item_name : item.item_name;
       if (!effectiveName || !effectiveName.trim()) {
-        throw new BadRequestException('Item Description is mandatory.');
+        throw new BadRequestException('Item Name is mandatory.');
       }
 
-      const effectiveUom = dto.uom_primary !== undefined ? dto.uom_primary : item.uom_primary;
+      const effectiveUom =
+        dto.uom_primary !== undefined ? dto.uom_primary : item.uom_primary;
       if (!effectiveUom || !effectiveUom.trim()) {
         throw new BadRequestException('Unit of Measure is mandatory.');
       }
@@ -860,49 +1243,80 @@ export class ItemService {
     if (dto.category_id !== undefined) updates.category_id = dto.category_id;
     if (dto.sub_category !== undefined) updates.sub_category = dto.sub_category;
     if (dto.uom_primary !== undefined) updates.uom_primary = dto.uom_primary;
-    if (dto.uom_secondary !== undefined) updates.uom_secondary = dto.uom_secondary;
-    if (dto.uom_conversion_factor !== undefined) updates.uom_conversion_factor = dto.uom_conversion_factor?.toString() || null;
-    if (dto.valuation_method !== undefined) updates.valuation_method = dto.valuation_method;
-    if (dto.posting_group !== undefined) updates.posting_group = dto.posting_group;
-    if (dto.standard_cost !== undefined) updates.standard_cost = dto.standard_cost?.toString() || null;
-    if (dto.is_lot_tracked !== undefined) updates.is_lot_tracked = dto.is_lot_tracked;
-    if (dto.is_serial_tracked !== undefined) updates.is_serial_tracked = dto.is_serial_tracked;
-    if (dto.tracking_series_id !== undefined) updates.tracking_series_id = dto.tracking_series_id;
+    if (dto.uom_secondary !== undefined)
+      updates.uom_secondary = dto.uom_secondary;
+    if (dto.uom_conversion_factor !== undefined)
+      updates.uom_conversion_factor =
+        dto.uom_conversion_factor?.toString() || null;
+    if (dto.valuation_method !== undefined)
+      updates.valuation_method = dto.valuation_method;
+    if (dto.posting_group !== undefined)
+      updates.posting_group = dto.posting_group;
+    if (dto.standard_cost !== undefined)
+      updates.standard_cost = dto.standard_cost?.toString() || null;
+    if (dto.is_lot_tracked !== undefined)
+      updates.is_lot_tracked = dto.is_lot_tracked;
+    if (dto.is_serial_tracked !== undefined)
+      updates.is_serial_tracked = dto.is_serial_tracked;
+    if (dto.tracking_series_id !== undefined)
+      updates.tracking_series_id = dto.tracking_series_id;
     // Switching tracking off takes the series with it. A series left standing on
     // an untracked item reads as configuration still in force, and whoever turns
     // tracking back on inherits a choice nobody made on this visit.
-    if (!effectiveIsLotTracked && !effectiveIsSerialTracked) updates.tracking_series_id = null;
-    if (dto.is_biological_asset !== undefined) updates.is_biological_asset = dto.is_biological_asset;
-    if (dto.is_biological_costing_method !== undefined) updates.is_biological_costing_method = dto.is_biological_costing_method;
-    if (dto.is_inventoriable !== undefined) updates.is_inventoriable = dto.is_inventoriable;
-    if (dto.min_stock_level !== undefined) updates.min_stock_level = dto.min_stock_level?.toString() || null;
-    if (dto.max_stock_level !== undefined) updates.max_stock_level = dto.max_stock_level?.toString() || null;
-    if (dto.reorder_level !== undefined) updates.reorder_level = dto.reorder_level?.toString() || null;
+    if (!effectiveIsLotTracked && !effectiveIsSerialTracked)
+      updates.tracking_series_id = null;
+    if (dto.is_biological_asset !== undefined)
+      updates.is_biological_asset = dto.is_biological_asset;
+    if (dto.is_biological_costing_method !== undefined)
+      updates.is_biological_costing_method = dto.is_biological_costing_method;
+    if (dto.is_inventoriable !== undefined)
+      updates.is_inventoriable = dto.is_inventoriable;
+    if (dto.min_stock_level !== undefined)
+      updates.min_stock_level = dto.min_stock_level?.toString() || null;
+    if (dto.max_stock_level !== undefined)
+      updates.max_stock_level = dto.max_stock_level?.toString() || null;
+    if (dto.reorder_level !== undefined)
+      updates.reorder_level = dto.reorder_level?.toString() || null;
     if (dto.diet_no !== undefined) updates.diet_no = dto.diet_no;
     if (dto.feed_form !== undefined) updates.feed_form = dto.feed_form;
     // Moving an item off a feed type drops its Feed Form with it.
-    else if (item.feed_form && !isFeedTypeCode(effectiveItemType)) updates.feed_form = null;
-    if (dto.lead_time_days !== undefined) updates.lead_time_days = dto.lead_time_days;
-    if (dto.shelf_life_days !== undefined) updates.shelf_life_days = dto.shelf_life_days;
-    if (dto.storage_temp_min !== undefined) updates.storage_temp_min = dto.storage_temp_min?.toString() || null;
-    if (dto.storage_temp_max !== undefined) updates.storage_temp_max = dto.storage_temp_max?.toString() || null;
-    if (dto.withdrawal_days !== undefined) updates.withdrawal_days = dto.withdrawal_days;
+    else if (item.feed_form && !isFeedTypeCode(effectiveItemType))
+      updates.feed_form = null;
+    if (dto.lead_time_days !== undefined)
+      updates.lead_time_days = dto.lead_time_days;
+    if (dto.shelf_life_days !== undefined)
+      updates.shelf_life_days = dto.shelf_life_days;
+    if (dto.storage_temp_min !== undefined)
+      updates.storage_temp_min = dto.storage_temp_min?.toString() || null;
+    if (dto.storage_temp_max !== undefined)
+      updates.storage_temp_max = dto.storage_temp_max?.toString() || null;
+    if (dto.withdrawal_days !== undefined)
+      updates.withdrawal_days = dto.withdrawal_days;
     // Only a medicine or vaccine carries one. An item re-typed away from those
     // loses it, rather than keeping a slaughter block nothing shows any more.
     if (!carriesWithdrawal(effectiveItemType)) updates.withdrawal_days = null;
-    if (dto.is_qr_enabled !== undefined) updates.is_qr_enabled = dto.is_qr_enabled;
-    if (dto.qr_trigger_event !== undefined) updates.qr_trigger_event = dto.qr_trigger_event;
-    if (dto.item_image_url !== undefined) updates.item_image_url = dto.item_image_url;
+    if (dto.is_qr_enabled !== undefined)
+      updates.is_qr_enabled = dto.is_qr_enabled;
+    if (dto.qr_trigger_event !== undefined)
+      updates.qr_trigger_event = dto.qr_trigger_event;
+    if (dto.item_image_url !== undefined)
+      updates.item_image_url = dto.item_image_url;
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
-    if (dto.item_template_id !== undefined) updates.item_template_id = dto.item_template_id;
-    if (dto.inventory_gl_account !== undefined) updates.inventory_gl_account = dto.inventory_gl_account;
-    if (dto.cogs_gl_account !== undefined) updates.cogs_gl_account = dto.cogs_gl_account;
+    if (dto.item_template_id !== undefined)
+      updates.item_template_id = dto.item_template_id;
+    if (dto.inventory_gl_account !== undefined)
+      updates.inventory_gl_account = dto.inventory_gl_account;
+    if (dto.cogs_gl_account !== undefined)
+      updates.cogs_gl_account = dto.cogs_gl_account;
     if (dto.status !== undefined) updates.status = dto.status;
     // Status is the lifecycle: an item saved as ACTIVE is active, whatever flag the form carried over from its draft.
     if (updates.status === 'ACTIVE') updates.is_active = true;
-    if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);
+    if (dto.extension_config !== undefined)
+      updates.extension_config = JSON.stringify(dto.extension_config);
 
-    const willBeActive = updates.status === 'ACTIVE' || (item.status === 'DRAFT' && dto.status === 'ACTIVE');
+    const willBeActive =
+      updates.status === 'ACTIVE' ||
+      (item.status === 'DRAFT' && dto.status === 'ACTIVE');
     if (willBeActive && item.status === 'DRAFT') {
       const templateId = dto.item_template_id || item.item_template_id;
       if (templateId) {
@@ -912,7 +1326,10 @@ export class ItemService {
           .where(eq(schema.itemTemplate.id, templateId))
           .limit(1);
         if (template?.no_series_id) {
-          await this.numberSeriesService.recordNumberUsedById(template.no_series_id, updates.item_code || item.item_code);
+          await this.numberSeriesService.recordNumberUsedById(
+            template.no_series_id,
+            updates.item_code || item.item_code,
+          );
         }
       }
     }
@@ -926,26 +1343,42 @@ export class ItemService {
       await this.recordUomConversion(tx, {
         tenantId,
         companyId: item.company_id || null,
-        fromUom: dto.uom_primary !== undefined ? dto.uom_primary : item.uom_primary,
-        toUom: dto.uom_secondary !== undefined ? dto.uom_secondary : item.uom_secondary,
-        factor: dto.uom_conversion_factor !== undefined ? dto.uom_conversion_factor : item.uom_conversion_factor,
+        fromUom:
+          dto.uom_primary !== undefined ? dto.uom_primary : item.uom_primary,
+        toUom:
+          dto.uom_secondary !== undefined
+            ? dto.uom_secondary
+            : item.uom_secondary,
+        factor:
+          dto.uom_conversion_factor !== undefined
+            ? dto.uom_conversion_factor
+            : item.uom_conversion_factor,
         userId: userPayload?.userId,
       });
 
       if (dto.attributes) {
         // Drop existing attributes map
-        await tx.delete(schema.itemAttributeValues).where(eq(schema.itemAttributeValues.item_id, id));
+        await tx
+          .delete(schema.itemAttributeValues)
+          .where(eq(schema.itemAttributeValues.item_id, id));
 
         // Insert new ones
         for (const attr of dto.attributes) {
           const [attrDef] = await tx
             .select()
             .from(schema.itemAttributeMaster)
-            .where(and(eq(schema.itemAttributeMaster.attribute_id, attr.attribute_id), isNull(schema.itemAttributeMaster.deleted_at)))
+            .where(
+              and(
+                eq(schema.itemAttributeMaster.attribute_id, attr.attribute_id),
+                isNull(schema.itemAttributeMaster.deleted_at),
+              ),
+            )
             .limit(1);
 
           if (!attrDef) {
-            throw new NotFoundException(`Attribute definition with ID '${attr.attribute_id}' not found.`);
+            throw new NotFoundException(
+              `Attribute definition with ID '${attr.attribute_id}' not found.`,
+            );
           }
 
           await tx.insert(schema.itemAttributeValues).values({
@@ -977,7 +1410,9 @@ export class ItemService {
 
     // If this was an uncompleted draft, hard delete it so it frees up the item code
     if (item.status === 'DRAFT' || !item.item_name || !item.item_name.trim()) {
-      await this.db.delete(schema.itemMaster).where(eq(schema.itemMaster.item_id, id));
+      await this.db
+        .delete(schema.itemMaster)
+        .where(eq(schema.itemMaster.item_id, id));
       return { success: true, message: 'Draft discarded.' };
     }
 
@@ -1004,7 +1439,10 @@ export class ItemService {
       newValues: { status: 'INACTIVE', deleted_at: deletedTime },
     });
 
-    return { success: true, message: `Item '${item.item_name}' has been soft-deleted.` };
+    return {
+      success: true,
+      message: `Item '${item.item_name}' has been soft-deleted.`,
+    };
   }
 
   async restore(id: string, tenantId: string, userPayload?: any) {
@@ -1025,7 +1463,9 @@ export class ItemService {
     }
     // A draft has no name or UoM yet; it is completed and saved, not switched on.
     if (item.status === 'DRAFT') {
-      throw new BadRequestException('This item is still a draft — open it, complete the required fields and save to activate it.');
+      throw new BadRequestException(
+        'This item is still a draft — open it, complete the required fields and save to activate it.',
+      );
     }
 
     await this.db

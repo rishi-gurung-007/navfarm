@@ -1,20 +1,83 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+  Optional,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
-import { and, eq, inArray, isNotNull, isNull, gt, lte, notInArray, or, sql } from 'drizzle-orm';
+import {
+  and,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  gt,
+  lte,
+  notInArray,
+  or,
+  sql,
+} from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
 import * as schema from '../../../core/database/schema';
-import { headsAt, loadBatchDeaths } from '../../production/batch-heads';
-import { activeFarmOfCompany, batchScopeConditions, farmScope, FARM_SCOPE_KEY, FarmScope, restrictedScopeConditions } from '../../../common/farm-scope';
-import { FeedStockMovement, InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
-import { FeedRow, stageDayRange } from '../../production/lifecycle/feed-row-days';
+import {
+  entryHeads,
+  loadBatchDeaths,
+  loadHeadMoves,
+} from '../../production/batch-heads';
+import {
+  activeFarmOfCompany,
+  batchScopeConditions,
+  farmPickerConditions,
+  farmScope,
+  FARM_SCOPE_KEY,
+  FarmScope,
+  restrictedScopeConditions,
+} from '../../../common/farm-scope';
+import {
+  FeedStockMovement,
+  InventoryLedgerService,
+} from '../inventory-ledger/inventory-ledger.service';
+import {
+  FeedRow,
+  stageDayRange,
+} from '../../production/lifecycle/feed-row-days';
 import { resolveNextStageDiets, type NextStageDiet } from './next-stage-diet';
-import { asBatchPk, buildFeedForecast, DailyForecastRow, dayShort, DietChange, ForecastFlag, forecastDemandHorizon, ForecastInput, ForecastResult, ForecastRow, ForecastSource, isTimeZone, todayInZone } from './feed-forecast.engine';
-import { defaultWindowEnd, displayDaily, ForecastView, groupRows, MAX_SPAN_DAYS, PeriodRange, ReportRow, resolveViewRange, spanProblem } from './feed-forecast.view';
+import {
+  asBatchPk,
+  buildFeedForecast,
+  DailyForecastRow,
+  dayShort,
+  DietChange,
+  ForecastFlag,
+  forecastDemandHorizon,
+  ForecastInput,
+  ForecastResult,
+  ForecastRow,
+  ForecastSource,
+  isTimeZone,
+  todayInZone,
+} from './feed-forecast.engine';
+import {
+  defaultWindowEnd,
+  displayDaily,
+  ForecastView,
+  groupRows,
+  MAX_SPAN_DAYS,
+  PeriodRange,
+  ReportRow,
+  resolveViewRange,
+  spanProblem,
+} from './feed-forecast.view';
 import { outstandingTransferQty, stockAsOf } from './feed-forecast.stock';
 import { OPEN_TRANSFER_STATUSES } from '../stock-transfer/transfer-execution.rules';
-import { QueryFeedForecastDto, QuerySiloStatusDto } from './dto/feed-forecast.dto';
+import {
+  QueryFeedForecastDto,
+  QuerySiloStatusDto,
+} from './dto/feed-forecast.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { isFarmBoundUserType } from '../../../common/user-type-hierarchy';
@@ -24,8 +87,20 @@ import { buildSourceSnapshot } from './feed-forecast-run.rules';
 import { FeedSettingsService } from '../feed-settings/feed-settings.service';
 import { toFarmFeedSettings } from '../feed-settings/feed-settings.rules';
 import { productionCycle } from '../../procurement/feed-requisition/feed-requisition.rules';
-import { buildSelectedSiloDashboard, buildSiloStatus, NextBinAssignment, SiloFact, SiloStatusRow } from './feed-silo-status';
-import { buildFeedPlanRows, completedFeedWeeks, deriveTentativeFeedQuantity, FeedPlanFact, productionFeedWeek } from './feed-plan.rules';
+import {
+  buildSelectedSiloDashboard,
+  buildSiloStatus,
+  NextBinAssignment,
+  SiloFact,
+  SiloStatusRow,
+} from './feed-silo-status';
+import {
+  buildFeedPlanRows,
+  completedFeedWeeks,
+  deriveTentativeFeedQuantity,
+  FeedPlanFact,
+  productionFeedWeek,
+} from './feed-plan.rules';
 import { FeedPlanService } from './feed-plan.service';
 import { resolveItemFeedForm } from '../../../common/feed-form';
 import { storeHoldingMost } from '../../../common/farm-store';
@@ -33,15 +108,21 @@ import { MillCapacityService } from './mill-capacity.service';
 import type { DietCapacity } from './mill-capacity.rules';
 
 /** Item Type FEED_BULK / FEED_BAG(GED) → the feed form it names; any other type says nothing. */
-export function itemTypeFeedForm(itemType: string | null | undefined): 'BULK' | 'BAGGED' | null {
+export function itemTypeFeedForm(
+  itemType: string | null | undefined,
+): 'BULK' | 'BAGGED' | null {
   const code = (itemType ?? '').toUpperCase().replace(/[\s-]+/g, '_');
   if (code === 'FEED_BULK') return 'BULK';
-  if (code === 'FEED_BAG' || code === 'FEED_BAGS' || code === 'FEED_BAGGED') return 'BAGGED';
+  if (code === 'FEED_BAG' || code === 'FEED_BAGS' || code === 'FEED_BAGGED')
+    return 'BAGGED';
   return null;
 }
 
 /** The item's own Feed Form first, then what its item type code says. */
-export function itemFeedForm(item: { feed_form?: string | null; item_type?: string | null }): 'BULK' | 'BAGGED' | null {
+export function itemFeedForm(item: {
+  feed_form?: string | null;
+  item_type?: string | null;
+}): 'BULK' | 'BAGGED' | null {
   return resolveItemFeedForm(item) ?? itemTypeFeedForm(item.item_type);
 }
 
@@ -54,7 +135,12 @@ export function itemFeedForm(item: { feed_form?: string | null; item_type?: stri
  */
 export function locationLobConditions(scope: FarmScope) {
   return scope.restricted && scope.lobId
-    ? [or(eq(schema.locationMaster.lob_id, scope.lobId), isNull(schema.locationMaster.lob_id))!]
+    ? [
+        or(
+          eq(schema.locationMaster.lob_id, scope.lobId),
+          isNull(schema.locationMaster.lob_id),
+        )!,
+      ]
     : [];
 }
 
@@ -73,7 +159,10 @@ const GONE_STATUSES = ['DEAD', 'SOLD', 'CULLED', 'SLAUGHTERED'];
 const MAX_SEGMENTS = 60;
 
 /** Ledger transaction types that bring feed into a silo (Master Setup row 16); variances and reversals are not receipts. */
-const SILO_RECEIPT_TRANSACTION_TYPES = ['PURCHASE', 'TRANSFER_RECEIPT'] as const;
+const SILO_RECEIPT_TRANSACTION_TYPES = [
+  'PURCHASE',
+  'TRANSFER_RECEIPT',
+] as const;
 
 export interface ForecastFarm {
   id: string;
@@ -109,7 +198,13 @@ export interface FeedPlanningSilo {
   locationId: string;
   code: string;
   name: string;
-  linkedSheds: Array<{ locationId: string; code: string; name: string; effectiveFrom?: string | null; effectiveTo?: string | null }>;
+  linkedSheds: Array<{
+    locationId: string;
+    code: string;
+    name: string;
+    effectiveFrom?: string | null;
+    effectiveTo?: string | null;
+  }>;
   feedType: 'BULK' | 'BAGGED';
   /** What it is holding now — read-only; null when it is empty. */
   feedItemCode: string | null;
@@ -149,25 +244,37 @@ export function plannedIncomingFromRequisitions(
     // still carry approval_status=OPEN.  A terminal approval decision is
     // authoritative for incoming-stock eligibility; do not silently drop a
     // genuinely approved requisition because of that historical mismatch.
-    const approvalStatus = row.status === 'APPROVED' && (!row.approval_status || row.approval_status === 'OPEN')
-      ? 'APPROVED'
-      : row.approval_status ?? row.status;
+    const approvalStatus =
+      row.status === 'APPROVED' &&
+      (!row.approval_status || row.approval_status === 'OPEN')
+        ? 'APPROVED'
+        : (row.approval_status ?? row.status);
     const documentStatus = row.document_status ?? 'OPEN';
-    if (approvalStatus !== 'APPROVED' || documentStatus !== 'OPEN' || row.transfer_link_id) return [];
+    if (
+      approvalStatus !== 'APPROVED' ||
+      documentStatus !== 'OPEN' ||
+      row.transfer_link_id
+    )
+      return [];
     if (!row.item_id || !row.destination_location_id) return [];
-    const requestedDate = row.proposed_delivery_date ?? row.recommended_delivery_date ?? row.required_date;
+    const requestedDate =
+      row.proposed_delivery_date ??
+      row.recommended_delivery_date ??
+      row.required_date;
     if (!requestedDate || requestedDate > horizonTo) return [];
-    return [{
-      locationId: row.destination_location_id,
-      itemId: row.item_id,
-      date: requestedDate < stockDate ? stockDate : requestedDate,
-      kg: Number(row.quantity),
-      kind: 'PLANNED_REQUISITION' as const,
-      referenceId: row.requisition_id,
-      referenceNo: row.req_no,
-      expectedDate: requestedDate,
-      overdue: requestedDate < stockDate,
-    }];
+    return [
+      {
+        locationId: row.destination_location_id,
+        itemId: row.item_id,
+        date: requestedDate < stockDate ? stockDate : requestedDate,
+        kg: Number(row.quantity),
+        kind: 'PLANNED_REQUISITION' as const,
+        referenceId: row.requisition_id,
+        referenceNo: row.req_no,
+        expectedDate: requestedDate,
+        overdue: requestedDate < stockDate,
+      },
+    ];
   });
 }
 
@@ -182,7 +289,11 @@ export interface FeedForecastResponse {
   horizonTo: string;
   farm: { id: string; code: string; name: string };
   /** TDD Engine Step 8 / Dashboard row 60: the configured planning settings the engine used for this run. */
-  settings: { safetyStockKg: number; bulkMultipleKg: number; bagSizeKg: number };
+  settings: {
+    safetyStockKg: number;
+    bulkMultipleKg: number;
+    bagSizeKg: number;
+  };
   rows: ForecastRow[];
   daily: DailyForecastRow[];
   sourceBalances: import('./feed-forecast.engine').SourceBalancePoint[];
@@ -198,10 +309,16 @@ export interface FeedForecastResponse {
   sourceNames: Record<string, string>;
   /** location_code -> configured fulfilment form; only explicit feed_in_bags is BAGGED for a silo. */
   sourceFeedTypes: Record<string, 'BULK' | 'BAGGED'>;
+  /** silo location_code -> silo_capacity_kg (null when unset); the store has no entry. Display only. */
+  sourceCapacities?: Record<string, number | null>;
   /** stage_id -> stage_name for the report's Stage column. Display only: not engine input, not part of any snapshot hash. */
   stageNames?: Record<string, string>;
   /** Detached, canonical pure-engine inputs. Saved runs use this as their deterministic source evidence. */
-  sourceSnapshot: { version: string; hash: string; values: { engineInput: ForecastInput } };
+  sourceSnapshot: {
+    version: string;
+    hash: string;
+    values: { engineInput: ForecastInput };
+  };
 }
 
 export interface ResolvedFarm {
@@ -258,47 +375,61 @@ export function stageBlocksFor(
   shedCodeById: Map<string, string>,
   planningDate: string,
 ): StageBlock[] {
-  return batches
-    .map((b) => {
-      const current = b.segments[0];
-      const stage = stages.get(current.stageId);
-      const currentTo = stage?.durationDays && stage.durationDays >= 1 ? addDays(current.start, stage.durationDays - 1) : null;
-      // A retired successor is not a stage the batch can move into (projectSegments refuses it too).
-      const candidate = stage?.nextStageId ? stages.get(stage.nextStageId) : undefined;
-      const next = candidate && candidate.isActive ? candidate : undefined;
-      const nextFrom = currentTo && next ? addDays(currentTo, 1) : null;
-      const nextTo = nextFrom && next?.durationDays && next.durationDays >= 1 ? addDays(nextFrom, next.durationDays - 1) : null;
-      return {
-        batchId: b.batchId,
-        batchNo: b.batchNo,
-        shedCode: shedCodeById.get(b.shedId) ?? '',
-        currentStageCode: current.stageCode,
-        currentFrom: current.start,
-        currentTo,
-        nextStageCode: next?.stageCode ?? null,
-        nextFrom,
-        nextTo,
-        // D36: the earliest day the change could happen — the stage master's
-        // min_days_before_move, read as day N's end (same -1 convention as
-        // durationDays above) — shown only when it falls strictly inside
-        // 0…latest. The planned date itself stays the LATEST day (D36).
-        stageChangeEarliest:
-          nextFrom && next && stage?.minDays != null && stage.minDays > 0 && stage.minDays < stage.durationDays!
-            ? addDays(current.start, stage.minDays)
-            : null,
-        stageChangeDate: nextFrom,
-        stageChangeOverdue: nextFrom !== null && nextFrom <= planningDate,
-      };
-    })
-    // Stage is the last tie-break: batchId + currentStageCode is the web's row key (an ANIMAL_WISE batch has a block
-    // per stage group), so the order must be total over it and never depend on the order batches were loaded in.
-    .sort((a, b) =>
-      a.shedCode !== b.shedCode
-        ? a.shedCode.localeCompare(b.shedCode)
-        : a.batchNo !== b.batchNo
-          ? a.batchNo.localeCompare(b.batchNo)
-          : a.currentStageCode.localeCompare(b.currentStageCode),
-    );
+  return (
+    batches
+      .map((b) => {
+        const current = b.segments[0];
+        const stage = stages.get(current.stageId);
+        const currentTo =
+          stage?.durationDays && stage.durationDays >= 1
+            ? addDays(current.start, stage.durationDays - 1)
+            : null;
+        // A retired successor is not a stage the batch can move into (projectSegments refuses it too).
+        const candidate = stage?.nextStageId
+          ? stages.get(stage.nextStageId)
+          : undefined;
+        const next = candidate && candidate.isActive ? candidate : undefined;
+        const nextFrom = currentTo && next ? addDays(currentTo, 1) : null;
+        const nextTo =
+          nextFrom && next?.durationDays && next.durationDays >= 1
+            ? addDays(nextFrom, next.durationDays - 1)
+            : null;
+        return {
+          batchId: b.batchId,
+          batchNo: b.batchNo,
+          shedCode: shedCodeById.get(b.shedId) ?? '',
+          currentStageCode: current.stageCode,
+          currentFrom: current.start,
+          currentTo,
+          nextStageCode: next?.stageCode ?? null,
+          nextFrom,
+          nextTo,
+          // D36: the earliest day the change could happen — the stage master's
+          // min_days_before_move, read as day N's end (same -1 convention as
+          // durationDays above) — shown only when it falls strictly inside
+          // 0…latest. The planned date itself stays the LATEST day (D36).
+          stageChangeEarliest:
+            nextFrom &&
+            next &&
+            stage?.minDays != null &&
+            stage.minDays > 0 &&
+            stage.minDays < stage.durationDays!
+              ? addDays(current.start, stage.minDays)
+              : null,
+          stageChangeDate: nextFrom,
+          stageChangeOverdue: nextFrom !== null && nextFrom <= planningDate,
+        };
+      })
+      // Stage is the last tie-break: batchId + currentStageCode is the web's row key (an ANIMAL_WISE batch has a block
+      // per stage group), so the order must be total over it and never depend on the order batches were loaded in.
+      .sort((a, b) =>
+        a.shedCode !== b.shedCode
+          ? a.shedCode.localeCompare(b.shedCode)
+          : a.batchNo !== b.batchNo
+            ? a.batchNo.localeCompare(b.batchNo)
+            : a.currentStageCode.localeCompare(b.currentStageCode),
+      )
+  );
 }
 
 /** GET /feed-forecast (Plan R): the field specification's report — grouped rows, the stage block and the range it covers. */
@@ -317,9 +448,18 @@ export interface FeedForecastReport {
   period: PeriodRange | null;
   farm: { id: string; code: string; name: string };
   /** TDD Engine Step 8 / Dashboard row 60: the configured planning settings the engine used for this run. */
-  settings: { safetyStockKg: number; bulkMultipleKg: number; bagSizeKg: number };
+  settings: {
+    safetyStockKg: number;
+    bulkMultipleKg: number;
+    bagSizeKg: number;
+  };
   rows: ReportRow[];
-  sourceBalances: Array<import('./feed-forecast.engine').SourceBalancePoint & { sourceName: string | null; feedType: 'BULK' | 'BAGGED' }>;
+  sourceBalances: Array<
+    import('./feed-forecast.engine').SourceBalancePoint & {
+      sourceName: string | null;
+      feedType: 'BULK' | 'BAGGED';
+    }
+  >;
   flags: ForecastFlag[];
   sources: Array<ForecastSource & { sourceName: string | null }>;
   dietChanges: DietChange[];
@@ -406,8 +546,16 @@ export function forecastHorizon(planningDate: string): string {
  * the planning date to `to`: the standard horizon, not `to`. The draft's
  * order window (the shortfall, the lines) stays `to`.
  */
-export function draftForecastRange(planningDate: string, to?: string): { planningDate: string; from: string; to: string; horizonTo: string } {
-  return { planningDate, from: planningDate, to: to ?? defaultWindowEnd(planningDate), horizonTo: forecastHorizon(planningDate) };
+export function draftForecastRange(
+  planningDate: string,
+  to?: string,
+): { planningDate: string; from: string; to: string; horizonTo: string } {
+  return {
+    planningDate,
+    from: planningDate,
+    to: to ?? defaultWindowEnd(planningDate),
+    horizonTo: forecastHorizon(planningDate),
+  };
 }
 
 function diffDays(a: string, b: string): number {
@@ -420,8 +568,13 @@ function diffDays(a: string, b: string): number {
  * Period is looked up) and computeForFarm (every caller), so the two can never
  * word or bound it differently.
  */
-function planningDateProblem(today: string, planningDate: string): string | null {
-  return Math.abs(diffDays(today, planningDate)) > MAX_SPAN_DAYS ? `The planning date must be within ${MAX_SPAN_DAYS} days of today (${dayShort(today)}).` : null;
+function planningDateProblem(
+  today: string,
+  planningDate: string,
+): string | null {
+  return Math.abs(diffDays(today, planningDate)) > MAX_SPAN_DAYS
+    ? `The planning date must be within ${MAX_SPAN_DAYS} days of today (${dayShort(today)}).`
+    : null;
 }
 
 /**
@@ -431,7 +584,11 @@ function planningDateProblem(today: string, planningDate: string): string | null
  * typed — the default from + 6 (7 days inclusive) — so the message names that instead of
  * pointing at a value the caller cannot see.
  */
-function reachProblem(planningDate: string, to: string, toSent: boolean): string | null {
+function reachProblem(
+  planningDate: string,
+  to: string,
+  toSent: boolean,
+): string | null {
   const reach = addDays(planningDate, MAX_SPAN_DAYS);
   if (to <= reach) return null;
   return toSent
@@ -441,7 +598,10 @@ function reachProblem(planningDate: string, to: string, toSent: boolean): string
 
 /** YYYY-MM-DD *and* a real day: Date.UTC rolls 2026-02-31 over to 3 March, so the parse must round-trip. */
 function isCalendarDay(iso: string): boolean {
-  return ISO_DAY.test(iso) && new Date(parseIsoUtc(iso)).toISOString().slice(0, 10) === iso;
+  return (
+    ISO_DAY.test(iso) &&
+    new Date(parseIsoUtc(iso)).toISOString().slice(0, 10) === iso
+  );
 }
 
 /**
@@ -489,15 +649,12 @@ export function projectSegments(
       projected: false,
 
       ...(first?.minDays != null &&
-        first.minDays > 0 &&
-        first.durationDays != null &&
-        first.minDays < first.durationDays
+      first.minDays > 0 &&
+      first.durationDays != null &&
+      first.minDays < first.durationDays
         ? {
-          changeWindowStart: addDays(
-            start,
-            first.minDays,
-          ),
-        }
+            changeWindowStart: addDays(start, first.minDays),
+          }
         : {}),
     },
   ];
@@ -511,18 +668,11 @@ export function projectSegments(
     const current = segments[segments.length - 1];
     const stage = stages.get(current.stageId);
 
-    if (
-      !stage?.durationDays ||
-      stage.durationDays < 1 ||
-      !stage.nextStageId
-    ) {
+    if (!stage?.durationDays || stage.durationDays < 1 || !stage.nextStageId) {
       break;
     }
 
-    const end = addDays(
-      current.start,
-      stage.durationDays - 1,
-    );
+    const end = addDays(current.start, stage.durationDays - 1);
 
     // If this transition should already have happened
     // before the planning date but was never posted,
@@ -560,11 +710,16 @@ export function projectSegments(
 }
 
 /** A location's SHED: itself, or the nearest SHED above it (PEN -> SHED, CRATE -> PEN -> SHED); null if none. */
-export function resolveShed(locationId: string | null | undefined, locationById: Map<string, LocationNode>): string | null {
+export function resolveShed(
+  locationId: string | null | undefined,
+  locationById: Map<string, LocationNode>,
+): string | null {
   let current = locationId ? locationById.get(locationId) : undefined;
   for (let hops = 0; current && hops < 5; hops++) {
     if (current.location_type === 'SHED') return current.location_id;
-    current = current.parent_location_id ? locationById.get(current.parent_location_id) : undefined;
+    current = current.parent_location_id
+      ? locationById.get(current.parent_location_id)
+      : undefined;
   }
   return null;
 }
@@ -614,7 +769,16 @@ export function buildInputBatches(args: {
   /** Latest header that counts as started; defaults to planningDate. The service passes max(planningDate, today) (Ruling I1). */
   headerCutoff?: string;
 }): { batches: InputBatch[]; flags: ForecastFlag[] } {
-  const { batchRows, animalGroups, headers, stages, locationById, activeShedIds, planningDate, to } = args;
+  const {
+    batchRows,
+    animalGroups,
+    headers,
+    stages,
+    locationById,
+    activeShedIds,
+    planningDate,
+    to,
+  } = args;
   const headerCutoff = args.headerCutoff ?? planningDate;
 
   // One header per (batch, stage) is the schema's intent (uq_scheduler_header_batch_stage),
@@ -624,8 +788,11 @@ export function buildInputBatches(args: {
   // still the stage the batch is in, and dropping its header would start it at the batch's own start —
   // the wrong day of stage, the wrong diet row, and a wrong stage block.
   const headerOf = new Map<string, HeaderRow>();
-  for (const h of [...headers].sort((a, b) => a.effective_from.localeCompare(b.effective_from))) {
-    if (h.effective_from <= headerCutoff) headerOf.set(`${h.batch_id}:${h.stage_id}`, h);
+  for (const h of [...headers].sort((a, b) =>
+    a.effective_from.localeCompare(b.effective_from),
+  )) {
+    if (h.effective_from <= headerCutoff)
+      headerOf.set(`${h.batch_id}:${h.stage_id}`, h);
   }
 
   const batches: InputBatch[] = [];
@@ -633,18 +800,31 @@ export function buildInputBatches(args: {
   for (const b of batchRows) {
     if (!b.breed_id) continue; // no breed, no feed standard to look up
     const animalWise = isGroupedByAnimal(b);
-    const groups = b.tracking_mode === 'ANIMAL_WISE'
-      ? stageGroupsOf(animalGroups.get(b.batch_id) ?? [])
-      : animalWise
-        ? registeredStageGroups(animalGroups.get(b.batch_id) ?? [], b.stage_id, Number(b.closing_quantity ?? b.opening_quantity))
-        : b.stage_id
-          ? [{ stageId: b.stage_id, heads: Number(b.closing_quantity ?? b.opening_quantity) }]
-          : [];
+    const groups =
+      b.tracking_mode === 'ANIMAL_WISE'
+        ? stageGroupsOf(animalGroups.get(b.batch_id) ?? [])
+        : animalWise
+          ? registeredStageGroups(
+              animalGroups.get(b.batch_id) ?? [],
+              b.stage_id,
+              Number(b.closing_quantity ?? b.opening_quantity),
+            )
+          : b.stage_id
+            ? [
+                {
+                  stageId: b.stage_id,
+                  heads: Number(b.closing_quantity ?? b.opening_quantity),
+                },
+              ]
+            : [];
     for (const g of groups) {
       const stageCode = stages.get(g.stageId)?.stageCode ?? g.stageId;
       const batchNo = animalWise ? `${b.batch_no} · ${stageCode}` : b.batch_no;
       const header = headerOf.get(`${b.batch_id}:${g.stageId}`);
-      const resolved = resolveShed(header?.location_id ?? b.shed_id, locationById);
+      const resolved = resolveShed(
+        header?.location_id ?? b.shed_id,
+        locationById,
+      );
       const shedId = resolved && activeShedIds.has(resolved) ? resolved : '';
       if (!shedId) flags.push({ kind: 'BATCH_SHED_UNKNOWN', batchNo });
       batches.push({
@@ -659,7 +839,13 @@ export function buildInputBatches(args: {
         breedId: b.breed_id,
         shedId,
         heads: g.heads,
-        segments: projectSegments(g.stageId, header?.effective_from ?? b.start_date, planningDate, to, stages),
+        segments: projectSegments(
+          g.stageId,
+          header?.effective_from ?? b.start_date,
+          planningDate,
+          to,
+          stages,
+        ),
       });
     }
   }
@@ -667,8 +853,12 @@ export function buildInputBatches(args: {
 }
 
 /** Batches the forecast splits by their animals' own stages (see buildInputBatches). */
-function isGroupedByAnimal(b: Pick<BatchRow, 'tracking_mode' | 'animal_tracking'>): boolean {
-  return b.tracking_mode === 'ANIMAL_WISE' || b.animal_tracking === 'REGISTERED';
+function isGroupedByAnimal(
+  b: Pick<BatchRow, 'tracking_mode' | 'animal_tracking'>,
+): boolean {
+  return (
+    b.tracking_mode === 'ANIMAL_WISE' || b.animal_tracking === 'REGISTERED'
+  );
 }
 
 /**
@@ -677,7 +867,9 @@ function isGroupedByAnimal(b: Pick<BatchRow, 'tracking_mode' | 'animal_tracking'
  * against an animal at the line's stage, and a stage-less row is typically a
  * BIO_ASSET placeholder, so counting it would double the herd.
  */
-function stageGroupsOf(groups: { stageId: string | null; heads: number }[]): { stageId: string; heads: number }[] {
+function stageGroupsOf(
+  groups: { stageId: string | null; heads: number }[],
+): { stageId: string; heads: number }[] {
   const heads = new Map<string, number>();
   for (const g of groups) {
     if (!g.stageId) continue;
@@ -704,7 +896,8 @@ function registeredStageGroups(
   }
   const staged = [...heads.values()].reduce((n, h) => n + h, 0);
   const remainder = Math.max(0, batchHeads - staged);
-  if (batchStageId && remainder > 0) heads.set(batchStageId, (heads.get(batchStageId) ?? 0) + remainder);
+  if (batchStageId && remainder > 0)
+    heads.set(batchStageId, (heads.get(batchStageId) ?? 0) + remainder);
   return [...heads].map(([stageId, n]) => ({ stageId, heads: n }));
 }
 
@@ -734,7 +927,7 @@ export class FeedForecastService {
     @Optional() private readonly runService?: FeedForecastRunService,
     @Optional() private readonly planService?: FeedPlanService,
     @Optional() private readonly millCapacity?: MillCapacityService,
-  ) { }
+  ) {}
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -745,10 +938,18 @@ export class FeedForecastService {
   }
 
   /** Checkpoint 15: the configured Maximum Forecast Days (Feed Planning Settings); 45 when unset. */
-  private async maxSpanDays(companyId: string, farmId: string): Promise<number> {
-    const resolved = (await this.feedSettings.resolveForFeedPlanning(companyId, farmId)) as { maxForecastDays?: number | null };
+  private async maxSpanDays(
+    companyId: string,
+    farmId: string,
+  ): Promise<number> {
+    const resolved = (await this.feedSettings.resolveForFeedPlanning(
+      companyId,
+      farmId,
+    )) as { maxForecastDays?: number | null };
     const configured = resolved?.maxForecastDays;
-    return typeof configured === 'number' && configured >= 1 ? Math.min(configured, MAX_SPAN_DAYS) : MAX_SPAN_DAYS;
+    return typeof configured === 'number' && configured >= 1
+      ? Math.min(configured, MAX_SPAN_DAYS)
+      : MAX_SPAN_DAYS;
   }
 
   /**
@@ -763,12 +964,38 @@ export class FeedForecastService {
    * such as 2026-02-31, and a malformed value must answer 400, never be
    * quietly dropped because this view happens not to need it.
    */
-  async getForecast(query: QueryFeedForecastDto, tenantId: string, userType?: string, includeDaily?: false): Promise<FeedForecastReport>;
-  async getForecast(query: QueryFeedForecastDto, tenantId: string, userType: string | undefined, includeDaily: true): Promise<PersistableFeedForecastReport>;
-  async getForecast(query: QueryFeedForecastDto, tenantId: string, userType?: string, includeDaily = false): Promise<FeedForecastReport | PersistableFeedForecastReport> {
-    const { farmId, companyId } = await this.resolveFarm(query.farmId, tenantId, userType);
-    for (const [name, value] of [['planningDate', query.planningDate], ['from', query.from], ['to', query.to]] as const) {
-      if (value !== undefined && !isCalendarDay(value)) throw new BadRequestException(`${name} must be a calendar date (YYYY-MM-DD).`);
+  async getForecast(
+    query: QueryFeedForecastDto,
+    tenantId: string,
+    userType?: string,
+    includeDaily?: false,
+  ): Promise<FeedForecastReport>;
+  async getForecast(
+    query: QueryFeedForecastDto,
+    tenantId: string,
+    userType: string | undefined,
+    includeDaily: true,
+  ): Promise<PersistableFeedForecastReport>;
+  async getForecast(
+    query: QueryFeedForecastDto,
+    tenantId: string,
+    userType?: string,
+    includeDaily = false,
+  ): Promise<FeedForecastReport | PersistableFeedForecastReport> {
+    const { farmId, companyId } = await this.resolveFarm(
+      query.farmId,
+      tenantId,
+      userType,
+    );
+    for (const [name, value] of [
+      ['planningDate', query.planningDate],
+      ['from', query.from],
+      ['to', query.to],
+    ] as const) {
+      if (value !== undefined && !isCalendarDay(value))
+        throw new BadRequestException(
+          `${name} must be a calendar date (YYYY-MM-DD).`,
+        );
     }
     const clock = await this.farmToday(companyId, tenantId);
     const planningDate = query.planningDate ?? clock.today;
@@ -780,61 +1007,81 @@ export class FeedForecastService {
     if (view === 'PERIOD') {
       const periods = await this.loadPeriods(companyId, tenantId);
       period = query.periodId
-        ? periods.find((p) => p.periodId === query.periodId) ?? null
-        : periods.find((p) => p.startDate <= planningDate && planningDate <= p.endDate) ?? null;
+        ? (periods.find((p) => p.periodId === query.periodId) ?? null)
+        : (periods.find(
+            (p) => p.startDate <= planningDate && planningDate <= p.endDate,
+          ) ?? null);
       if (!period) {
         throw new BadRequestException(
-          query.periodId ? 'Reporting period not found.' : `No reporting period covers ${dayShort(planningDate)}. Add one under Farm Master → Reporting Periods.`,
+          query.periodId
+            ? 'Reporting period not found.'
+            : `No reporting period covers ${dayShort(planningDate)}. Add one under Farm Master → Reporting Periods.`,
         );
       }
     } else if (query.periodId !== undefined) {
       // A period chosen for another view would be silently ignored — say so instead.
-      throw new BadRequestException('periodId applies only to the Reporting Period view.');
+      throw new BadRequestException(
+        'periodId applies only to the Reporting Period view.',
+      );
     }
-    const { from, to } = resolveViewRange({ view, planningDate, from: query.from, to: query.to, period });
-    const span = spanProblem(from, to, period, await this.maxSpanDays(companyId, farmId));
+    const { from, to } = resolveViewRange({
+      view,
+      planningDate,
+      from: query.from,
+      to: query.to,
+      period,
+    });
+    const span = spanProblem(
+      from,
+      to,
+      period,
+      await this.maxSpanDays(companyId, farmId),
+    );
     if (span) throw new BadRequestException(span);
     // `reach` is the last displayed forecast day (45 days after the planning date). computeForFarm refuses a
     // `to` past it (reachProblem); the engine can search past it for First Shortage Date without adding columns.
     // The computed and returned range is the one resolveViewRange chose: an omitted `to` means the 7-day default
     // window (from + 6, Engine §5 row 67), never the reach. An explicit `to` is sent as typed and stays bound by it.
     const reach = forecastHorizon(planningDate);
-    const sentTo =
-      view === 'CUSTOM'
-        ? query.to ?? to
-        : to;
+    const sentTo = view === 'CUSTOM' ? (query.to ?? to) : to;
 
-    const boundDisplayToRange =
-      view === 'CUSTOM' || view === 'PERIOD';
-    const result = await this.computeForFarm(farmId, companyId, tenantId, { from, to: sentTo, planningDate, horizonTo: reach }, clock);
+    const boundDisplayToRange = view === 'CUSTOM' || view === 'PERIOD';
+    const result = await this.computeForFarm(
+      farmId,
+      companyId,
+      tenantId,
+      { from, to: sentTo, planningDate, horizonTo: reach },
+      clock,
+    );
     // Q7: an "as of" forecast has no projection for days already behind the planning date.
-    const forecastFrom = to < planningDate ? null : from > planningDate ? from : planningDate;
-    const forecastNote = forecastFrom === null
-      ? `Nothing from ${dayShort(from)} to ${dayShort(to)} is forecast: the range ends before the planning date (${dayShort(planningDate)}).`
-      : forecastFrom > from
-        ? `Days before the planning date (${dayShort(planningDate)}) are not forecast.`
-        : null;
+    const forecastFrom =
+      to < planningDate ? null : from > planningDate ? from : planningDate;
+    const forecastNote =
+      forecastFrom === null
+        ? `Nothing from ${dayShort(from)} to ${dayShort(to)} is forecast: the range ends before the planning date (${dayShort(planningDate)}).`
+        : forecastFrom > from
+          ? `Days before the planning date (${dayShort(planningDate)}) are not forecast.`
+          : null;
     // shortageDate is new run/requisition evidence. Keep the ordinary GET
     // response compatible by exposing the same source shape it had before
     // persisted runs; the explicit save path receives it on `daily` instead.
     const reportSources = result.sources.map((source) => {
-      const compatible = { ...source, sourceName: result.sourceNames[source.sourceCode] ?? null };
+      const compatible = {
+        ...source,
+        sourceName: result.sourceNames[source.sourceCode] ?? null,
+      };
       delete compatible.shortageDate;
       return compatible;
     });
     const reportRows = groupRows(
-      displayDaily(
-        result.daily,
-        view,
-        boundDisplayToRange,
-        sentTo,
-      ),
+      displayDaily(result.daily, view, boundDisplayToRange, sentTo),
       view,
       from,
       result.sourceNames,
       result.farm.id,
       result.sourceFeedTypes ?? {},
       result.stageNames ?? {},
+      result.sourceCapacities ?? {},
     );
 
     const reportSourceBalances = displayDaily(
@@ -844,11 +1091,10 @@ export class FeedForecastService {
       sentTo,
     ).map((point) => ({
       ...point,
-      sourceName:
-        result.sourceNames[point.sourceCode] ?? null,
+      sourceName: result.sourceNames[point.sourceCode] ?? null,
       feedType:
-        result.sourceFeedTypes?.[point.sourceCode]
-        ?? (point.sourceType === 'STORE' ? 'BAGGED' : 'BULK'),
+        result.sourceFeedTypes?.[point.sourceCode] ??
+        (point.sourceType === 'STORE' ? 'BAGGED' : 'BULK'),
     }));
 
     const report: FeedForecastReport = {
@@ -873,135 +1119,295 @@ export class FeedForecastService {
       sources: reportSources,
       dietChanges: result.dietChanges,
     };
-    return includeDaily ? { ...report, daily: result.daily, sourceSnapshot: result.sourceSnapshot } : report;
+    return includeDaily
+      ? {
+          ...report,
+          daily: result.daily,
+          sourceSnapshot: result.sourceSnapshot,
+        }
+      : report;
   }
 
   /** Explicit persistence boundary. Ordinary getForecast calls never enter it. */
-  async saveRun(query: QueryFeedForecastDto, tenantId: string, actor?: { userId?: string; userType?: string }) {
-    if (!this.runService) throw new Error('Feed forecast run service is not configured.');
-    if (!actor?.userId) throw new UnauthorizedException('An authenticated creator is required to save a forecast run.');
+  async saveRun(
+    query: QueryFeedForecastDto,
+    tenantId: string,
+    actor?: { userId?: string; userType?: string },
+  ) {
+    if (!this.runService)
+      throw new Error('Feed forecast run service is not configured.');
+    if (!actor?.userId)
+      throw new UnauthorizedException(
+        'An authenticated creator is required to save a forecast run.',
+      );
     const runService = this.runService;
     return withTenantTransaction(this.cls, async () => {
       // This is transaction/database time, not application wall-clock time.
       // It records when the evidence was taken; deterministic reconstruction
       // comes from sourceSnapshot, which contains the exact detached engine
       // inputs read by this transaction.
-      const [clockRows] = await this.db.execute(sql`SELECT CURRENT_TIMESTAMP AS source_cutoff_at`) as unknown as [
-        Array<{ source_cutoff_at: string }>,
-        unknown,
-      ];
+      const [clockRows] = (await this.db.execute(
+        sql`SELECT CURRENT_TIMESTAMP AS source_cutoff_at`,
+      )) as unknown as [Array<{ source_cutoff_at: string }>, unknown];
       const [clock] = clockRows;
-      if (!clock?.source_cutoff_at) throw new Error('Database source cutoff could not be established.');
-      const { farmId, companyId } = await this.resolveFarm(query.farmId, tenantId, actor?.userType);
-      const output = await this.getForecast({ ...query, farmId }, tenantId, actor?.userType, true);
-      return runService.createRun({
+      if (!clock?.source_cutoff_at)
+        throw new Error('Database source cutoff could not be established.');
+      const { farmId, companyId } = await this.resolveFarm(
+        query.farmId,
         tenantId,
-        companyId,
-        farmId,
-        planningDate: output.planningDate,
-        view: output.view,
-        from: output.from,
-        to: output.to,
-        periodId: output.period?.periodId ?? null,
-        sourceCutoffAt: clock.source_cutoff_at,
-      }, output, actor);
+        actor?.userType,
+      );
+      const output = await this.getForecast(
+        { ...query, farmId },
+        tenantId,
+        actor?.userType,
+        true,
+      );
+      return runService.createRun(
+        {
+          tenantId,
+          companyId,
+          farmId,
+          planningDate: output.planningDate,
+          view: output.view,
+          from: output.from,
+          to: output.to,
+          periodId: output.period?.periodId ?? null,
+          sourceCutoffAt: clock.source_cutoff_at,
+        },
+        output,
+        actor,
+      );
     });
   }
 
-  async listRuns(queryFarmId: string | undefined, tenantId: string, userType?: string) {
-    if (!this.runService) throw new Error('Feed forecast run service is not configured.');
-    const { farmId, companyId } = await this.resolveFarm(queryFarmId, tenantId, userType);
+  async listRuns(
+    queryFarmId: string | undefined,
+    tenantId: string,
+    userType?: string,
+  ) {
+    if (!this.runService)
+      throw new Error('Feed forecast run service is not configured.');
+    const { farmId, companyId } = await this.resolveFarm(
+      queryFarmId,
+      tenantId,
+      userType,
+    );
     return this.runService.findAll(farmId, companyId, tenantId);
   }
 
   async findRun(runId: string, tenantId: string) {
-    if (!this.runService) throw new Error('Feed forecast run service is not configured.');
+    if (!this.runService)
+      throw new Error('Feed forecast run service is not configured.');
     return this.runService.findOne(runId, tenantId);
   }
 
-  async currentRun(queryFarmId: string | undefined, tenantId: string, userType?: string) {
-    if (!this.runService) throw new Error('Feed forecast run service is not configured.');
-    const { farmId, companyId } = await this.resolveFarm(queryFarmId, tenantId, userType);
+  async currentRun(
+    queryFarmId: string | undefined,
+    tenantId: string,
+    userType?: string,
+  ) {
+    if (!this.runService)
+      throw new Error('Feed forecast run service is not configured.');
+    const { farmId, companyId } = await this.resolveFarm(
+      queryFarmId,
+      tenantId,
+      userType,
+    );
     return this.runService.findCurrent(farmId, companyId, tenantId);
   }
 
-  async feedPlan(queryFarmId: string | undefined, tenantId: string, userType?: string, from?: string, to?: string, productionDate?: string) {
-    if (!this.runService) throw new Error('Feed forecast run service is not configured.');
-    const { farmId, companyId } = await this.resolveFarm(queryFarmId, tenantId, userType);
+  async feedPlan(
+    queryFarmId: string | undefined,
+    tenantId: string,
+    userType?: string,
+    from?: string,
+    to?: string,
+    productionDate?: string,
+  ) {
+    if (!this.runService)
+      throw new Error('Feed forecast run service is not configured.');
+    const { farmId, companyId } = await this.resolveFarm(
+      queryFarmId,
+      tenantId,
+      userType,
+    );
     const run = await this.runService.findCurrent(farmId, companyId, tenantId);
     if (!run) return { run: null, rows: [] };
-    const [farm] = await this.db.select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
-      .from(schema.locationMaster).where(and(eq(schema.locationMaster.location_id, farmId), eq(schema.locationMaster.tenant_id, tenantId))).limit(1);
+    const [farm] = await this.db
+      .select({
+        code: schema.locationMaster.location_code,
+        name: schema.locationMaster.location_name,
+      })
+      .from(schema.locationMaster)
+      .where(
+        and(
+          eq(schema.locationMaster.location_id, farmId),
+          eq(schema.locationMaster.tenant_id, tenantId),
+        ),
+      )
+      .limit(1);
     const range = [
-      from ? sql`${schema.feedForecastRunLine.forecast_date} >= ${from}` : undefined,
-      to ? sql`${schema.feedForecastRunLine.forecast_date} <= ${to}` : undefined,
+      from
+        ? sql`${schema.feedForecastRunLine.forecast_date} >= ${from}`
+        : undefined,
+      to
+        ? sql`${schema.feedForecastRunLine.forecast_date} <= ${to}`
+        : undefined,
     ].filter((condition): condition is SQL => !!condition);
-    const savedLines = await this.db.select({
-      destination_id: schema.feedForecastRunLine.destination_location_id,
-      forecast_date: schema.feedForecastRunLine.forecast_date,
-      shortage_date: schema.feedForecastRunLine.shortage_date,
-      item_id: schema.feedForecastRunLine.required_item_id,
-      item_code: schema.itemMaster.item_code,
-      item_name: schema.itemMaster.item_name,
-      recommended_qty_kg: schema.feedForecastRunLine.recommended_qty_kg,
-    }).from(schema.feedForecastRunLine)
-      .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.feedForecastRunLine.required_item_id))
+    const savedLines = await this.db
+      .select({
+        destination_id: schema.feedForecastRunLine.destination_location_id,
+        forecast_date: schema.feedForecastRunLine.forecast_date,
+        shortage_date: schema.feedForecastRunLine.shortage_date,
+        item_id: schema.feedForecastRunLine.required_item_id,
+        item_code: schema.itemMaster.item_code,
+        item_name: schema.itemMaster.item_name,
+        recommended_qty_kg: schema.feedForecastRunLine.recommended_qty_kg,
+      })
+      .from(schema.feedForecastRunLine)
+      .innerJoin(
+        schema.itemMaster,
+        eq(
+          schema.itemMaster.item_id,
+          schema.feedForecastRunLine.required_item_id,
+        ),
+      )
       .where(and(eq(schema.feedForecastRunLine.run_id, run.run_id), ...range));
 
     // The saved run may contain one dated line per batch. The requisition rule
     // orders once per destination/item, using the maximum saved recommendation;
     // Feed Plan uses that same immutable interpretation rather than summing the
     // repeated recommendation on every batch/day row.
-    const tentative = new Map<string, typeof savedLines[number]>();
+    const tentative = new Map<string, (typeof savedLines)[number]>();
     for (const line of savedLines) {
-      if (!line.destination_id || Number(line.recommended_qty_kg) <= 0) continue;
+      if (!line.destination_id || Number(line.recommended_qty_kg) <= 0)
+        continue;
       const key = `${line.destination_id}|${line.item_id}`;
       const current = tentative.get(key);
       const lineDate = line.shortage_date ?? line.forecast_date;
-      const currentDate = current ? current.shortage_date ?? current.forecast_date : null;
-      if (!current || Number(line.recommended_qty_kg) > Number(current.recommended_qty_kg) || lineDate < currentDate!) tentative.set(key, line);
+      const currentDate = current
+        ? (current.shortage_date ?? current.forecast_date)
+        : null;
+      if (
+        !current ||
+        Number(line.recommended_qty_kg) > Number(current.recommended_qty_kg) ||
+        lineDate < currentDate!
+      )
+        tentative.set(key, line);
     }
     const facts: FeedPlanFact[] = [...tentative.values()].map((line) => ({
-      farmId, farmCode: farm?.code ?? '', farmName: farm?.name ?? '', period: line.shortage_date ?? line.forecast_date,
-      itemId: line.item_id, itemCode: line.item_code, itemName: line.item_name,
+      farmId,
+      farmCode: farm?.code ?? '',
+      farmName: farm?.name ?? '',
+      period: line.shortage_date ?? line.forecast_date,
+      itemId: line.item_id,
+      itemCode: line.item_code,
+      itemName: line.item_name,
       // Workbook Engine rows 31–44 mean mill production capacity here, not the
       // destination silo's storage capacity; it is filled per diet below from
       // the MILL and its BIN Diet Assignments for the production date.
-      tentativeKg: Number(line.recommended_qty_kg), capacityKg: null,
+      tentativeKg: Number(line.recommended_qty_kg),
+      capacityKg: null,
     }));
 
-    const [requisition] = await this.db.select({
-      id: schema.requisition.requisition_id,
-      status: schema.requisition.status,
-      approval_status: schema.requisition.approval_status,
-    }).from(schema.requisition).where(and(
-      eq(schema.requisition.tenant_id, tenantId), eq(schema.requisition.company_id, companyId),
-      eq(schema.requisition.farm_id, farmId), eq(schema.requisition.feed_forecast_run_id, run.run_id), isNull(schema.requisition.deleted_at),
-    )).limit(1);
-    if (requisition && (requisition.approval_status === 'APPROVED' || requisition.status === 'APPROVED')) {
-      const requisitionLines = await this.db.select({
-        line_id: schema.requisitionLine.line_id,
-        item_id: schema.requisitionLine.item_id,
-        item_code: schema.itemMaster.item_code,
-        item_name: schema.itemMaster.item_name,
-        quantity: schema.requisitionLine.quantity,
-        date: schema.requisitionLine.proposed_delivery_date,
-      }).from(schema.requisitionLine)
-        .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.requisitionLine.item_id))
+    const [requisition] = await this.db
+      .select({
+        id: schema.requisition.requisition_id,
+        status: schema.requisition.status,
+        approval_status: schema.requisition.approval_status,
+      })
+      .from(schema.requisition)
+      .where(
+        and(
+          eq(schema.requisition.tenant_id, tenantId),
+          eq(schema.requisition.company_id, companyId),
+          eq(schema.requisition.farm_id, farmId),
+          eq(schema.requisition.feed_forecast_run_id, run.run_id),
+          isNull(schema.requisition.deleted_at),
+        ),
+      )
+      .limit(1);
+    if (
+      requisition &&
+      (requisition.approval_status === 'APPROVED' ||
+        requisition.status === 'APPROVED')
+    ) {
+      const requisitionLines = await this.db
+        .select({
+          line_id: schema.requisitionLine.line_id,
+          item_id: schema.requisitionLine.item_id,
+          item_code: schema.itemMaster.item_code,
+          item_name: schema.itemMaster.item_name,
+          quantity: schema.requisitionLine.quantity,
+          date: schema.requisitionLine.proposed_delivery_date,
+        })
+        .from(schema.requisitionLine)
+        .innerJoin(
+          schema.itemMaster,
+          eq(schema.itemMaster.item_id, schema.requisitionLine.item_id),
+        )
         .where(eq(schema.requisitionLine.requisition_id, requisition.id));
       const lineIds = requisitionLines.map((line) => line.line_id);
-      const transferLines = lineIds.length ? await this.db.select({ id: schema.stockTransferLine.line_id, requisition_line_id: schema.stockTransferLine.requisition_line_id })
-        .from(schema.stockTransferLine).where(inArray(schema.stockTransferLine.requisition_line_id, lineIds)) : [];
+      const transferLines = lineIds.length
+        ? await this.db
+            .select({
+              id: schema.stockTransferLine.line_id,
+              requisition_line_id: schema.stockTransferLine.requisition_line_id,
+            })
+            .from(schema.stockTransferLine)
+            .where(
+              inArray(schema.stockTransferLine.requisition_line_id, lineIds),
+            )
+        : [];
       const transferLineIds = transferLines.map((line) => line.id);
-      const [shipments, receipts] = transferLineIds.length ? await Promise.all([
-        this.db.select({ line_id: schema.transferShipmentLine.line_id, quantity: schema.transferShipmentLine.quantity })
-          .from(schema.transferShipmentLine).innerJoin(schema.transferShipment, eq(schema.transferShipment.shipment_id, schema.transferShipmentLine.shipment_id))
-          .where(and(inArray(schema.transferShipmentLine.line_id, transferLineIds), eq(schema.transferShipment.status, 'POSTED'), isNull(schema.transferShipment.deleted_at))),
-        this.db.select({ line_id: schema.transferReceiptLine.line_id, quantity: schema.transferReceiptLine.quantity })
-          .from(schema.transferReceiptLine).innerJoin(schema.transferReceipt, eq(schema.transferReceipt.receipt_id, schema.transferReceiptLine.receipt_id))
-          .where(and(inArray(schema.transferReceiptLine.line_id, transferLineIds), eq(schema.transferReceipt.status, 'POSTED'), isNull(schema.transferReceipt.deleted_at))),
-      ]) : [[], []];
-      const requisitionLineOf = new Map(transferLines.map((line) => [line.id, line.requisition_line_id]));
+      const [shipments, receipts] = transferLineIds.length
+        ? await Promise.all([
+            this.db
+              .select({
+                line_id: schema.transferShipmentLine.line_id,
+                quantity: schema.transferShipmentLine.quantity,
+              })
+              .from(schema.transferShipmentLine)
+              .innerJoin(
+                schema.transferShipment,
+                eq(
+                  schema.transferShipment.shipment_id,
+                  schema.transferShipmentLine.shipment_id,
+                ),
+              )
+              .where(
+                and(
+                  inArray(schema.transferShipmentLine.line_id, transferLineIds),
+                  eq(schema.transferShipment.status, 'POSTED'),
+                  isNull(schema.transferShipment.deleted_at),
+                ),
+              ),
+            this.db
+              .select({
+                line_id: schema.transferReceiptLine.line_id,
+                quantity: schema.transferReceiptLine.quantity,
+              })
+              .from(schema.transferReceiptLine)
+              .innerJoin(
+                schema.transferReceipt,
+                eq(
+                  schema.transferReceipt.receipt_id,
+                  schema.transferReceiptLine.receipt_id,
+                ),
+              )
+              .where(
+                and(
+                  inArray(schema.transferReceiptLine.line_id, transferLineIds),
+                  eq(schema.transferReceipt.status, 'POSTED'),
+                  isNull(schema.transferReceipt.deleted_at),
+                ),
+              ),
+          ])
+        : [[], []];
+      const requisitionLineOf = new Map(
+        transferLines.map((line) => [line.id, line.requisition_line_id]),
+      );
       const shipped = new Map<string, number>();
       const received = new Map<string, number>();
       for (const line of shipments) {
@@ -1010,25 +1416,54 @@ export class FeedForecastService {
       }
       for (const line of receipts) {
         const id = requisitionLineOf.get(line.line_id);
-        if (id) received.set(id, (received.get(id) ?? 0) + Number(line.quantity));
+        if (id)
+          received.set(id, (received.get(id) ?? 0) + Number(line.quantity));
       }
       for (const line of requisitionLines) {
-        if (!line.item_id || !line.date || (from && line.date < from) || (to && line.date > to)) continue;
+        if (
+          !line.item_id ||
+          !line.date ||
+          (from && line.date < from) ||
+          (to && line.date > to)
+        )
+          continue;
         facts.push({
-          farmId, farmCode: farm?.code ?? '', farmName: farm?.name ?? '', period: line.date,
-          itemId: line.item_id, itemCode: line.item_code, itemName: line.item_name,
-          approvedRequisitionKg: Number(line.quantity), shippedKg: shipped.get(line.line_id) ?? 0, receivedKg: received.get(line.line_id) ?? 0,
+          farmId,
+          farmCode: farm?.code ?? '',
+          farmName: farm?.name ?? '',
+          period: line.date,
+          itemId: line.item_id,
+          itemCode: line.item_code,
+          itemName: line.item_name,
+          approvedRequisitionKg: Number(line.quantity),
+          shippedKg: shipped.get(line.line_id) ?? 0,
+          receivedKg: received.get(line.line_id) ?? 0,
         });
       }
     }
     const rows = buildFeedPlanRows(facts);
-    const capacity = await this.feedPlanCapacity(rows, farmId, companyId, tenantId, productionDate);
+    const capacity = await this.feedPlanCapacity(
+      rows,
+      farmId,
+      companyId,
+      tenantId,
+      productionDate,
+    );
     return {
-      run: { runId: run.run_id, runCode: run.run_code, from: run.from_date, to: run.to_date },
+      run: {
+        runId: run.run_id,
+        runCode: run.run_code,
+        from: run.from_date,
+        to: run.to_date,
+      },
       productionDate: productionDate ?? null,
       rows: rows.map((row) => {
         const diet = capacity?.get(row.item.id) ?? null;
-        return { ...row, capacityKg: diet?.availableKg ?? null, capacity: diet };
+        return {
+          ...row,
+          capacityKg: diet?.availableKg ?? null,
+          capacity: diet,
+        };
       }),
     };
   }
@@ -1042,36 +1477,88 @@ export class FeedForecastService {
    * Without a production date or a mill setup there is nothing to show, and
    * the row stays "Not configured" rather than 0.
    */
-  private async feedPlanCapacity(rows: Array<{ item: { id: string }; tentativeKg: number; approvedRequisitionKg: number }>, farmId: string, companyId: string, tenantId: string, productionDate?: string): Promise<Map<string, DietCapacity> | null> {
+  private async feedPlanCapacity(
+    rows: Array<{
+      item: { id: string };
+      tentativeKg: number;
+      approvedRequisitionKg: number;
+    }>,
+    farmId: string,
+    companyId: string,
+    tenantId: string,
+    productionDate?: string,
+  ): Promise<Map<string, DietCapacity> | null> {
     if (!this.millCapacity || !productionDate) return null;
-    if (!ISO_DAY.test(productionDate)) throw new BadRequestException('Production date must be in YYYY-MM-DD format.');
-    const { lines } = await this.millCapacity.approvedDemand(tenantId, { companyIds: [companyId] }, productionDate, productionDate);
-    const approvedHere = new Set(lines.filter((line) => line.farmId === farmId).map((line) => line.itemId));
-    const demands = lines.map((line) => ({ itemId: line.itemId, demandKg: line.requestedKg }));
+    if (!ISO_DAY.test(productionDate))
+      throw new BadRequestException(
+        'Production date must be in YYYY-MM-DD format.',
+      );
+    const { lines } = await this.millCapacity.approvedDemand(
+      tenantId,
+      { companyIds: [companyId] },
+      productionDate,
+      productionDate,
+    );
+    const approvedHere = new Set(
+      lines.filter((line) => line.farmId === farmId).map((line) => line.itemId),
+    );
+    const demands = lines.map((line) => ({
+      itemId: line.itemId,
+      demandKg: line.requestedKg,
+    }));
     for (const row of rows) {
-      if (row.approvedRequisitionKg > 0 || approvedHere.has(row.item.id)) continue;
+      if (row.approvedRequisitionKg > 0 || approvedHere.has(row.item.id))
+        continue;
       demands.push({ itemId: row.item.id, demandKg: row.tentativeKg });
     }
-    return this.millCapacity.allocateOn(tenantId, [companyId], productionDate, demands);
+    return this.millCapacity.allocateOn(
+      tenantId,
+      [companyId],
+      productionDate,
+      demands,
+    );
   }
 
   /** Compare Report (Feed Forecast r11): all farm demand vs mill capacity per diet, for the farms this caller may open. */
-  async millCompareReport(tenantId: string, userType: string | undefined, query: { millId?: string; date: string; period?: 'DAY' | 'WEEK' }) {
-    if (!this.millCapacity) throw new Error('Mill capacity service is not configured.');
+  async millCompareReport(
+    tenantId: string,
+    userType: string | undefined,
+    query: { millId?: string; date: string; period?: 'DAY' | 'WEEK' },
+  ) {
+    if (!this.millCapacity)
+      throw new Error('Mill capacity service is not configured.');
     const farms = await this.listFarms(tenantId, userType);
-    if (!farms.length) throw new NotFoundException('No farms are available in this scope.');
-    const companyIds = [...new Set(farms.map((farm) => farm.companyId).filter(Boolean))];
-    return this.millCapacity.compareReport(tenantId, farms.map((farm) => farm.farmId), companyIds, query);
+    if (!farms.length)
+      throw new NotFoundException('No farms are available in this scope.');
+    const companyIds = [
+      ...new Set(farms.map((farm) => farm.companyId).filter(Boolean)),
+    ];
+    return this.millCapacity.compareReport(
+      tenantId,
+      farms.map((farm) => farm.farmId),
+      companyIds,
+      query,
+    );
   }
 
-  async listFeedPlanVersions(queryFarmId: string | undefined, tenantId: string, userType?: string) {
-    if (!this.planService) throw new Error('Feed plan service is not configured.');
-    const { farmId, companyId } = await this.resolveFarm(queryFarmId, tenantId, userType);
+  async listFeedPlanVersions(
+    queryFarmId: string | undefined,
+    tenantId: string,
+    userType?: string,
+  ) {
+    if (!this.planService)
+      throw new Error('Feed plan service is not configured.');
+    const { farmId, companyId } = await this.resolveFarm(
+      queryFarmId,
+      tenantId,
+      userType,
+    );
     return this.planService.list(farmId, companyId, tenantId);
   }
 
   async findFeedPlanVersion(planId: string, tenantId: string) {
-    if (!this.planService) throw new Error('Feed plan service is not configured.');
+    if (!this.planService)
+      throw new Error('Feed plan service is not configured.');
     return this.planService.findOne(planId, tenantId);
   }
 
@@ -1081,13 +1568,27 @@ export class FeedForecastService {
     tenantId: string,
     actor?: { userId?: string; userType?: string },
   ) {
-    if (!this.runService || !this.planService) throw new Error('Feed plan services are not configured.');
-    const { farmId, companyId } = await this.resolveFarm(queryFarmId, tenantId, actor?.userType);
+    if (!this.runService || !this.planService)
+      throw new Error('Feed plan services are not configured.');
+    const { farmId, companyId } = await this.resolveFarm(
+      queryFarmId,
+      tenantId,
+      actor?.userType,
+    );
     const run = await this.runService.findCurrent(farmId, companyId, tenantId);
-    if (!run) throw new ConflictException('Save a feed forecast calculation before generating a feed plan.');
-    const [farm] = await this.db.select({ code: schema.locationMaster.location_code })
+    if (!run)
+      throw new ConflictException(
+        'Save a feed forecast calculation before generating a feed plan.',
+      );
+    const [farm] = await this.db
+      .select({ code: schema.locationMaster.location_code })
       .from(schema.locationMaster)
-      .where(and(eq(schema.locationMaster.location_id, farmId), eq(schema.locationMaster.tenant_id, tenantId)))
+      .where(
+        and(
+          eq(schema.locationMaster.location_id, farmId),
+          eq(schema.locationMaster.tenant_id, tenantId),
+        ),
+      )
       .limit(1);
     if (!farm) throw new NotFoundException('Farm not found.');
 
@@ -1095,129 +1596,235 @@ export class FeedForecastService {
     const historyWeeks = completedFeedWeeks(productionDate);
     const sourceFrom = historyWeeks[0].from;
     const sourceTo = historyWeeks.at(-1)!.to;
-    const targetRows = await this.db.select({
-      itemId: schema.feedForecastRunLine.required_item_id,
-      demandKg: schema.feedForecastRunLine.daily_demand_kg,
-    }).from(schema.feedForecastRunLine).where(and(
-      eq(schema.feedForecastRunLine.run_id, run.run_id),
-      sql`${schema.feedForecastRunLine.forecast_date} >= ${targetWeek.from}`,
-      sql`${schema.feedForecastRunLine.forecast_date} <= ${targetWeek.to}`,
-    ));
+    const targetRows = await this.db
+      .select({
+        itemId: schema.feedForecastRunLine.required_item_id,
+        demandKg: schema.feedForecastRunLine.daily_demand_kg,
+      })
+      .from(schema.feedForecastRunLine)
+      .where(
+        and(
+          eq(schema.feedForecastRunLine.run_id, run.run_id),
+          sql`${schema.feedForecastRunLine.forecast_date} >= ${targetWeek.from}`,
+          sql`${schema.feedForecastRunLine.forecast_date} <= ${targetWeek.to}`,
+        ),
+      );
     const projectedByItem = new Map<string, number>();
-    for (const row of targetRows) projectedByItem.set(row.itemId, (projectedByItem.get(row.itemId) ?? 0) + Number(row.demandKg));
+    for (const row of targetRows)
+      projectedByItem.set(
+        row.itemId,
+        (projectedByItem.get(row.itemId) ?? 0) + Number(row.demandKg),
+      );
 
-    const historyRows = await this.db.select({
-      entryDate: schema.batchDailyData.entry_date,
-      actualKg: schema.batchDailyData.entered_value,
-      itemId: schema.schedulerLine.item_id,
-      standardQty: schema.schedulerLine.standard_qty,
-      qtyBasis: schema.schedulerLine.qty_basis,
-      batchId: schema.batchHeader.batch_id,
-      openingQty: schema.batchHeader.opening_quantity,
-    }).from(schema.batchDailyData)
-      .innerJoin(schema.schedulerLine, eq(schema.schedulerLine.line_id, schema.batchDailyData.line_id))
-      .innerJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, schema.batchDailyData.batch_id))
-      .where(and(
-        eq(schema.batchDailyData.tenant_id, tenantId),
-        eq(schema.batchDailyData.company_id, companyId),
-        eq(schema.batchHeader.farm_id, farmId),
-        eq(schema.batchDailyData.posted, true),
-        eq(schema.schedulerLine.line_type, 'CONSUMPTION'),
-        sql`${schema.batchDailyData.entry_date} >= ${sourceFrom}`,
-        sql`${schema.batchDailyData.entry_date} <= ${sourceTo}`,
-      ));
+    const historyRows = await this.db
+      .select({
+        entryDate: schema.batchDailyData.entry_date,
+        actualKg: schema.batchDailyData.entered_value,
+        itemId: schema.schedulerLine.item_id,
+        standardQty: schema.schedulerLine.standard_qty,
+        qtyBasis: schema.schedulerLine.qty_basis,
+        batchId: schema.batchHeader.batch_id,
+        openingQty: schema.batchHeader.opening_quantity,
+        animalId: schema.batchDailyData.animal_id,
+      })
+      .from(schema.batchDailyData)
+      .innerJoin(
+        schema.schedulerLine,
+        eq(schema.schedulerLine.line_id, schema.batchDailyData.line_id),
+      )
+      .innerJoin(
+        schema.batchHeader,
+        eq(schema.batchHeader.batch_id, schema.batchDailyData.batch_id),
+      )
+      .where(
+        and(
+          eq(schema.batchDailyData.tenant_id, tenantId),
+          eq(schema.batchDailyData.company_id, companyId),
+          eq(schema.batchHeader.farm_id, farmId),
+          eq(schema.batchDailyData.posted, true),
+          eq(schema.schedulerLine.line_type, 'CONSUMPTION'),
+          sql`${schema.batchDailyData.entry_date} >= ${sourceFrom}`,
+          sql`${schema.batchDailyData.entry_date} <= ${sourceTo}`,
+        ),
+      );
     // Deaths from both sources (batch_transaction MORTALITY and posted MORTALITY_COUNT entries): see production/batch-heads.
-    const mortalities = await loadBatchDeaths(this.db, [...new Set(historyRows.map((row) => row.batchId))], sourceTo);
+    const mortalities = await loadBatchDeaths(
+      this.db,
+      [...new Set(historyRows.map((row) => row.batchId))],
+      sourceTo,
+    );
+    // Litters joining a cohort and sows joining a service batch arrive by transfer, not in the opening quantity.
+    const moves = await loadHeadMoves(
+      this.db,
+      [...new Set(historyRows.map((row) => row.batchId))],
+      sourceTo,
+    );
 
-    const historyByItem = new Map<string, Array<{ from: string; to: string; actualKg: number; expectedKg: number }>>();
+    const historyByItem = new Map<
+      string,
+      Array<{ from: string; to: string; actualKg: number; expectedKg: number }>
+    >();
     const ensureHistory = (itemId: string) => {
       const existing = historyByItem.get(itemId);
       if (existing) return existing;
-      const created = historyWeeks.map((week) => ({ ...week, actualKg: 0, expectedKg: 0 }));
+      const created = historyWeeks.map((week) => ({
+        ...week,
+        actualKg: 0,
+        expectedKg: 0,
+      }));
       historyByItem.set(itemId, created);
       return created;
     };
     for (const row of historyRows) {
       if (!row.itemId || row.actualKg === null) continue;
-      const weekIndex = historyWeeks.findIndex((week) => row.entryDate >= week.from && row.entryDate <= week.to);
+      const weekIndex = historyWeeks.findIndex(
+        (week) => row.entryDate >= week.from && row.entryDate <= week.to,
+      );
       if (weekIndex < 0) continue;
-      const heads = headsAt(row.openingQty, mortalities.get(row.batchId), row.entryDate, true);
+      const heads = entryHeads(
+        {
+          batchId: row.batchId,
+          animalId: row.animalId,
+          date: String(row.entryDate).slice(0, 10),
+          opening: row.openingQty,
+        },
+        mortalities.get(row.batchId),
+        moves,
+      );
       const standard = Math.max(0, Number(row.standardQty) || 0);
-      const expected = row.qtyBasis === 'PER_HEAD' ? standard * heads : standard;
+      const expected =
+        row.qtyBasis === 'PER_HEAD' ? standard * heads : standard;
       const history = ensureHistory(row.itemId);
       history[weekIndex].actualKg += Math.max(0, Number(row.actualKg) || 0);
       history[weekIndex].expectedKg += expected;
     }
 
-    const approvedRequisitions = await this.db.select({ id: schema.requisition.requisition_id })
-      .from(schema.requisition).where(and(
-        eq(schema.requisition.tenant_id, tenantId),
-        eq(schema.requisition.company_id, companyId),
-        eq(schema.requisition.farm_id, farmId),
-        eq(schema.requisition.feed_forecast_run_id, run.run_id),
-        or(eq(schema.requisition.approval_status, 'APPROVED'), eq(schema.requisition.status, 'APPROVED')),
-        isNull(schema.requisition.deleted_at),
-      ));
+    const approvedRequisitions = await this.db
+      .select({ id: schema.requisition.requisition_id })
+      .from(schema.requisition)
+      .where(
+        and(
+          eq(schema.requisition.tenant_id, tenantId),
+          eq(schema.requisition.company_id, companyId),
+          eq(schema.requisition.farm_id, farmId),
+          eq(schema.requisition.feed_forecast_run_id, run.run_id),
+          or(
+            eq(schema.requisition.approval_status, 'APPROVED'),
+            eq(schema.requisition.status, 'APPROVED'),
+          ),
+          isNull(schema.requisition.deleted_at),
+        ),
+      );
     const requestedByItem = new Map<string, number>();
     const approvedByItem = new Map<string, number>();
     const approvedLineItems = new Set<string>();
     if (approvedRequisitions.length) {
-      const requisitionLines = await this.db.select({
-        lineId: schema.requisitionLine.line_id,
-        itemId: schema.requisitionLine.item_id,
-        quantity: schema.requisitionLine.quantity,
-      }).from(schema.requisitionLine).where(inArray(schema.requisitionLine.requisition_id, approvedRequisitions.map((row) => row.id)));
+      const requisitionLines = await this.db
+        .select({
+          lineId: schema.requisitionLine.line_id,
+          itemId: schema.requisitionLine.item_id,
+          quantity: schema.requisitionLine.quantity,
+        })
+        .from(schema.requisitionLine)
+        .where(
+          inArray(
+            schema.requisitionLine.requisition_id,
+            approvedRequisitions.map((row) => row.id),
+          ),
+        );
       for (const row of requisitionLines) {
-        if (row.itemId) requestedByItem.set(row.itemId, (requestedByItem.get(row.itemId) ?? 0) + Number(row.quantity));
+        if (row.itemId)
+          requestedByItem.set(
+            row.itemId,
+            (requestedByItem.get(row.itemId) ?? 0) + Number(row.quantity),
+          );
       }
-      const consolidationLines = await this.db.select({
-        lineId: schema.feedConsolidationLine.requisition_line_id,
-        itemId: schema.feedConsolidationLine.item_id,
-        approved: schema.feedConsolidationLine.mill_approved_qty_kg,
-      }).from(schema.feedConsolidationLine).where(inArray(schema.feedConsolidationLine.requisition_id, approvedRequisitions.map((row) => row.id)));
+      const consolidationLines = await this.db
+        .select({
+          lineId: schema.feedConsolidationLine.requisition_line_id,
+          itemId: schema.feedConsolidationLine.item_id,
+          approved: schema.feedConsolidationLine.mill_approved_qty_kg,
+        })
+        .from(schema.feedConsolidationLine)
+        .where(
+          inArray(
+            schema.feedConsolidationLine.requisition_id,
+            approvedRequisitions.map((row) => row.id),
+          ),
+        );
       for (const row of consolidationLines) {
         if (!row.itemId) continue;
         approvedLineItems.add(row.itemId);
-        approvedByItem.set(row.itemId, (approvedByItem.get(row.itemId) ?? 0) + Number(row.approved));
+        approvedByItem.set(
+          row.itemId,
+          (approvedByItem.get(row.itemId) ?? 0) + Number(row.approved),
+        );
       }
     }
 
-    const itemIds = new Set([...projectedByItem.keys(), ...requestedByItem.keys()]);
-    const lines = [...itemIds].map((itemId) => {
-      const history = ensureHistory(itemId);
-      const projectedTargetKg = projectedByItem.get(itemId) ?? 0;
-      const normalized = deriveTentativeFeedQuantity({ projectedTargetKg, history });
-      return {
-        itemId,
-        projectedTargetKg,
-        adjustmentFactor: normalized.adjustmentFactor,
-        tentativeKg: normalized.tentativeKg,
-        requestedKg: approvedRequisitions.length ? requestedByItem.get(itemId) ?? 0 : null,
-        millApprovedKg: approvedLineItems.has(itemId) ? approvedByItem.get(itemId) ?? 0 : null,
-        history,
-      };
-    }).filter((line) => line.projectedTargetKg > 0 || (line.requestedKg ?? 0) > 0);
-    return this.planService.createVersion({
-      tenantId,
-      companyId,
-      farmId,
-      farmCode: farm.code,
-      sourceRunId: run.run_id,
-      productionDate,
-      planType: approvedRequisitions.length ? 'ACTUAL' : 'TENTATIVE',
-      sourceFrom,
-      sourceTo,
-      lines,
-    }, actor);
+    const itemIds = new Set([
+      ...projectedByItem.keys(),
+      ...requestedByItem.keys(),
+    ]);
+    const lines = [...itemIds]
+      .map((itemId) => {
+        const history = ensureHistory(itemId);
+        const projectedTargetKg = projectedByItem.get(itemId) ?? 0;
+        const normalized = deriveTentativeFeedQuantity({
+          projectedTargetKg,
+          history,
+        });
+        return {
+          itemId,
+          projectedTargetKg,
+          adjustmentFactor: normalized.adjustmentFactor,
+          tentativeKg: normalized.tentativeKg,
+          requestedKg: approvedRequisitions.length
+            ? (requestedByItem.get(itemId) ?? 0)
+            : null,
+          millApprovedKg: approvedLineItems.has(itemId)
+            ? (approvedByItem.get(itemId) ?? 0)
+            : null,
+          history,
+        };
+      })
+      .filter(
+        (line) => line.projectedTargetKg > 0 || (line.requestedKg ?? 0) > 0,
+      );
+    return this.planService.createVersion(
+      {
+        tenantId,
+        companyId,
+        farmId,
+        farmCode: farm.code,
+        sourceRunId: run.run_id,
+        productionDate,
+        planType: approvedRequisitions.length ? 'ACTUAL' : 'TENTATIVE',
+        sourceFrom,
+        sourceTo,
+        lines,
+      },
+      actor,
+    );
   }
 
-  async archiveRun(runId: string, tenantId: string, actor?: { userId?: string; userType?: string }) {
-    if (!this.runService) throw new Error('Feed forecast run service is not configured.');
+  async archiveRun(
+    runId: string,
+    tenantId: string,
+    actor?: { userId?: string; userType?: string },
+  ) {
+    if (!this.runService)
+      throw new Error('Feed forecast run service is not configured.');
     return this.runService.archiveRun(runId, tenantId, actor);
   }
 
-  async deleteRunPermanently(runId: string, tenantId: string, actor?: { userId?: string; userType?: string }) {
-    if (!this.runService) throw new Error('Feed forecast run service is not configured.');
+  async deleteRunPermanently(
+    runId: string,
+    tenantId: string,
+    actor?: { userId?: string; userType?: string },
+  ) {
+    if (!this.runService)
+      throw new Error('Feed forecast run service is not configured.');
     return this.runService.deleteRunPermanently(runId, tenantId, actor);
   }
 
@@ -1226,8 +1833,16 @@ export class FeedForecastService {
    * for the caller's farm (D13, D20). Through resolveFarm, so a farm login gets
    * its own company's list and an unknown user type fails closed.
    */
-  async listPeriods(queryFarmId: string | undefined, tenantId: string, userType: string | undefined): Promise<PeriodRange[]> {
-    const { companyId } = await this.resolveFarm(queryFarmId, tenantId, userType);
+  async listPeriods(
+    queryFarmId: string | undefined,
+    tenantId: string,
+    userType: string | undefined,
+  ): Promise<PeriodRange[]> {
+    const { companyId } = await this.resolveFarm(
+      queryFarmId,
+      tenantId,
+      userType,
+    );
     return this.loadPeriods(companyId, tenantId);
   }
 
@@ -1237,7 +1852,10 @@ export class FeedForecastService {
    * same line the Reporting Period Master's own company scope draws, so the
    * report can never cut by a calendar the company's master screen does not show.
    */
-  private async loadPeriods(companyId: string, tenantId: string): Promise<PeriodRange[]> {
+  private async loadPeriods(
+    companyId: string,
+    tenantId: string,
+  ): Promise<PeriodRange[]> {
     const P = schema.reportingPeriod;
     const rows = await this.db
       .select({
@@ -1249,7 +1867,14 @@ export class FeedForecastService {
         production_start_date: P.production_start_date,
       })
       .from(P)
-      .where(and(eq(P.tenant_id, tenantId), eq(P.company_id, companyId), eq(P.is_active, true), isNull(P.deleted_at)))
+      .where(
+        and(
+          eq(P.tenant_id, tenantId),
+          eq(P.company_id, companyId),
+          eq(P.is_active, true),
+          isNull(P.deleted_at),
+        ),
+      )
       .orderBy(P.start_date);
     return rows.map((r) => ({
       periodId: r.period_id,
@@ -1271,7 +1896,11 @@ export class FeedForecastService {
    * before answered [] there. Sorted by code, the order the farms are known by.
    */
   /** The same farms GET /feed-forecast/farms offers, each with its farm override row's values (null = inherits the company). */
-  async listFarmSettings(tenantId: string, userType: string | undefined, companyId?: string): Promise<FeedFarmSettingsRow[]> {
+  async listFarmSettings(
+    tenantId: string,
+    userType: string | undefined,
+    companyId?: string,
+  ): Promise<FeedFarmSettingsRow[]> {
     const L = schema.locationMaster;
     const conditions = this.farmListConditions(tenantId, userType);
     if (!conditions) return [];
@@ -1285,7 +1914,10 @@ export class FeedForecastService {
         company_name: schema.companyMaster.company_name,
       })
       .from(L)
-      .leftJoin(schema.companyMaster, eq(schema.companyMaster.company_id, L.company_id))
+      .leftJoin(
+        schema.companyMaster,
+        eq(schema.companyMaster.company_id, L.company_id),
+      )
       .where(and(...conditions))
       .orderBy(L.location_code);
     const overrides = await this.farmOverrideRows(rows.map((r) => r.farm_id));
@@ -1295,29 +1927,44 @@ export class FeedForecastService {
       name: r.name,
       companyId: r.company_id as string,
       companyName: r.company_name ?? null,
-      settings: overrides.get(r.farm_id) ?? { safetyStockKg: null, bagSizeKg: null, bulkMultipleKg: null, truckTargetKg: null, productionWeekday: null },
+      settings: overrides.get(r.farm_id) ?? {
+        safetyStockKg: null,
+        bagSizeKg: null,
+        bulkMultipleKg: null,
+        truckTargetKg: null,
+        productionWeekday: null,
+      },
     }));
   }
 
   /** The active farm-scope feed_planning_setting rows of these farms, as override values (null = inherit). */
-  private async farmOverrideRows(farmIds: string[]): Promise<Map<string, FeedFarmSettings>> {
+  private async farmOverrideRows(
+    farmIds: string[],
+  ): Promise<Map<string, FeedFarmSettings>> {
     const byFarm = new Map<string, FeedFarmSettings>();
     if (!farmIds.length) return byFarm;
     const S = schema.feedPlanningSetting;
-    const rows = await this.db.select({
-      farm_id: S.farm_id,
-      safety_stock_kg: S.safety_stock_kg,
-      bag_size_kg: S.bag_size_kg,
-      bulk_multiple_kg: S.bulk_multiple_kg,
-      truck_target_kg: S.truck_target_kg,
-      production_weekday: S.production_weekday,
-    }).from(S).where(and(inArray(S.farm_id, farmIds), eq(S.is_active, true)));
-    const num = (v: string | number | null) => (v === null || v === undefined ? null : Number(v));
+    const rows = await this.db
+      .select({
+        farm_id: S.farm_id,
+        safety_stock_kg: S.safety_stock_kg,
+        bag_size_kg: S.bag_size_kg,
+        bulk_multiple_kg: S.bulk_multiple_kg,
+        truck_target_kg: S.truck_target_kg,
+        production_weekday: S.production_weekday,
+      })
+      .from(S)
+      .where(and(inArray(S.farm_id, farmIds), eq(S.is_active, true)));
+    const num = (v: string | number | null) =>
+      v === null || v === undefined ? null : Number(v);
     for (const r of rows) {
       if (!r.farm_id) continue;
       byFarm.set(r.farm_id, {
-        safetyStockKg: num(r.safety_stock_kg), bagSizeKg: num(r.bag_size_kg), bulkMultipleKg: num(r.bulk_multiple_kg),
-        truckTargetKg: num(r.truck_target_kg), productionWeekday: r.production_weekday ?? null,
+        safetyStockKg: num(r.safety_stock_kg),
+        bagSizeKg: num(r.bag_size_kg),
+        bulkMultipleKg: num(r.bulk_multiple_kg),
+        truckTargetKg: num(r.truck_target_kg),
+        productionWeekday: r.production_weekday ?? null,
       });
     }
     return byFarm;
@@ -1328,7 +1975,10 @@ export class FeedForecastService {
    * now. One location read and one balance read per silo (SiloFeedService), so a
    * farm with no silo costs nothing.
    */
-  private async siloPlanningRows(farmIds: string[], tenantId: string): Promise<Map<string, FeedPlanningSilo[]>> {
+  private async siloPlanningRows(
+    farmIds: string[],
+    tenantId: string,
+  ): Promise<Map<string, FeedPlanningSilo[]>> {
     const byFarm = new Map<string, FeedPlanningSilo[]>();
     if (!farmIds.length) return byFarm;
     const L = schema.locationMaster;
@@ -1346,17 +1996,22 @@ export class FeedForecastService {
         status: L.status,
       })
       .from(L)
-      .where(and(
-        eq(L.tenant_id, tenantId),
-        eq(L.location_type, 'SILO'),
-        inArray(L.farm_id, farmIds),
-        eq(L.is_active, true),
-        isNull(L.deleted_at),
-      ))
+      .where(
+        and(
+          eq(L.tenant_id, tenantId),
+          eq(L.location_type, 'SILO'),
+          inArray(L.farm_id, farmIds),
+          eq(L.is_active, true),
+          isNull(L.deleted_at),
+        ),
+      )
       .orderBy(L.location_code);
     if (!rows.length) return byFarm;
 
-    const Shed = alias(schema.locationMaster, 'feed_planning_shed') as unknown as typeof schema.locationMaster;
+    const Shed = alias(
+      schema.locationMaster,
+      'feed_planning_shed',
+    ) as unknown as typeof schema.locationMaster;
     const shedLinks = await this.db
       .select({
         silo_id: schema.siloShedLink.silo_id,
@@ -1368,29 +2023,56 @@ export class FeedForecastService {
       })
       .from(schema.siloShedLink)
       .innerJoin(Shed, eq(Shed.location_id, schema.siloShedLink.shed_id))
-      .where(and(
-        eq(schema.siloShedLink.tenant_id, tenantId),
-        inArray(schema.siloShedLink.silo_id, rows.map((row) => row.location_id)),
-        eq(Shed.location_type, 'SHED'),
-        eq(Shed.is_active, true),
-        isNull(Shed.deleted_at),
-      ))
+      .where(
+        and(
+          eq(schema.siloShedLink.tenant_id, tenantId),
+          inArray(
+            schema.siloShedLink.silo_id,
+            rows.map((row) => row.location_id),
+          ),
+          eq(Shed.location_type, 'SHED'),
+          eq(Shed.is_active, true),
+          isNull(Shed.deleted_at),
+        ),
+      )
       .orderBy(Shed.location_code);
-    const shedsBySilo = new Map<string, Array<{ locationId: string; code: string; name: string }>>();
+    const shedsBySilo = new Map<
+      string,
+      Array<{ locationId: string; code: string; name: string }>
+    >();
     for (const link of shedLinks) {
-      const linkedShed = { locationId: link.shed_id, code: link.shed_code, name: link.shed_name, effectiveFrom: link.effective_from ?? null, effectiveTo: link.effective_to ?? null };
-      shedsBySilo.set(link.silo_id, [...(shedsBySilo.get(link.silo_id) ?? []), linkedShed]);
+      const linkedShed = {
+        locationId: link.shed_id,
+        code: link.shed_code,
+        name: link.shed_name,
+        effectiveFrom: link.effective_from ?? null,
+        effectiveTo: link.effective_to ?? null,
+      };
+      shedsBySilo.set(link.silo_id, [
+        ...(shedsBySilo.get(link.silo_id) ?? []),
+        linkedShed,
+      ]);
     }
 
     // The feed held, per company, only for the silos there are.
-    const held = new Map<string, { item_code: string; item_description: string | null } | null>();
+    const held = new Map<
+      string,
+      { item_code: string; item_description: string | null } | null
+    >();
     const byCompany = new Map<string, string[]>();
     for (const row of rows) {
       if (!row.company_id) continue;
-      byCompany.set(row.company_id, [...(byCompany.get(row.company_id) ?? []), row.location_id]);
+      byCompany.set(row.company_id, [
+        ...(byCompany.get(row.company_id) ?? []),
+        row.location_id,
+      ]);
     }
     for (const [companyId, siloIds] of byCompany) {
-      const items = await this.siloFeedService.currentItems(siloIds, companyId, tenantId);
+      const items = await this.siloFeedService.currentItems(
+        siloIds,
+        companyId,
+        tenantId,
+      );
       for (const [siloId, item] of items) held.set(siloId, item);
     }
 
@@ -1418,36 +2100,18 @@ export class FeedForecastService {
     return byFarm;
   }
 
-  /**
-   * Which farms this caller may be offered, as WHERE conditions — null when the
-   * answer is "none at all". Shared by GET /feed-forecast/farms and D32's
-   * farm-settings list so the two can never disagree about whose farms a user
-   * sees.
-   */
-  private farmListConditions(tenantId: string, userType: string | undefined): SQL[] | null {
-    const scope = farmScope(this.cls);
-    const L = schema.locationMaster;
-    const conditions: SQL[] = [
-      eq(L.tenant_id, tenantId),
-      eq(L.location_type, 'FARM'),
-      isNull(L.parent_location_id),
-      eq(L.is_active, true),
-      isNull(L.deleted_at),
-    ];
-    if (isFarmBoundUserType(userType)) {
-      if (!scope.farmId) return null;
-      conditions.push(eq(L.location_id, scope.farmId));
-      if (scope.companyId) conditions.push(eq(L.company_id, scope.companyId));
-    } else if (scope.companyId) {
-      conditions.push(eq(L.company_id, scope.companyId));
-      if (scope.restricted && scope.lobId) conditions.push(eq(L.lob_id, scope.lobId));
-    } else if (userType !== 'TENANT_ADMIN' && userType !== 'SYSTEM_ADMIN') {
-      return null;
-    }
-    return conditions;
+  /** Which farms this caller may be offered (farmPickerConditions), shared by GET /feed-forecast/farms and D32's list. */
+  private farmListConditions(
+    tenantId: string,
+    userType: string | undefined,
+  ): SQL[] | null {
+    return farmPickerConditions(farmScope(this.cls), tenantId, userType);
   }
 
-  async listFarms(tenantId: string, userType: string | undefined): Promise<FeedFarmOption[]> {
+  async listFarms(
+    tenantId: string,
+    userType: string | undefined,
+  ): Promise<FeedFarmOption[]> {
     const L = schema.locationMaster;
     const conditions = this.farmListConditions(tenantId, userType);
     if (!conditions) return [];
@@ -1460,7 +2124,10 @@ export class FeedForecastService {
         company_name: schema.companyMaster.company_name,
       })
       .from(L)
-      .leftJoin(schema.companyMaster, eq(schema.companyMaster.company_id, L.company_id))
+      .leftJoin(
+        schema.companyMaster,
+        eq(schema.companyMaster.company_id, L.company_id),
+      )
       .where(and(...conditions))
       .orderBy(L.location_code);
     return rows.map((r) => ({
@@ -1486,7 +2153,11 @@ export class FeedForecastService {
    * (unset, unknown, or a real admin type) takes the company/LOB-checked one
    * below, which fails closed with no exceptions carved out.
    */
-  async resolveFarm(queryFarmId: string | undefined, tenantId: string, userType: string | undefined): Promise<ResolvedFarm> {
+  async resolveFarm(
+    queryFarmId: string | undefined,
+    tenantId: string,
+    userType: string | undefined,
+  ): Promise<ResolvedFarm> {
     const query = { farmId: queryFarmId };
     const scope = farmScope(this.cls);
     // Ruling (Task 1): only farm-bound personas are farm-bound for this
@@ -1517,12 +2188,23 @@ export class FeedForecastService {
       farmId = query.farmId ?? scope.farmId ?? undefined;
       if (farmId) {
         if (scope.companyId) {
-          if (!(await activeFarmOfCompany(this.db, farmId, scope.companyId, tenantId))) {
+          if (
+            !(await activeFarmOfCompany(
+              this.db,
+              farmId,
+              scope.companyId,
+              tenantId,
+            ))
+          ) {
             throw new NotFoundException('Farm not found.');
           }
         } else if (userType === 'TENANT_ADMIN' || userType === 'SYSTEM_ADMIN') {
-          const tenantFarmCompanyId = await this.activeFarmOfTenant(farmId, tenantId);
-          if (!tenantFarmCompanyId) throw new NotFoundException('Farm not found.');
+          const tenantFarmCompanyId = await this.activeFarmOfTenant(
+            farmId,
+            tenantId,
+          );
+          if (!tenantFarmCompanyId)
+            throw new NotFoundException('Farm not found.');
           effectiveCompanyId = tenantFarmCompanyId;
         } else {
           // No company to validate against and not a tenant-wide admin type —
@@ -1536,7 +2218,8 @@ export class FeedForecastService {
             .from(schema.locationMaster)
             .where(eq(schema.locationMaster.location_id, farmId))
             .limit(1);
-          if (!farmRow || farmRow.lob_id !== scope.lobId) throw new NotFoundException('Farm not found.');
+          if (!farmRow || farmRow.lob_id !== scope.lobId)
+            throw new NotFoundException('Farm not found.');
         }
       }
     }
@@ -1557,11 +2240,20 @@ export class FeedForecastService {
    * timezone_master id before giving up. No usable zone → the server's day,
    * which is what the forecast used before, and timeZone null says so.
    */
-  async farmToday(companyId: string, tenantId: string, nowMs: number = Date.now()): Promise<FarmClock> {
+  async farmToday(
+    companyId: string,
+    tenantId: string,
+    nowMs: number = Date.now(),
+  ): Promise<FarmClock> {
     const [company] = await this.db
       .select({ zone: schema.companyMaster.default_timezone_id })
       .from(schema.companyMaster)
-      .where(and(eq(schema.companyMaster.company_id, companyId), eq(schema.companyMaster.tenant_id, tenantId)))
+      .where(
+        and(
+          eq(schema.companyMaster.company_id, companyId),
+          eq(schema.companyMaster.tenant_id, tenantId),
+        ),
+      )
       .limit(1);
     let zone: string | null = company?.zone ?? null;
     if (zone && !isTimeZone(zone)) {
@@ -1598,25 +2290,43 @@ export class FeedForecastService {
     farmId: string,
     companyId: string,
     tenantId: string,
-    range: { from?: string; to?: string; planningDate?: string; horizonTo?: string } = {},
+    range: {
+      from?: string;
+      to?: string;
+      planningDate?: string;
+      horizonTo?: string;
+    } = {},
     clock?: FarmClock,
   ): Promise<FeedForecastResponse> {
-    const { today, timeZone } = clock ?? (await this.farmToday(companyId, tenantId));
+    const { today, timeZone } =
+      clock ?? (await this.farmToday(companyId, tenantId));
     const planningDate = range.planningDate ?? today;
-    if (!isCalendarDay(planningDate)) throw new BadRequestException('planningDate must be a calendar date (YYYY-MM-DD).');
+    if (!isCalendarDay(planningDate))
+      throw new BadRequestException(
+        'planningDate must be a calendar date (YYYY-MM-DD).',
+      );
     const dateProblem = planningDateProblem(today, planningDate);
     if (dateProblem) throw new BadRequestException(dateProblem);
     const from = range.from ?? planningDate;
     const to = range.to ?? defaultWindowEnd(from);
     if (!isCalendarDay(from) || !isCalendarDay(to)) {
-      throw new BadRequestException('from and to must be calendar dates (YYYY-MM-DD).');
+      throw new BadRequestException(
+        'from and to must be calendar dates (YYYY-MM-DD).',
+      );
     }
-    const span = spanProblem(from, to, null, await this.maxSpanDays(companyId, farmId));
+    const span = spanProblem(
+      from,
+      to,
+      null,
+      await this.maxSpanDays(companyId, farmId),
+    );
     if (span) throw new BadRequestException(span);
     // A horizon that is sent must be a real day, like the other dates: silently falling back to `to` would hide the
     // run-down the caller asked to see (fix round 1). Only its size is clamped below — that is Q12's rule, not an error.
     if (range.horizonTo !== undefined && !isCalendarDay(range.horizonTo)) {
-      throw new BadRequestException('horizonTo must be a calendar date (YYYY-MM-DD).');
+      throw new BadRequestException(
+        'horizonTo must be a calendar date (YYYY-MM-DD).',
+      );
     }
     // Held here, not in getForecast, so the alert and requisition callers are bound by the reach too (follow-up).
     const reachError = reachProblem(planningDate, to, range.to !== undefined);
@@ -1635,22 +2345,74 @@ export class FeedForecastService {
       // planning settings now, never from the farm's own lead-time column.
       // Important 4 (fix round 2): resolved through resolveForFeedPlanning, not
       // directly — see FeedSettingsService.resolveForFeedPlanning for why.
-      const resolvedSettings = await this.feedSettings.resolveForFeedPlanning(companyId, farmId);
-      const { input: loadedInput, flags: loadFlags, stageBlocks, sourceNames, sourceFeedTypes, stageNames, nextStageDiets } = await this.loadInput(farm, planningDate, from, to, tenantId, { stockDate, horizonTo, headerCutoff });
-      const input: ForecastInput = { ...loadedInput, safetyStockKg: resolvedSettings.safetyStockKg };
-      const { rows, flags, sources, dietChanges, daily, sourceBalances = [] } = buildFeedForecast(input);
+      const resolvedSettings = await this.feedSettings.resolveForFeedPlanning(
+        companyId,
+        farmId,
+      );
+      const {
+        input: loadedInput,
+        flags: loadFlags,
+        stageBlocks,
+        sourceNames,
+        sourceFeedTypes,
+        sourceCapacities,
+        stageNames,
+        nextStageDiets,
+      } = await this.loadInput(farm, planningDate, from, to, tenantId, {
+        stockDate,
+        horizonTo,
+        headerCutoff,
+      });
+      const input: ForecastInput = {
+        ...loadedInput,
+        safetyStockKg: resolvedSettings.safetyStockKg,
+      };
+      const {
+        rows,
+        flags,
+        sources,
+        dietChanges,
+        daily,
+        sourceBalances = [],
+      } = buildFeedForecast(input);
       const sourceSnapshot = buildSourceSnapshot({ engineInput: input });
-      const asOf: ForecastFlag[] = planningDate < today ? [{ kind: 'AS_OF_PAST', planningDate, today, note: asOfPastNote(planningDate, today) }] : [];
+      const asOf: ForecastFlag[] =
+        planningDate < today
+          ? [
+              {
+                kind: 'AS_OF_PAST',
+                planningDate,
+                today,
+                note: asOfPastNote(planningDate, today),
+              },
+            ]
+          : [];
       return {
-        planningDate, today, timeZone, from, to, horizonTo,
+        planningDate,
+        today,
+        timeZone,
+        from,
+        to,
+        horizonTo,
         farm: { id: farm.id, code: farm.code, name: farm.name },
         settings: {
           safetyStockKg: resolvedSettings.safetyStockKg,
           bulkMultipleKg: resolvedSettings.bulkMultipleKg,
           bagSizeKg: resolvedSettings.bagSizeKg,
         },
-        rows, daily, sourceBalances, flags: [...flags, ...loadFlags, ...asOf], sources, dietChanges,
-        stages: stageBlocks, sourceNames: sourceNames ?? {}, sourceFeedTypes: sourceFeedTypes ?? {}, stageNames: stageNames ?? {}, nextStageDiets: nextStageDiets ?? [], sourceSnapshot,
+        rows,
+        daily,
+        sourceBalances,
+        flags: [...flags, ...loadFlags, ...asOf],
+        sources,
+        dietChanges,
+        stages: stageBlocks,
+        sourceNames: sourceNames ?? {},
+        sourceFeedTypes: sourceFeedTypes ?? {},
+        sourceCapacities: sourceCapacities ?? {},
+        stageNames: stageNames ?? {},
+        nextStageDiets: nextStageDiets ?? [],
+        sourceSnapshot,
         itemCodes: input.itemCodes ?? {},
       };
     });
@@ -1662,12 +2424,28 @@ export class FeedForecastService {
    * Farm→Shed→Silo selection computes the Farm exactly once, then shapes both
    * the selected-Silo facts and the explicitly farm-wide order total from it.
    */
-  async siloStatus(query: QuerySiloStatusDto, tenantId: string, userType?: string) {
-    const { farmId, companyId } = await this.resolveFarm(query.farmId, tenantId, userType);
-    for (const [name, value] of [['planningDate', query.planningDate], ['from', query.from], ['to', query.to]] as const) {
-      if (value !== undefined && !isCalendarDay(value)) throw new BadRequestException(`${name} must be a calendar date (YYYY-MM-DD).`);
+  async siloStatus(
+    query: QuerySiloStatusDto,
+    tenantId: string,
+    userType?: string,
+  ) {
+    const { farmId, companyId } = await this.resolveFarm(
+      query.farmId,
+      tenantId,
+      userType,
+    );
+    for (const [name, value] of [
+      ['planningDate', query.planningDate],
+      ['from', query.from],
+      ['to', query.to],
+    ] as const) {
+      if (value !== undefined && !isCalendarDay(value))
+        throw new BadRequestException(
+          `${name} must be a calendar date (YYYY-MM-DD).`,
+        );
     }
-    if (query.siloId && !query.shedId) throw new BadRequestException('Choose a Shed before choosing a Silo.');
+    if (query.siloId && !query.shedId)
+      throw new BadRequestException('Choose a Shed before choosing a Silo.');
 
     const clock = await this.farmToday(companyId, tenantId);
     const planningDate = query.planningDate ?? clock.today;
@@ -1678,39 +2456,87 @@ export class FeedForecastService {
     if (view === 'PERIOD') {
       const periods = await this.loadPeriods(companyId, tenantId);
       period = query.periodId
-        ? periods.find((candidate) => candidate.periodId === query.periodId) ?? null
-        : periods.find((candidate) => candidate.startDate <= planningDate && planningDate <= candidate.endDate) ?? null;
+        ? (periods.find((candidate) => candidate.periodId === query.periodId) ??
+          null)
+        : (periods.find(
+            (candidate) =>
+              candidate.startDate <= planningDate &&
+              planningDate <= candidate.endDate,
+          ) ?? null);
       if (!period) {
         throw new BadRequestException(
-          query.periodId ? 'Reporting period not found.' : `No reporting period covers ${dayShort(planningDate)}. Add one under Farm Master → Reporting Periods.`,
+          query.periodId
+            ? 'Reporting period not found.'
+            : `No reporting period covers ${dayShort(planningDate)}. Add one under Farm Master → Reporting Periods.`,
         );
       }
     } else if (query.periodId !== undefined) {
-      throw new BadRequestException('periodId applies only to the Reporting Period view.');
+      throw new BadRequestException(
+        'periodId applies only to the Reporting Period view.',
+      );
     }
-    const resolved = resolveViewRange({ view, planningDate, from: query.from, to: query.to, period });
-    const span = spanProblem(resolved.from, resolved.to, period, await this.maxSpanDays(companyId, farmId));
+    const resolved = resolveViewRange({
+      view,
+      planningDate,
+      from: query.from,
+      to: query.to,
+      period,
+    });
+    const span = spanProblem(
+      resolved.from,
+      resolved.to,
+      period,
+      await this.maxSpanDays(companyId, farmId),
+    );
     if (span) throw new BadRequestException(span);
     const sentTo = query.to ?? resolved.to;
 
     return this.withFarmScope(farmId, companyId, async () => {
       const farm = await this.loadFarm(farmId, tenantId);
-      const planningSilos = ((await this.siloPlanningRows([farmId], tenantId)).get(farmId) ?? [])
-        .filter((silo) => silo.status === 'ACTIVE');
-      const shedById = new Map<string, { id: string; code: string; name: string }>();
+      const planningSilos = (
+        (await this.siloPlanningRows([farmId], tenantId)).get(farmId) ?? []
+      ).filter((silo) => silo.status === 'ACTIVE');
+      const shedById = new Map<
+        string,
+        { id: string; code: string; name: string }
+      >();
       for (const silo of planningSilos) {
-        for (const shed of silo.linkedSheds) shedById.set(shed.locationId, { id: shed.locationId, code: shed.code, name: shed.name });
+        for (const shed of silo.linkedSheds)
+          shedById.set(shed.locationId, {
+            id: shed.locationId,
+            code: shed.code,
+            name: shed.name,
+          });
       }
-      const sheds = [...shedById.values()].sort((a, b) => a.code.localeCompare(b.code) || a.id.localeCompare(b.id));
-      if (query.shedId && !shedById.has(query.shedId)) throw new NotFoundException('Selected Shed is not available on this Farm.');
+      const sheds = [...shedById.values()].sort(
+        (a, b) => a.code.localeCompare(b.code) || a.id.localeCompare(b.id),
+      );
+      if (query.shedId && !shedById.has(query.shedId))
+        throw new NotFoundException(
+          'Selected Shed is not available on this Farm.',
+        );
       const siloOptions = query.shedId
         ? planningSilos
-          .filter((silo) => silo.linkedSheds.some((shed) => shed.locationId === query.shedId))
-          .map((silo) => ({ id: silo.locationId, code: silo.code, name: silo.name }))
-          .sort((a, b) => a.code.localeCompare(b.code) || a.id.localeCompare(b.id))
+            .filter((silo) =>
+              silo.linkedSheds.some((shed) => shed.locationId === query.shedId),
+            )
+            .map((silo) => ({
+              id: silo.locationId,
+              code: silo.code,
+              name: silo.name,
+            }))
+            .sort(
+              (a, b) =>
+                a.code.localeCompare(b.code) || a.id.localeCompare(b.id),
+            )
         : [];
-      if (query.siloId && !siloOptions.some((silo) => silo.id === query.siloId)) {
-        throw new BadRequestException('Selected Silo is not linked to the selected Shed.');
+      if (
+        query.siloId &&
+        !siloOptions.some((silo) => silo.id === query.siloId)
+      ) {
+        throw new BadRequestException(
+          'Selected Silo is not linked to the selected Shed.',
+        );
       }
       const selection = {
         shedId: query.shedId ?? null,
@@ -1730,24 +2556,66 @@ export class FeedForecastService {
         selection,
       };
       if (!query.shedId || !query.siloId) {
-        return { ...base, submissionDeadline: null, silo: null, balanceSeries: [], demandSeries: [], farmTotalOrderKg: 0 };
+        return {
+          ...base,
+          submissionDeadline: null,
+          silo: null,
+          balanceSeries: [],
+          demandSeries: [],
+          farmTotalOrderKg: 0,
+        };
       }
 
-      const settings = toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(companyId, farmId));
-      const { submissionDeadline } = productionCycle(planningDate, settings.productionWeekday);
+      const settings = toFarmFeedSettings(
+        await this.feedSettings.resolveForFeedPlanning(companyId, farmId),
+      );
+      const { submissionDeadline } = productionCycle(
+        planningDate,
+        settings.productionWeekday,
+      );
       const forecast = await this.computeForFarm(
         farmId,
         companyId,
         tenantId,
-        { planningDate, from: resolved.from, to: sentTo, horizonTo: forecastHorizon(planningDate) },
+        {
+          planningDate,
+          from: resolved.from,
+          to: sentTo,
+          horizonTo: forecastHorizon(planningDate),
+        },
         clock,
       );
-      const statuses = await this.statusesFromForecast(farmId, companyId, tenantId, forecast, submissionDeadline, settings, planningDate);
-      const status = statuses.find((candidate) => candidate.siloId === query.siloId);
-      if (!status) throw new NotFoundException('Selected Silo is not available for feed planning.');
+      const statuses = await this.statusesFromForecast(
+        farmId,
+        companyId,
+        tenantId,
+        forecast,
+        submissionDeadline,
+        settings,
+        planningDate,
+      );
+      const status = statuses.find(
+        (candidate) => candidate.siloId === query.siloId,
+      );
+      if (!status)
+        throw new NotFoundException(
+          'Selected Silo is not available for feed planning.',
+        );
       const itemId = status.currentDietItemId ?? status.feedInSiloItemId;
-      const nextBinAssignment = itemId ? await this.findNextBinAssignment(itemId, planningDate, companyId, tenantId) : null;
-      const displayedDaily = displayDaily(forecast.daily, view, query.to !== undefined, sentTo);
+      const nextBinAssignment = itemId
+        ? await this.findNextBinAssignment(
+            itemId,
+            planningDate,
+            companyId,
+            tenantId,
+          )
+        : null;
+      const displayedDaily = displayDaily(
+        forecast.daily,
+        view,
+        query.to !== undefined,
+        sentTo,
+      );
       const dashboard = buildSelectedSiloDashboard({
         status,
         result: { sources: forecast.sources, daily: displayedDaily },
@@ -1758,7 +2626,13 @@ export class FeedForecastService {
         ...base,
         submissionDeadline,
         ...dashboard,
-        farmTotalOrderKg: Math.round(statuses.reduce((sum, candidate) => sum + candidate.recommendedOrderKg, 0) * 1000) / 1000,
+        farmTotalOrderKg:
+          Math.round(
+            statuses.reduce(
+              (sum, candidate) => sum + candidate.recommendedOrderKg,
+              0,
+            ) * 1000,
+          ) / 1000,
       };
     });
   }
@@ -1768,18 +2642,41 @@ export class FeedForecastService {
     farmId: string,
     companyId: string,
     tenantId: string,
-    forecast: Pick<ForecastResult, 'sources' | 'dietChanges'> & { itemCodes?: Record<string, string>; nextStageDiets?: NextStageDiet[] },
+    forecast: Pick<ForecastResult, 'sources' | 'dietChanges'> & {
+      itemCodes?: Record<string, string>;
+      nextStageDiets?: NextStageDiet[];
+    },
     submissionDeadline: string | null,
     settings: ReturnType<typeof toFarmFeedSettings>,
     asOf?: string,
   ) {
     const facts = await this.loadSiloFacts(farmId, companyId, tenantId);
-    const requisitions = submissionDeadline ? await this.loadLatestRequisitionStatuses(farmId, tenantId, submissionDeadline) : new Map();
+    const requisitions = submissionDeadline
+      ? await this.loadLatestRequisitionStatuses(
+          farmId,
+          tenantId,
+          submissionDeadline,
+        )
+      : new Map();
     const nextStageDiets = forecast.nextStageDiets ?? [];
-    const itemFeedTypes = await this.loadItemFeedTypes([...(forecast.sources ?? []).map((s) => s.itemId), ...forecast.dietChanges.map((change) => change.toItemId), ...nextStageDiets.flatMap((d) => (d.itemId ? [d.itemId] : []))], tenantId);
+    const itemFeedTypes = await this.loadItemFeedTypes(
+      [
+        ...(forecast.sources ?? []).map((s) => s.itemId),
+        ...forecast.dietChanges.map((change) => change.toItemId),
+        ...nextStageDiets.flatMap((d) => (d.itemId ? [d.itemId] : [])),
+      ],
+      tenantId,
+    );
     return buildSiloStatus({
-      silos: facts, result: forecast, requisitionStatusBySilo: requisitions, submissionDeadline, settings,
-      itemCodes: forecast.itemCodes ?? {}, itemFeedTypes, nextStageDiets, asOf,
+      silos: facts,
+      result: forecast,
+      requisitionStatusBySilo: requisitions,
+      submissionDeadline,
+      settings,
+      itemCodes: forecast.itemCodes ?? {},
+      itemFeedTypes,
+      nextStageDiets,
+      asOf,
     });
   }
 
@@ -1787,15 +2684,46 @@ export class FeedForecastService {
    * W2D A7 (Engine §1 rows 8–17): the farm's silo statuses as of the farm's today over the standard seven-day
    * window — what the Physical Count shows beside each silo (projected shortfall, next diet, next item).
    */
-  async currentSiloStatuses(farmId: string, companyId: string, tenantId: string): Promise<{ planningDate: string; statuses: SiloStatusRow[]; truckTargetKg: number }> {
+  async currentSiloStatuses(
+    farmId: string,
+    companyId: string,
+    tenantId: string,
+  ): Promise<{
+    planningDate: string;
+    statuses: SiloStatusRow[];
+    truckTargetKg: number;
+  }> {
     const clock = await this.farmToday(companyId, tenantId);
     const planningDate = clock.today;
     return this.withFarmScope(farmId, companyId, async () => {
-      const settings = toFarmFeedSettings(await this.feedSettings.resolveForFeedPlanning(companyId, farmId));
-      const { submissionDeadline } = productionCycle(planningDate, settings.productionWeekday);
-      const forecast = await this.computeForFarm(farmId, companyId, tenantId, draftForecastRange(planningDate), clock);
+      const settings = toFarmFeedSettings(
+        await this.feedSettings.resolveForFeedPlanning(companyId, farmId),
+      );
+      const { submissionDeadline } = productionCycle(
+        planningDate,
+        settings.productionWeekday,
+      );
+      const forecast = await this.computeForFarm(
+        farmId,
+        companyId,
+        tenantId,
+        draftForecastRange(planningDate),
+        clock,
+      );
       // truckTargetKg: the farm's truck target (Engine row 62), for the TRUCK_TARGET alert.
-      return { planningDate, statuses: await this.statusesFromForecast(farmId, companyId, tenantId, forecast, submissionDeadline, settings, planningDate), truckTargetKg: settings.truckTargetKg };
+      return {
+        planningDate,
+        statuses: await this.statusesFromForecast(
+          farmId,
+          companyId,
+          tenantId,
+          forecast,
+          submissionDeadline,
+          settings,
+          planningDate,
+        ),
+        truckTargetKg: settings.truckTargetKg,
+      };
     });
   }
 
@@ -1803,26 +2731,55 @@ export class FeedForecastService {
    * Feed form (BULK/BAGGED) of each item from its Breed Lifecycle feed rows (Master Setup row 37) — what
    * checkpoint 9 matches a silo's Feed Type against. An item whose rows disagree, or have none, is left out.
    */
-  private async loadItemFeedTypes(itemIds: string[], tenantId: string): Promise<Record<string, 'BULK' | 'BAGGED'>> {
+  private async loadItemFeedTypes(
+    itemIds: string[],
+    tenantId: string,
+  ): Promise<Record<string, 'BULK' | 'BAGGED'>> {
     const ids = [...new Set(itemIds)];
     if (!ids.length) return {};
     const rows = await this.db
-      .select({ item_id: schema.breedLifecycleStages.feed_item_id, feed_form: schema.breedLifecycleStages.feed_form })
+      .select({
+        item_id: schema.breedLifecycleStages.feed_item_id,
+        feed_form: schema.breedLifecycleStages.feed_form,
+      })
       .from(schema.breedLifecycleStages)
-      .where(and(eq(schema.breedLifecycleStages.tenant_id, tenantId), inArray(schema.breedLifecycleStages.feed_item_id, ids), isNotNull(schema.breedLifecycleStages.feed_form)));
+      .where(
+        and(
+          eq(schema.breedLifecycleStages.tenant_id, tenantId),
+          inArray(schema.breedLifecycleStages.feed_item_id, ids),
+          isNotNull(schema.breedLifecycleStages.feed_form),
+        ),
+      );
     const forms = new Map<string, Set<string>>();
     for (const row of rows) {
-      if (!row.item_id || (row.feed_form !== 'BULK' && row.feed_form !== 'BAGGED')) continue;
-      forms.set(row.item_id, (forms.get(row.item_id) ?? new Set()).add(row.feed_form));
+      if (
+        !row.item_id ||
+        (row.feed_form !== 'BULK' && row.feed_form !== 'BAGGED')
+      )
+        continue;
+      forms.set(
+        row.item_id,
+        (forms.get(row.item_id) ?? new Set()).add(row.feed_form),
+      );
     }
     const out: Record<string, 'BULK' | 'BAGGED'> = {};
-    for (const [itemId, set] of forms) if (set.size === 1) out[itemId] = [...set][0] as 'BULK' | 'BAGGED';
+    for (const [itemId, set] of forms)
+      if (set.size === 1) out[itemId] = [...set][0] as 'BULK' | 'BAGGED';
     // Master Setup rows 22 and 26: the Item Type itself says FEED BULK or FEED BAG,
     // so it wins over the lifecycle row's feed_form (12 Oct; feed_form is empty in practice).
     const items = await this.db
-      .select({ item_id: schema.itemMaster.item_id, item_type: schema.itemMaster.item_type, feed_form: schema.itemMaster.feed_form })
+      .select({
+        item_id: schema.itemMaster.item_id,
+        item_type: schema.itemMaster.item_type,
+        feed_form: schema.itemMaster.feed_form,
+      })
       .from(schema.itemMaster)
-      .where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, ids)));
+      .where(
+        and(
+          eq(schema.itemMaster.tenant_id, tenantId),
+          inArray(schema.itemMaster.item_id, ids),
+        ),
+      );
     for (const item of items) {
       const form = itemFeedForm(item);
       if (form) out[item.item_id] = form;
@@ -1846,19 +2803,37 @@ export class FeedForecastService {
    * (Master Setup row 16); System Balance is that item's ledger balance now;
    * the last approved count is the latest POSTED stock count line.
    */
-  private async loadSiloFacts(farmId: string, companyId: string, tenantId: string): Promise<SiloFact[]> {
+  private async loadSiloFacts(
+    farmId: string,
+    companyId: string,
+    tenantId: string,
+  ): Promise<SiloFact[]> {
     // Engine §1 row 8: only ACTIVE silos are planned; location_master.status is ACTIVE or INACTIVE.
-    const planning = ((await this.siloPlanningRows([farmId], tenantId)).get(farmId) ?? []).filter((s) => s.status === 'ACTIVE');
+    const planning = (
+      (await this.siloPlanningRows([farmId], tenantId)).get(farmId) ?? []
+    ).filter((s) => s.status === 'ACTIVE');
     if (!planning.length) return [];
     const siloIds = planning.map((s) => s.locationId);
 
     const Count = schema.feedStockCount;
     const Line = schema.feedStockCountLine;
     const counts = await this.db
-      .select({ silo_id: Line.silo_id, item_id: Line.item_id, counted_qty_kg: Line.counted_qty_kg, counted_at: Count.counted_at })
+      .select({
+        silo_id: Line.silo_id,
+        item_id: Line.item_id,
+        counted_qty_kg: Line.counted_qty_kg,
+        counted_at: Count.counted_at,
+      })
       .from(Line)
       .innerJoin(Count, eq(Count.count_id, Line.count_id))
-      .where(and(eq(Count.tenant_id, tenantId), eq(Count.farm_id, farmId), eq(Count.status, 'POSTED'), inArray(Line.silo_id, siloIds)))
+      .where(
+        and(
+          eq(Count.tenant_id, tenantId),
+          eq(Count.farm_id, farmId),
+          eq(Count.status, 'POSTED'),
+          inArray(Line.silo_id, siloIds),
+        ),
+      )
       .orderBy(sql`${Count.counted_at} DESC`);
 
     const Ledger = schema.inventoryLedger;
@@ -1867,30 +2842,65 @@ export class FeedForecastService {
       // Master Setup row 16: the last genuine receipt (purchase or transfer in), newest first, one row.
       // Variances and reversals are not receipts, and neither is a receipt a reversal row points back at.
       const [last = null] = await this.db
-        .select({ item_id: Ledger.item_id, item_description: Ledger.item_description, posting_date: Ledger.posting_date })
+        .select({
+          item_id: Ledger.item_id,
+          item_description: Ledger.item_description,
+          posting_date: Ledger.posting_date,
+        })
         .from(Ledger)
-        .where(and(
-          eq(Ledger.tenant_id, tenantId), eq(Ledger.company_id, companyId), eq(Ledger.warehouse_id, silo.locationId),
-          eq(Ledger.entry_type, 'POSITIVE'), inArray(Ledger.transaction_type, [...SILO_RECEIPT_TRANSACTION_TYPES]), gt(Ledger.quantity, '0'),
-          isNull(Ledger.reversal_of_ledger_id),
-          sql`NOT EXISTS (SELECT 1 FROM ${schema.inventoryLedger} AS feed_receipt_reversal WHERE feed_receipt_reversal.reversal_of_ledger_id = ${Ledger.ledger_id})`,
-        ))
-        .orderBy(sql`${Ledger.posting_date} DESC`, sql`${Ledger.created_at} DESC`)
+        .where(
+          and(
+            eq(Ledger.tenant_id, tenantId),
+            eq(Ledger.company_id, companyId),
+            eq(Ledger.warehouse_id, silo.locationId),
+            eq(Ledger.entry_type, 'POSITIVE'),
+            inArray(Ledger.transaction_type, [
+              ...SILO_RECEIPT_TRANSACTION_TYPES,
+            ]),
+            gt(Ledger.quantity, '0'),
+            isNull(Ledger.reversal_of_ledger_id),
+            sql`NOT EXISTS (SELECT 1 FROM ${schema.inventoryLedger} AS feed_receipt_reversal WHERE feed_receipt_reversal.reversal_of_ledger_id = ${Ledger.ledger_id})`,
+          ),
+        )
+        .orderBy(
+          sql`${Ledger.posting_date} DESC`,
+          sql`${Ledger.created_at} DESC`,
+        )
         .limit(1);
       const itemId = last?.item_id ?? null;
       const balances = itemId
-        ? (await this.ledgerService.getStockBalance({ companyId, warehouseId: silo.locationId } as any, tenantId)).filter((b) => b.item_id === itemId)
+        ? (
+            await this.ledgerService.getStockBalance(
+              { companyId, warehouseId: silo.locationId } as any,
+              tenantId,
+            )
+          ).filter((b) => b.item_id === itemId)
         : [];
       // Bags are never added to kilograms (silo-feed.service.ts); the dashboard flags the silo instead of refusing.
-      const onHand = balances.filter((b) => b.uom === 'KG').reduce((sum, b) => sum + Number(b.on_hand_qty), 0);
-      const count = counts.find((c) => c.silo_id === silo.locationId && (itemId === null || c.item_id === itemId)) ?? null;
+      const onHand = balances
+        .filter((b) => b.uom === 'KG')
+        .reduce((sum, b) => sum + Number(b.on_hand_qty), 0);
+      const count =
+        counts.find(
+          (c) =>
+            c.silo_id === silo.locationId &&
+            (itemId === null || c.item_id === itemId),
+        ) ?? null;
       facts.push({
         siloId: silo.locationId,
         siloCode: silo.code,
         siloName: silo.name,
         houseCodes: silo.linkedSheds.map((shed) => shed.code),
-        houses: silo.linkedSheds.map((shed) => ({ id: shed.locationId, code: shed.code, name: shed.name })),
-        houseLinks: silo.linkedSheds.map((shed) => ({ code: shed.code, effectiveFrom: shed.effectiveFrom ?? null, effectiveTo: shed.effectiveTo ?? null })),
+        houses: silo.linkedSheds.map((shed) => ({
+          id: shed.locationId,
+          code: shed.code,
+          name: shed.name,
+        })),
+        houseLinks: silo.linkedSheds.map((shed) => ({
+          code: shed.code,
+          effectiveFrom: shed.effectiveFrom ?? null,
+          effectiveTo: shed.effectiveTo ?? null,
+        })),
         capacityKg: silo.capacityKg,
         belowFeedLevelKg: silo.lowLevelKg,
         aboveThresholdKg: silo.highLevelKg,
@@ -1901,7 +2911,9 @@ export class FeedForecastService {
         lastApprovedCountKg: count ? Number(count.counted_qty_kg) : null,
         lastApprovedCountAt: count?.counted_at ?? null,
         lastFeedReceiptDate: last?.posting_date ?? null,
-        nonKgBalance: balances.some((b) => b.uom !== 'KG' && Math.abs(Number(b.on_hand_qty)) > 0.0001),
+        nonKgBalance: balances.some(
+          (b) => b.uom !== 'KG' && Math.abs(Number(b.on_hand_qty)) > 0.0001,
+        ),
       });
     }
     return facts;
@@ -1916,21 +2928,47 @@ export class FeedForecastService {
     const R = schema.requisition;
     const RL = schema.requisitionLine;
     const rows = await this.db
-      .select({ destination: RL.destination_location_id, requisition_id: R.requisition_id, status: R.status, created_at: R.created_at })
+      .select({
+        destination: RL.destination_location_id,
+        requisition_id: R.requisition_id,
+        status: R.status,
+        created_at: R.created_at,
+      })
       .from(RL)
       .innerJoin(R, eq(R.requisition_id, RL.requisition_id))
-      .where(and(
-        eq(R.tenant_id, tenantId), eq(R.farm_id, farmId), eq(R.doc_type, 'FEED'),
-        eq(R.submission_deadline, submissionDeadline), notInArray(R.status, ['REJECTED', 'CANCELLED']), isNull(R.deleted_at),
-      ));
-    const latest = new Map<string, { requisitionId: string; status: string; createdMs: number }>();
+      .where(
+        and(
+          eq(R.tenant_id, tenantId),
+          eq(R.farm_id, farmId),
+          eq(R.doc_type, 'FEED'),
+          eq(R.submission_deadline, submissionDeadline),
+          notInArray(R.status, ['REJECTED', 'CANCELLED']),
+          isNull(R.deleted_at),
+        ),
+      );
+    const latest = new Map<
+      string,
+      { requisitionId: string; status: string; createdMs: number }
+    >();
     for (const row of rows) {
       if (!row.destination) continue;
       const seen = latest.get(row.destination);
-      const createdMs = new Date(row.created_at as unknown as string | Date).getTime();
-      if (!seen || createdMs > seen.createdMs) latest.set(row.destination, { requisitionId: row.requisition_id, status: row.status, createdMs });
+      const createdMs = new Date(
+        row.created_at as unknown as string | Date,
+      ).getTime();
+      if (!seen || createdMs > seen.createdMs)
+        latest.set(row.destination, {
+          requisitionId: row.requisition_id,
+          status: row.status,
+          createdMs,
+        });
     }
-    return new Map([...latest].map(([silo, value]) => [silo, { requisitionId: value.requisitionId, status: value.status }]));
+    return new Map(
+      [...latest].map(([silo, value]) => [
+        silo,
+        { requisitionId: value.requisitionId, status: value.status },
+      ]),
+    );
   }
 
   /**
@@ -1956,8 +2994,16 @@ export class FeedForecastService {
    * guard's own context (tenantDb, tenantId, ...) and only farmScope is
    * overridden within it.
    */
-  async withFarmScope<T>(farmId: string, companyId: string, work: () => Promise<T>): Promise<T> {
-    const effectiveScope: FarmScope = { ...farmScope(this.cls), farmId, companyId };
+  async withFarmScope<T>(
+    farmId: string,
+    companyId: string,
+    work: () => Promise<T>,
+  ): Promise<T> {
+    const effectiveScope: FarmScope = {
+      ...farmScope(this.cls),
+      farmId,
+      companyId,
+    };
     return this.cls.run(async () => {
       this.cls.set(FARM_SCOPE_KEY, effectiveScope);
       return work();
@@ -1966,7 +3012,10 @@ export class FeedForecastService {
 
   /** Company of an active, top-level, non-deleted FARM of the tenant — no company condition, for
    * a TENANT_ADMIN/SYSTEM_ADMIN in tenant-wide scope who has no company pinned to check against. */
-  private async activeFarmOfTenant(farmId: string, tenantId: string): Promise<string | null> {
+  private async activeFarmOfTenant(
+    farmId: string,
+    tenantId: string,
+  ): Promise<string | null> {
     const [row] = await this.db
       .select({ company_id: schema.locationMaster.company_id })
       .from(schema.locationMaster)
@@ -1985,7 +3034,10 @@ export class FeedForecastService {
   }
 
   /** The FARM row itself, inside the caller's company — the same test farm-scope uses for an active farm. */
-  private async loadFarm(farmId: string, tenantId: string): Promise<ForecastFarm> {
+  private async loadFarm(
+    farmId: string,
+    tenantId: string,
+  ): Promise<ForecastFarm> {
     const scope = farmScope(this.cls);
     const [row] = await this.db
       .select({
@@ -2003,7 +3055,9 @@ export class FeedForecastService {
           isNull(schema.locationMaster.parent_location_id),
           eq(schema.locationMaster.is_active, true),
           isNull(schema.locationMaster.deleted_at),
-          ...(scope.companyId ? [eq(schema.locationMaster.company_id, scope.companyId)] : []),
+          ...(scope.companyId
+            ? [eq(schema.locationMaster.company_id, scope.companyId)]
+            : []),
         ),
       )
       .limit(1);
@@ -2023,7 +3077,16 @@ export class FeedForecastService {
     to: string,
     tenantId: string,
     opts: { stockDate: string; horizonTo: string; headerCutoff: string },
-  ): Promise<{ input: ForecastInput; flags: ForecastFlag[]; stageBlocks: StageBlock[]; sourceNames?: Record<string, string>; sourceFeedTypes?: Record<string, 'BULK' | 'BAGGED'>; stageNames?: Record<string, string>; nextStageDiets?: NextStageDiet[] }> {
+  ): Promise<{
+    input: ForecastInput;
+    flags: ForecastFlag[];
+    stageBlocks: StageBlock[];
+    sourceNames?: Record<string, string>;
+    sourceFeedTypes?: Record<string, 'BULK' | 'BAGGED'>;
+    sourceCapacities?: Record<string, number | null>;
+    stageNames?: Record<string, string>;
+    nextStageDiets?: NextStageDiet[];
+  }> {
     const companyId = farm.companyId;
     // computeForFarm has already replaced the CLS scope with the effective one
     // (fix round 2, finding 1) — every read below, direct or through the
@@ -2042,6 +3105,7 @@ export class FeedForecastService {
         parent_location_id: schema.locationMaster.parent_location_id,
         is_active: schema.locationMaster.is_active,
         low_level_kg: schema.locationMaster.low_level_kg,
+        silo_capacity_kg: schema.locationMaster.silo_capacity_kg,
         feed_in_bags: schema.locationMaster.feed_in_bags,
       })
       .from(schema.locationMaster)
@@ -2058,7 +3122,9 @@ export class FeedForecastService {
       );
     const locationById = new Map(locations.map((l) => [l.location_id, l]));
     const activeOfType = (type: string) =>
-      locations.filter((l) => l.location_type === type && l.is_active).sort((a, b) => a.location_code.localeCompare(b.location_code));
+      locations
+        .filter((l) => l.location_type === type && l.is_active)
+        .sort((a, b) => a.location_code.localeCompare(b.location_code));
 
     const shedRows = activeOfType('SHED');
     const siloRows = activeOfType('SILO');
@@ -2068,47 +3134,124 @@ export class FeedForecastService {
     const shedIds = shedRows.map((s) => s.location_id);
     const links = shedIds.length
       ? await this.db
-        .select({
-          silo_id: schema.siloShedLink.silo_id,
-          shed_id: schema.siloShedLink.shed_id,
-          effective_from: schema.siloShedLink.effective_from,
-          effective_to: schema.siloShedLink.effective_to,
-        })
-        .from(schema.siloShedLink)
-        .where(and(eq(schema.siloShedLink.tenant_id, tenantId), inArray(schema.siloShedLink.shed_id, shedIds)))
+          .select({
+            silo_id: schema.siloShedLink.silo_id,
+            shed_id: schema.siloShedLink.shed_id,
+            effective_from: schema.siloShedLink.effective_from,
+            effective_to: schema.siloShedLink.effective_to,
+          })
+          .from(schema.siloShedLink)
+          .where(
+            and(
+              eq(schema.siloShedLink.tenant_id, tenantId),
+              inArray(schema.siloShedLink.shed_id, shedIds),
+            ),
+          )
       : [];
     const siloIdsByShed = new Map<string, string[]>();
-    const siloLinksByShed = new Map<string, Array<{ siloId: string; effectiveFrom: string | null; effectiveTo: string | null }>>();
+    const siloLinksByShed = new Map<
+      string,
+      Array<{
+        siloId: string;
+        effectiveFrom: string | null;
+        effectiveTo: string | null;
+      }>
+    >();
     for (const link of links) {
       if (!activeSiloIds.has(link.silo_id)) continue; // a link to a retired silo feeds nothing
-      siloLinksByShed.set(link.shed_id, [...(siloLinksByShed.get(link.shed_id) ?? []), { siloId: link.silo_id, effectiveFrom: link.effective_from ?? null, effectiveTo: link.effective_to ?? null }]);
-      siloIdsByShed.set(link.shed_id, [...(siloIdsByShed.get(link.shed_id) ?? []), link.silo_id]);
+      siloLinksByShed.set(link.shed_id, [
+        ...(siloLinksByShed.get(link.shed_id) ?? []),
+        {
+          siloId: link.silo_id,
+          effectiveFrom: link.effective_from ?? null,
+          effectiveTo: link.effective_to ?? null,
+        },
+      ]);
+      siloIdsByShed.set(link.shed_id, [
+        ...(siloIdsByShed.get(link.shed_id) ?? []),
+        link.silo_id,
+      ]);
     }
-    const sheds = shedRows.map((s) => ({ shedId: s.location_id, shedCode: s.location_code, siloIds: siloIdsByShed.get(s.location_id) ?? [], siloLinks: siloLinksByShed.get(s.location_id) ?? [] }));
-    const linkedSiloIds = [...new Set(links.map((l) => l.silo_id).filter((id) => activeSiloIds.has(id)))];
+    const sheds = shedRows.map((s) => ({
+      shedId: s.location_id,
+      shedCode: s.location_code,
+      siloIds: siloIdsByShed.get(s.location_id) ?? [],
+      siloLinks: siloLinksByShed.get(s.location_id) ?? [],
+    }));
+    const linkedSiloIds = [
+      ...new Set(
+        links.map((l) => l.silo_id).filter((id) => activeSiloIds.has(id)),
+      ),
+    ];
 
     // Stages are projected to the run-down horizon, so a stage change just past `to` still moves the run-down (Q12).
-    const { batches, flags, stages } = await this.loadBatches(farm, planningDate, opts.horizonTo, opts.headerCutoff, tenantId, locationById, new Set(shedIds));
-    const feedRows = await this.loadFeedRows([...new Set(batches.map((b) => b.breedId))], companyId, tenantId, farm.id);
-    const calculationHorizon = forecastDemandHorizon({ batches, feedRows }, opts.horizonTo);
+    const { batches, flags, stages } = await this.loadBatches(
+      farm,
+      planningDate,
+      opts.horizonTo,
+      opts.headerCutoff,
+      tenantId,
+      locationById,
+      new Set(shedIds),
+    );
+    const feedRows = await this.loadFeedRows(
+      [...new Set(batches.map((b) => b.breedId))],
+      companyId,
+      tenantId,
+      farm.id,
+    );
+    const calculationHorizon = forecastDemandHorizon(
+      { batches, feedRows },
+      opts.horizonTo,
+    );
 
     // The farm's STORE (D6 fallback) — the forecast needs one pool. A farm with several stores keeps its feed
     // in one of them, so the pool is the store holding the most of this farm's feed; first by code only when
     // none holds any. First-by-code alone picked the AI store on a farm whose feed sits in PSTORE-FEED.
     const stores = activeOfType('STORE');
-    const feedStoreId = await storeHoldingMost(this.db, stores.map((s) => s.location_id), [...new Set(feedRows.map((r) => r.itemId))]);
-    const storeRow = stores.find((s) => s.location_id === feedStoreId) ?? stores[0];
-    const stockIds = [...linkedSiloIds, ...(storeRow ? [storeRow.location_id] : [])];
+    const feedStoreId = await storeHoldingMost(
+      this.db,
+      stores.map((s) => s.location_id),
+      [...new Set(feedRows.map((r) => r.itemId))],
+    );
+    const storeRow =
+      stores.find((s) => s.location_id === feedStoreId) ?? stores[0];
+    const stockIds = [
+      ...linkedSiloIds,
+      ...(storeRow ? [storeRow.location_id] : []),
+    ];
     // Q6 / D19: the opening is the ledger strictly before the stock date; posted
     // non-feeding movements from it on, and the outstanding part of open
     // transfers inside the walk (loadDraftTransfers, Part E Task 4b),
     // are incoming (Ruling on Task 6's carry). Feeding is left to the engine.
     const ledger = stockIds.length
-      ? await this.ledgerService.getFeedStockAsOf({ companyId, warehouseIds: stockIds, stockDate: opts.stockDate, horizonTo: calculationHorizon }, tenantId)
+      ? await this.ledgerService.getFeedStockAsOf(
+          {
+            companyId,
+            warehouseIds: stockIds,
+            stockDate: opts.stockDate,
+            horizonTo: calculationHorizon,
+          },
+          tenantId,
+        )
       : { opening: [], movements: [] };
-    const drafts = stockIds.length ? await this.loadDraftTransfers(stockIds, companyId, tenantId, opts.stockDate, calculationHorizon) : [];
+    const drafts = stockIds.length
+      ? await this.loadDraftTransfers(
+          stockIds,
+          companyId,
+          tenantId,
+          opts.stockDate,
+          calculationHorizon,
+        )
+      : [];
     const plannedRequisitions = stockIds.length
-      ? await this.loadPlannedFeedRequisitions(farm.id, companyId, tenantId, opts.stockDate, calculationHorizon)
+      ? await this.loadPlannedFeedRequisitions(
+          farm.id,
+          companyId,
+          tenantId,
+          opts.stockDate,
+          calculationHorizon,
+        )
       : [];
     const stock = stockAsOf({
       silos: siloRows
@@ -2118,7 +3261,9 @@ export class FeedForecastService {
           siloCode: s.location_code,
           lowLevelKg: s.low_level_kg == null ? null : Number(s.low_level_kg),
         })),
-      store: storeRow ? { storeId: storeRow.location_id, storeCode: storeRow.location_code } : null,
+      store: storeRow
+        ? { storeId: storeRow.location_id, storeCode: storeRow.location_code }
+        : null,
       feedItemIds: new Set(feedRows.map((r) => r.itemId)),
       opening: ledger.opening,
       movements: ledger.movements,
@@ -2131,45 +3276,87 @@ export class FeedForecastService {
     const itemCodes: Record<string, string> = {};
     if (itemIds.size) {
       const itemRows = await this.db
-        .select({ item_id: schema.itemMaster.item_id, item_name: schema.itemMaster.item_name, item_code: schema.itemMaster.item_code })
+        .select({
+          item_id: schema.itemMaster.item_id,
+          item_name: schema.itemMaster.item_name,
+          item_code: schema.itemMaster.item_code,
+        })
         .from(schema.itemMaster)
-        .where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, [...itemIds])));
+        .where(
+          and(
+            eq(schema.itemMaster.tenant_id, tenantId),
+            inArray(schema.itemMaster.item_id, [...itemIds]),
+          ),
+        );
       for (const i of itemRows) {
         items[i.item_id] = i.item_name;
         itemCodes[i.item_id] = i.item_code; // Item No (D16)
       }
     }
 
-    const stageBlocks = stageBlocksFor(batches, stages, new Map(shedRows.map((s) => [s.location_id, s.location_code])), planningDate);
+    const stageBlocks = stageBlocksFor(
+      batches,
+      stages,
+      new Map(shedRows.map((s) => [s.location_id, s.location_code])),
+      planningDate,
+    );
 
     // Code -> name for the silos and the store the engine can name as a source; the engine itself stays a pure calculation.
     const sourceNames: Record<string, string> = {};
-    for (const l of [...siloRows, ...(storeRow ? [storeRow] : [])]) sourceNames[l.location_code] = l.location_name;
+    for (const l of [...siloRows, ...(storeRow ? [storeRow] : [])])
+      sourceNames[l.location_code] = l.location_name;
     const sourceFeedTypes: Record<string, 'BULK' | 'BAGGED'> = {};
-    for (const l of siloRows) sourceFeedTypes[l.location_code] = l.feed_in_bags === true ? 'BAGGED' : 'BULK';
-    if (storeRow) sourceFeedTypes[storeRow.location_code] = storeRow.feed_in_bags === false ? 'BULK' : 'BAGGED';
+    for (const l of siloRows)
+      sourceFeedTypes[l.location_code] =
+        l.feed_in_bags === true ? 'BAGGED' : 'BULK';
+    if (storeRow)
+      sourceFeedTypes[storeRow.location_code] =
+        storeRow.feed_in_bags === false ? 'BULK' : 'BAGGED';
+    // Silo code -> its configured capacity, for the report's Silo Capacity column; a store has none.
+    const sourceCapacities: Record<string, number | null> = {};
+    for (const l of siloRows)
+      sourceCapacities[l.location_code] =
+        l.silo_capacity_kg == null ? null : Number(l.silo_capacity_kg);
 
     // stage_id -> name for the report's Stage column; display only, kept out of the engine input (and so its snapshot hash).
     const stageNames: Record<string, string> = {};
-    for (const s of stages.values()) if (s.stageName) stageNames[s.stageId] = s.stageName;
+    for (const s of stages.values())
+      if (s.stageName) stageNames[s.stageId] = s.stageName;
 
     const breedIds = [...new Set(batches.map((b) => b.breedId))];
     const breedNames: Record<string, string> = {};
     if (breedIds.length) {
       const breedRows = await this.db
-        .select({ breed_id: schema.breedMaster.breed_id, breed_name: schema.breedMaster.breed_name })
+        .select({
+          breed_id: schema.breedMaster.breed_id,
+          breed_name: schema.breedMaster.breed_name,
+        })
         .from(schema.breedMaster)
-        .where(and(eq(schema.breedMaster.tenant_id, tenantId), inArray(schema.breedMaster.breed_id, breedIds)));
+        .where(
+          and(
+            eq(schema.breedMaster.tenant_id, tenantId),
+            inArray(schema.breedMaster.breed_id, breedIds),
+          ),
+        );
       for (const r of breedRows) breedNames[r.breed_id] = r.breed_name;
     }
     const nextStageDiets = resolveNextStageDiets({
-      batches, stages, feedRows, farmId: farm.id, planningDate,
-      shedCodeById: new Map(shedRows.map((s) => [s.location_id, s.location_code])), items, breedNames,
+      batches,
+      stages,
+      feedRows,
+      farmId: farm.id,
+      planningDate,
+      shedCodeById: new Map(
+        shedRows.map((s) => [s.location_id, s.location_code]),
+      ),
+      items,
+      breedNames,
     });
 
     return {
       sourceNames,
       sourceFeedTypes,
+      sourceCapacities,
       stageNames,
       nextStageDiets,
       input: {
@@ -2219,24 +3406,36 @@ export class FeedForecastService {
       })
       .from(R)
       .innerJoin(L, eq(L.requisition_id, R.requisition_id))
-      .where(and(
-        eq(R.tenant_id, tenantId),
-        eq(R.company_id, companyId),
-        eq(R.farm_id, farmId),
-        eq(R.doc_type, 'FEED'),
-        isNull(R.deleted_at),
-      ));
+      .where(
+        and(
+          eq(R.tenant_id, tenantId),
+          eq(R.company_id, companyId),
+          eq(R.farm_id, farmId),
+          eq(R.doc_type, 'FEED'),
+          isNull(R.deleted_at),
+        ),
+      );
     const requisitionIds = [...new Set(rows.map((row) => row.requisition_id))];
     const links = requisitionIds.length
-      ? await this.db.select({ requisition_id: X.requisition_id, link_id: X.link_id })
-        .from(X)
-        .where(and(eq(X.tenant_id, tenantId), inArray(X.requisition_id, requisitionIds)))
+      ? await this.db
+          .select({ requisition_id: X.requisition_id, link_id: X.link_id })
+          .from(X)
+          .where(
+            and(
+              eq(X.tenant_id, tenantId),
+              inArray(X.requisition_id, requisitionIds),
+            ),
+          )
       : [];
     const linked = new Set(links.map((link) => link.requisition_id));
-    return plannedIncomingFromRequisitions(rows.map((row) => ({
-      ...row,
-      transfer_link_id: linked.has(row.requisition_id) ? 'LINKED' : null,
-    })), stockDate, horizonTo);
+    return plannedIncomingFromRequisitions(
+      rows.map((row) => ({
+        ...row,
+        transfer_link_id: linked.has(row.requisition_id) ? 'LINKED' : null,
+      })),
+      stockDate,
+      horizonTo,
+    );
   }
 
   /**
@@ -2291,7 +3490,10 @@ export class FeedForecastService {
       inArray(T.status, [...OPEN_TRANSFER_STATUSES]),
       isNull(T.deleted_at),
       lte(T.posting_date, horizonTo),
-      ...restrictedScopeConditions(farmScope(this.cls), { companyId: T.company_id, lobId: schema.itemMaster.lob_id }),
+      ...restrictedScopeConditions(farmScope(this.cls), {
+        companyId: T.company_id,
+        lobId: schema.itemMaster.lob_id,
+      }),
     ];
     const lineColumns = {
       line_id: TL.line_id,
@@ -2318,19 +3520,45 @@ export class FeedForecastService {
       .where(and(...common, inArray(T.from_warehouse_id, locationIds)));
 
     const lineIds = [...new Set([...into, ...out].map((r) => r.line_id))];
-    const requisitionLineIds = [...new Set([...into, ...out].map((r) => r.requisition_line_id).filter((id): id is string => !!id))];
-    const expectedByLine = new Map<string, { reqNo: string; expectedDate: string | null }>();
+    const requisitionLineIds = [
+      ...new Set(
+        [...into, ...out]
+          .map((r) => r.requisition_line_id)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const expectedByLine = new Map<
+      string,
+      { reqNo: string; expectedDate: string | null }
+    >();
     if (requisitionLineIds.length) {
       const requisitionRows = await this.db
         .select({
           lineId: schema.requisitionLine.line_id,
           reqNo: schema.requisition.req_no,
-          expectedDate: sql<string | null>`COALESCE(${schema.requisitionLine.proposed_delivery_date}, ${schema.requisitionLine.recommended_delivery_date}, ${schema.requisition.required_date})`,
+          expectedDate: sql<
+            string | null
+          >`COALESCE(${schema.requisitionLine.proposed_delivery_date}, ${schema.requisitionLine.recommended_delivery_date}, ${schema.requisition.required_date})`,
         })
         .from(schema.requisitionLine)
-        .innerJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
-        .where(and(eq(schema.requisition.tenant_id, tenantId), inArray(schema.requisitionLine.line_id, requisitionLineIds)));
-      for (const row of requisitionRows) expectedByLine.set(row.lineId, { reqNo: row.reqNo, expectedDate: row.expectedDate });
+        .innerJoin(
+          schema.requisition,
+          eq(
+            schema.requisition.requisition_id,
+            schema.requisitionLine.requisition_id,
+          ),
+        )
+        .where(
+          and(
+            eq(schema.requisition.tenant_id, tenantId),
+            inArray(schema.requisitionLine.line_id, requisitionLineIds),
+          ),
+        );
+      for (const row of requisitionRows)
+        expectedByLine.set(row.lineId, {
+          reqNo: row.reqNo,
+          expectedDate: row.expectedDate,
+        });
     }
     const shipped = new Map<string, number>();
     const received = new Map<string, number>();
@@ -2340,16 +3568,34 @@ export class FeedForecastService {
       const RC = schema.transferReceipt;
       const RL = schema.transferReceiptLine;
       const shippedRows = await this.db
-        .select({ line_id: SL.line_id, qty: sql<string>`COALESCE(SUM(${SL.quantity}), 0)` })
+        .select({
+          line_id: SL.line_id,
+          qty: sql<string>`COALESCE(SUM(${SL.quantity}), 0)`,
+        })
         .from(SL)
         .innerJoin(SH, eq(SH.shipment_id, SL.shipment_id))
-        .where(and(inArray(SL.line_id, lineIds), eq(SH.tenant_id, tenantId), isNull(SH.deleted_at)))
+        .where(
+          and(
+            inArray(SL.line_id, lineIds),
+            eq(SH.tenant_id, tenantId),
+            isNull(SH.deleted_at),
+          ),
+        )
         .groupBy(SL.line_id);
       const receivedRows = await this.db
-        .select({ line_id: RL.line_id, qty: sql<string>`COALESCE(SUM(${RL.quantity}), 0)` })
+        .select({
+          line_id: RL.line_id,
+          qty: sql<string>`COALESCE(SUM(${RL.quantity}), 0)`,
+        })
         .from(RL)
         .innerJoin(RC, eq(RC.receipt_id, RL.receipt_id))
-        .where(and(inArray(RL.line_id, lineIds), eq(RC.tenant_id, tenantId), isNull(RC.deleted_at)))
+        .where(
+          and(
+            inArray(RL.line_id, lineIds),
+            eq(RC.tenant_id, tenantId),
+            isNull(RC.deleted_at),
+          ),
+        )
         .groupBy(RL.line_id);
       for (const r of shippedRows) shipped.set(r.line_id, Number(r.qty));
       for (const r of receivedRows) received.set(r.line_id, Number(r.qty));
@@ -2376,7 +3622,9 @@ export class FeedForecastService {
       // explainable when several transfers arrive on the same silo/date.
       // The forecast engine still sums these movements at the silo/item grain;
       // the UI deduplicates the badge across batch rows.
-      const key = [r.warehouse_id, r.item_id, r.uom, date, r.transfer_id].join('|');
+      const key = [r.warehouse_id, r.item_id, r.uom, date, r.transfer_id].join(
+        '|',
+      );
       const row = totals.get(key) ?? {
         warehouse_id: r.warehouse_id,
         item_id: r.item_id,
@@ -2392,8 +3640,24 @@ export class FeedForecastService {
       row.qty += qty;
       totals.set(key, row);
     };
-    for (const r of into) add(r, outstandingTransferQty(Number(r.qty), shipped.get(r.line_id) ?? 0, received.get(r.line_id) ?? 0).pendingIn);
-    for (const r of out) add(r, -outstandingTransferQty(Number(r.qty), shipped.get(r.line_id) ?? 0, received.get(r.line_id) ?? 0).pendingOut);
+    for (const r of into)
+      add(
+        r,
+        outstandingTransferQty(
+          Number(r.qty),
+          shipped.get(r.line_id) ?? 0,
+          received.get(r.line_id) ?? 0,
+        ).pendingIn,
+      );
+    for (const r of out)
+      add(
+        r,
+        -outstandingTransferQty(
+          Number(r.qty),
+          shipped.get(r.line_id) ?? 0,
+          received.get(r.line_id) ?? 0,
+        ).pendingOut,
+      );
     return [...totals.values()];
   }
 
@@ -2406,7 +3670,11 @@ export class FeedForecastService {
     tenantId: string,
     locationById: Map<string, LocationNode>,
     activeShedIds: Set<string>,
-  ): Promise<{ batches: InputBatch[]; flags: ForecastFlag[]; stages: Map<string, StageInfo> }> {
+  ): Promise<{
+    batches: InputBatch[];
+    flags: ForecastFlag[];
+    stages: Map<string, StageInfo>;
+  }> {
     const scope = farmScope(this.cls);
     const batchRows = await this.db
       .select({
@@ -2439,7 +3707,10 @@ export class FeedForecastService {
     if (!fed.length) return { batches: [], flags: [], stages: new Map() };
     const batchIds = fed.map((b) => b.batch_id);
 
-    const animalGroups = new Map<string, { stageId: string | null; heads: number }[]>();
+    const animalGroups = new Map<
+      string,
+      { stageId: string | null; heads: number }[]
+    >();
     const animalWiseIds = fed.filter(isGroupedByAnimal).map((b) => b.batch_id);
     if (animalWiseIds.length) {
       const groups = await this.db
@@ -2460,10 +3731,16 @@ export class FeedForecastService {
             notInArray(schema.animalRegister.status, GONE_STATUSES),
           ),
         )
-        .groupBy(schema.animalRegister.current_batch_id, schema.animalRegister.current_stage_id);
+        .groupBy(
+          schema.animalRegister.current_batch_id,
+          schema.animalRegister.current_stage_id,
+        );
       for (const g of groups) {
         if (!g.batch_id) continue;
-        animalGroups.set(g.batch_id, [...(animalGroups.get(g.batch_id) ?? []), { stageId: g.stage_id ?? null, heads: Number(g.heads) }]);
+        animalGroups.set(g.batch_id, [
+          ...(animalGroups.get(g.batch_id) ?? []),
+          { stageId: g.stage_id ?? null, heads: Number(g.heads) },
+        ]);
       }
     }
 
@@ -2502,7 +3779,7 @@ export class FeedForecastService {
       .where(
         and(
           eq(schema.stageMaster.tenant_id, tenantId),
-          or(isNull(schema.stageMaster.company_id), eq(schema.stageMaster.company_id, farm.companyId)),
+          eq(schema.stageMaster.company_id, farm.companyId), // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
           inArray(schema.stageMaster.lob_id, lobIds),
           isNull(schema.stageMaster.deleted_at),
         ),
@@ -2526,11 +3803,29 @@ export class FeedForecastService {
     );
 
     // Stage Master is returned as well: the stage block dates the current and next stage from it.
-    return { ...buildInputBatches({ batchRows: fed, animalGroups, headers, stages, locationById, activeShedIds, planningDate, to: horizonTo, headerCutoff }), stages };
+    return {
+      ...buildInputBatches({
+        batchRows: fed,
+        animalGroups,
+        headers,
+        stages,
+        locationById,
+        activeShedIds,
+        planningDate,
+        to: horizonTo,
+        headerCutoff,
+      }),
+      stages,
+    };
   }
 
   /** Active lifecycle rows with a feed item and a positive rate, as stage-day ranges (feed-row-days.ts). */
-  private async loadFeedRows(breedIds: string[], companyId: string, tenantId: string, farmId?: string): Promise<FeedRow[]> {
+  private async loadFeedRows(
+    breedIds: string[],
+    companyId: string,
+    tenantId: string,
+    farmId?: string,
+  ): Promise<FeedRow[]> {
     if (!breedIds.length) return [];
     const rows = await this.db
       .select({
@@ -2549,9 +3844,14 @@ export class FeedForecastService {
       .where(
         and(
           eq(schema.breedLifecycleStages.tenant_id, tenantId),
-          or(isNull(schema.breedLifecycleStages.company_id), eq(schema.breedLifecycleStages.company_id, companyId)),
+          eq(schema.breedLifecycleStages.company_id, companyId), // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
           // Default rows (no farm) and this farm's overrides only (Master Setup r30/r39).
-          farmId ? or(isNull(schema.breedLifecycleStages.farm_id), eq(schema.breedLifecycleStages.farm_id, farmId)) : isNull(schema.breedLifecycleStages.farm_id),
+          farmId
+            ? or(
+                isNull(schema.breedLifecycleStages.farm_id),
+                eq(schema.breedLifecycleStages.farm_id, farmId),
+              )
+            : isNull(schema.breedLifecycleStages.farm_id),
           inArray(schema.breedLifecycleStages.breed_id, breedIds),
           eq(schema.breedLifecycleStages.is_active, true),
           isNotNull(schema.breedLifecycleStages.feed_item_id),
@@ -2564,7 +3864,9 @@ export class FeedForecastService {
         range = stageDayRange(r.calc_unit, r.period_from, r.period_to);
       } catch (e) {
         // Corrupt master data: name the row rather than answer a bare 500.
-        throw new ConflictException(`Breed lifecycle row ${r.lifecycle_id}: ${(e as Error).message}`);
+        throw new ConflictException(
+          `Breed lifecycle row ${r.lifecycle_id}: ${(e as Error).message}`,
+        );
       }
       return {
         lifecycleId: r.lifecycle_id,

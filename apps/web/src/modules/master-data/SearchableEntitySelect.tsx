@@ -1,10 +1,26 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Search, Check, Plus, List, Loader2, X } from "lucide-react";
-import { Popover, usePopoverSurface } from "@/components/ui/popover";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
+import { Search, Check, Plus, List, Loader2, X } from 'lucide-react';
+import { Popover, usePopoverSurface } from '@/components/ui/popover';
 
 type Row = Record<string, any>;
+
+/** Server-side paging for a long list (usePagedOptions): the typed text is sent
+ * as the search, and reaching the foot of the list asks for the next page. */
+export interface RemoteOptions {
+  search: (query: string) => void;
+  loadMore: () => void;
+  hasMore: boolean;
+  loadingMore: boolean;
+  searching?: boolean;
+}
 
 /**
  * The panel content of a searchable select. Split out from the trigger/anchor
@@ -27,6 +43,7 @@ function SearchableEntityPanel({
   onClear,
   onCreate,
   onViewAll,
+  remote,
 }: {
   options: Row[];
   valueKey: string;
@@ -42,9 +59,10 @@ function SearchableEntityPanel({
   onClear?: () => void;
   onCreate?: () => void;
   onViewAll?: () => void;
+  remote?: RemoteOptions;
 }) {
   const { close } = usePopoverSurface();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -55,20 +73,67 @@ function SearchableEntityPanel({
     return parts && parts.length ? parts : [getLabel(row)];
   };
 
+  // A remote list is already the server's answer to the query, which may match
+  // fields the label does not show, so it is not filtered a second time here.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return options;
+    if (!q || remote) return options;
     // Matched against every column as well as the joined label, so typing the
     // farm name still finds a breed whose only match is in the last column.
     return options.filter((o) =>
-      [getLabel(o), ...(getLabelParts?.(o) || [])].join(" ").toLowerCase().includes(q),
+      [getLabel(o), ...(getLabelParts?.(o) || [])]
+        .join(' ')
+        .toLowerCase()
+        .includes(q),
     );
-  }, [options, query, getLabel, getLabelParts]);
+  }, [options, query, getLabel, getLabelParts, remote]);
+
+  // The server is asked once typing pauses, and the list goes back to the
+  // unfiltered one when the panel closes on a search.
+  const remoteSearch = remote?.search;
+  const searchedRef = useRef(false);
+  useEffect(() => {
+    if (!remoteSearch) return;
+    const q = query.trim();
+    if (!q && !searchedRef.current) return;
+    const timer = setTimeout(() => {
+      searchedRef.current = !!q;
+      remoteSearch(q);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [query, remoteSearch]);
+  useEffect(
+    () => () => {
+      if (searchedRef.current) remoteSearch?.('');
+    },
+    [remoteSearch],
+  );
+
+  // A page that fills less than the list (or that a screen filters down to
+  // nothing) leaves no scroll to reach the foot by, so the next one is asked
+  // for straight away until the list can scroll or the server has no more.
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el || !remote?.hasMore || remote.loadingMore || remote.searching) return;
+    if (el.scrollHeight <= el.clientHeight + 48) remote.loadMore();
+  });
+
+  const onListScroll = (event: React.UIEvent<HTMLDivElement>) => {
+    if (!remote?.hasMore || remote.loadingMore) return;
+    const el = event.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 48) remote.loadMore();
+  };
 
   // The widest row decides the column count, so a row missing its last value
   // still lines its first columns up with the rows around it.
   const columnCount = useMemo(
-    () => (getLabelParts ? filtered.reduce((widest, o) => Math.max(widest, getLabelParts(o).length), 1) : 1),
+    () =>
+      getLabelParts
+        ? filtered.reduce(
+            (widest, o) => Math.max(widest, getLabelParts(o).length),
+            1,
+          )
+        : 1,
     [filtered, getLabelParts],
   );
   // The code column sizes to its content; the prose columns share what is left
@@ -77,14 +142,20 @@ function SearchableEntityPanel({
   // would size its own columns and nothing would line up.
   const columnar = columnCount > 1;
   const listTemplate = columnar
-    ? ["max-content", ...Array(columnCount - 1).fill("minmax(0,1fr)"), "auto"].join(" ")
+    ? [
+        'max-content',
+        ...Array(columnCount - 1).fill('minmax(0,1fr)'),
+        'auto',
+      ].join(' ')
     : undefined;
 
   const selectedIdx = useMemo(() => {
     return filtered.findIndex((o) => String(o[valueKey]) === String(value));
   }, [filtered, valueKey, value]);
 
-  const [highlight, setHighlight] = useState(selectedIdx >= 0 ? selectedIdx : 0);
+  const [highlight, setHighlight] = useState(
+    selectedIdx >= 0 ? selectedIdx : 0,
+  );
 
   // The option elements, not every child: the loading and empty-state rows are
   // children of the same list, so indexing children directly can point one row
@@ -95,8 +166,11 @@ function SearchableEntityPanel({
   useEffect(() => {
     inputRef.current?.focus({ preventScroll: true });
     if (selectedIdx >= 0 && listRef.current) {
-      const activeEl = listRef.current.querySelectorAll<HTMLElement>('[role="option"]')[selectedIdx];
-      activeEl?.scrollIntoView?.({ block: "nearest" });
+      const activeEl =
+        listRef.current.querySelectorAll<HTMLElement>('[role="option"]')[
+          selectedIdx
+        ];
+      activeEl?.scrollIntoView?.({ block: 'nearest' });
     }
   }, []);
 
@@ -110,32 +184,34 @@ function SearchableEntityPanel({
   }
 
   function onKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
-    if (event.key === "ArrowDown") {
+    if (event.key === 'ArrowDown') {
       event.preventDefault();
       setHighlight((h) => {
         const next = Math.min(h + 1, Math.max(0, filtered.length - 1));
-        optionEl(next)?.scrollIntoView({ block: "nearest" });
+        optionEl(next)?.scrollIntoView({ block: 'nearest' });
         return next;
       });
-    } else if (event.key === "ArrowUp") {
+    } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       setHighlight((h) => {
         const prev = Math.max(h - 1, 0);
-        optionEl(prev)?.scrollIntoView({ block: "nearest" });
+        optionEl(prev)?.scrollIntoView({ block: 'nearest' });
         return prev;
       });
-    } else if (event.key === "Enter") {
+    } else if (event.key === 'Enter') {
       event.preventDefault();
       if (filtered[highlight]) pick(filtered[highlight]);
     }
   }
 
   return (
-    <div className={`flex w-full min-h-0 flex-col gap-1.5 p-1 ${columnar ? (columnCount >= 3 ? "min-w-[480px]" : "min-w-[280px]") : ""}`}>
+    <div
+      className={`flex w-full min-h-0 flex-col gap-1.5 p-1 ${columnar ? (columnCount >= 3 ? 'min-w-[480px]' : 'min-w-[280px]') : ''}`}
+    >
       <div className="relative shrink-0">
         <Search
           className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
-          style={{ color: "var(--text-muted)" }}
+          style={{ color: 'var(--text-muted)' }}
         />
         <input
           ref={inputRef}
@@ -149,50 +225,75 @@ function SearchableEntityPanel({
           placeholder={searchPlaceholder}
           className="nf-input-sm w-full"
           style={{
-            backgroundColor: "var(--input-bg)",
-            color: "var(--input-text)",
-            borderColor: "var(--input-border)",
-            paddingLeft: "1.75rem",
+            backgroundColor: 'var(--input-bg)',
+            color: 'var(--input-text)',
+            borderColor: 'var(--input-border)',
+            paddingLeft: '1.75rem',
           }}
         />
       </div>
       <div
         ref={listRef}
         role="listbox"
+        onScroll={remote ? onListScroll : undefined}
         aria-label={ariaLabel}
-        className={`min-h-0 overflow-y-auto overscroll-contain gap-0.5 pr-0.5 ${columnar ? "grid" : "flex flex-col"}`}
-        style={columnar ? { maxHeight: "240px", gridTemplateColumns: listTemplate } : { maxHeight: "240px" }}
+        className={`min-h-0 overflow-y-auto overscroll-contain gap-0.5 pr-0.5 ${columnar ? 'grid' : 'flex flex-col'}`}
+        style={
+          columnar
+            ? { maxHeight: '240px', gridTemplateColumns: listTemplate }
+            : { maxHeight: '240px' }
+        }
       >
-        {columnar && columnHeaders && columnHeaders.length > 0 && !loading && filtered.length > 0 && (
+        {columnar &&
+          columnHeaders &&
+          columnHeaders.length > 0 &&
+          !loading &&
+          filtered.length > 0 && (
+            <div
+              role="presentation"
+              aria-hidden="true"
+              className="sticky top-0 z-10 grid gap-x-3 px-2.5 py-1.5 text-[11px] font-bold tracking-wider uppercase select-none border-b shrink-0"
+              style={{
+                gridColumn: '1 / -1',
+                gridTemplateColumns: 'subgrid',
+                color: 'var(--text-muted)',
+                borderColor: 'var(--border-subtle)',
+                backgroundColor: 'var(--surface)',
+              }}
+            >
+              {Array.from({ length: columnCount }, (_, col) => (
+                <span
+                  key={col}
+                  className={col === 0 ? 'whitespace-nowrap' : 'truncate'}
+                >
+                  {columnHeaders[col] ?? ''}
+                </span>
+              ))}
+              <span className="w-4 shrink-0" aria-hidden="true" />
+            </div>
+          )}
+        {loading || remote?.searching ? (
           <div
-            role="presentation"
-            aria-hidden="true"
-            className="sticky top-0 z-10 grid gap-x-3 px-2.5 py-1.5 text-[11px] font-bold tracking-wider uppercase select-none border-b shrink-0"
-            style={{
-              gridColumn: "1 / -1",
-              gridTemplateColumns: "subgrid",
-              color: "var(--text-muted)",
-              borderColor: "var(--border-subtle)",
-              backgroundColor: "var(--surface)",
-            }}
+            role="status"
+            aria-live="polite"
+            className="px-2.5 py-3 text-xs"
+            style={{ color: 'var(--text-muted)', gridColumn: '1 / -1' }}
           >
-            {Array.from({ length: columnCount }, (_, col) => (
-              <span key={col} className={col === 0 ? "whitespace-nowrap" : "truncate"}>
-                {columnHeaders[col] ?? ""}
-              </span>
-            ))}
-            <span className="w-4 shrink-0" aria-hidden="true" />
-          </div>
-        )}
-        {loading ? (
-          <div role="status" aria-live="polite" className="px-2.5 py-3 text-xs" style={{ color: "var(--text-muted)", gridColumn: "1 / -1" }}>
-            <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin" aria-hidden />
+            <Loader2
+              className="mr-1.5 inline h-3.5 w-3.5 animate-spin"
+              aria-hidden
+            />
             Loading records…
           </div>
-        ) : filtered.length === 0 && (
-          <div className="px-2.5 py-3 text-xs" style={{ color: "var(--text-muted)", gridColumn: "1 / -1" }}>
-            {noMatchesLabel}
-          </div>
+        ) : (
+          filtered.length === 0 && (
+            <div
+              className="px-2.5 py-3 text-xs"
+              style={{ color: 'var(--text-muted)', gridColumn: '1 / -1' }}
+            >
+              {noMatchesLabel}
+            </div>
+          )
         )}
         {filtered.map((o, idx) => {
           const v = String(o[valueKey]);
@@ -211,12 +312,16 @@ function SearchableEntityPanel({
               aria-label={getLabel(o)}
               onMouseEnter={() => setHighlight(idx)}
               onClick={() => pick(o)}
-              className={`shrink-0 items-center w-full min-h-[34px] rounded-[var(--radius-sm)] px-2.5 py-1.5 text-left text-sm transition-colors cursor-pointer ${columnar ? "grid gap-x-3" : "flex justify-between"}`}
+              className={`shrink-0 items-center w-full min-h-[34px] rounded-[var(--radius-sm)] px-2.5 py-1.5 text-left text-sm transition-colors cursor-pointer ${columnar ? 'grid gap-x-3' : 'flex justify-between'}`}
               style={{
-                backgroundColor: isHighlighted ? "var(--surface-secondary)" : "transparent",
-                color: "var(--text-primary)",
+                backgroundColor: isHighlighted
+                  ? 'var(--surface-secondary)'
+                  : 'transparent',
+                color: 'var(--text-primary)',
                 fontWeight: isSelected ? 600 : 400,
-                ...(columnar ? { gridColumn: "1 / -1", gridTemplateColumns: "subgrid" } : null),
+                ...(columnar
+                  ? { gridColumn: '1 / -1', gridTemplateColumns: 'subgrid' }
+                  : null),
               }}
             >
               {columnar ? (
@@ -224,27 +329,53 @@ function SearchableEntityPanel({
                   {Array.from({ length: columnCount }, (_, col) => (
                     <span
                       key={col}
-                      className={col === 0 ? "whitespace-nowrap" : "truncate"}
-                      style={col === 0 ? undefined : { color: "var(--text-secondary)" }}
+                      className={col === 0 ? 'whitespace-nowrap' : 'truncate'}
+                      style={
+                        col === 0
+                          ? undefined
+                          : { color: 'var(--text-secondary)' }
+                      }
                     >
-                      {cells[col] ?? ""}
+                      {cells[col] ?? ''}
                     </span>
                   ))}
                   <span className="flex w-4 shrink-0 justify-end">
-                    {isSelected && <Check className="h-4 w-4" style={{ color: "var(--accent)" }} />}
+                    {isSelected && (
+                      <Check
+                        className="h-4 w-4"
+                        style={{ color: 'var(--accent)' }}
+                      />
+                    )}
                   </span>
                 </>
               ) : (
                 <>
                   <span className="truncate pr-2">{cells[0]}</span>
                   {isSelected && (
-                    <Check className="h-4 w-4 shrink-0" style={{ color: "var(--accent)" }} />
+                    <Check
+                      className="h-4 w-4 shrink-0"
+                      style={{ color: 'var(--accent)' }}
+                    />
                   )}
                 </>
               )}
             </button>
           );
         })}
+        {remote?.loadingMore && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="px-2.5 py-2 text-xs"
+            style={{ color: 'var(--text-muted)', gridColumn: '1 / -1' }}
+          >
+            <Loader2
+              className="mr-1.5 inline h-3.5 w-3.5 animate-spin"
+              aria-hidden
+            />
+            Loading more…
+          </div>
+        )}
       </div>
       {(onClear || onCreate || onViewAll) && (
         <div className="flex shrink-0 items-center justify-end gap-2 border-t border-(--border-subtle) px-1 pt-2">
@@ -255,7 +386,10 @@ function SearchableEntityPanel({
           {onClear && (
             <button
               type="button"
-              onClick={() => { close(); onClear(); }}
+              onClick={() => {
+                close();
+                onClear();
+              }}
               aria-label={`Clear ${ariaLabel}`}
               className="nf-press me-auto inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface-raised) px-2 py-1 text-xs font-semibold text-(--text-primary)"
             >
@@ -266,7 +400,10 @@ function SearchableEntityPanel({
           {onCreate && (
             <button
               type="button"
-              onClick={() => { close(); onCreate(); }}
+              onClick={() => {
+                close();
+                onCreate();
+              }}
               aria-label={`New ${ariaLabel}`}
               className="nf-press inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface-raised) px-2 py-1 text-xs font-semibold text-(--text-primary)"
             >
@@ -277,7 +414,10 @@ function SearchableEntityPanel({
           {onViewAll && (
             <button
               type="button"
-              onClick={() => { close(); onViewAll(); }}
+              onClick={() => {
+                close();
+                onViewAll();
+              }}
               aria-label={`View All ${ariaLabel}`}
               className="nf-press inline-flex items-center gap-1 rounded-[var(--radius-sm)] border border-(--border) bg-(--surface-raised) px-2 py-1 text-xs font-semibold text-(--text-primary)"
             >
@@ -319,8 +459,11 @@ export interface SearchableEntitySelectProps {
   onClear?: () => void;
   onCreate?: () => void;
   onViewAll?: () => void;
+  /** Form fields fill their parent by default; compact toolbars can opt out. */
+  fullWidth?: boolean;
   triggerClassName?: string;
   triggerStyle?: React.CSSProperties;
+  remote?: RemoteOptions;
 }
 
 /** A single-select entity dropdown with an in-panel text filter, for catalogs long enough that
@@ -346,42 +489,70 @@ export function SearchableEntitySelect({
   onClear,
   onCreate,
   onViewAll,
+  fullWidth = true,
   triggerClassName,
   triggerStyle,
+  remote,
 }: SearchableEntitySelectProps) {
   const [open, setOpen] = useState(false);
   const unavailable = disabled || loading;
   // A field can go from enabled to disabled mid-interaction (e.g. its restrictOptionsBy
   // selector changes while this panel is open), or its options can begin loading — force it
   // closed rather than leave an open panel over a now-disabled trigger.
-  useEffect(() => { if (unavailable) setOpen(false); }, [unavailable]);
+  useEffect(() => {
+    if (unavailable) setOpen(false);
+  }, [unavailable]);
 
-  const selected = options.find((o) => String(o[valueKey]) === String(value));
-  const selectedText = selected ? (() => {
-    if (getSelectedLabel) return getSelectedLabel(selected);
-    if (!getLabelParts) return getLabel(selected);
+  // A remote list holds one search's page at a time, so the chosen row is
+  // remembered to keep the trigger's text when a later search leaves it out.
+  const pickedRef = useRef<Row | null>(null);
+  const found = options.find((o) => String(o[valueKey]) === String(value));
+  if (found) pickedRef.current = found;
+  const selected =
+    found ??
+    (remote && pickedRef.current && String(pickedRef.current[valueKey]) === String(value)
+      ? pickedRef.current
+      : undefined);
+  const selectedText = selected
+    ? (() => {
+        if (getSelectedLabel) return getSelectedLabel(selected);
+        if (!getLabelParts) return getLabel(selected);
 
-    const parts = getLabelParts(selected);
-    if (!columnHeaders?.length) return parts[1] || parts[0] || getLabel(selected);
-    const normalizedHeaders = columnHeaders.map((header) => header.trim().toLowerCase());
-    const codeIndex = normalizedHeaders.findIndex((header) => /\b(code|no\.?|number)\b/.test(header));
-    const descriptionIndex = normalizedHeaders.findIndex((header) => /\b(description|desc)\b/.test(header));
-    const nameIndex = normalizedHeaders.findIndex((header) => /\bname\b/.test(header));
-    const field = ariaLabel.trim().toLowerCase();
+        const parts = getLabelParts(selected);
+        if (!columnHeaders?.length)
+          return parts[1] || parts[0] || getLabel(selected);
+        const normalizedHeaders = columnHeaders.map((header) =>
+          header.trim().toLowerCase(),
+        );
+        const codeIndex = normalizedHeaders.findIndex((header) =>
+          /\b(code|no\.?|number)\b/.test(header),
+        );
+        const descriptionIndex = normalizedHeaders.findIndex((header) =>
+          /\b(description|desc)\b/.test(header),
+        );
+        const nameIndex = normalizedHeaders.findIndex((header) =>
+          /\bname\b/.test(header),
+        );
+        const field = ariaLabel.trim().toLowerCase();
 
-    if (/\b(code|no\.?|number)\b/.test(field) && codeIndex >= 0) return parts[codeIndex] || getLabel(selected);
-    // A UOM or currency is its code (KG, USD): the code is the thing itself (Rishi, 14 Oct).
-    if (/\b(uom|unit|currency)\b/.test(field) && codeIndex >= 0) return parts[codeIndex] || getLabel(selected);
-    if (/\b(description|desc)\b/.test(field)) {
-      const index = descriptionIndex >= 0 ? descriptionIndex : nameIndex;
-      if (index >= 0) return parts[index] || getLabel(selected);
-    }
+        if (/\b(code|no\.?|number)\b/.test(field) && codeIndex >= 0)
+          return parts[codeIndex] || getLabel(selected);
+        // A UOM or currency is its code (KG, USD): the code is the thing itself (Rishi, 14 Oct).
+        if (/\b(uom|unit|currency)\b/.test(field) && codeIndex >= 0)
+          return parts[codeIndex] || getLabel(selected);
+        if (/\b(description|desc)\b/.test(field)) {
+          const index = descriptionIndex >= 0 ? descriptionIndex : nameIndex;
+          if (index >= 0) return parts[index] || getLabel(selected);
+        }
 
-    // A generic entity field (Item, Supplier, Farm...) displays its human
-    // name/description after selection, while the open list retains all parts.
-    const humanIndex = nameIndex >= 0 ? nameIndex : descriptionIndex;
-    return humanIndex >= 0 ? parts[humanIndex] || getLabel(selected) : getLabel(selected);
-  })() : null;
+        // A generic entity field (Item, Supplier, Farm...) displays its human
+        // name/description after selection, while the open list retains all parts.
+        const humanIndex = nameIndex >= 0 ? nameIndex : descriptionIndex;
+        return humanIndex >= 0
+          ? parts[humanIndex] || getLabel(selected)
+          : getLabel(selected);
+      })()
+    : null;
 
   return (
     <Popover
@@ -389,7 +560,7 @@ export function SearchableEntitySelect({
       onOpenChange={setOpen}
       align="start"
       haspopup="listbox"
-      className="w-full"
+      className={fullWidth ? 'w-full' : 'inline-flex max-w-full'}
       panelClassName="nf-combobox-panel"
       // Every one of these lives inside the Master create/edit Dialog, whose
       // body scrolls. An anchored panel is clipped by that scroll container —
@@ -409,15 +580,15 @@ export function SearchableEntitySelect({
             const v = e?.target?.value ?? e;
             if (v !== undefined) onChange(String(v));
           }}
-          className={`nf-input nf-select w-full truncate text-left disabled:cursor-not-allowed disabled:opacity-70 ${triggerClassName || ""}`}
+          className={`nf-input nf-select w-full min-w-0 truncate text-left disabled:cursor-not-allowed disabled:opacity-70 ${triggerClassName || ''}`}
           style={{
-            backgroundColor: "var(--input-bg)",
-            color: selected ? "var(--input-text)" : "var(--text-muted)",
-            borderColor: "var(--input-border)",
+            backgroundColor: 'var(--input-bg)',
+            color: selected ? 'var(--input-text)' : 'var(--text-muted)',
+            borderColor: 'var(--input-border)',
             ...triggerStyle,
           }}
         >
-          {loading ? "Loading records…" : selected ? selectedText : placeholder}
+          {loading ? 'Loading records…' : selected ? selectedText : placeholder}
         </button>
       )}
     >
@@ -428,7 +599,10 @@ export function SearchableEntitySelect({
         getLabelParts={getLabelParts}
         columnHeaders={columnHeaders}
         value={value}
-        onPick={(row) => onChange(String(row[valueKey]))}
+        onPick={(row) => {
+          pickedRef.current = row;
+          onChange(String(row[valueKey]));
+        }}
         searchPlaceholder={searchPlaceholder}
         noMatchesLabel={noMatchesLabel}
         ariaLabel={ariaLabel}
@@ -436,6 +610,7 @@ export function SearchableEntitySelect({
         onClear={onClear}
         onCreate={onCreate}
         onViewAll={onViewAll}
+        remote={remote}
       />
     </Popover>
   );

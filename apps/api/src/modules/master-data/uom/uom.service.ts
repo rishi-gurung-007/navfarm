@@ -17,7 +17,7 @@ import {
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { normalizeSegment } from '../../system/number-series/code-format.util';
-import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import { listFilterConditions, listOrderBy, runMasterList } from '../../../common/master-list-query';
 import { assertCodeUnchanged } from '../../../common/master-code';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -190,16 +190,7 @@ export class UomService {
 
     conditions.push(...listFilterConditions(schema.uomMaster, query.filter));
 
-    const limit = query.limit || 50;
-    const offset = query.offset || 0;
-
-    return this.db
-      .select()
-      .from(schema.uomMaster)
-      .where(and(...conditions))
-      .orderBy(listOrderBy(schema.uomMaster, query, schema.uomMaster.uom_code))
-      .limit(limit)
-      .offset(offset);
+    return runMasterList(this.db, schema.uomMaster, conditions, query, schema.uomMaster.uom_code);
   }
 
   async update(id: string, dto: UpdateUomDto, tenantId: string, userPayload?: any) {

@@ -17,6 +17,7 @@ import { deepLinkIdFor, loadingSheetHref, transferHref } from "./feed-loading-pa
 import { requisitionHref } from "./transfer-source-links";
 import { millCapacityText, type MillCapacityState } from "./mill-capacity-view";
 import { formatDateShort } from "@/utils/date-short";
+import { FeedConsolidationDialog } from "./feed-consolidation-dialog";
 
 type Sheet = { consolidation_id: string; consolidation_no: string; production_week: string; consolidation_date: string; status: string; line_count: number; requested_qty_kg: number; mill_approved_qty_kg: number };
 /** The saved sheet (GET /feed-requisition/consolidations/:id), workbook Requisition and Loading Sheet §5. */
@@ -58,6 +59,11 @@ export function FeedConsolidationsPanel() {
   const [sheets, setSheets] = useState<Sheet[]>([]);
   const [selected, setSelected] = useState<SheetDetail | null>(null);
   const [status, setStatus] = useState("");
+  // Approved feed requisition lines not yet on a sheet: the Consolidate button shows only while there are any.
+  const [eligibleCount, setEligibleCount] = useState(0);
+  const [consolidateOpen, setConsolidateOpen] = useState(false);
+  const loadEligible = () => api.get("/feed-requisition/consolidations/eligible").then((response) => setEligibleCount(unwrap<unknown[]>(response).length)).catch(() => setEligibleCount(0));
+  useEffect(() => { void loadEligible(); }, []);
   const load = () => api.get(`/feed-requisition/consolidations${status ? `?status=${encodeURIComponent(status)}` : ""}`).then((response) => setSheets(unwrap<Sheet[]>(response))).catch((err: any) => showToast.error(err?.message || t("fcsLoadFailed")));
   useEffect(() => { load(); }, [status]);
   const open = async (id: string) => { try { setSelected(unwrap<SheetDetail>(await api.get(`/feed-requisition/consolidations/${id}`))); } catch (err: any) { showToast.error(err?.message || t("fcsSheetLoadFailed")); } };
@@ -65,7 +71,6 @@ export function FeedConsolidationsPanel() {
   useEffect(() => { const id = deepLinkIdFor("mill-consolidation"); if (id) void open(id); }, []);
   const markReviewed = async () => { if (!selected) return; try { setSelected(unwrap<SheetDetail>(await api.post(`/feed-requisition/consolidations/${selected.consolidation_id}/review`, {}))); showToast.success(t("fcsMarkedReviewed")); load(); } catch (err: any) { showToast.error(err?.message || t("fcsMarkReviewedFailed")); } };
   const finalize = async () => { if (!selected) return; try { setSelected(unwrap<SheetDetail>(await api.post(`/feed-requisition/consolidations/${selected.consolidation_id}/finalize`, {}))); showToast.success(t("fcsFinalized")); load(); } catch (err: any) { showToast.error(err?.message || t("fcsFinalizeFailed")); } };
-  const closeButton = <Button variant="outline" onClick={() => setSelected(null)}>{t("fcsClose")}</Button>;
   return (
     <div data-fill-body className="min-h-0 overflow-y-auto">
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-3 [&_.nf-input-sm]:h-9">
@@ -84,6 +89,7 @@ export function FeedConsolidationsPanel() {
             triggerClassName="nf-input-sm min-w-[10rem] h-9"
           />
         </Field>
+        {eligibleCount > 0 && <Button size="sm" onClick={() => setConsolidateOpen(true)}>{t("rqConsolidate", { count: eligibleCount })}</Button>}
       </div>
       {sheets.length === 0 ? (
         <EmptyState icon={Layers} title={t("fcsEmpty")} />
@@ -110,7 +116,8 @@ export function FeedConsolidationsPanel() {
           </table>
         </div>
       )}
-      <Dialog open={!!selected} onClose={() => setSelected(null)} title={selected?.consolidation_no || t("fcsSheetTitle")} maxWidth="xl" presentation="compact" className="w-[95vw] max-h-[85vh]" footer={selected && ["DRAFT", "REVIEWED"].includes(selected.status) ? <>{closeButton}{selected.status === "DRAFT" && <Button variant="outline" onClick={markReviewed}>{t("fcsMarkReviewed")}</Button>}<Button onClick={finalize}>{t("fcsFinalize")}</Button></> : closeButton}>
+      <FeedConsolidationDialog open={consolidateOpen} onClose={() => setConsolidateOpen(false)} onCreated={(message) => { setConsolidateOpen(false); showToast.success(message); load(); void loadEligible(); }} />
+      <Dialog open={!!selected} onClose={() => setSelected(null)} title={selected?.consolidation_no || t("fcsSheetTitle")} maxWidth="xl" presentation="compact" className="w-[95vw] max-h-[85vh]" footer={selected && ["DRAFT", "REVIEWED"].includes(selected.status) ? <>{selected.status === "DRAFT" && <Button variant="outline" onClick={markReviewed}>{t("fcsMarkReviewed")}</Button>}<Button onClick={finalize}>{t("fcsFinalize")}</Button></> : null}>
         {selected && (
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-3 rounded-md border border-(--border) p-3 text-sm sm:grid-cols-4">

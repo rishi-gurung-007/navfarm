@@ -1,26 +1,30 @@
-"use client";
+'use client';
 
-import { Fragment, useEffect, useMemo, useState } from "react";
-import { ageBetween, formatAge } from "./utils/age";
-import { X, Loader2, ChevronRight } from "lucide-react";
-import { api } from "@/services/api-client";
-import { API_ORIGIN } from "@/lib/api-client";
-import { Toast } from "@/components/ui/toast";
-import { ReadField } from "@/components/ui/field";
-import { formatAmount, formatQuantity } from "@/lib/utils";
+import { NA } from '@/utils/na';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { ageBetween, formatAge } from './utils/age';
+import { X, Loader2, ChevronRight } from 'lucide-react';
+import { api } from '@/services/api-client';
+import { API_ORIGIN } from '@/lib/api-client';
+import { Toast } from '@/components/ui/toast';
+import { ReadField } from '@/components/ui/field';
+import { formatAmount, formatQuantity } from '@/lib/utils';
 
 type Row = Record<string, any>;
 
 const S = {
-  surface: { backgroundColor: "var(--surface)", borderColor: "var(--border)" },
-  raised: { backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" },
-  primary: { color: "var(--text-primary)" },
-  sub: { color: "var(--text-secondary)" },
-  muted: { color: "var(--text-muted)" },
+  surface: { backgroundColor: 'var(--surface)', borderColor: 'var(--border)' },
+  raised: {
+    backgroundColor: 'var(--surface-raised)',
+    borderColor: 'var(--border)',
+  },
+  primary: { color: 'var(--text-primary)' },
+  sub: { color: 'var(--text-secondary)' },
+  muted: { color: 'var(--text-muted)' },
 };
 
 function unwrap<T = any>(res: any): T {
-  return (Array.isArray(res) ? res : res?.data ?? res) as T;
+  return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 }
 
 // Exactly three, decided 15 Sep (correction 3). The earlier plan for separate
@@ -28,23 +32,30 @@ function unwrap<T = any>(res: any): T {
 // batch, stage and pen move is a card on the one lifetime timeline, so the
 // same move is never told twice in two places.
 const TABS = [
-  { key: "details", label: "Details" },
-  { key: "breeding", label: "Breeding record history" },
-  { key: "traceability", label: "Traceability" },
+  { key: 'details', label: 'Details' },
+  { key: 'breeding', label: 'Breeding record history' },
+  { key: 'traceability', label: 'Traceability' },
 ] as const;
 
-type TabKey = (typeof TABS)[number]["key"];
+type TabKey = (typeof TABS)[number]['key'];
 
-const fmt = (v: any) => (v === null || v === undefined || v === "" ? "" : String(v));
+const fmt = (v: any) =>
+  v === null || v === undefined || v === '' ? '' : String(v);
 // Decimal columns arrive as "28000.0000": quantities show at most 2 decimals, money always 2.
-const fmtQty = (v: any) => (v === null || v === undefined || v === "" ? "" : formatQuantity(v));
-const fmtAmount = (v: any) => (v === null || v === undefined || v === "" ? "" : formatAmount(v));
+const fmtQty = (v: any) =>
+  v === null || v === undefined || v === '' ? '' : formatQuantity(v);
+const fmtAmount = (v: any) =>
+  v === null || v === undefined || v === '' ? '' : formatAmount(v);
 const asObject = (value: any): Row => {
   if (!value) return {};
-  if (typeof value !== "string") return value;
-  try { return JSON.parse(value); } catch { return {}; }
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return {};
+  }
 };
-const human = (v: any) => fmt(v).replaceAll("_", " ").toLowerCase();
+const human = (v: any) => fmt(v).replaceAll('_', ' ').toLowerCase();
 
 type TimelineEvent = {
   id: string;
@@ -60,7 +71,8 @@ type TimelineEvent = {
  * so it outranks the panel's guess from gender, which is only a fallback for a
  * record that arrived without one.
  */
-const isSireOn = (m: Row, isMale: boolean) => (m.role === "SIRE" ? true : m.role === "DAM" ? false : isMale);
+const isSireOn = (m: Row, isMale: boolean) =>
+  m.role === 'SIRE' ? true : m.role === 'DAM' ? false : isMale;
 
 /**
  * One mating on the lifetime timeline, told from this animal's side. For a sow
@@ -76,36 +88,55 @@ function matingTimelineEvent(m: Row, isMale: boolean): TimelineEvent {
     // A service from a pooled semen lot has no single sire: for the boar who went into the pool it is "a pooled lot used",
     // for the sow it was served by the lot, not by one named boar.
     title: m.pooled
-      ? `Pooled lot ${fmt(m.semen_lot_no)} used on ${partner || "a sow"}`.replace("  ", " ")
+      ? `Pooled lot ${fmt(m.semen_lot_no)} used on ${partner || 'a sow'}`.replace(
+          '  ',
+          ' ',
+        )
       : sire
-      ? `Served ${partner || "a sow"}`
-      : `Served by ${partner || (m.semen_lot_no ? `pooled lot ${m.semen_lot_no}` : "a boar")}`,
-    summary: [human(m.mating_type), m.pooled ? "pooled — sire not one boar" : "", fmt(m.batch_no), fmt(m.parity_number) ? `parity ${m.parity_number}` : ""]
-      .filter(Boolean).join(" · "),
+        ? `Served ${partner || 'a sow'}`
+        : `Served by ${partner || (m.semen_lot_no ? `pooled lot ${m.semen_lot_no}` : 'a boar')}`,
+    summary: [
+      human(m.mating_type),
+      m.pooled ? 'pooled — sire not one boar' : '',
+      fmt(m.batch_no),
+      fmt(m.parity_number) ? `parity ${m.parity_number}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · '),
     detail: [
-      ["Mating type", fmt(m.mating_type)], [sire ? "Sow" : "Boar", partner],
-      ["Batch", fmt(m.batch_no)], ["Second mating", fmt(m.second_mating_date)],
-      ["Semen doses", fmtQty(m.semen_dose_qty)], ["Sow parity", fmt(m.parity_number)],
-      ["Boar parity", fmt(m.boar_parity_number)], ["Expected farrowing", fmt(m.expected_farrowing_date)],
+      ['Mating type', fmt(m.mating_type)],
+      [sire ? 'Sow' : 'Boar', partner],
+      ['Batch', fmt(m.batch_no)],
+      ['Second mating', fmt(m.second_mating_date)],
+      ['Semen doses', fmtQty(m.semen_dose_qty)],
+      ['Sow parity', fmt(m.parity_number)],
+      ['Boar parity', fmt(m.boar_parity_number)],
+      ['Expected farrowing', fmt(m.expected_farrowing_date)],
     ],
   };
 }
 
 /** A pregnancy check is an event only once it has a result; a PENDING row is a plan. */
 function pregCheckTimelineEvent(m: Row, isMale: boolean): TimelineEvent | null {
-  if (!m.conception_result || m.conception_result === "PENDING") return null;
+  if (!m.conception_result || m.conception_result === 'PENDING') return null;
   const sire = isSireOn(m, isMale);
   return {
     id: `pregcheck-${m.breeding_id}`,
     date: fmt(m.preg_check_date) || fmt(m.mating_date),
     title: sire
-      ? `Service on ${fmt(m.sow_code) || "a sow"} — ${human(m.conception_result)}`
+      ? `Service on ${fmt(m.sow_code) || 'a sow'} — ${human(m.conception_result)}`
       : `Pregnancy check — ${human(m.conception_result)}`,
-    summary: [human(m.preg_check_method), fmt(m.expected_farrowing_date) ? `due ${m.expected_farrowing_date}` : ""]
-      .filter(Boolean).join(" · "),
+    summary: [
+      human(m.preg_check_method),
+      fmt(m.expected_farrowing_date) ? `due ${m.expected_farrowing_date}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · '),
     detail: [
-      ["Result", fmt(m.conception_result)], ["Check date", fmt(m.preg_check_date)],
-      ["Method", fmt(m.preg_check_method)], ["Expected farrowing", fmt(m.expected_farrowing_date)],
+      ['Result', fmt(m.conception_result)],
+      ['Check date', fmt(m.preg_check_date)],
+      ['Method', fmt(m.preg_check_method)],
+      ['Expected farrowing', fmt(m.expected_farrowing_date)],
     ],
   };
 }
@@ -122,15 +153,25 @@ function farrowingTimelineEvent(f: Row, isMale: boolean): TimelineEvent {
     id: `farrow-${f.farrow_id}`,
     date: fmt(f.farrowing_date),
     title: isMale
-      ? (live ? `Sired a litter — ${live} live` : "Sired a litter")
-      : (live ? `Farrowed ${live} live` : "Farrowed"),
-    summary: [total ? `${total} born` : "", human(f.farrowing_status)].filter(Boolean).join(" · "),
+      ? live
+        ? `Sired a litter — ${live} live`
+        : 'Sired a litter'
+      : live
+        ? `Farrowed ${live} live`
+        : 'Farrowed',
+    summary: [total ? `${total} born` : '', human(f.farrowing_status)]
+      .filter(Boolean)
+      .join(' · '),
     detail: [
-      ["Farrowing date", fmt(f.farrowing_date)], ["Born total", total],
-      ["Born live", live], ["Stillborn", fmt(f.piglets_stillborn)],
-      ["Mummified", fmt(f.piglets_mummified)], ["Avg birth weight", fmtQty(f.avg_birth_weight_kg)],
-      ["Litter weight", fmtQty(f.total_litter_weight_kg)], ["Status", fmt(f.farrowing_status)],
-      ["Parity", fmt(f.parity_number)],
+      ['Farrowing date', fmt(f.farrowing_date)],
+      ['Born total', total],
+      ['Born live', live],
+      ['Stillborn', fmt(f.piglets_stillborn)],
+      ['Mummified', fmt(f.piglets_mummified)],
+      ['Avg birth weight', fmtQty(f.avg_birth_weight_kg)],
+      ['Litter weight', fmtQty(f.total_litter_weight_kg)],
+      ['Status', fmt(f.farrowing_status)],
+      ['Parity', fmt(f.parity_number)],
     ],
   };
 }
@@ -145,11 +186,17 @@ function weaningTimelineEvent(f: Row, isMale: boolean): TimelineEvent | null {
   return {
     id: `wean-${f.farrow_id}`,
     date: fmt(f.weaning_date),
-    title: isMale ? `Litter weaned — ${f.piglets_weaned}` : `Weaned ${f.piglets_weaned}`,
-    summary: fmtQty(f.avg_weaning_weight_kg) ? `avg ${fmtQty(f.avg_weaning_weight_kg)} kg` : "",
+    title: isMale
+      ? `Litter weaned — ${f.piglets_weaned}`
+      : `Weaned ${f.piglets_weaned}`,
+    summary: fmtQty(f.avg_weaning_weight_kg)
+      ? `avg ${fmtQty(f.avg_weaning_weight_kg)} kg`
+      : '',
     detail: [
-      ["Weaning date", fmt(f.weaning_date)], ["Piglets weaned", fmt(f.piglets_weaned)],
-      ["Avg weaning weight", fmtQty(f.avg_weaning_weight_kg)], ["Cost per piglet", fmtAmount(f.cost_per_piglet)],
+      ['Weaning date', fmt(f.weaning_date)],
+      ['Piglets weaned', fmt(f.piglets_weaned)],
+      ['Avg weaning weight', fmtQty(f.avg_weaning_weight_kg)],
+      ['Cost per piglet', fmtAmount(f.cost_per_piglet)],
     ],
   };
 }
@@ -162,14 +209,22 @@ const oldestFirst = (a: TimelineEvent, b: TimelineEvent) =>
 
 /** The timeline rail: a card per event, each opening in place. */
 function TimelineList({
-  events, emptyText, openEvent, onToggle,
+  events,
+  emptyText,
+  openEvent,
+  onToggle,
 }: {
   events: TimelineEvent[];
   emptyText: string;
   openEvent: string | null;
   onToggle: (id: string) => void;
 }) {
-  if (!events.length) return <p className="text-xs" style={S.muted}>{emptyText}</p>;
+  if (!events.length)
+    return (
+      <p className="text-xs" style={S.muted}>
+        {emptyText}
+      </p>
+    );
   return (
     <ol className="relative flex flex-col gap-2 ps-5">
       {/* The rail. Sits behind the markers rather than between the cards, so
@@ -177,7 +232,7 @@ function TimelineList({
       <span
         aria-hidden="true"
         className="absolute bottom-2 start-[5px] top-2 w-px"
-        style={{ backgroundColor: "var(--border)" }}
+        style={{ backgroundColor: 'var(--border)' }}
       />
       {events.map((ev) => {
         const open = openEvent === ev.id;
@@ -187,7 +242,10 @@ function TimelineList({
             <span
               aria-hidden="true"
               className="absolute -start-5 top-4 h-[9px] w-[9px] translate-x-[1px] rounded-full border-2"
-              style={{ backgroundColor: "var(--surface)", borderColor: "var(--accent)" }}
+              style={{
+                backgroundColor: 'var(--surface)',
+                borderColor: 'var(--accent)',
+              }}
             />
             <button
               type="button"
@@ -197,23 +255,45 @@ function TimelineList({
               style={S.raised}
             >
               <div className="flex items-baseline justify-between gap-2">
-                <span className="min-w-0 truncate text-sm font-medium" style={S.primary}>{ev.title}</span>
-                <span className="shrink-0 font-mono text-xs" style={S.sub}>{ev.date}</span>
+                <span
+                  className="min-w-0 truncate text-sm font-medium"
+                  style={S.primary}
+                >
+                  {ev.title}
+                </span>
+                <span className="shrink-0 font-mono text-xs" style={S.sub}>
+                  {ev.date}
+                </span>
               </div>
               <div className="mt-1 flex items-center justify-between gap-2">
-                <span className="min-w-0 truncate text-xs" style={S.sub}>{ev.summary}</span>
+                <span className="min-w-0 truncate text-xs" style={S.sub}>
+                  {ev.summary}
+                </span>
                 <ChevronRight
                   className="h-3.5 w-3.5 shrink-0 transition-transform"
-                  style={{ color: "var(--text-muted)", transform: open ? "rotate(90deg)" : undefined }}
+                  style={{
+                    color: 'var(--text-muted)',
+                    transform: open ? 'rotate(90deg)' : undefined,
+                  }}
                 />
               </div>
 
               {open && rows.length > 0 && (
-                <dl className="mt-3 grid grid-cols-1 gap-x-4 gap-y-1.5 border-t pt-3 sm:grid-cols-2" style={{ borderColor: "var(--border)" }}>
+                <dl
+                  className="mt-3 grid grid-cols-1 gap-x-4 gap-y-1.5 border-t pt-3 sm:grid-cols-2"
+                  style={{ borderColor: 'var(--border)' }}
+                >
                   {rows.map(([label, value]) => (
                     <div key={label} className="flex min-w-0 flex-col">
-                      <dt className="text-[10px] uppercase tracking-wide" style={S.muted}>{label}</dt>
-                      <dd className="truncate text-xs" style={S.primary}>{value}</dd>
+                      <dt
+                        className="text-[10px] uppercase tracking-wide"
+                        style={S.muted}
+                      >
+                        {label}
+                      </dt>
+                      <dd className="truncate text-xs" style={S.primary}>
+                        {value}
+                      </dd>
                     </div>
                   ))}
                 </dl>
@@ -233,8 +313,12 @@ function DetailGrid({ rows }: { rows: [string, string][] }) {
     <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5">
       {shown.map(([label, value]) => (
         <div key={label} className="flex min-w-0 flex-col">
-          <dt className="text-[10px] uppercase tracking-wide" style={S.muted}>{label}</dt>
-          <dd className="truncate text-xs" style={S.primary}>{value}</dd>
+          <dt className="text-[10px] uppercase tracking-wide" style={S.muted}>
+            {label}
+          </dt>
+          <dd className="truncate text-xs" style={S.primary}>
+            {value}
+          </dd>
         </div>
       ))}
     </dl>
@@ -249,7 +333,11 @@ function DetailGrid({ rows }: { rows: [string, string][] }) {
  * and the litter it produced. Clicking a row opens the rest of the record.
  */
 function BreedingRecordTable({
-  matings, farrowings, isMale, openRow, onToggle,
+  matings,
+  farrowings,
+  isMale,
+  openRow,
+  onToggle,
 }: {
   matings: Row[];
   farrowings: Row[];
@@ -258,81 +346,204 @@ function BreedingRecordTable({
   onToggle: (id: string) => void;
 }) {
   const farrowByBreeding = new Map<string, Row>();
-  for (const f of farrowings) if (f.breeding_id) farrowByBreeding.set(f.breeding_id, f);
+  for (const f of farrowings)
+    if (f.breeding_id) farrowByBreeding.set(f.breeding_id, f);
   // A farrowing recorded without its service still belongs in a sow's history;
   // listed under the table rather than dropped.
-  const unlinked = isMale ? [] : farrowings.filter((f) => !f.breeding_id || !matings.some((m) => m.breeding_id === f.breeding_id));
+  const unlinked = isMale
+    ? []
+    : farrowings.filter(
+        (f) =>
+          !f.breeding_id ||
+          !matings.some((m) => m.breeding_id === f.breeding_id),
+      );
 
   const headers = isMale
-    ? ["Date", "Type", "Sow", "Batch", "Sow parity", "Boar parity", "Result", "Litter (live / total)", "Weaned"]
-    : ["Date", "Type", "Boar", "Batch", "Parity", "Preg check", "Result", "Expected farrowing", "Farrowed (live / total)", "Weaned"];
+    ? [
+        'Date',
+        'Type',
+        'Sow',
+        'Batch',
+        'Sow parity',
+        'Boar parity',
+        'Result',
+        'Litter (live / total)',
+        'Weaned',
+      ]
+    : [
+        'Date',
+        'Type',
+        'Boar',
+        'Batch',
+        'Parity',
+        'Preg check',
+        'Result',
+        'Expected farrowing',
+        'Farrowed (live / total)',
+        'Weaned',
+      ];
 
   if (!matings.length && !unlinked.length) {
-    return <p className="text-xs" style={S.muted}>No breeding record.</p>;
+    return (
+      <p className="text-xs" style={S.muted}>
+        No breeding record.
+      </p>
+    );
   }
 
   const litters = isMale ? [...farrowByBreeding.values()] : [];
-  const cell = "px-2 py-2 whitespace-nowrap";
+  const cell = 'px-2 py-2 whitespace-nowrap';
 
   return (
     <div className="flex flex-col gap-4">
       {isMale && litters.length > 0 && (
         <p className="text-xs" style={S.sub}>
-          {matings.length} service{matings.length === 1 ? "" : "s"} · {litters.length} litter{litters.length === 1 ? "" : "s"} ·{" "}
-          {litters.reduce((sum, f) => sum + (Number(f.piglets_born_live) || 0), 0)} born live ·{" "}
-          {litters.reduce((sum, f) => sum + (Number(f.piglets_weaned) || 0), 0)} weaned
+          {matings.length} service{matings.length === 1 ? '' : 's'} ·{' '}
+          {litters.length} litter{litters.length === 1 ? '' : 's'} ·{' '}
+          {litters.reduce(
+            (sum, f) => sum + (Number(f.piglets_born_live) || 0),
+            0,
+          )}{' '}
+          born live ·{' '}
+          {litters.reduce((sum, f) => sum + (Number(f.piglets_weaned) || 0), 0)}{' '}
+          weaned
         </p>
       )}
 
       {matings.length > 0 && (
-        <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
+        <div
+          className="overflow-x-auto rounded-[var(--radius-sm)] border"
+          style={S.surface}
+        >
           <table className="w-full border-collapse text-left text-xs">
-            <thead className="border-b" style={{ ...S.raised, color: "var(--text-secondary)" }}>
-              <tr>{headers.map((h) => <th key={h} className={`${cell} font-semibold`}>{h}</th>)}</tr>
+            <thead
+              className="border-b"
+              style={{ ...S.raised, color: 'var(--text-secondary)' }}
+            >
+              <tr>
+                {headers.map((h) => (
+                  <th key={h} className={`${cell} font-semibold`}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
             </thead>
             <tbody>
               {matings.map((m) => {
                 const f = farrowByBreeding.get(m.breeding_id);
                 const open = openRow === m.breeding_id;
-                const litter = f ? `${fmt(f.piglets_born_live)} / ${fmt(f.piglets_born_total)}` : "";
-                const weaned = f && Number(f.piglets_weaned) > 0 ? fmt(f.piglets_weaned) : "";
-                const type = m.pooled ? `${human(m.mating_type)} (pooled lot ${fmt(m.semen_lot_no)})` : human(m.mating_type);
+                const litter = f
+                  ? `${fmt(f.piglets_born_live)} / ${fmt(f.piglets_born_total)}`
+                  : '';
+                const weaned =
+                  f && Number(f.piglets_weaned) > 0
+                    ? fmt(f.piglets_weaned)
+                    : '';
+                const type = m.pooled
+                  ? `${human(m.mating_type)} (pooled lot ${fmt(m.semen_lot_no)})`
+                  : human(m.mating_type);
                 const values = isMale
-                  ? [m.mating_date, type, m.sow_code, m.batch_no, m.parity_number, m.boar_parity_number, m.conception_result, litter, weaned]
-                  : [m.mating_date, type, m.boar_code || (m.semen_lot_no ? `pooled lot ${m.semen_lot_no}` : ""), m.batch_no, m.parity_number, m.preg_check_date, m.conception_result, m.expected_farrowing_date, litter, weaned];
+                  ? [
+                      m.mating_date,
+                      type,
+                      m.sow_code,
+                      m.batch_no,
+                      m.parity_number,
+                      m.boar_parity_number,
+                      m.conception_result,
+                      litter,
+                      weaned,
+                    ]
+                  : [
+                      m.mating_date,
+                      type,
+                      m.boar_code ||
+                        (m.semen_lot_no ? `pooled lot ${m.semen_lot_no}` : ''),
+                      m.batch_no,
+                      m.parity_number,
+                      m.preg_check_date,
+                      m.conception_result,
+                      m.expected_farrowing_date,
+                      litter,
+                      weaned,
+                    ];
                 return (
                   <Fragment key={m.breeding_id}>
                     <tr
                       className="cursor-pointer border-b transition hover:bg-[var(--surface-raised)]"
-                      style={{ borderColor: "var(--border)" }}
+                      style={{ borderColor: 'var(--border)' }}
                       onClick={() => onToggle(m.breeding_id)}
                       aria-expanded={open}
                     >
                       {values.map((v, i) => (
-                        <td key={headers[i]} className={`${cell} ${i === 0 ? "font-mono" : ""}`} style={fmt(v) ? S.primary : S.muted}>
-                          {fmt(v) || "—"}
+                        <td
+                          key={headers[i]}
+                          className={`${cell} ${i === 0 ? 'font-mono' : ''}`}
+                          style={fmt(v) ? S.primary : S.muted}
+                        >
+                          {fmt(v) || NA}
                         </td>
                       ))}
                     </tr>
                     {open && (
-                      <tr className="border-b" style={{ borderColor: "var(--border)" }}>
-                        <td colSpan={headers.length} className="p-3" style={S.raised}>
+                      <tr
+                        className="border-b"
+                        style={{ borderColor: 'var(--border)' }}
+                      >
+                        <td
+                          colSpan={headers.length}
+                          className="p-3"
+                          style={S.raised}
+                        >
                           <div className="flex flex-col gap-3">
-                            <DetailGrid rows={[
-                              ["Second mating", fmt(m.second_mating_date)], ["Semen doses", fmtQty(m.semen_dose_qty)],
-                              ["Check method", fmt(m.preg_check_method)], ["Pregnancy check date", fmt(m.preg_check_date)],
-                              ["Expected farrowing", fmt(m.expected_farrowing_date)], ["Boar parity", fmt(m.boar_parity_number)],
-                              ["Notes", fmt(m.notes)],
-                            ]} />
+                            <DetailGrid
+                              rows={[
+                                ['Second mating', fmt(m.second_mating_date)],
+                                ['Semen doses', fmtQty(m.semen_dose_qty)],
+                                ['Check method', fmt(m.preg_check_method)],
+                                [
+                                  'Pregnancy check date',
+                                  fmt(m.preg_check_date),
+                                ],
+                                [
+                                  'Expected farrowing',
+                                  fmt(m.expected_farrowing_date),
+                                ],
+                                ['Boar parity', fmt(m.boar_parity_number)],
+                                ['Notes', fmt(m.notes)],
+                              ]}
+                            />
                             {f && (
-                              <DetailGrid rows={[
-                                ["Farrowing date", fmt(f.farrowing_date)], ["Farrowing status", fmt(f.farrowing_status)],
-                                ["Born live", fmt(f.piglets_born_live)], ["Stillborn", fmt(f.piglets_stillborn)],
-                                ["Mummified", fmt(f.piglets_mummified)], ["Avg birth weight", fmtQty(f.avg_birth_weight_kg)],
-                                [Number(f.piglets_weaned) > 0 ? "Weaning date" : "Planned weaning", fmt(f.weaning_date)],
-                                ["Avg weaning weight", fmtQty(f.avg_weaning_weight_kg)],
-                                ["Litter mass weaned", Number(f.piglets_weaned) > 0 && Number(f.avg_weaning_weight_kg) > 0 ? `${(Number(f.piglets_weaned) * Number(f.avg_weaning_weight_kg)).toFixed(1)} kg` : ""],
-                              ]} />
+                              <DetailGrid
+                                rows={[
+                                  ['Farrowing date', fmt(f.farrowing_date)],
+                                  ['Farrowing status', fmt(f.farrowing_status)],
+                                  ['Born live', fmt(f.piglets_born_live)],
+                                  ['Stillborn', fmt(f.piglets_stillborn)],
+                                  ['Mummified', fmt(f.piglets_mummified)],
+                                  [
+                                    'Avg birth weight',
+                                    fmtQty(f.avg_birth_weight_kg),
+                                  ],
+                                  [
+                                    Number(f.piglets_weaned) > 0
+                                      ? 'Weaning date'
+                                      : 'Planned weaning',
+                                    fmt(f.weaning_date),
+                                  ],
+                                  [
+                                    'Avg weaning weight',
+                                    fmtQty(f.avg_weaning_weight_kg),
+                                  ],
+                                  [
+                                    'Litter mass weaned',
+                                    Number(f.piglets_weaned) > 0 &&
+                                    Number(f.avg_weaning_weight_kg) > 0
+                                      ? `${(Number(f.piglets_weaned) * Number(f.avg_weaning_weight_kg)).toFixed(1)} kg`
+                                      : '',
+                                  ],
+                                ]}
+                              />
                             )}
                           </div>
                         </td>
@@ -348,15 +559,36 @@ function BreedingRecordTable({
 
       {unlinked.length > 0 && (
         <div className="flex flex-col gap-2">
-          <p className="text-[11px] font-semibold uppercase tracking-wide" style={S.muted}>Farrowings not linked to a service</p>
+          <p
+            className="text-[11px] font-semibold uppercase tracking-wide"
+            style={S.muted}
+          >
+            Farrowings not linked to a service
+          </p>
           {unlinked.map((f) => (
-            <div key={f.farrow_id} className="rounded-[var(--radius-sm)] border p-3" style={S.raised}>
-              <DetailGrid rows={[
-                ["Farrowing date", fmt(f.farrowing_date)], ["Parity", fmt(f.parity_number)],
-                ["Born live / total", `${fmt(f.piglets_born_live)} / ${fmt(f.piglets_born_total)}`],
-                ["Weaned", Number(f.piglets_weaned) > 0 ? fmt(f.piglets_weaned) : ""],
-                ["Weaning date", Number(f.piglets_weaned) > 0 ? fmt(f.weaning_date) : ""],
-              ]} />
+            <div
+              key={f.farrow_id}
+              className="rounded-[var(--radius-sm)] border p-3"
+              style={S.raised}
+            >
+              <DetailGrid
+                rows={[
+                  ['Farrowing date', fmt(f.farrowing_date)],
+                  ['Parity', fmt(f.parity_number)],
+                  [
+                    'Born live / total',
+                    `${fmt(f.piglets_born_live)} / ${fmt(f.piglets_born_total)}`,
+                  ],
+                  [
+                    'Weaned',
+                    Number(f.piglets_weaned) > 0 ? fmt(f.piglets_weaned) : '',
+                  ],
+                  [
+                    'Weaning date',
+                    Number(f.piglets_weaned) > 0 ? fmt(f.weaning_date) : '',
+                  ],
+                ]}
+              />
             </div>
           ))}
         </div>
@@ -379,11 +611,17 @@ function BreedingRecordTable({
  * at Colcom and the Kill Sheet — have no tables at all, so they are stated as
  * unmodelled below the timeline rather than drawn as empty cards.
  */
-export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose: () => void }) {
-  const [tab, setTab] = useState<TabKey>("details");
+export default function AnimalDetailPanel({
+  row,
+  onClose,
+}: {
+  row: Row;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<TabKey>('details');
   const [breeding, setBreeding] = useState<Row | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
   const [openEvent, setOpenEvent] = useState<string | null>(null);
 
   const animalId = row.animal_id;
@@ -391,25 +629,39 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
   useEffect(() => {
     let cancelled = false;
     setBreeding(null);
-    setError("");
+    setError('');
     setOpenEvent(null);
     if (!animalId) return;
     setLoading(true);
-    api.get(`/animal/${animalId}/breeding`)
-      .then((res) => { if (!cancelled) setBreeding(unwrap<Row>(res)); })
-      .catch((err: any) => { if (!cancelled) setError(err?.message || "Could not load breeding history."); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
+    api
+      .get(`/animal/${animalId}/breeding`)
+      .then((res) => {
+        if (!cancelled) setBreeding(unwrap<Row>(res));
+      })
+      .catch((err: any) => {
+        if (!cancelled)
+          setError(err?.message || 'Could not load breeding history.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [animalId]);
 
   const matings: Row[] = breeding?.matings ?? [];
   const farrowings: Row[] = breeding?.farrowings ?? [];
   const movements: Row[] = breeding?.movements ?? [];
   const transfers: Row[] = breeding?.transfers ?? [];
-  const labels = breeding?.traceability_labels ?? { stages: {}, batches: {}, locations: {} };
+  const labels = breeding?.traceability_labels ?? {
+    stages: {},
+    batches: {},
+    locations: {},
+  };
   const lineage: Row = breeding?.lineage ?? { offspring: [] };
   const current: Row = breeding?.current_labels ?? {};
-  const isMale = row.gender === "M" || row.animal_type === "BOAR";
+  const isMale = row.gender === 'M' || row.animal_type === 'BOAR';
 
   const sowStats = useMemo(() => {
     if (isMale) return null;
@@ -419,25 +671,45 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
       return {
         totalBornDead: s.born_dead_count ?? 0,
         totalMummified: s.mummified_count ?? 0,
-        mortalityPct: s.mortality_pct !== null && s.mortality_pct !== undefined
-          ? `${s.mortality_pct}%`
-          : "",
-        totalLitterMassWeanedKg: s.total_litter_mass_weaned_kg !== null && s.total_litter_mass_weaned_kg !== undefined
-          ? `${s.total_litter_mass_weaned_kg} kg`
-          : "",
-        totalBornLive: s.total_born_live ?? Number(row.total_piglets_born_live) ?? 0,
+        mortalityPct:
+          s.mortality_pct !== null && s.mortality_pct !== undefined
+            ? `${s.mortality_pct}%`
+            : '',
+        totalLitterMassWeanedKg:
+          s.total_litter_mass_weaned_kg !== null &&
+          s.total_litter_mass_weaned_kg !== undefined
+            ? `${s.total_litter_mass_weaned_kg} kg`
+            : '',
+        totalBornLive:
+          s.total_born_live ?? Number(row.total_piglets_born_live) ?? 0,
         totalWeaned: s.total_weaned ?? Number(row.total_piglets_weaned) ?? 0,
       };
     }
 
-    const bornLiveFromFarrowings = farrowings.reduce((sum, f) => sum + (Number(f.piglets_born_live) || 0), 0);
-    const weanedFromFarrowings = farrowings.reduce((sum, f) => sum + (Number(f.piglets_weaned) || 0), 0);
+    const bornLiveFromFarrowings = farrowings.reduce(
+      (sum, f) => sum + (Number(f.piglets_born_live) || 0),
+      0,
+    );
+    const weanedFromFarrowings = farrowings.reduce(
+      (sum, f) => sum + (Number(f.piglets_weaned) || 0),
+      0,
+    );
 
-    const totalBornLive = bornLiveFromFarrowings > 0 ? bornLiveFromFarrowings : (Number(row.total_piglets_born_live) || 0);
-    const totalWeaned = weanedFromFarrowings > 0 ? weanedFromFarrowings : (Number(row.total_piglets_weaned) || 0);
+    const totalBornLive =
+      bornLiveFromFarrowings > 0
+        ? bornLiveFromFarrowings
+        : Number(row.total_piglets_born_live) || 0;
+    const totalWeaned =
+      weanedFromFarrowings > 0
+        ? weanedFromFarrowings
+        : Number(row.total_piglets_weaned) || 0;
 
     const totalBornDead = farrowings.reduce((sum, f) => {
-      if (f.piglets_stillborn !== undefined && f.piglets_stillborn !== null && f.piglets_stillborn !== "") {
+      if (
+        f.piglets_stillborn !== undefined &&
+        f.piglets_stillborn !== null &&
+        f.piglets_stillborn !== ''
+      ) {
         return sum + (Number(f.piglets_stillborn) || 0);
       }
       const tot = Number(f.piglets_born_total) || 0;
@@ -446,16 +718,23 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
       return sum + Math.max(0, tot - live - mum);
     }, 0);
 
-    const totalMummified = farrowings.reduce((sum, f) => sum + (Number(f.piglets_mummified) || 0), 0);
+    const totalMummified = farrowings.reduce(
+      (sum, f) => sum + (Number(f.piglets_mummified) || 0),
+      0,
+    );
 
-    let mortalityPct = "";
+    let mortalityPct = '';
     if (totalBornLive > 0) {
       const deaths = Math.max(0, totalBornLive - totalWeaned);
       mortalityPct = `${((deaths / totalBornLive) * 100).toFixed(1)}%`;
     } else if (totalBornDead + totalMummified > 0) {
-      mortalityPct = "100.0%";
-    } else if (row.parity_count !== null && row.parity_count !== undefined && Number(row.parity_count) > 0) {
-      mortalityPct = "0.0%";
+      mortalityPct = '100.0%';
+    } else if (
+      row.parity_count !== null &&
+      row.parity_count !== undefined &&
+      Number(row.parity_count) > 0
+    ) {
+      mortalityPct = '0.0%';
     }
 
     let totalLitterMassWeanedKg = 0;
@@ -475,40 +754,76 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
       totalBornDead,
       totalMummified,
       mortalityPct,
-      totalLitterMassWeanedKg: hasWeanWeight ? `${totalLitterMassWeanedKg.toFixed(1)} kg` : "",
+      totalLitterMassWeanedKg: hasWeanWeight
+        ? `${totalLitterMassWeanedKg.toFixed(1)} kg`
+        : '',
     };
-  }, [isMale, breeding, farrowings, row.total_piglets_born_live, row.total_piglets_weaned, row.parity_count]);
+  }, [
+    isMale,
+    breeding,
+    farrowings,
+    row.total_piglets_born_live,
+    row.total_piglets_weaned,
+    row.parity_count,
+  ]);
 
   const timeline = useMemo<TimelineEvent[]>(() => {
     const events: TimelineEvent[] = [];
-    const created = movements.find((m) => m.action === "CREATE");
+    const created = movements.find((m) => m.action === 'CREATE');
     const createdValues = asObject(created?.new_values);
 
     if (row.dob) {
       events.push({
-        id: "dob", date: fmt(row.dob), title: "Born",
-        summary: [fmt(lineage.dam_code) && `dam ${lineage.dam_code}`, fmt(lineage.sire_code) && `sire ${lineage.sire_code}`]
-          .filter(Boolean).join(" · ") || "Date of birth recorded",
-        detail: [["Date of birth", fmt(row.dob)], ["Dam", fmt(lineage.dam_code)], ["Sire", fmt(lineage.sire_code)]],
+        id: 'dob',
+        date: fmt(row.dob),
+        title: 'Born',
+        summary:
+          [
+            fmt(lineage.dam_code) && `dam ${lineage.dam_code}`,
+            fmt(lineage.sire_code) && `sire ${lineage.sire_code}`,
+          ]
+            .filter(Boolean)
+            .join(' · ') || 'Date of birth recorded',
+        detail: [
+          ['Date of birth', fmt(row.dob)],
+          ['Dam', fmt(lineage.dam_code)],
+          ['Sire', fmt(lineage.sire_code)],
+        ],
       });
     }
     if (row.entry_date) {
       // Registration, with the placement it was registered into as the audit
       // row recorded it — the first link of the batch/stage/pen chain.
       events.push({
-        id: "entry", date: fmt(row.entry_date), title: "Registered",
-        summary: [human(row.entry_type), labels.batches?.[createdValues.current_batch_id], labels.locations?.[createdValues.current_location_id]]
-          .filter(Boolean).join(" · ") || "Entry recorded",
+        id: 'entry',
+        date: fmt(row.entry_date),
+        title: 'Registered',
+        summary:
+          [
+            human(row.entry_type),
+            labels.batches?.[createdValues.current_batch_id],
+            labels.locations?.[createdValues.current_location_id],
+          ]
+            .filter(Boolean)
+            .join(' · ') || 'Entry recorded',
         detail: [
-          ["Entry type", fmt(row.entry_type)], ["Entry date", fmt(row.entry_date)],
-          ["Stage", labels.stages?.[createdValues.current_stage_id] || ""],
-          ["Batch", labels.batches?.[createdValues.current_batch_id] || ""],
-          ["Pen", labels.locations?.[createdValues.current_location_id] || ""],
-          ["Dam", fmt(lineage.dam_code)], ["Sire", fmt(lineage.sire_code)],
-          // source_receipt_id, not source_grn_id: the column is named after
-          // this codebase's goods_receipt table rather than the spec's "GRN".
-          ["Source receipt", fmt(breeding?.source_labels?.receipt_no)], ["Born from batch", fmt(breeding?.source_labels?.batch_label)],
-          ["Acquisition cost", fmtAmount(row.acquisition_cost)],
+          ['Entry type', fmt(row.entry_type)],
+          ['Entry date', fmt(row.entry_date)],
+          ['Stage', labels.stages?.[createdValues.current_stage_id] || ''],
+          ['Batch', labels.batches?.[createdValues.current_batch_id] || ''],
+          ['Pen', labels.locations?.[createdValues.current_location_id] || ''],
+          ['Dam', fmt(lineage.dam_code)],
+          ['Sire', fmt(lineage.sire_code)],
+          // The API resolves the internal source_receipt_id to the business-facing GRN number; the names behind it come from source_labels.
+          [
+            'Source GRN',
+            fmt(row.source_grn_no ?? breeding?.source_labels?.receipt_no),
+          ],
+          [
+            'Born from batch',
+            fmt(breeding?.source_labels?.batch_label ?? row.source_batch_id),
+          ],
+          ['Acquisition cost', fmtAmount(row.acquisition_cost)],
         ],
       });
     }
@@ -531,28 +846,42 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
     }
     for (const [day, group] of offspringByDay) {
       events.push({
-        id: `offspring-${day}`, date: day,
+        id: `offspring-${day}`,
+        date: day,
         title: `${group.length} offspring registered`,
-        summary: group.map((o) => fmt(o.animal_code)).join(", "),
-        detail: group.map((o) => [fmt(o.animal_code), [fmt(o.gender), fmt(o.dob)].filter(Boolean).join(" · ")] as [string, string]),
+        summary: group.map((o) => fmt(o.animal_code)).join(', '),
+        detail: group.map(
+          (o) =>
+            [
+              fmt(o.animal_code),
+              [fmt(o.gender), fmt(o.dob)].filter(Boolean).join(' · '),
+            ] as [string, string],
+        ),
       });
     }
     for (const movement of movements) {
-      if (movement.action !== "TRANSITION_STAGE") continue;
+      if (movement.action !== 'TRANSITION_STAGE') continue;
       const oldValues = asObject(movement.old_values);
       const newValues = asObject(movement.new_values);
-      const fromStage = labels.stages?.[oldValues.current_stage_id] || "Previous stage";
-      const toStage = labels.stages?.[newValues.current_stage_id] || "New stage";
+      const fromStage =
+        labels.stages?.[oldValues.current_stage_id] || 'Previous stage';
+      const toStage =
+        labels.stages?.[newValues.current_stage_id] || 'New stage';
       events.push({
         id: `movement-${movement.occurred_at}-${toStage}`,
-        date: fmt(newValues.transition_date || movement.occurred_at).slice(0, 10),
+        date: fmt(newValues.transition_date || movement.occurred_at).slice(
+          0,
+          10,
+        ),
         title: `Stage moved to ${toStage}`,
         summary: `${fromStage} → ${toStage}`,
         detail: [
-          ["From stage", fromStage], ["To stage", toStage],
-          ["Batch", labels.batches?.[newValues.current_batch_id] || ""],
-          ["Pen", labels.locations?.[newValues.current_location_id] || ""],
-          ["Reason", fmt(newValues.reason)], ["Remarks", fmt(newValues.remarks)],
+          ['From stage', fromStage],
+          ['To stage', toStage],
+          ['Batch', labels.batches?.[newValues.current_batch_id] || ''],
+          ['Pen', labels.locations?.[newValues.current_location_id] || ''],
+          ['Reason', fmt(newValues.reason)],
+          ['Remarks', fmt(newValues.remarks)],
         ],
       });
     }
@@ -561,22 +890,29 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
         id: `transfer-${transfer.transfer_id}`,
         date: fmt(transfer.transfer_date),
         title: `Transferred — ${fmt(transfer.transfer_no)}`,
-        summary: `${fmt(transfer.from_batch_no) || "Previous batch"} → ${fmt(transfer.to_batch_no) || "New batch"}`,
+        summary: `${fmt(transfer.from_batch_no) || 'Previous batch'} → ${fmt(transfer.to_batch_no) || 'New batch'}`,
         detail: [
-          ["Transfer", fmt(transfer.transfer_no)],
-          ["From batch", fmt(transfer.from_batch_no)], ["To batch", fmt(transfer.to_batch_no)],
-          ["From pen", fmt(transfer.from_pen_code)], ["To pen", fmt(transfer.to_pen_code)],
-          ["Reason", fmt(transfer.reason)], ["Remarks", fmt(transfer.remarks)],
+          ['Transfer', fmt(transfer.transfer_no)],
+          ['From batch', fmt(transfer.from_batch_no)],
+          ['To batch', fmt(transfer.to_batch_no)],
+          ['From pen', fmt(transfer.from_pen_code)],
+          ['To pen', fmt(transfer.to_pen_code)],
+          ['Reason', fmt(transfer.reason)],
+          ['Remarks', fmt(transfer.remarks)],
         ],
       });
     }
     if (row.disposal_date) {
       events.push({
-        id: "disposal", date: fmt(row.disposal_date), title: `Disposed — ${human(row.disposal_type)}`,
-        summary: "Left the herd",
+        id: 'disposal',
+        date: fmt(row.disposal_date),
+        title: `Disposed — ${human(row.disposal_type)}`,
+        summary: 'Left the herd',
         detail: [
-          ["Disposal date", fmt(row.disposal_date)], ["Disposal type", fmt(row.disposal_type)],
-          ["Disposal value", fmtAmount(row.disposal_value)], ["Gain / loss", fmt(row.gain_loss_on_disposal)],
+          ['Disposal date', fmt(row.disposal_date)],
+          ['Disposal type', fmt(row.disposal_type)],
+          ['Disposal value', fmtAmount(row.disposal_value)],
+          ['Gain / loss', fmt(row.gain_loss_on_disposal)],
         ],
       });
     }
@@ -585,7 +921,9 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
   }, [row, matings, farrowings, movements, transfers, labels, lineage, isMale]);
 
   const spinner = (
-    <div className="py-10 text-center"><Loader2 className="mx-auto h-4 w-4 animate-spin" style={S.muted} /></div>
+    <div className="py-10 text-center">
+      <Loader2 className="mx-auto h-4 w-4 animate-spin" style={S.muted} />
+    </div>
   );
 
   return (
@@ -596,8 +934,16 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
     >
       {/* The code only: it is the one fact that has to hold on every tab, so
           it says whose history you are reading on Breeding or Traceability. */}
-      <header className="flex items-center justify-between gap-3 border-b p-4" style={{ borderColor: "var(--border)" }}>
-        <p className="truncate font-mono text-sm font-semibold" style={S.primary}>{fmt(row.animal_code)}</p>
+      <header
+        className="flex items-center justify-between gap-3 border-b p-4"
+        style={{ borderColor: 'var(--border)' }}
+      >
+        <p
+          className="truncate font-mono text-sm font-semibold"
+          style={S.primary}
+        >
+          {fmt(row.animal_code)}
+        </p>
         <button
           type="button"
           onClick={onClose}
@@ -609,17 +955,32 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
         </button>
       </header>
 
-      <nav className="flex gap-1 overflow-x-auto border-b px-2 pt-2" style={{ borderColor: "var(--border)" }} aria-label="Animal detail sections">
+      <nav
+        className="flex gap-1 overflow-x-auto border-b px-2 pt-2"
+        style={{ borderColor: 'var(--border)' }}
+        aria-label="Animal detail sections"
+      >
         {TABS.map((tb) => (
           <button
             key={tb.key}
             type="button"
-            onClick={() => { setTab(tb.key); setOpenEvent(null); }}
-            aria-current={tab === tb.key ? "page" : undefined}
+            onClick={() => {
+              setTab(tb.key);
+              setOpenEvent(null);
+            }}
+            aria-current={tab === tb.key ? 'page' : undefined}
             className="whitespace-nowrap px-3 py-2 text-xs font-semibold"
-            style={tab === tb.key
-              ? { color: "var(--accent)", borderBottom: "2px solid var(--accent)" }
-              : { color: "var(--text-secondary)", borderBottom: "2px solid transparent" }}
+            style={
+              tab === tb.key
+                ? {
+                    color: 'var(--accent)',
+                    borderBottom: '2px solid var(--accent)',
+                  }
+                : {
+                    color: 'var(--text-secondary)',
+                    borderBottom: '2px solid transparent',
+                  }
+            }
           >
             {tb.label}
           </button>
@@ -627,9 +988,9 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
       </nav>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        <Toast variant="danger" message={error} onClose={() => setError("")} />
+        <Toast variant="danger" message={error} onClose={() => setError('')} />
 
-        {tab === "details" && (
+        {tab === 'details' && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <ReadField label="Type" value={fmt(row.animal_type)} />
             <ReadField label="Gender" value={fmt(row.gender)} />
@@ -647,74 +1008,170 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
               value={(() => {
                 const age = ageBetween(row.dob, row.entry_date);
                 if (age) return formatAge(age);
-                return row.age_at_entry_weeks === null || row.age_at_entry_weeks === undefined ? "" : `${row.age_at_entry_weeks} weeks`;
+                return row.age_at_entry_weeks === null ||
+                  row.age_at_entry_weeks === undefined
+                  ? ''
+                  : `${row.age_at_entry_weeks} weeks`;
               })()}
             />
             <ReadField label="Entry type" value={fmt(row.entry_type)} />
             <ReadField label="Entry date" value={fmt(row.entry_date)} />
+            <ReadField
+              label="Source GRN"
+              value={
+                row.source_grn_no ? (
+                  <a
+                    className="text-(--accent) hover:underline"
+                    href={`/inventory/goods-receipt?recordId=${encodeURIComponent(row.source_grn_id)}`}
+                  >
+                    {fmt(row.source_grn_no)}
+                  </a>
+                ) : (
+                  ''
+                )
+              }
+            />
             <ReadField label="Sire" value={fmt(lineage.sire_code)} mono />
             <ReadField label="Dam" value={fmt(lineage.dam_code)} mono />
             <ReadField mono label="RFID" value={fmt(row.rfid_tag)} />
             <ReadField
               label="Ear tag image"
-              value={row.ear_tag_image_url
-                ? (
+              value={
+                row.ear_tag_image_url ? (
                   <div className="flex items-center gap-3">
                     <img
-                      src={row.ear_tag_image_url.startsWith("http") ? row.ear_tag_image_url : `${API_ORIGIN}${row.ear_tag_image_url}`}
+                      src={
+                        row.ear_tag_image_url.startsWith('http')
+                          ? row.ear_tag_image_url
+                          : `${API_ORIGIN}${row.ear_tag_image_url}`
+                      }
                       alt="Ear tag"
                       className="h-12 w-12 rounded-[var(--radius-sm)] border object-cover cursor-pointer"
-                      onClick={() => window.open(row.ear_tag_image_url.startsWith("http") ? row.ear_tag_image_url : `${API_ORIGIN}${row.ear_tag_image_url}`, "_blank")}
+                      onClick={() =>
+                        window.open(
+                          row.ear_tag_image_url.startsWith('http')
+                            ? row.ear_tag_image_url
+                            : `${API_ORIGIN}${row.ear_tag_image_url}`,
+                          '_blank',
+                        )
+                      }
                     />
                     <a
-                      href={row.ear_tag_image_url.startsWith("http") ? row.ear_tag_image_url : `${API_ORIGIN}${row.ear_tag_image_url}`}
+                      href={
+                        row.ear_tag_image_url.startsWith('http')
+                          ? row.ear_tag_image_url
+                          : `${API_ORIGIN}${row.ear_tag_image_url}`
+                      }
                       target="_blank"
                       rel="noreferrer"
                       className="underline text-xs"
-                      style={{ color: "var(--accent)" }}
+                      style={{ color: 'var(--accent)' }}
                     >
                       Open full image
                     </a>
                   </div>
+                ) : (
+                  ''
                 )
-                : ""}
+              }
             />
-            {!isMale && <ReadField label="No. of teats" value={fmt(row.no_of_teats)} />}
-            {!isMale && <ReadField label="Parity count" value={fmt(row.parity_count)} />}
-            {!isMale && <ReadField label="Piglets born live" value={fmt(sowStats?.totalBornLive ?? row.total_piglets_born_live)} />}
+            {!isMale && (
+              <ReadField label="No. of teats" value={fmt(row.no_of_teats)} />
+            )}
+            {!isMale && (
+              <ReadField label="Parity count" value={fmt(row.parity_count)} />
+            )}
+            {!isMale && (
+              <ReadField
+                label="Piglets born live"
+                value={fmt(
+                  sowStats?.totalBornLive ?? row.total_piglets_born_live,
+                )}
+              />
+            )}
             {!isMale && (
               <ReadField
                 label="Born dead"
-                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : String(sowStats?.totalBornDead ?? 0)}
+                value={
+                  loading && !breeding ? (
+                    <Loader2
+                      className="h-3.5 w-3.5 animate-spin"
+                      style={S.muted}
+                    />
+                  ) : (
+                    String(sowStats?.totalBornDead ?? 0)
+                  )
+                }
               />
             )}
             {!isMale && (
               <ReadField
                 label="Mummified piglets"
-                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : String(sowStats?.totalMummified ?? 0)}
+                value={
+                  loading && !breeding ? (
+                    <Loader2
+                      className="h-3.5 w-3.5 animate-spin"
+                      style={S.muted}
+                    />
+                  ) : (
+                    String(sowStats?.totalMummified ?? 0)
+                  )
+                }
               />
             )}
-            {!isMale && <ReadField label="Piglets weaned" value={fmt(sowStats?.totalWeaned ?? row.total_piglets_weaned)} />}
+            {!isMale && (
+              <ReadField
+                label="Piglets weaned"
+                value={fmt(sowStats?.totalWeaned ?? row.total_piglets_weaned)}
+              />
+            )}
             {!isMale && (
               <ReadField
                 label="Mortality percentage"
-                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : (sowStats?.mortalityPct || "—")}
+                value={
+                  loading && !breeding ? (
+                    <Loader2
+                      className="h-3.5 w-3.5 animate-spin"
+                      style={S.muted}
+                    />
+                  ) : (
+                    sowStats?.mortalityPct || NA
+                  )
+                }
               />
             )}
             {!isMale && (
               <ReadField
                 label="Total litter mass weaned"
-                value={loading && !breeding ? <Loader2 className="h-3.5 w-3.5 animate-spin" style={S.muted} /> : (sowStats?.totalLitterMassWeanedKg || "—")}
+                value={
+                  loading && !breeding ? (
+                    <Loader2
+                      className="h-3.5 w-3.5 animate-spin"
+                      style={S.muted}
+                    />
+                  ) : (
+                    sowStats?.totalLitterMassWeanedKg || NA
+                  )
+                }
               />
             )}
             <ReadField label="Book value" value={fmtAmount(row.book_value)} />
-            <ReadField label="Expected cull date" value={fmt(row.expected_cull_date)} />
+            <ReadField
+              label="Expected cull date"
+              value={fmt(row.expected_cull_date)}
+            />
             {/* Rishi, 14 Oct: beside the expected date, the day it actually happened — the date of
                 death for an animal that died (mortality in data entry or Dispose), the actual cull date for one culled. */}
-            {row.disposal_type === "DIED" || row.status === "DEAD" ? (
+            {row.disposal_type === 'DIED' || row.status === 'DEAD' ? (
               <ReadField label="Date of death" value={fmt(row.disposal_date)} />
             ) : (
-              <ReadField label="Actual cull date" value={fmt(row.cull_date ?? (row.disposal_type === "CULLED" ? row.disposal_date : null))} />
+              <ReadField
+                label="Actual cull date"
+                value={fmt(
+                  row.cull_date ??
+                    (row.disposal_type === 'CULLED' ? row.disposal_date : null),
+                )}
+              />
             )}
             {/* Disposal is set by the Dispose action, which checks withdrawal
                 periods and posts the gain or loss — never by a form field.
@@ -724,8 +1181,10 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
           </div>
         )}
 
-        {tab === "breeding" && (
-          loading ? spinner : (
+        {tab === 'breeding' &&
+          (loading ? (
+            spinner
+          ) : (
             <BreedingRecordTable
               matings={matings}
               farrowings={farrowings}
@@ -733,11 +1192,12 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
               openRow={openEvent}
               onToggle={(id) => setOpenEvent(openEvent === id ? null : id)}
             />
-          )
-        )}
+          ))}
 
-        {tab === "traceability" && (
-          loading ? spinner : (
+        {tab === 'traceability' &&
+          (loading ? (
+            spinner
+          ) : (
             <div className="flex flex-col gap-4">
               <TimelineList
                 events={timeline}
@@ -748,8 +1208,7 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
               {/* Only a permanent gap needs stating; an absent card already says
                   a thing has not happened. */}
             </div>
-          )
-        )}
+          ))}
       </div>
     </aside>
   );

@@ -555,9 +555,8 @@ export default function FeedStockCountPanel() {
             <Button size="sm" variant="outline" onClick={closeDialog} disabled={busy}>{t("cancel")}</Button>
             <Button size="sm" onClick={() => void createCount()} disabled={busy || entry.pairs.length === 0}>{t("fscSave")}</Button>
           </>
-        ) : selected ? (
+        ) : selected && (canSubmit || canPost) ? (
           <>
-            <Button size="sm" variant="outline" onClick={closeDialog} disabled={busy}>{t("close")}</Button>
             {canSubmit && <Button size="sm" onClick={() => void submit(selected.count_id)} disabled={busy}>{t("fscSubmit")}</Button>}
             {canPost && <Button size="sm" onClick={() => void post(selected.count_id)} disabled={busy}>{t("fscPost")}</Button>}
           </>

@@ -59,6 +59,7 @@ import { BioAssetLedgerModule } from './modules/inventory/bio-asset-ledger/bio-a
 import { BioCostingModule } from './modules/finance/bio-costing/bio-costing.module';
 import { StockTransferModule } from './modules/inventory/stock-transfer/stock-transfer.module';
 import { StockAdjustmentModule } from './modules/inventory/stock-adjustment/stock-adjustment.module';
+import { MillOutputModule } from './modules/inventory/mill-output/mill-output.module';
 import { InventorySetupModule } from './modules/inventory/inventory-setup/inventory-setup.module';
 import { JournalModule } from './modules/finance/journal/journal.module';
 import { ExpenseModule } from './modules/finance/expense/expense.module';
@@ -81,6 +82,7 @@ import { AnimalModule } from './modules/piggery/animal/animal.module';
 import { BreedingModule } from './modules/piggery/breeding/breeding.module';
 import { GiltSelectionModule } from './modules/piggery/gilt-selection/gilt-selection.module';
 import { PiggeryAnalyticsModule } from './modules/piggery/analytics/piggery-analytics.module';
+import { ReportsModule } from './modules/piggery/reports/reports.module';
 import { TenantMiddleware } from './common/middlewares/tenant.middleware';
 import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
@@ -163,6 +165,7 @@ import { SystemController } from './system/system.controller';
     BioCostingModule,
     StockTransferModule,
     StockAdjustmentModule,
+    MillOutputModule,
     InventorySetupModule,
     JournalModule,
     ExpenseModule,
@@ -193,6 +196,7 @@ import { SystemController } from './system/system.controller';
     BreedingModule,
     GiltSelectionModule,
     PiggeryAnalyticsModule,
+    ReportsModule,
   ],
   controllers: [SystemController],
   providers: [],

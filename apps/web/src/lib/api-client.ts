@@ -26,7 +26,8 @@ function setSessionCookie() {
 // Local storage can outlive the middleware's presence cookie. Restore only
 // that hint before client navigation; API token validation remains authoritative.
 export function restoreSessionCookie(): boolean {
-  if (!stored(AUTH_STORAGE.accessToken) || !stored(AUTH_STORAGE.user)) return false;
+  if (!stored(AUTH_STORAGE.accessToken) || !stored(AUTH_STORAGE.user))
+    return false;
   setSessionCookie();
   return true;
 }
@@ -51,6 +52,12 @@ type ApiOptions = Omit<RequestInit, 'body'> & {
   body?: unknown;
   tenantId?: string | null;
   retry?: boolean;
+  /**
+   * Ask as this company's workspace for this one call, whatever workspace is active. The tenant dashboard reads
+   * each company's register this way: company records are not listed in tenant scope. The server still checks
+   * the user may open that company.
+   */
+  asCompany?: string;
 };
 
 function stored(key: string): string | null {
@@ -95,7 +102,10 @@ function clearSession() {
   const refreshToken = localStorage.getItem(AUTH_STORAGE.refreshToken);
   const tenantId = localStorage.getItem(AUTH_STORAGE.tenantId);
   if (token && refreshToken) {
-    const headers = new Headers({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` });
+    const headers = new Headers({
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    });
     if (tenantId) headers.set('x-tenant-id', tenantId);
     fetch(`${API_BASE_URL}/auth/logout`, {
       method: 'POST',
@@ -148,7 +158,11 @@ async function refreshAccessToken(): Promise<string> {
       // state. Send the browser to login instead of leaving a signed-out user
       // looking at a dashboard of zeroes.
       redirectToLogin();
-      throw new ApiError(errorMessage(payload, 'Your session has expired.'), response.status, payload);
+      throw new ApiError(
+        errorMessage(payload, 'Your session has expired.'),
+        response.status,
+        payload,
+      );
     }
     localStorage.setItem(AUTH_STORAGE.accessToken, payload.access_token);
     if (payload.refresh_token) {
@@ -162,7 +176,11 @@ async function refreshAccessToken(): Promise<string> {
 }
 
 /** The headers every authenticated call carries: token, tenant, and the active workspace/company/area/farm scope. */
-function scopedHeaders(base: HeadersInit | undefined, tenantId: string | null | undefined, json: boolean): Headers {
+function scopedHeaders(
+  base: HeadersInit | undefined,
+  tenantId: string | null | undefined,
+  json: boolean,
+): Headers {
   const headers = new Headers(base);
   if (json) headers.set('Content-Type', 'application/json');
   const token = stored(AUTH_STORAGE.accessToken);
@@ -170,21 +188,37 @@ function scopedHeaders(base: HeadersInit | undefined, tenantId: string | null | 
   if (tenantId) headers.set('x-tenant-id', tenantId);
   const activeCompanyId = stored('active_company_id');
   let userType: string | undefined;
-  try { userType = JSON.parse(stored(AUTH_STORAGE.user) || '{}').userType; } catch { /* Authentication handles an invalid stored session. */ }
-  const isFarmBoundUser = userType === 'FARM_MANAGER' || userType === 'STANDARD_USER';
-  const workspaceScope = stored('active_workspace_scope') || (userType === 'TENANT_ADMIN' ? 'TENANT' : ['OPERATIONAL_ADMIN', 'FARM_MANAGER', 'STANDARD_USER'].includes(userType || '') ? 'OPERATIONAL' : 'COMPANY');
+  try {
+    userType = JSON.parse(stored(AUTH_STORAGE.user) || '{}').userType;
+  } catch {
+    /* Authentication handles an invalid stored session. */
+  }
+  const isFarmBoundUser =
+    userType === 'FARM_MANAGER' || userType === 'STANDARD_USER';
+  const workspaceScope =
+    stored('active_workspace_scope') ||
+    (userType === 'TENANT_ADMIN'
+      ? 'TENANT'
+      : ['OPERATIONAL_ADMIN', 'FARM_MANAGER', 'STANDARD_USER'].includes(
+            userType || '',
+          )
+        ? 'OPERATIONAL'
+        : 'COMPANY');
   if (workspaceScope) headers.set('x-workspace-scope', workspaceScope);
-  if (activeCompanyId && workspaceScope !== 'TENANT') headers.set('x-active-company-id', activeCompanyId);
+  if (activeCompanyId && workspaceScope !== 'TENANT')
+    headers.set('x-active-company-id', activeCompanyId);
   else headers.delete('x-active-company-id');
   const activeAreaId = stored('active_operational_area_id');
-  if (activeAreaId && (!workspaceScope || workspaceScope === 'OPERATIONAL')) headers.set('x-active-operational-area-id', activeAreaId);
+  if (activeAreaId && (!workspaceScope || workspaceScope === 'OPERATIONAL'))
+    headers.set('x-active-operational-area-id', activeAreaId);
   else headers.delete('x-active-operational-area-id');
   // A farm-bound user's farm is fixed server-side (user_master.farm_id) — the
   // API derives it and 403s on a header naming a different farm, so the
   // client must never send one for that persona. Every other user type may
   // send it to select a single farm; absent means every farm in scope.
   const activeFarmId = stored('active_farm_id');
-  if (activeFarmId && !isFarmBoundUser) headers.set('x-active-farm-id', activeFarmId);
+  if (activeFarmId && !isFarmBoundUser)
+    headers.set('x-active-farm-id', activeFarmId);
   else headers.delete('x-active-farm-id');
   return headers;
 }
@@ -201,32 +235,71 @@ export interface ApiDownload {
  * authentication, refresh and scope headers as every other call. apiRequest
  * always parses JSON, which a spreadsheet is not.
  */
-export async function apiDownload(path: string, fallbackName = 'download', retry = true): Promise<ApiDownload> {
-  const headers = scopedHeaders(undefined, stored(AUTH_STORAGE.tenantId), false);
-  const response = await fetch(`${API_BASE_URL}${path}`, { method: 'GET', headers });
+export async function apiDownload(
+  path: string,
+  fallbackName = 'download',
+  retry = true,
+): Promise<ApiDownload> {
+  const headers = scopedHeaders(
+    undefined,
+    stored(AUTH_STORAGE.tenantId),
+    false,
+  );
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'GET',
+    headers,
+  });
   if (response.status === 401 && stored(AUTH_STORAGE.accessToken) && retry) {
     await refreshAccessToken();
     return apiDownload(path, fallbackName, false);
   }
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throw new ApiError(errorMessage(payload, `Download failed (${response.status}).`), response.status, payload);
+    throw new ApiError(
+      errorMessage(payload, `Download failed (${response.status}).`),
+      response.status,
+      payload,
+    );
   }
   const disposition = response.headers.get('content-disposition') || '';
   const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition);
-  return { blob: await response.blob(), filename: match ? decodeURIComponent(match[1]) : fallbackName, headers: response.headers };
+  return {
+    blob: await response.blob(),
+    filename: match ? decodeURIComponent(match[1]) : fallbackName,
+    headers: response.headers,
+  };
 }
 
-export async function apiRequest<T>(path: string, options: ApiOptions = {}): Promise<T> {
-  const { body, tenantId = stored(AUTH_STORAGE.tenantId), retry = true, ...init } = options;
-  const isFormData = body instanceof FormData || (body && typeof (body as any).append === 'function');
+export async function apiRequest<T>(
+  path: string,
+  options: ApiOptions = {},
+): Promise<T> {
+  const {
+    body,
+    tenantId = stored(AUTH_STORAGE.tenantId),
+    retry = true,
+    asCompany,
+    ...init
+  } = options;
+  const isFormData =
+    body instanceof FormData ||
+    (body && typeof (body as any).append === 'function');
   const headers = scopedHeaders(init.headers, tenantId, !isFormData);
+  if (asCompany) {
+    headers.set('x-workspace-scope', 'COMPANY');
+    headers.set('x-active-company-id', asCompany);
+    headers.delete('x-active-operational-area-id');
+  }
   const token = stored(AUTH_STORAGE.accessToken);
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers,
-    body: isFormData ? (body as any) : body === undefined ? undefined : JSON.stringify(body),
+    body: isFormData
+      ? (body as any)
+      : body === undefined
+        ? undefined
+        : JSON.stringify(body),
   });
 
   if (response.status === 401 && token && retry && path !== '/auth/refresh') {
@@ -235,19 +308,29 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}): Pro
     return apiRequest<T>(path, { ...options, headers, retry: false });
   }
 
-  const payload = response.status === 204 ? null : await response.json().catch(() => null);
+  const payload =
+    response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(errorMessage(payload, `Request failed (${response.status}).`), response.status, payload);
+    throw new ApiError(
+      errorMessage(payload, `Request failed (${response.status}).`),
+      response.status,
+      payload,
+    );
   }
   return payload as T;
 }
 
 export const api = {
-  get: <T>(path: string, options?: ApiOptions) => apiRequest<T>(path, { ...options, method: 'GET' }),
-  post: <T>(path: string, body?: unknown, options?: ApiOptions) => apiRequest<T>(path, { ...options, method: 'POST', body }),
-  put: <T>(path: string, body?: unknown, options?: ApiOptions) => apiRequest<T>(path, { ...options, method: 'PUT', body }),
-  patch: <T>(path: string, body?: unknown, options?: ApiOptions) => apiRequest<T>(path, { ...options, method: 'PATCH', body }),
-  delete: <T>(path: string, options?: ApiOptions) => apiRequest<T>(path, { ...options, method: 'DELETE' }),
+  get: <T>(path: string, options?: ApiOptions) =>
+    apiRequest<T>(path, { ...options, method: 'GET' }),
+  post: <T>(path: string, body?: unknown, options?: ApiOptions) =>
+    apiRequest<T>(path, { ...options, method: 'POST', body }),
+  put: <T>(path: string, body?: unknown, options?: ApiOptions) =>
+    apiRequest<T>(path, { ...options, method: 'PUT', body }),
+  patch: <T>(path: string, body?: unknown, options?: ApiOptions) =>
+    apiRequest<T>(path, { ...options, method: 'PATCH', body }),
+  delete: <T>(path: string, options?: ApiOptions) =>
+    apiRequest<T>(path, { ...options, method: 'DELETE' }),
 };
 
 export function persistAuthSession(session: {
@@ -261,7 +344,9 @@ export function persistAuthSession(session: {
   const uiLanguage = (session.user as { uiLanguage?: string }).uiLanguage;
   if (uiLanguage) {
     localStorage.setItem('navfarm_lang', uiLanguage);
-    window.dispatchEvent(new CustomEvent('navfarm:lang-sync', { detail: uiLanguage }));
+    window.dispatchEvent(
+      new CustomEvent('navfarm:lang-sync', { detail: uiLanguage }),
+    );
   }
   const tenantId = (session.user as { tenantId?: string }).tenantId;
   if (tenantId) {

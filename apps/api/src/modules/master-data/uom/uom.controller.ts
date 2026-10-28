@@ -54,7 +54,10 @@ export class UomController {
     return {
       success: true,
       message: 'Units of Measure retrieved successfully.',
-      data: result
+      data: result.data,
+      total: result.total,
+      limit: result.limit,
+      offset: result.offset,
     };
   }
 

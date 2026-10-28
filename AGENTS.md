@@ -47,7 +47,7 @@ this file and Rishi disagree, **Rishi wins** — say so and update this file.
 ## 2. Source of truth
 
 **Rishi is the source of truth.** Not the BBP, not the TDD tracker, not the
-templates. Every document in this repo is *reference* — evidence of what the
+templates. Every document in this repo is _reference_ — evidence of what the
 client has said so far — and every one of them is incomplete, unsigned, or
 contradicts another. What the application should do is what Rishi says it
 should do.
@@ -166,14 +166,11 @@ the message describes nothing that happened.
 
 - Animal code prefix: TDD row 7 and the Animal Register template say
   `PIG-YYYY-SEQ`; BBP §2.1 says `ANM-YYYY-NNNNN`.
-- Does "weaning" mean the sow's event or the piglets' phase? On the BBP's chain
-  (Sow → Piglet Lot → Weaner Batch) the weaner phase belongs to a batch.
-- Residual value: a percentage (our column) or a per-kg rate (the Bio Asset BBP
-  and the 20 Aug MOM)?
-- Reporting currency: §1.1's flowchart says ZWL, its field spec says USD.
-- ZWL or ZiG.
+- Answered 20 Oct (docs/decisions.md): weaning is the Lactation stage (the sow suckles the litter); residual
+  value is a per-kg rate; Base Currency is posted, Local Currency is mapped at the Currency master's rate.
+- Which local currency: ZWL or ZiG (the mechanism is settled, the currency is not).
 - 47 reason codes were promised; 3 exist. Mortality alone is specified as 21.
-- The Kill Sheet and DOA have **no tables**. BBP gives the kill sheet a process
+- The Kill Sheet and DOA have **no tables** (deferred by Rishi, 20 Oct). BBP gives the kill sheet a process
   (attached to the transfer order, carcass weights per line, invoice =
   Delivered Qty × Avg Carcass Weight × Price/KG) but no field specification.
 
@@ -336,12 +333,12 @@ Evidence: `docs/VERIFICATION-2026-10-04-feed-part-e.md`.
    architecture changes, so another agent does not reconstruct history from
    stale workbook examples.
 7. **In a git worktree, nx builds and serves the wrong tree.** `nx run
-   api:build`, `nx run web:dev`, `nx test web` and `nx lint web` all replayed the
+api:build`, `nx run web:dev`, `nx test web` and `nx lint web` all replayed the
    main checkout on 3 Oct, even with `--skip-nx-cache`, `NX_DAEMON=false` and the
    worktree's own nx binary. Build the API with
    `cd apps/api && NODE_ENV=production NX_WORKSPACE_ROOT_PATH=<worktree>
-   NX_TASK_TARGET_PROJECT=api NX_TASK_TARGET_TARGET=build
-   ../../node_modules/.bin/webpack-cli build`, serve the web with
+NX_TASK_TARGET_PROJECT=api NX_TASK_TARGET_TARGET=build
+../../node_modules/.bin/webpack-cli build`, serve the web with
    `cd apps/web && ../../node_modules/.bin/next dev --port 3002`, and run jest
    with `../../node_modules/.bin/jest --maxWorkers=2`. Then **grep the bundle for
    a string from your newest commit** before believing anything the API tells

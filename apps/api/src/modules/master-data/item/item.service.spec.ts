@@ -594,7 +594,7 @@ describe('ItemService', () => {
 
       await expect(
         service.update('item-draft-1', { item_name: '' }, 'tenant-123')
-      ).rejects.toThrow(new BadRequestException('Item Description is mandatory.'));
+      ).rejects.toThrow(new BadRequestException('Item Name is mandatory.'));
     });
 
     it('should require unit of measure when description is provided', async () => {

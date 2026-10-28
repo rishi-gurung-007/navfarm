@@ -14,18 +14,29 @@ const host = process.env.DATABASE_HOST || '127.0.0.1';
 const port = Number(process.env.DATABASE_PORT || 3306);
 const user = process.env.DATABASE_USERNAME || 'root';
 const password = process.env.DATABASE_PASSWORD || '';
-const ssl = process.env.DATABASE_SSL === 'true'
-  ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
-  : undefined;
+const ssl =
+  process.env.DATABASE_SSL === 'true'
+    ? { minVersion: 'TLSv1.2' as const, rejectUnauthorized: true }
+    : undefined;
 
 async function run() {
   const apply = process.argv.includes('--apply');
   const verify = process.argv.includes('--verify');
-  if (process.argv.slice(2).some((a) => !['--apply', '--verify'].includes(a)) || (apply && verify)) {
+  if (
+    process.argv.slice(2).some((a) => !['--apply', '--verify'].includes(a)) ||
+    (apply && verify)
+  ) {
     throw new Error('Use no flags (read-only), --verify, or --apply.');
   }
   const database = process.env.DEV_TENANT_DATABASE || 'nf_devco';
-  const db = await mysql.createConnection({ host, port, user, password, database, ssl });
+  const db = await mysql.createConnection({
+    host,
+    port,
+    user,
+    password,
+    database,
+    ssl,
+  });
   try {
     // The same count syncAnimalWiseCounts writes: live animals of the batch whose stage has this stage code.
     const [rows] = await db.query<RowDataPacket[]>(
@@ -41,10 +52,19 @@ async function run() {
         ORDER BY b.batch_no, s.stage_code`,
     );
     const plan = rows.filter((r) => Number(r.stored_count) !== Number(r.live));
-    console.log(JSON.stringify({
-      database,
-      toRecount: plan.map((r) => `${r.batch_no} ${r.stage_code}: ${Number(r.stored_count)} → ${Number(r.live)}`),
-    }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          database,
+          toRecount: plan.map(
+            (r) =>
+              `${r.batch_no} ${r.stage_code}: ${Number(r.stored_count)} → ${Number(r.live)}`,
+          ),
+        },
+        null,
+        2,
+      ),
+    );
 
     if (!apply && !verify) {
       console.log('Read-only. No changes attempted.');
@@ -52,7 +72,10 @@ async function run() {
     }
     await db.beginTransaction();
     for (const r of plan) {
-      await db.query('UPDATE scheduler_header SET animal_count = ?, updated_at = NOW() WHERE scheduler_id = ?', [r.live, r.scheduler_id]);
+      await db.query(
+        'UPDATE scheduler_header SET animal_count = ?, updated_at = NOW() WHERE scheduler_id = ?',
+        [r.live, r.scheduler_id],
+      );
     }
     console.log(`Recounted ${plan.length}.`);
     if (apply) {

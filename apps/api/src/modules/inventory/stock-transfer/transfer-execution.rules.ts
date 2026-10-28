@@ -13,7 +13,10 @@
  * line's balance and the transfer line's balance are the same arithmetic.
  */
 import { BadRequestException } from '@nestjs/common';
-import { assertReceiptQty, assertShipmentQty } from '../../procurement/requisition/requisition.rules';
+import {
+  assertReceiptQty,
+  assertShipmentQty,
+} from '../../procurement/requisition/requisition.rules';
 import { FLOAT_SUM_TOLERANCE } from '../../../common/numeric-tolerance';
 
 export interface TrackingAssignment {
@@ -34,14 +37,25 @@ export interface ItemTrackingFlags {
  * row-per-identity shape: serials are one unit each, a bare lot carries the
  * whole line quantity.
  */
-export function assignmentsFromLine(line: { lot_no: string | null; serial_no: string | null; qty: number }): TrackingAssignment[] {
+export function assignmentsFromLine(line: {
+  lot_no: string | null;
+  serial_no: string | null;
+  qty: number;
+}): TrackingAssignment[] {
   const qtyAbs = Math.abs(line.qty);
-  const serials = String(line.serial_no ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const serials = String(line.serial_no ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (line.lot_no) {
     // One lot with one or more serials: the lot carries the serials, one row
     // per serial, qty 1, and the remainder (if any) stays on the lot.
     if (serials.length) {
-      return serials.map((s) => ({ lot_no: line.lot_no, serial_no: s, qty: 1 }));
+      return serials.map((s) => ({
+        lot_no: line.lot_no,
+        serial_no: s,
+        qty: 1,
+      }));
     }
     return [{ lot_no: line.lot_no, serial_no: null, qty: qtyAbs }];
   }
@@ -50,7 +64,6 @@ export function assignmentsFromLine(line: { lot_no: string | null; serial_no: st
   }
   return [{ lot_no: null, serial_no: null, qty: qtyAbs }];
 }
-
 
 export interface ShipmentLineState {
   ordered: number;
@@ -66,8 +79,12 @@ export interface ReceiptLineState {
 }
 
 /** The quantity guards, re-raised under transfer names for the callers here. */
-export const assertShipmentEvent = (balanceToShip: number, qty: number): void => assertShipmentQty(balanceToShip, qty);
-export const assertReceiptEvent = (remainingToReceive: number, qty: number): void => assertReceiptQty(remainingToReceive, qty);
+export const assertShipmentEvent = (balanceToShip: number, qty: number): void =>
+  assertShipmentQty(balanceToShip, qty);
+export const assertReceiptEvent = (
+  remainingToReceive: number,
+  qty: number,
+): void => assertReceiptQty(remainingToReceive, qty);
 
 /** Ship `qty` against a line: append-only accumulation, never beyond the order. */
 export function nextShipmentState(
@@ -76,7 +93,11 @@ export function nextShipmentState(
 ): { shipped: number; balanceToShip: number; events: TrackingAssignment[] } {
   const remaining = state.ordered - state.previouslyShipped;
   assertShipmentQty(remaining, event.qty);
-  return { shipped: state.previouslyShipped + event.qty, balanceToShip: remaining - event.qty, events: [] };
+  return {
+    shipped: state.previouslyShipped + event.qty,
+    balanceToShip: remaining - event.qty,
+    events: [],
+  };
 }
 
 /**
@@ -87,13 +108,22 @@ export function nextShipmentState(
 export function nextReceiptState(
   state: ReceiptLineState,
   event: { lineId: string; qty: number },
-): { received: number; remainingToReceive: number; events: TrackingAssignment[] } {
+): {
+  received: number;
+  remainingToReceive: number;
+  events: TrackingAssignment[];
+} {
   if (state.previouslyShipped <= 0) {
     throw new BadRequestException('A receipt cannot precede its shipment.');
   }
-  const remaining = Math.min(state.previouslyShipped, state.ordered) - state.previouslyReceived;
+  const remaining =
+    Math.min(state.previouslyShipped, state.ordered) - state.previouslyReceived;
   assertReceiptQty(remaining, event.qty);
-  return { received: state.previouslyReceived + event.qty, remainingToReceive: remaining - event.qty, events: [] };
+  return {
+    received: state.previouslyReceived + event.qty,
+    remainingToReceive: remaining - event.qty,
+    events: [],
+  };
 }
 
 /**
@@ -108,30 +138,44 @@ export function assertTrackingAssignments(
   qty: number,
 ): void {
   if (item.isLotTracked && !assignments.some((a) => a.lot_no)) {
-    throw new BadRequestException('Item is lot-tracked; assign a lot before shipment.');
+    throw new BadRequestException(
+      'Item is lot-tracked; assign a lot before shipment.',
+    );
   }
   if (item.isSerialTracked) {
     if (!assignments.some((a) => a.serial_no)) {
-      throw new BadRequestException('Item is serial-tracked; assign a serial number before shipment.');
+      throw new BadRequestException(
+        'Item is serial-tracked; assign a serial number before shipment.',
+      );
     }
-    const serials = assignments.filter((a) => a.serial_no).map((a) => a.serial_no);
+    const serials = assignments
+      .filter((a) => a.serial_no)
+      .map((a) => a.serial_no);
     if (new Set(serials).size !== serials.length) {
-      throw new BadRequestException('Serial numbers must be unique on one transfer line.');
+      throw new BadRequestException(
+        'Serial numbers must be unique on one transfer line.',
+      );
     }
   }
   if (item.isLotTracked || item.isSerialTracked) {
     const covered = assignments.reduce((sum, a) => sum + a.qty, 0);
     if (assignments.length === 0 || covered <= 0) {
-      throw new BadRequestException('Assigned quantities must cover the shipped quantity.');
+      throw new BadRequestException(
+        'Assigned quantities must cover the shipped quantity.',
+      );
     }
     if (covered + FLOAT_SUM_TOLERANCE < qty) {
-      throw new BadRequestException(`Assigned lot/serial quantities (${covered}) do not cover the shipped quantity (${qty}).`);
+      throw new BadRequestException(
+        `Assigned lot/serial quantities (${covered}) do not cover the shipped quantity (${qty}).`,
+      );
     }
   }
 }
 
 /** Receipt copies the shipment's assignments verbatim (spec: "copied automatically"). */
-export function cumulativeAfter(assignments: TrackingAssignment[]): TrackingAssignment[] {
+export function cumulativeAfter(
+  assignments: TrackingAssignment[],
+): TrackingAssignment[] {
   return assignments.map((a) => ({ ...a }));
 }
 
@@ -155,11 +199,17 @@ export function cumulativeAfter(assignments: TrackingAssignment[]): TrackingAssi
  */
 const FULLY_COVERED_TOLERANCE = FLOAT_SUM_TOLERANCE;
 
-export const transferIsFullyShipped = (lines: Array<{ ordered: number; shipped: number }>): boolean =>
-  lines.length > 0 && lines.every((l) => l.shipped >= l.ordered - FULLY_COVERED_TOLERANCE);
+export const transferIsFullyShipped = (
+  lines: Array<{ ordered: number; shipped: number }>,
+): boolean =>
+  lines.length > 0 &&
+  lines.every((l) => l.shipped >= l.ordered - FULLY_COVERED_TOLERANCE);
 
-export const transferIsFullyReceived = (lines: Array<{ ordered: number; received: number }>): boolean =>
-  lines.length > 0 && lines.every((l) => l.received >= l.ordered - FULLY_COVERED_TOLERANCE);
+export const transferIsFullyReceived = (
+  lines: Array<{ ordered: number; received: number }>,
+): boolean =>
+  lines.length > 0 &&
+  lines.every((l) => l.received >= l.ordered - FULLY_COVERED_TOLERANCE);
 
 /**
  * A transfer's status, derived from its events (Part E Task 4b). The column
@@ -172,14 +222,22 @@ export const transferIsFullyReceived = (lines: Array<{ ordered: number; received
  * CANCELLED is not derived: only remove() sets it, and only on a transfer
  * with no events.
  */
-export type TransferStatus = 'DRAFT' | 'IN_TRANSIT' | 'PARTIALLY_RECEIVED' | 'POSTED';
+export type TransferStatus =
+  'DRAFT' | 'IN_TRANSIT' | 'PARTIALLY_RECEIVED' | 'POSTED';
 
 /** Statuses a further shipment or receipt may still be posted against. */
-export const OPEN_TRANSFER_STATUSES: readonly TransferStatus[] = ['DRAFT', 'IN_TRANSIT', 'PARTIALLY_RECEIVED'];
+export const OPEN_TRANSFER_STATUSES: readonly TransferStatus[] = [
+  'DRAFT',
+  'IN_TRANSIT',
+  'PARTIALLY_RECEIVED',
+];
 
-export function transferStatusFor(lines: Array<{ ordered: number; shipped: number; received: number }>): TransferStatus {
+export function transferStatusFor(
+  lines: Array<{ ordered: number; shipped: number; received: number }>,
+): TransferStatus {
   if (!lines.some((l) => l.shipped > 0)) return 'DRAFT';
-  if (transferIsFullyShipped(lines) && transferIsFullyReceived(lines)) return 'POSTED';
+  if (transferIsFullyShipped(lines) && transferIsFullyReceived(lines))
+    return 'POSTED';
   if (lines.some((l) => l.received > 0)) return 'PARTIALLY_RECEIVED';
   return 'IN_TRANSIT';
 }
@@ -193,14 +251,25 @@ export function transferStatusFor(lines: Array<{ ordered: number; shipped: numbe
  * partial receipt takes the next serials not yet received on that shipment
  * line, in shipment order.
  */
-export function serialsForReceipt(shipmentSerialNo: string | null, alreadyReceived: number, qty: number): string[] {
-  const serials = String(shipmentSerialNo ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+export function serialsForReceipt(
+  shipmentSerialNo: string | null,
+  alreadyReceived: number,
+  qty: number,
+): string[] {
+  const serials = String(shipmentSerialNo ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (!Number.isInteger(qty) || !Number.isInteger(alreadyReceived)) {
-    throw new BadRequestException(`Serial-tracked receipts are whole units (got ${qty}).`);
+    throw new BadRequestException(
+      `Serial-tracked receipts are whole units (got ${qty}).`,
+    );
   }
   const left = serials.length - alreadyReceived;
   if (qty > left) {
-    throw new BadRequestException(`The shipment line has ${left} serial(s) left to receive; ${qty} requested.`);
+    throw new BadRequestException(
+      `The shipment line has ${left} serial(s) left to receive; ${qty} requested.`,
+    );
   }
   return serials.slice(alreadyReceived, alreadyReceived + qty);
 }
@@ -232,16 +301,25 @@ export function assertTrackingForShipment(
   qty: number,
   balanceToShip: number,
 ): void {
-  assertTrackingAssignments(item, assignmentsFromLine({ ...assignment, qty }), qty);
+  assertTrackingAssignments(
+    item,
+    assignmentsFromLine({ ...assignment, qty }),
+    qty,
+  );
   if (item.isSerialTracked) {
     if (qty + FLOAT_SUM_TOLERANCE < balanceToShip) {
       throw new BadRequestException(
         `A serial-tracked line ships its whole balance (${balanceToShip}) in one shipment; partial shipments of serial-tracked lines are not supported yet.`,
       );
     }
-    const count = String(assignment.serial_no ?? '').split(',').map((s) => s.trim()).filter(Boolean).length;
+    const count = String(assignment.serial_no ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean).length;
     if (count !== qty) {
-      throw new BadRequestException(`Assign exactly ${qty} serial number(s) to ship ${qty}; ${count} are assigned.`);
+      throw new BadRequestException(
+        `Assign exactly ${qty} serial number(s) to ship ${qty}; ${count} are assigned.`,
+      );
     }
   }
 }
@@ -255,8 +333,13 @@ export function assertTrackingForShipment(
 export const BAG_COUNT_TOLERANCE = 0.01; // Silo row 24: "within 1 percent tolerance"
 
 /** Shipped minus everything received on the line once this posting lands. */
-export function receiptVariance(shipped: number, previouslyReceived: number, quantity: number): number {
-  const v = Math.round((shipped - previouslyReceived - quantity) * 10000) / 10000;
+export function receiptVariance(
+  shipped: number,
+  previouslyReceived: number,
+  quantity: number,
+): number {
+  const v =
+    Math.round((shipped - previouslyReceived - quantity) * 10000) / 10000;
   return Math.abs(v) < FLOAT_SUM_TOLERANCE ? 0 : v;
 }
 
@@ -279,7 +362,8 @@ export interface FeedReceiptLineCheck {
  * The delivery note no. is optional.
  */
 export function assertFeedReceiptLine(c: FeedReceiptLineCheck): number {
-  const fmt = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 4 });
+  const fmt = (n: number) =>
+    n.toLocaleString('en-US', { maximumFractionDigits: 4 });
   const variance = receiptVariance(c.shipped, c.previouslyReceived, c.quantity);
   if (variance > 0 && !c.varianceReason?.trim()) {
     throw new BadRequestException(
@@ -287,19 +371,55 @@ export function assertFeedReceiptLine(c: FeedReceiptLineCheck): number {
     );
   }
   if (c.feedType !== 'BAGGED' && c.bagCount != null) {
-    throw new BadRequestException(`${c.label}: a bag count applies only to BAGGED feed; remove it from this ${c.feedType ?? 'non-bagged'} line.`);
+    throw new BadRequestException(
+      `${c.label}: a bag count applies only to BAGGED feed; remove it from this ${c.feedType ?? 'non-bagged'} line.`,
+    );
   }
   if (c.feedType === 'BAGGED') {
     const bags = c.bagCount;
     if (bags == null || !Number.isInteger(bags) || bags <= 0) {
-      throw new BadRequestException(`${c.label}: enter the bag count received, a whole number, for bagged feed (checkpoint 27).`);
+      throw new BadRequestException(
+        `${c.label}: enter the bag count received, a whole number, for bagged feed (checkpoint 27).`,
+      );
     }
     const bagKg = bags * c.bagSizeKg;
-    if (Math.abs(bagKg - c.quantity) > c.quantity * BAG_COUNT_TOLERANCE + FLOAT_SUM_TOLERANCE) {
+    if (
+      Math.abs(bagKg - c.quantity) >
+      c.quantity * BAG_COUNT_TOLERANCE + FLOAT_SUM_TOLERANCE
+    ) {
       throw new BadRequestException(
         `${c.label}: ${bags} bags x ${fmt(c.bagSizeKg)} KG = ${fmt(bagKg)} KG does not match ${fmt(c.quantity)} KG received within 1 percent (checkpoint 27).`,
       );
     }
   }
   return variance;
+}
+
+/**
+ * The lot a requisition's shipment takes when none was assigned: the feed requisition's Transfer Shipment has no lot
+ * field, so a lot-tracked feed could never ship from it. The oldest lot holding the whole quantity is taken, else the
+ * oldest lot held at all (its shortfall is then refused by the ledger, as any short draw is). Null when nothing is held.
+ */
+export function pickOldestLot(
+  rows: Array<{
+    lot_no: string;
+    quantity: number;
+    receipt_date: string | null;
+  }>,
+  qty: number,
+): string | null {
+  const held = rows
+    .filter((r) => r.lot_no && Number(r.quantity) > 0)
+    .sort(
+      (a, b) =>
+        String(a.receipt_date ?? '').localeCompare(
+          String(b.receipt_date ?? ''),
+        ) || a.lot_no.localeCompare(b.lot_no),
+    );
+  return (
+    (
+      held.find((r) => Number(r.quantity) + FLOAT_SUM_TOLERANCE >= qty) ??
+      held[0]
+    )?.lot_no ?? null
+  );
 }

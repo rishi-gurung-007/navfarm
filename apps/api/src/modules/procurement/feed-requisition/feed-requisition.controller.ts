@@ -60,7 +60,10 @@ export class FeedRequisitionController {
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'approve')
   @ApiOperation({ summary: 'Approved feed requisition lines without a mill consolidation sheet' })
   async eligibleConsolidationLines(@Query() query: FeedConsolidationQueryDto, @Req() req: any) {
-    const data = await this.consolidations!.eligible(query, req.user?.tenantId || req['tenantId'], req.user);
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = query.withPriority === 'true'
+      ? await this.consolidations!.eligibleWithPriority(query, tenantId, req.user)
+      : await this.consolidations!.eligible(query, tenantId, req.user);
     return { success: true, message: 'Eligible feed requisitions retrieved.', data };
   }
 

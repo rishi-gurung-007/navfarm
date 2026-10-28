@@ -7,17 +7,45 @@ import {
   Inject,
 } from '@nestjs/common';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { bioCodes, bioEventCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
+import {
+  bioCodes,
+  bioEventCondition,
+} from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 import { assertPostingPeriodOpen } from '../../../common/period-close';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { BioCostingExitService } from '../../finance/bio-costing/bio-costing-exit.service';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, like, isNull, isNotNull, inArray, desc, asc, gt, lte, sql, SQL } from 'drizzle-orm';
+import {
+  eq,
+  ne,
+  and,
+  or,
+  like,
+  isNull,
+  isNotNull,
+  inArray,
+  desc,
+  asc,
+  gt,
+  lte,
+  sql,
+  SQL,
+  count,
+} from 'drizzle-orm';
+import {
+  animalsInBatchOn,
+  loadBatchMembership,
+} from '../batch-daily-data/animal-membership';
+import { entryBlockedReason } from '../batch-daily-data/entry-blocked';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { stageFitsGender } from '../stage/stage-gender';
 import { farmStoreOf } from '../../../common/farm-store';
 import { BatchDayReversalService } from './batch-day-reversal.service';
-import { animalOutputEvent, parsePoolIds, type AnimalOutputEvent } from '../batch-daily-data/animal-output-event';
+import {
+  animalOutputEvent,
+  parsePoolIds,
+  type AnimalOutputEvent,
+} from '../batch-daily-data/animal-output-event';
 import { randomUUID } from 'crypto';
 import { unlink } from 'fs/promises';
 import { resolve } from 'path';
@@ -60,7 +88,10 @@ import { AnimalMovementLogService } from '../../piggery/animal-movement-log/anim
 // direct class reference — the DI graph stays circular (both modules import
 // each other, which is fine and forwardRef-guarded at the module level) but
 // no compiled file ends up needing the other's class value at load time.
-import type { BatchDailyDataService, PendingConsumption } from '../batch-daily-data/batch-daily-data.service';
+import type {
+  BatchDailyDataService,
+  PendingConsumption,
+} from '../batch-daily-data/batch-daily-data.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -92,13 +123,17 @@ const CULL_HOLD_ALERT_DAYS = 14;
 export function splitLots(
   lots: Array<{ lotNo: string; quantity: number }> | undefined,
   firstQuantity: number,
-): [Array<{ lotNo: string; quantity: number }> | undefined, Array<{ lotNo: string; quantity: number }> | undefined] {
+): [
+  Array<{ lotNo: string; quantity: number }> | undefined,
+  Array<{ lotNo: string; quantity: number }> | undefined,
+] {
   if (!lots?.length) return [undefined, undefined];
   const first: Array<{ lotNo: string; quantity: number }> = [];
   const rest: Array<{ lotNo: string; quantity: number }> = [];
   let need = firstQuantity;
   for (const lot of lots) {
-    const take = Math.round(Math.min(lot.quantity, Math.max(need, 0)) * 1e4) / 1e4;
+    const take =
+      Math.round(Math.min(lot.quantity, Math.max(need, 0)) * 1e4) / 1e4;
     const left = Math.round((lot.quantity - take) * 1e4) / 1e4;
     if (take > 0) first.push({ lotNo: lot.lotNo, quantity: take });
     if (left > 0) rest.push({ lotNo: lot.lotNo, quantity: left });
@@ -209,11 +244,18 @@ export class BatchService {
     assertCompanyInScope(scope, dto.company_id);
     assertLobInScope(scope, dto.lob_id);
     await assertLocationOnActiveFarm(this.db, scope, dto.shed_id, 'Batch shed');
-    await assertLocationOnActiveFarm(this.db, scope, dto.location_id, 'Batch location');
+    await assertLocationOnActiveFarm(
+      this.db,
+      scope,
+      dto.location_id,
+      'Batch location',
+    );
 
     const trackingMode = (dto.tracking_mode || 'BATCH_WISE').toUpperCase();
     // An internal caller may open a bio-asset batch with no head (see `options.opensEmpty` above); nobody else can.
-    const opensEmpty = options.opensEmpty === true && dto.costing_method?.toUpperCase() === 'BIO_ASSET';
+    const opensEmpty =
+      options.opensEmpty === true &&
+      dto.costing_method?.toUpperCase() === 'BIO_ASSET';
 
     // ANIMAL_WISE batches are populated from animal_ids, not input_lines/opening_quantity —
     // each is required for exactly one mode, enforced here rather than as DTO decorators
@@ -242,9 +284,7 @@ export class BatchService {
 
       for (const line of dto.input_lines) {
         if (!line.item_id) {
-          throw new BadRequestException(
-            'Choose an item on every input line.',
-          );
+          throw new BadRequestException('Choose an item on every input line.');
         }
         const qty = Number(line.quantity);
         if (
@@ -326,7 +366,9 @@ export class BatchService {
       }
     } else {
       try {
-        const inputItemIds = dto.input_lines!.map((l) => l.item_id).filter(Boolean);
+        const inputItemIds = dto
+          .input_lines!.map((l) => l.item_id)
+          .filter(Boolean);
         if (inputItemIds.length > 0 && typeof this.db.select === 'function') {
           const selectObj = this.db.select();
           if (selectObj?.from) {
@@ -341,7 +383,12 @@ export class BatchService {
                 ),
               );
             if (items && items.length > 0) {
-              const itemMap = new Map(items.map((itemRecord: any) => [itemRecord.item_id, itemRecord]));
+              const itemMap = new Map(
+                items.map((itemRecord: any) => [
+                  itemRecord.item_id,
+                  itemRecord,
+                ]),
+              );
               for (const line of dto.input_lines!) {
                 const itemRecord = itemMap.get(line.item_id);
                 if (itemRecord) {
@@ -353,7 +400,11 @@ export class BatchService {
                     itemRecord.item_type === 'LIVING_ASSET'
                   ) {
                     // A batch that opens empty (a weaner batch, its head still to arrive by transfer) has no quantity yet, but never a negative one.
-                    if (opensEmpty ? isNaN(lineQty) || lineQty < 0 : !line.quantity || isNaN(lineQty) || lineQty <= 0) {
+                    if (
+                      opensEmpty
+                        ? isNaN(lineQty) || lineQty < 0
+                        : !line.quantity || isNaN(lineQty) || lineQty <= 0
+                    ) {
                       throw new BadRequestException(
                         `Biological asset item '${itemName}' requires a valid quantity greater than zero.`,
                       );
@@ -463,7 +514,9 @@ export class BatchService {
     // the caller's own active farm when nothing was placed yet.
     const placementLocationId = dto.shed_id || dto.location_id;
     const derivedFarmId = placementLocationId
-      ? (await farmOfLocation(this.db, placementLocationId)) || scope.farmId || null
+      ? (await farmOfLocation(this.db, placementLocationId)) ||
+        scope.farmId ||
+        null
       : scope.farmId || null;
     const batchHeaderValues = {
       batch_id: batchId,
@@ -484,7 +537,8 @@ export class BatchService {
       status: 'DRAFT',
       tracking_mode: trackingMode,
       is_litter_lot: options.litterLot === true,
-      animal_tracking: trackingMode === 'ANIMAL_WISE' ? 'REGISTERED' : 'COUNT_ONLY',
+      animal_tracking:
+        trackingMode === 'ANIMAL_WISE' ? 'REGISTERED' : 'COUNT_ONLY',
       uom: dto.uom,
       remarks: dto.remarks || null,
       created_by: userPayload?.userId || null,
@@ -498,7 +552,11 @@ export class BatchService {
       // batch_header too — otherwise a race would leave behind an orphaned
       // DRAFT batch with none of its intended animals.
       batchNo = await this.db.transaction(async (tx) => {
-        const newBatchNo = await this.generateBatchNo(tenantId, dto.company_id, tx);
+        const newBatchNo = await this.generateBatchNo(
+          tenantId,
+          dto.company_id,
+          tx,
+        );
         await tx.insert(schema.batchHeader).values({
           ...batchHeaderValues,
           batch_no: newBatchNo,
@@ -617,7 +675,10 @@ export class BatchService {
         // schedulers would read 0 head for animals that are there: she starts at the batch's own stage, which is the Line of Business's first
         // one (as loadCurrentSchedulerHeader resolves a batch that was given none).
         if (!animal.current_stage_id) {
-          entryStageId ??= initialStage?.stage_id ?? (await this.firstStageIdOfLob(dto.lob_id)) ?? null;
+          entryStageId ??=
+            initialStage?.stage_id ??
+            (await this.firstStageIdOfLob(dto.lob_id)) ??
+            null;
           if (entryStageId) {
             await this.db
               .update(schema.animalRegister)
@@ -633,10 +694,7 @@ export class BatchService {
           ? stageCodeToCanonicalId.get(stageCode) || animal.current_stage_id
           : animal.current_stage_id;
 
-        if (
-          canonicalStageId &&
-          canonicalStageId !== animal.current_stage_id
-        ) {
+        if (canonicalStageId && canonicalStageId !== animal.current_stage_id) {
           await this.db
             .update(schema.animalRegister)
             .set({ current_stage_id: canonicalStageId })
@@ -681,12 +739,24 @@ export class BatchService {
         await this.numberSeriesService.ensureCompanySeries(
           tenantId,
           dto.company_id,
-          { seriesCode: 'LITTER_LOT', seriesName: 'Litter Lot Number', documentType: 'LITTER_LOT', prefix: 'LIT', separator: '-', seqLength: 6 },
+          {
+            seriesCode: 'LITTER_LOT',
+            seriesName: 'Litter Lot Number',
+            documentType: 'LITTER_LOT',
+            prefix: 'LIT',
+            separator: '-',
+            seqLength: 6,
+          },
           async () => [],
         );
       }
       batchNo = await this.db.transaction(async (tx) => {
-        const newBatchNo = await this.generateBatchNo(tenantId, dto.company_id, tx, options.litterLot === true);
+        const newBatchNo = await this.generateBatchNo(
+          tenantId,
+          dto.company_id,
+          tx,
+          options.litterLot === true,
+        );
         await tx.insert(schema.batchHeader).values({
           ...batchHeaderValues,
           batch_no: newBatchNo,
@@ -1005,9 +1075,7 @@ export class BatchService {
 
       for (const line of dto.input_lines) {
         if (!line.item_id) {
-          throw new BadRequestException(
-            'Choose an item on every input line.',
-          );
+          throw new BadRequestException('Choose an item on every input line.');
         }
         const qty = Number(line.quantity);
         if (
@@ -1178,7 +1246,12 @@ export class BatchService {
    * no farm yet takes the shed's. Read scoped like every batch read here, so
    * a batch outside the caller's farm/LOB is not found.
    */
-  async changeShed(id: string, shedId: string | null, tenantId: string, userPayload?: UserContext) {
+  async changeShed(
+    id: string,
+    shedId: string | null,
+    tenantId: string,
+    userPayload?: UserContext,
+  ) {
     const [batch] = await this.db
       .select({
         batch_id: schema.batchHeader.batch_id,
@@ -1189,16 +1262,20 @@ export class BatchService {
         shed_id: schema.batchHeader.shed_id,
       })
       .from(schema.batchHeader)
-      .where(and(
-        eq(schema.batchHeader.batch_id, id),
-        eq(schema.batchHeader.tenant_id, tenantId),
-        isNull(schema.batchHeader.deleted_at),
-        ...batchScopeConditions(farmScope(this.cls)),
-      ))
+      .where(
+        and(
+          eq(schema.batchHeader.batch_id, id),
+          eq(schema.batchHeader.tenant_id, tenantId),
+          isNull(schema.batchHeader.deleted_at),
+          ...batchScopeConditions(farmScope(this.cls)),
+        ),
+      )
       .limit(1);
     if (!batch) throw new NotFoundException(`Batch with ID '${id}' not found.`);
     if (batch.status === 'CLOSED' || batch.status === 'CANCELLED') {
-      throw new BadRequestException(`${batch.batch_no} is ${batch.status.toLowerCase()}; its shed can no longer be changed.`);
+      throw new BadRequestException(
+        `${batch.batch_no} is ${batch.status.toLowerCase()}; its shed can no longer be changed.`,
+      );
     }
     let farmId = batch.farm_id;
     if (shedId) {
@@ -1213,20 +1290,41 @@ export class BatchService {
           deleted_at: schema.locationMaster.deleted_at,
         })
         .from(schema.locationMaster)
-        .where(and(eq(schema.locationMaster.location_id, shedId), eq(schema.locationMaster.tenant_id, tenantId)))
+        .where(
+          and(
+            eq(schema.locationMaster.location_id, shedId),
+            eq(schema.locationMaster.tenant_id, tenantId),
+          ),
+        )
         .limit(1);
-      if (!shed || shed.location_type !== 'SHED' || !shed.is_active || shed.deleted_at) {
+      if (
+        !shed ||
+        shed.location_type !== 'SHED' ||
+        !shed.is_active ||
+        shed.deleted_at
+      ) {
         throw new BadRequestException('Choose an active shed.');
       }
-      if (shed.company_id !== batch.company_id) throw new BadRequestException('That shed belongs to another company.');
+      if (shed.company_id !== batch.company_id)
+        throw new BadRequestException('That shed belongs to another company.');
       const shedFarm = shed.farm_id ?? shed.parent_location_id;
-      if (batch.farm_id && shedFarm !== batch.farm_id) throw new BadRequestException('That shed is on another farm.');
-      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), shedId, 'Batch shed');
+      if (batch.farm_id && shedFarm !== batch.farm_id)
+        throw new BadRequestException('That shed is on another farm.');
+      await assertLocationOnActiveFarm(
+        this.db,
+        farmScope(this.cls),
+        shedId,
+        'Batch shed',
+      );
       farmId = batch.farm_id ?? shedFarm;
     }
     await this.db
       .update(schema.batchHeader)
-      .set({ shed_id: shedId, farm_id: farmId, updated_by: userPayload?.userId ?? null })
+      .set({
+        shed_id: shedId,
+        farm_id: farmId,
+        updated_by: userPayload?.userId ?? null,
+      })
       .where(eq(schema.batchHeader.batch_id, id));
     await this.auditService.log({
       tenantId,
@@ -1448,7 +1546,12 @@ export class BatchService {
         ),
       )
       // A reversed row stays as the record of what was posted and is not part of the batch's cost or activity.
-      .where(and(eq(schema.batchTransaction.batch_id, id), isNull(schema.batchTransaction.reversed_at)));
+      .where(
+        and(
+          eq(schema.batchTransaction.batch_id, id),
+          isNull(schema.batchTransaction.reversed_at),
+        ),
+      );
     const outputLines = await this.db
       .select()
       .from(schema.batchOutputLine)
@@ -1588,15 +1691,15 @@ export class BatchService {
           eq(schema.stageMaster.is_active, true),
           isNull(schema.stageMaster.deleted_at),
           batch.company_id
-            ? or(eq(schema.stageMaster.company_id, batch.company_id), isNull(schema.stageMaster.company_id))
+            ? eq(schema.stageMaster.company_id, batch.company_id)
             : undefined,
         ),
       )
       .limit(5);
     // The company's own row, else the tenant template — never another company's, whatever order they came back in.
     const matchedStage = batch.company_id
-      ? (stageCandidates.find((row) => row.company_id === batch.company_id)
-        ?? stageCandidates.find((row) => (row.company_id ?? null) === null))
+      ? (stageCandidates.find((row) => row.company_id === batch.company_id) ??
+        stageCandidates.find((row) => (row.company_id ?? null) === null))
       : stageCandidates[0];
 
     // A code that matches nothing, for a LOB that HAS stages configured, is a
@@ -1652,7 +1755,8 @@ export class BatchService {
           ? new Date(lastTransfer.transferred_at)
           : new Date(batch.start_date);
         const daysPassed = Math.floor(
-          (new Date(eventDate).getTime() - stageEntryDate.getTime()) / (1000 * 60 * 60 * 24),
+          (new Date(eventDate).getTime() - stageEntryDate.getTime()) /
+            (1000 * 60 * 60 * 24),
         );
 
         if (
@@ -1705,7 +1809,9 @@ export class BatchService {
               : isNull(schema.animalRegister.current_stage_id),
           ),
         );
-      const inStep = stepRows.filter((a) => stageFitsGender(matchedStage, a.gender));
+      const inStep = stepRows.filter((a) =>
+        stageFitsGender(matchedStage, a.gender),
+      );
 
       if (inStep.length > 0) {
         await this.db
@@ -1753,7 +1859,9 @@ export class BatchService {
       to_location_id: dto.to_location_id || null,
       transferred_by: userPayload?.userId || null,
       remarks: dto.remarks || null,
-      ...(dto.transfer_date ? { transferred_at: `${dto.transfer_date} 12:00:00` } : {}),
+      ...(dto.transfer_date
+        ? { transferred_at: `${dto.transfer_date} 12:00:00` }
+        : {}),
     });
 
     await this.auditService.log({
@@ -1777,7 +1885,10 @@ export class BatchService {
     // the stage being left is finished only when nobody is still in it.
     const stageStillOccupied =
       batch.tracking_mode === 'ANIMAL_WISE' && batch.stage_id
-        ? (await this.schedulerHeaderService.countLiveAnimalsAtStage(id, batch.stage_id)) > 0
+        ? (await this.schedulerHeaderService.countLiveAnimalsAtStage(
+            id,
+            batch.stage_id,
+          )) > 0
         : false;
     if (batch.stage_id && !stageStillOccupied) {
       await this.db
@@ -1811,7 +1922,10 @@ export class BatchService {
       );
       // An animal-wise stage's scheduler, created now or earlier, starts on the day of this move
       // (createForStage dates every header from the batch start). A no-op for batch-wise batches.
-      await this.schedulerHeaderService.alignToStageEntry(id, matchedStage.stage_id);
+      await this.schedulerHeaderService.alignToStageEntry(
+        id,
+        matchedStage.stage_id,
+      );
     }
 
     // The stages just changed hands: each open scheduler counts the animals now at its stage.
@@ -1834,10 +1948,24 @@ export class BatchService {
 
     if (query.companyId)
       conditions.push(eq(schema.batchHeader.company_id, query.companyId));
-    if (query.status)
-      conditions.push(eq(schema.batchHeader.status, query.status));
+    if (query.status) {
+      // One status, or several comma-separated (a transfer's destination is ACTIVE or DRAFT).
+      const statuses = query.status
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean);
+      conditions.push(
+        statuses.length > 1
+          ? inArray(schema.batchHeader.status, statuses)
+          : eq(schema.batchHeader.status, statuses[0]),
+      );
+    }
     if (query.lobId)
       conditions.push(eq(schema.batchHeader.lob_id, query.lobId));
+    if (query.breedId)
+      conditions.push(eq(schema.batchHeader.breed_id, query.breedId));
+    if (query.trackingMode)
+      conditions.push(eq(schema.batchHeader.tracking_mode, query.trackingMode));
     if (query.search)
       conditions.push(like(schema.batchHeader.batch_no, `%${query.search}%`));
     if (query.litterLotsOnly) {
@@ -1851,17 +1979,27 @@ export class BatchService {
       // A litter's piglet lot is not a production batch: out of the list unless the caller asks for it.
       conditions.push(eq(schema.batchHeader.is_litter_lot, false));
     }
+    if (query.batchId)
+      conditions.push(eq(schema.batchHeader.batch_id, query.batchId));
+    if (query.animalTracking)
+      conditions.push(
+        eq(schema.batchHeader.animal_tracking, query.animalTracking),
+      );
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
+    // Batch number order — the order the list already came back in — with the
+    // id as tie-break: without an explicit order MySQL may return any rows for
+    // a given offset, so a picker's second page could repeat or skip batches.
     const rows = await this.db
       .select()
       .from(schema.batchHeader)
       .where(and(...conditions))
-      // Newest first, so a batch just created is always inside the page; without an
-      // order the limit kept an arbitrary slice and a new batch could fall outside it.
-      .orderBy(desc(schema.batchHeader.created_at), desc(schema.batchHeader.batch_id))
+      .orderBy(
+        asc(schema.batchHeader.batch_no),
+        asc(schema.batchHeader.batch_id),
+      )
       .limit(limit)
       .offset(offset);
 
@@ -1887,7 +2025,12 @@ export class BatchService {
         amount: schema.batchTransaction.amount,
       })
       .from(schema.batchTransaction)
-      .where(and(inArray(schema.batchTransaction.batch_id, batchIds), isNull(schema.batchTransaction.reversed_at)));
+      .where(
+        and(
+          inArray(schema.batchTransaction.batch_id, batchIds),
+          isNull(schema.batchTransaction.reversed_at),
+        ),
+      );
 
     const accrued = new Map<string, number>();
     for (const tx of costTx) {
@@ -1944,48 +2087,90 @@ export class BatchService {
           );
 
     // A litter's piglet lot is shown as the litter it holds, not by its number: "Litter of PIG-2025-0013, farrowed 2026-05-29 (LOT-00004)".
-    const litterIds = rows.filter((r) => r.is_litter_lot).map((r) => r.batch_id);
-    const litterNames = litterIds.length === 0
-      ? new Map<string, string>()
-      : new Map(
-          (
-            await this.db
-              .select({
-                batch_id: schema.farrowingRecord.piglet_batch_id,
-                sow: schema.animalRegister.animal_code,
-                farrowed: schema.farrowingRecord.farrowing_date,
-                lot_no: schema.farrowingRecord.piglet_lot_no,
-              })
-              .from(schema.farrowingRecord)
-              .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.farrowingRecord.sow_animal_id))
-              .where(inArray(schema.farrowingRecord.piglet_batch_id, litterIds))
-          ).map((l) => [l.batch_id as string, `Litter of ${l.sow}, farrowed ${String(l.farrowed).slice(0, 10)}${l.lot_no ? ` (${l.lot_no})` : ''}`]),
-        );
+    const litterIds = rows
+      .filter((r) => r.is_litter_lot)
+      .map((r) => r.batch_id);
+    const litterNames =
+      litterIds.length === 0
+        ? new Map<string, string>()
+        : new Map(
+            (
+              await this.db
+                .select({
+                  batch_id: schema.farrowingRecord.piglet_batch_id,
+                  sow: schema.animalRegister.animal_code,
+                  farrowed: schema.farrowingRecord.farrowing_date,
+                  lot_no: schema.farrowingRecord.piglet_lot_no,
+                })
+                .from(schema.farrowingRecord)
+                .innerJoin(
+                  schema.animalRegister,
+                  eq(
+                    schema.animalRegister.animal_id,
+                    schema.farrowingRecord.sow_animal_id,
+                  ),
+                )
+                .where(
+                  inArray(schema.farrowingRecord.piglet_batch_id, litterIds),
+                )
+            ).map((l) => [
+              l.batch_id as string,
+              `Litter of ${l.sow}, farrowed ${String(l.farrowed).slice(0, 10)}${l.lot_no ? ` (${l.lot_no})` : ''}`,
+            ]),
+          );
 
     // For the picker of a born-on-farm animal's litter: the lot number, the sow, and the piglets still held.
-    const litterInfo = new Map<string, { sow_batch_no: string; sow_code: string; piglets_label: string }>();
+    const litterInfo = new Map<
+      string,
+      { sow_batch_no: string; sow_code: string; piglets_label: string }
+    >();
     if (query.litterLotsOnly && litterIds.length) {
       const held = new Map(
-        (await this.db
-          .select({ batch_id: schema.batchBioAssetState.batch_id, head: schema.batchBioAssetState.current_quantity })
-          .from(schema.batchBioAssetState)
-          .where(inArray(schema.batchBioAssetState.batch_id, litterIds))
+        (
+          await this.db
+            .select({
+              batch_id: schema.batchBioAssetState.batch_id,
+              head: schema.batchBioAssetState.current_quantity,
+            })
+            .from(schema.batchBioAssetState)
+            .where(inArray(schema.batchBioAssetState.batch_id, litterIds))
         ).map((s) => [s.batch_id, Number(s.head)]),
       );
       const farrowings = await this.db
-        .select({ batch_id: schema.farrowingRecord.piglet_batch_id, sow: schema.animalRegister.animal_code, sow_batch_id: schema.farrowingRecord.batch_id, sow_current_batch_id: schema.animalRegister.current_batch_id })
+        .select({
+          batch_id: schema.farrowingRecord.piglet_batch_id,
+          sow: schema.animalRegister.animal_code,
+          sow_batch_id: schema.farrowingRecord.batch_id,
+          sow_current_batch_id: schema.animalRegister.current_batch_id,
+        })
         .from(schema.farrowingRecord)
-        .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.farrowingRecord.sow_animal_id))
+        .innerJoin(
+          schema.animalRegister,
+          eq(
+            schema.animalRegister.animal_id,
+            schema.farrowingRecord.sow_animal_id,
+          ),
+        )
         .where(inArray(schema.farrowingRecord.piglet_batch_id, litterIds));
       // The litter is picked by the batch its sow is in (BATCH-000003), which is how the farm names it; the lot number is only its id behind the scenes.
-      const sowBatchIds = [...new Set(farrowings.map((f) => f.sow_batch_id ?? f.sow_current_batch_id).filter((x): x is string => !!x))];
+      const sowBatchIds = [
+        ...new Set(
+          farrowings
+            .map((f) => f.sow_batch_id ?? f.sow_current_batch_id)
+            .filter((x): x is string => !!x),
+        ),
+      ];
       const sowBatchNos = new Map(
         sowBatchIds.length === 0
           ? []
-          : (await this.db
-              .select({ batch_id: schema.batchHeader.batch_id, batch_no: schema.batchHeader.batch_no })
-              .from(schema.batchHeader)
-              .where(inArray(schema.batchHeader.batch_id, sowBatchIds))
+          : (
+              await this.db
+                .select({
+                  batch_id: schema.batchHeader.batch_id,
+                  batch_no: schema.batchHeader.batch_no,
+                })
+                .from(schema.batchHeader)
+                .where(inArray(schema.batchHeader.batch_id, sowBatchIds))
             ).map((b) => [b.batch_id, b.batch_no] as [string, string]),
       );
       for (const f of farrowings) {
@@ -2007,7 +2192,14 @@ export class BatchService {
       breed_name: r.breed_id ? (breedNames.get(r.breed_id) ?? null) : null,
       stage_name: r.stage_id ? (stageNames.get(r.stage_id) ?? null) : null,
       display_name: litterNames.get(r.batch_id) ?? r.batch_no,
-      ...(query.litterLotsOnly ? { sow_batch_no: litterInfo.get(r.batch_id)?.sow_batch_no || r.batch_no, sow_code: litterInfo.get(r.batch_id)?.sow_code ?? '', piglets_label: litterInfo.get(r.batch_id)?.piglets_label ?? '' } : {}),
+      ...(query.litterLotsOnly
+        ? {
+            sow_batch_no:
+              litterInfo.get(r.batch_id)?.sow_batch_no || r.batch_no,
+            sow_code: litterInfo.get(r.batch_id)?.sow_code ?? '',
+            piglets_label: litterInfo.get(r.batch_id)?.piglets_label ?? '',
+          }
+        : {}),
     }));
   }
 
@@ -2027,7 +2219,12 @@ export class BatchService {
    * `bornOnFarm` marks a bio-asset batch whose head was born here (a farrowing's piglet lot): the farrowing record is written only after
    * its lot is active, so the caller has to say so for the receipt row to be coded as OUTPUT and not PURCHASE.
    */
-  async activate(id: string, tenantId: string, userPayload?: UserContext, options: { bornOnFarm?: boolean } = {}) {
+  async activate(
+    id: string,
+    tenantId: string,
+    userPayload?: UserContext,
+    options: { bornOnFarm?: boolean } = {},
+  ) {
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'DRAFT');
 
@@ -2060,49 +2257,54 @@ export class BatchService {
       // against existing warehouse stock, so no FIFO/inventory_ledger here.
       let totalAcquisitionCost = 0;
       // Born on the farm (a farrowing's piglet lot) or bought: it decides the ledger row's transaction type.
-      const [farrowing] = await this.db.select({ id: schema.farrowingRecord.piglet_batch_id }).from(schema.farrowingRecord)
-        .where(eq(schema.farrowingRecord.piglet_batch_id, id)).limit(1);
+      const [farrowing] = await this.db
+        .select({ id: schema.farrowingRecord.piglet_batch_id })
+        .from(schema.farrowingRecord)
+        .where(eq(schema.farrowingRecord.piglet_batch_id, id))
+        .limit(1);
       const bornOnFarm = options.bornOnFarm === true || !!farrowing;
       for (const line of batch.input_lines) {
         const amount = Number(line.quantity) * Number(line.rate || 0);
         totalAcquisitionCost += amount;
         // A nil acquisition — the piglets of a farrowing — has no value to journal.
-        if (amount >= 0.005) await this.glPostingService.postBatchCostEntry({
-          tenantId,
-          companyId: batch.company_id,
-          transactionType: 'BIO_ACQUISITION',
-          amount,
-          documentNo: batch.batch_no,
-          documentLineId: line.line_id,
-          postingDate: batch.start_date,
-          description: `Acquisition — ${batch.batch_no}`,
-          nobId: batch.nob_id || undefined,
-          lobId: batch.lob_id,
-          stageId: batch.stage_id || undefined,
-          userId: userPayload?.userId,
-        });
+        if (amount >= 0.005)
+          await this.glPostingService.postBatchCostEntry({
+            tenantId,
+            companyId: batch.company_id,
+            transactionType: 'BIO_ACQUISITION',
+            amount,
+            documentNo: batch.batch_no,
+            documentLineId: line.line_id,
+            postingDate: batch.start_date,
+            description: `Acquisition — ${batch.batch_no}`,
+            nobId: batch.nob_id || undefined,
+            lobId: batch.lob_id,
+            stageId: batch.stage_id || undefined,
+            userId: userPayload?.userId,
+          });
         // A batch that opens empty (a weaner batch, its head still to arrive by transfer) has no receipt to record.
-        if (Number(line.quantity) > 0) await this.db.insert(schema.bioAssetLedger).values({
-          entry_id: randomUUID(),
-          tenant_id: tenantId,
-          company_id: batch.company_id,
-          bio_asset_item_id: line.item_id,
-          ...bioCodes.batchReceipt({ born: bornOnFarm }),
-          document_no: batch.batch_no,
-          batch_id: id,
-          batch_no: batch.batch_no,
-          posting_date: batch.start_date,
-          stage: 'PREMATURE',
-          // The lot the head came in as — a farrowing's piglet lot, say — so the ledger names it.
-          lot_no: line.lot_no || null,
-          quantity: line.quantity,
-          cost_amount: amount.toString(),
-          cost_amount_each_unit: line.rate || null,
-          costing_method: 'COST_ACCUMULATION',
-          nob_id: batch.nob_id,
-          lob_id: batch.lob_id,
-          created_by: userPayload?.userId || null,
-        });
+        if (Number(line.quantity) > 0)
+          await this.db.insert(schema.bioAssetLedger).values({
+            entry_id: randomUUID(),
+            tenant_id: tenantId,
+            company_id: batch.company_id,
+            bio_asset_item_id: line.item_id,
+            ...bioCodes.batchReceipt({ born: bornOnFarm }),
+            document_no: batch.batch_no,
+            batch_id: id,
+            batch_no: batch.batch_no,
+            posting_date: batch.start_date,
+            stage: 'PREMATURE',
+            // The lot the head came in as — a farrowing's piglet lot, say — so the ledger names it.
+            lot_no: line.lot_no || null,
+            quantity: line.quantity,
+            cost_amount: amount.toString(),
+            cost_amount_each_unit: line.rate || null,
+            costing_method: 'COST_ACCUMULATION',
+            nob_id: batch.nob_id,
+            lob_id: batch.lob_id,
+            created_by: userPayload?.userId || null,
+          });
       }
       await this.db
         .update(schema.batchBioAssetState)
@@ -2152,7 +2354,9 @@ export class BatchService {
         status: 'ACTIVE',
         // A head-count batch starts holding its opening head; left empty, every screen that reads the closing figure
         // showed nothing until the first death or transfer wrote one.
-        ...(batch.tracking_mode !== 'ANIMAL_WISE' && batch.closing_quantity == null && batch.opening_quantity != null
+        ...(batch.tracking_mode !== 'ANIMAL_WISE' &&
+        batch.closing_quantity == null &&
+        batch.opening_quantity != null
           ? { closing_quantity: String(batch.opening_quantity) }
           : {}),
         updated_by: userPayload?.userId || null,
@@ -2219,7 +2423,10 @@ export class BatchService {
   }
 
   /** The herd's bio-asset state row, created on first use (a batch can consume before anything else touched it). */
-  private async ensureBioState(batch: Awaited<ReturnType<BatchService['findOne']>>, id: string) {
+  private async ensureBioState(
+    batch: Awaited<ReturnType<BatchService['findOne']>>,
+    id: string,
+  ) {
     let [bioState] = await this.db
       .select()
       .from(schema.batchBioAssetState)
@@ -2227,7 +2434,9 @@ export class BatchService {
       .limit(1);
     if (!bioState) {
       const stateId = randomUUID();
-      const stage = ['GESTATION', 'DRY_SOW_GESTATION', 'LACTATION'].includes(batch.current_stage_code || '')
+      const stage = ['GESTATION', 'DRY_SOW_GESTATION', 'LACTATION'].includes(
+        batch.current_stage_code || '',
+      )
         ? 'MATURE'
         : 'PREMATURE';
       // A mature herd's opening carrying value is what its bio-asset ledger says it is worth. It used to be
@@ -2236,7 +2445,9 @@ export class BatchService {
       let openingValue = '0.0000';
       if (stage === 'MATURE') {
         const [ledgerValue] = await this.db
-          .select({ total: sql<string>`COALESCE(SUM(${schema.bioAssetLedger.cost_amount}), 0)` })
+          .select({
+            total: sql<string>`COALESCE(SUM(${schema.bioAssetLedger.cost_amount}), 0)`,
+          })
           .from(schema.bioAssetLedger)
           .where(eq(schema.bioAssetLedger.batch_id, id));
         const derived = Number(ledgerValue?.total ?? 0);
@@ -2255,7 +2466,8 @@ export class BatchService {
         // The head the batch holds now. closing_quantity is kept in step by transfers and deaths; the opening
         // figure re-created a herd that had left — a sow group emptied by transfer came back at 8 head the
         // first time a late consumption touched it, and so never read as empty again.
-        current_quantity: (batch.closing_quantity ?? batch.opening_quantity)?.toString() || '1',
+        current_quantity:
+          (batch.closing_quantity ?? batch.opening_quantity)?.toString() || '1',
         nca_book_value: openingValue,
       });
       [bioState] = await this.db
@@ -2296,38 +2508,104 @@ export class BatchService {
     // TDD rows 7 and 9: feed is capitalised in the WIP period and expensed in production. For registered animals the
     // line between the two is each animal's own costing start date, not a switch on the batch; the animals whose
     // costing has begun are issued as a separate entry that is expensed, so one group may become two ledger entries.
-    const expensed = await this.animalsPastCostingStart(batch, params.shares.map((x) => x.animal_id), params.transaction_date);
-    if (!expensed.size) return this.postConsumptionGroupAs(batch, id, params, false, tenantId, userPayload);
-    const past = params.shares.filter((x) => x.animal_id && expensed.has(x.animal_id));
-    if (past.length === params.shares.length) return this.postConsumptionGroupAs(batch, id, params, true, tenantId, userPayload);
-    const before = params.shares.filter((x) => !(x.animal_id && expensed.has(x.animal_id)));
-    const quantityOf = (shares: Array<{ quantity: number }>) => Math.round(shares.reduce((n, x) => n + x.quantity, 0) * 1e4) / 1e4;
+    const expensed = await this.animalsPastCostingStart(
+      batch,
+      params.shares.map((x) => x.animal_id),
+      params.transaction_date,
+    );
+    if (!expensed.size)
+      return this.postConsumptionGroupAs(
+        batch,
+        id,
+        params,
+        false,
+        tenantId,
+        userPayload,
+      );
+    const past = params.shares.filter(
+      (x) => x.animal_id && expensed.has(x.animal_id),
+    );
+    if (past.length === params.shares.length)
+      return this.postConsumptionGroupAs(
+        batch,
+        id,
+        params,
+        true,
+        tenantId,
+        userPayload,
+      );
+    const before = params.shares.filter(
+      (x) => !(x.animal_id && expensed.has(x.animal_id)),
+    );
+    const quantityOf = (shares: Array<{ quantity: number }>) =>
+      Math.round(shares.reduce((n, x) => n + x.quantity, 0) * 1e4) / 1e4;
     const [beforeLots, pastLots] = splitLots(params.lots, quantityOf(before));
     return withTenantTransaction(this.cls, async () => {
-      const first = await this.postConsumptionGroupAs(batch, id, { ...params, lots: beforeLots, shares: before }, false, tenantId, userPayload);
-      const second = await this.postConsumptionGroupAs(batch, id, { ...params, lots: pastLots, shares: past }, true, tenantId, userPayload);
-      return { ledgerEntry: first.ledgerEntry, transactions: [...first.transactions, ...second.transactions] };
+      const first = await this.postConsumptionGroupAs(
+        batch,
+        id,
+        { ...params, lots: beforeLots, shares: before },
+        false,
+        tenantId,
+        userPayload,
+      );
+      const second = await this.postConsumptionGroupAs(
+        batch,
+        id,
+        { ...params, lots: pastLots, shares: past },
+        true,
+        tenantId,
+        userPayload,
+      );
+      return {
+        ledgerEntry: first.ledgerEntry,
+        transactions: [...first.transactions, ...second.transactions],
+      };
     });
   }
 
   /** The pre-mature biological asset account (what the pre-mature mortality rule credits): where a pre-mature herd's value sits. */
-  private async prematureAssetAccount(batch: { company_id: string; nob_id?: string | null; lob_id?: string | null }, tenantId: string): Promise<string | undefined> {
-    return this.glPostingService.mappedAccount(tenantId, batch.company_id, 'BIO_MORTALITY_PREMATURE', 'credit', { nobId: batch.nob_id, lobId: batch.lob_id });
+  private async prematureAssetAccount(
+    batch: {
+      company_id: string;
+      nob_id?: string | null;
+      lob_id?: string | null;
+    },
+    tenantId: string,
+  ): Promise<string | undefined> {
+    return this.glPostingService.mappedAccount(
+      tenantId,
+      batch.company_id,
+      'BIO_MORTALITY_PREMATURE',
+      'credit',
+      { nobId: batch.nob_id, lobId: batch.lob_id },
+    );
   }
 
   /**
    * The one asset account the animals of a batch are carried in, where they agree (each one's profile acquisition account); undefined where they differ or
    * none has a profile, and the mapping's account is used. For the cost that belongs to the batch as a whole (its overhead).
    */
-  private async batchClassAccount(batchId: string): Promise<string | undefined> {
+  private async batchClassAccount(
+    batchId: string,
+  ): Promise<string | undefined> {
     const rows = await this.db
       .select({ animal_id: schema.animalRegister.animal_id })
       .from(schema.animalRegister)
-      .where(and(eq(schema.animalRegister.current_batch_id, batchId), eq(schema.animalRegister.is_active, true)));
+      .where(
+        and(
+          eq(schema.animalRegister.current_batch_id, batchId),
+          eq(schema.animalRegister.is_active, true),
+        ),
+      );
     if (!rows.length) return undefined;
-    const accounts = await this.glPostingService.animalAssetAccountIds(rows.map((r) => r.animal_id));
+    const accounts = await this.glPostingService.animalAssetAccountIds(
+      rows.map((r) => r.animal_id),
+    );
     const distinct = new Set(rows.map((r) => accounts.get(r.animal_id) ?? ''));
-    return distinct.size === 1 && !distinct.has('') ? [...distinct][0] : undefined;
+    return distinct.size === 1 && !distinct.has('')
+      ? [...distinct][0]
+      : undefined;
   }
 
   /**
@@ -2336,7 +2614,10 @@ export class BatchService {
    */
   private async animalAcquisitionIsInGl(animalId: string): Promise<boolean> {
     const [animal] = await this.db
-      .select({ animal_code: schema.animalRegister.animal_code, source_receipt_id: schema.animalRegister.source_receipt_id })
+      .select({
+        animal_code: schema.animalRegister.animal_code,
+        source_receipt_id: schema.animalRegister.source_receipt_id,
+      })
       .from(schema.animalRegister)
       .where(eq(schema.animalRegister.animal_id, animalId))
       .limit(1);
@@ -2344,7 +2625,11 @@ export class BatchService {
     let documentNo = animal.animal_code;
     let documentType = 'ANIMAL_REGISTRATION';
     if (animal.source_receipt_id) {
-      const [receipt] = await this.db.select({ receipt_no: schema.goodsReceipt.receipt_no }).from(schema.goodsReceipt).where(eq(schema.goodsReceipt.receipt_id, animal.source_receipt_id)).limit(1);
+      const [receipt] = await this.db
+        .select({ receipt_no: schema.goodsReceipt.receipt_no })
+        .from(schema.goodsReceipt)
+        .where(eq(schema.goodsReceipt.receipt_id, animal.source_receipt_id))
+        .limit(1);
       if (!receipt) return false;
       documentNo = receipt.receipt_no;
       documentType = 'GOODS_RECEIPT';
@@ -2352,7 +2637,13 @@ export class BatchService {
     const [journal] = await this.db
       .select({ id: schema.journalHeader.journal_id })
       .from(schema.journalHeader)
-      .where(and(eq(schema.journalHeader.source_document_type, documentType), eq(schema.journalHeader.source_document_no, documentNo), eq(schema.journalHeader.status, 'POSTED')))
+      .where(
+        and(
+          eq(schema.journalHeader.source_document_type, documentType),
+          eq(schema.journalHeader.source_document_no, documentNo),
+          eq(schema.journalHeader.status, 'POSTED'),
+        ),
+      )
       .limit(1);
     return !!journal;
   }
@@ -2367,11 +2658,22 @@ export class BatchService {
     date: string,
   ): Promise<Set<string>> {
     const ids = [...new Set(animalIds.filter((x): x is string => !!x))];
-    if (batch.costing_method !== 'BIO_ASSET' || batch.tracking_mode !== 'ANIMAL_WISE' || !ids.length) return new Set();
+    if (
+      batch.costing_method !== 'BIO_ASSET' ||
+      batch.tracking_mode !== 'ANIMAL_WISE' ||
+      !ids.length
+    )
+      return new Set();
     const rows = await this.db
       .select({ animal_id: schema.animalRegister.animal_id })
       .from(schema.animalRegister)
-      .where(and(inArray(schema.animalRegister.animal_id, ids), isNotNull(schema.animalRegister.costing_start_date), lte(schema.animalRegister.costing_start_date, date)));
+      .where(
+        and(
+          inArray(schema.animalRegister.animal_id, ids),
+          isNotNull(schema.animalRegister.costing_start_date),
+          lte(schema.animalRegister.costing_start_date, date),
+        ),
+      );
     return new Set(rows.map((r) => r.animal_id));
   }
 
@@ -2394,15 +2696,20 @@ export class BatchService {
     tenantId: string,
     userPayload?: UserContext,
   ) {
-    const total = Math.round(params.shares.reduce((n, s) => n + s.quantity, 0) * 1e4) / 1e4;
-    if (!(total > 0)) throw new BadRequestException('A consumption entry needs a quantity.');
+    const total =
+      Math.round(params.shares.reduce((n, s) => n + s.quantity, 0) * 1e4) / 1e4;
+    if (!(total > 0))
+      throw new BadRequestException('A consumption entry needs a quantity.');
 
     const isBioAsset = batch.costing_method === 'BIO_ASSET';
     const bio = isBioAsset ? await this.ensureBioState(batch, id) : undefined;
-    const isCostCapitalised = isBioAsset && bio?.stage === 'PREMATURE' && !expense;
+    const isCostCapitalised =
+      isBioAsset && bio?.stage === 'PREMATURE' && !expense;
     // A bio-asset batch's feed is a CONSUMPTION like any other; only the G/L rule it posts under differs.
     const glMappingType = isBioAsset
-      ? isCostCapitalised ? 'BIO_CONSUMPTION_PREMATURE' : 'BIO_CONSUMPTION_MATURE'
+      ? isCostCapitalised
+        ? 'BIO_CONSUMPTION_PREMATURE'
+        : 'BIO_CONSUMPTION_MATURE'
       : undefined;
 
     const groupId = randomUUID();
@@ -2420,19 +2727,33 @@ export class BatchService {
       uom: params.uom,
       batchNo: batch.batch_no,
       warehouseId: params.source_warehouse_id,
-      ...(params.lots?.length ? { lots: params.lots } : { lotNo: params.lot_no }),
+      ...(params.lots?.length
+        ? { lots: params.lots }
+        : { lotNo: params.lot_no }),
       serialNo: params.serial_no,
       userId: userPayload?.userId,
     });
     // Capitalised feed goes into each animal's own class account (her profile's acquisition account), a part for each animal fed; an animal with no profile, or a
     // batch of head only, takes the mapping's account.
-    const feedSplit = isCostCapitalised && params.shares.some((x) => x.animal_id)
-      ? await (async () => {
-          const accounts = await this.glPostingService.animalAssetAccountIds(params.shares.map((x) => x.animal_id).filter((x): x is string => !!x));
-          return params.shares.map((x) => ({ accountId: (x.animal_id && accounts.get(x.animal_id)) || null, amount: x.quantity }));
-        })()
-      : undefined;
-    await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId, feedSplit ? { debitSplit: feedSplit } : {});
+    const feedSplit =
+      isCostCapitalised && params.shares.some((x) => x.animal_id)
+        ? await (async () => {
+            const accounts = await this.glPostingService.animalAssetAccountIds(
+              params.shares
+                .map((x) => x.animal_id)
+                .filter((x): x is string => !!x),
+            );
+            return params.shares.map((x) => ({
+              accountId: (x.animal_id && accounts.get(x.animal_id)) || null,
+              amount: x.quantity,
+            }));
+          })()
+        : undefined;
+    await this.glPostingService.postInventoryLedgerEntry(
+      ledgerEntry,
+      userPayload?.userId,
+      feedSplit ? { debitSplit: feedSplit } : {},
+    );
 
     const amount = Number(ledgerEntry.amount); // negative
     const rate = Number(ledgerEntry.rate);
@@ -2443,19 +2764,31 @@ export class BatchService {
       const capitalisedAmount = Math.abs(amount);
       await this.db
         .update(schema.batchBioAssetState)
-        .set({ nca_book_value: (Number(bio.nca_book_value) + capitalisedAmount).toString(), updated_at: toMysqlTimestamp() })
+        .set({
+          nca_book_value: (
+            Number(bio.nca_book_value) + capitalisedAmount
+          ).toString(),
+          updated_at: toMysqlTimestamp(),
+        })
         .where(eq(schema.batchBioAssetState.batch_id, id));
     }
     // The capitalised cost is written to the bio-asset ledger one row per share below, each carrying its animal, so
     // an animal's own cost is on her ledger (it was one batch-level row, and her book value could not be derived).
 
     // Each animal's share of the entry: its quantity, and that fraction of the cost (the last takes the rounding).
-    const transactions: Array<{ transaction_id: string; animal_id?: string; quantity: number; amount: number }> = [];
+    const transactions: Array<{
+      transaction_id: string;
+      animal_id?: string;
+      quantity: number;
+      amount: number;
+    }> = [];
     let allocated = 0;
     for (let i = 0; i < params.shares.length; i++) {
       const share = params.shares[i];
       const last = i === params.shares.length - 1;
-      const shareAmount = last ? Math.round((amount - allocated) * 1e4) / 1e4 : Math.round(amount * (share.quantity / total) * 1e4) / 1e4;
+      const shareAmount = last
+        ? Math.round((amount - allocated) * 1e4) / 1e4
+        : Math.round(amount * (share.quantity / total) * 1e4) / 1e4;
       allocated = Math.round((allocated + shareAmount) * 1e4) / 1e4;
       const transactionId = randomUUID();
       await this.db.insert(schema.batchTransaction).values({
@@ -2512,12 +2845,26 @@ export class BatchService {
         action: 'CREATE',
         entityName: 'batch_transaction',
         entityId: transactionId,
-        newValues: { batch_id: id, item_id: params.item_id, animal_id: share.animal_id, quantity: share.quantity, amount: shareAmount, ledger_id: ledgerEntry.ledger_id },
+        newValues: {
+          batch_id: id,
+          item_id: params.item_id,
+          animal_id: share.animal_id,
+          quantity: share.quantity,
+          amount: shareAmount,
+          ledger_id: ledgerEntry.ledger_id,
+        },
       });
-      transactions.push({ transaction_id: transactionId, animal_id: share.animal_id, quantity: share.quantity, amount: shareAmount });
+      transactions.push({
+        transaction_id: transactionId,
+        animal_id: share.animal_id,
+        quantity: share.quantity,
+        amount: shareAmount,
+      });
     }
     if (isCostCapitalised) {
-      const animalIds = params.shares.map((x) => x.animal_id).filter((x): x is string => !!x);
+      const animalIds = params.shares
+        .map((x) => x.animal_id)
+        .filter((x): x is string => !!x);
       if (animalIds.length) await this.animalBookValue.refreshCache(animalIds);
     }
     return { ledgerEntry, transactions };
@@ -2550,7 +2897,10 @@ export class BatchService {
     // or not at all; joins the caller's transaction when one is open. An output
     // draws its lot number from the ITEM_LOT series, so it is one too: a failure
     // after the number is drawn rolls the counter back instead of burning it.
-    if (dto.transaction_type === 'MORTALITY' || dto.transaction_type === 'OUTPUT') {
+    if (
+      dto.transaction_type === 'MORTALITY' ||
+      dto.transaction_type === 'OUTPUT'
+    ) {
       return withTenantTransaction(this.cls, () =>
         this.addTransactionInner(id, dto, tenantId, userPayload),
       );
@@ -2564,7 +2914,10 @@ export class BatchService {
   }
 
   /** See SchedulerHeaderService.alignToStageEntry: a stage's unused scheduler starts when its animals entered it. */
-  async alignSchedulerToStageEntry(batchId: string, stageId: string): Promise<string | null> {
+  async alignSchedulerToStageEntry(
+    batchId: string,
+    stageId: string,
+  ): Promise<string | null> {
     return this.schedulerHeaderService.alignToStageEntry(batchId, stageId);
   }
 
@@ -2574,14 +2927,27 @@ export class BatchService {
    * is what the alert is about), once per animal and hold.
    */
   private async raiseCullHoldAlerts(
-    batch: { batch_id: string; batch_no: string; tenant_id: string; company_id: string; lob_id: string },
-    animals: Array<{ animal_id: string; animal_code: string; is_active: boolean | null; out_of_production_date?: string | null }>,
+    batch: {
+      batch_id: string;
+      batch_no: string;
+      tenant_id: string;
+      company_id: string;
+      lob_id: string;
+    },
+    animals: Array<{
+      animal_id: string;
+      animal_code: string;
+      is_active: boolean | null;
+      out_of_production_date?: string | null;
+    }>,
     dateStr: string,
   ): Promise<void> {
     for (const animal of animals) {
       if (!animal.is_active || !animal.out_of_production_date) continue;
       const since = String(animal.out_of_production_date).slice(0, 10);
-      const days = Math.floor((new Date(dateStr).getTime() - new Date(since).getTime()) / 86_400_000);
+      const days = Math.floor(
+        (new Date(dateStr).getTime() - new Date(since).getTime()) / 86_400_000,
+      );
       if (days <= CULL_HOLD_ALERT_DAYS) continue;
       const title = `${animal.animal_code} out of production for over ${CULL_HOLD_ALERT_DAYS} days — not culled`;
       const [already] = await this.db
@@ -2621,6 +2987,13 @@ export class BatchService {
    * The costs the batch has accumulated stay with the animals still in it: how a leaving animal takes her share of
    * them is a decision for the client (decisions.md, 9 Oct, Phase 8).
    */
+  /**
+   * One registered animal leaves her batch other than by death (sold, culled, slaughtered): the batch's head
+   * count, its bio-asset head and the carrying value she takes with her, the movement log, the stage counts.
+   * Returns the book value she leaves with — her own, the batch's average per head when she has none, and
+   * whatever more the batch still carries when she is its last live animal (what it capitalised while it held
+   * her) — or null when she was in no ACTIVE bio-asset batch, so the caller falls back to her own book value.
+   */
   async recordAnimalExit(
     animal: {
       animal_id: string;
@@ -2628,19 +3001,24 @@ export class BatchService {
       current_batch_id: string | null;
       current_stage_id: string | null;
       current_location_id: string | null;
+      book_value?: string | null;
     },
     exitType: string,
     exitDate: string,
     tenantId: string,
     userPayload?: UserContext,
-  ): Promise<void> {
-    if (!animal.current_batch_id) return;
+  ): Promise<{
+    valueRelieved: number | null;
+    batch: typeof schema.batchHeader.$inferSelect | null;
+  }> {
+    if (!animal.current_batch_id) return { valueRelieved: null, batch: null };
     const [batch] = await this.db
       .select()
       .from(schema.batchHeader)
       .where(eq(schema.batchHeader.batch_id, animal.current_batch_id))
       .limit(1);
-    if (!batch || batch.status !== 'ACTIVE') return;
+    if (!batch || batch.status !== 'ACTIVE')
+      return { valueRelieved: null, batch: null };
 
     await this.db
       .update(schema.batchHeader)
@@ -2650,14 +3028,46 @@ export class BatchService {
         updated_at: toMysqlTimestamp(),
       })
       .where(eq(schema.batchHeader.batch_id, batch.batch_id));
+    let valueRelieved: number | null = null;
     if (batch.costing_method === 'BIO_ASSET') {
-      await this.db
-        .update(schema.batchBioAssetState)
-        .set({
-          current_quantity: sql`GREATEST(0, ${schema.batchBioAssetState.current_quantity} - 1)`,
-          updated_at: toMysqlTimestamp(),
-        })
-        .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id));
+      const [state] = await this.db
+        .select()
+        .from(schema.batchBioAssetState)
+        .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id))
+        .limit(1);
+      if (state) {
+        // Her head left the state but her value used to stay behind in it, so a batch emptied this way
+        // closed at nil head still carrying the value of every animal sold or culled out of it.
+        const nca = Number(state.nca_book_value) || 0;
+        const qty = Number(state.current_quantity) || 0;
+        const [otherLive] = await this.db
+          .select({ animal_id: schema.animalRegister.animal_id })
+          .from(schema.animalRegister)
+          .where(
+            and(
+              eq(schema.animalRegister.current_batch_id, batch.batch_id),
+              eq(schema.animalRegister.is_active, true),
+              ne(schema.animalRegister.animal_id, animal.animal_id),
+            ),
+          )
+          .limit(1);
+        // An animal-wise batch's state holds only the value that came in by transfer, so it can hold less than
+        // she is worth: she still leaves at her own value, and the state stops at nil.
+        const own =
+          animal.book_value != null ? Number(animal.book_value) : null;
+        const hers = own ?? (qty > 0 ? nca / qty : 0);
+        valueRelieved = Number(
+          (otherLive ? hers : Math.max(hers, nca)).toFixed(4),
+        );
+        await this.db
+          .update(schema.batchBioAssetState)
+          .set({
+            current_quantity: sql`GREATEST(0, ${schema.batchBioAssetState.current_quantity} - 1)`,
+            nca_book_value: Math.max(0, nca - valueRelieved).toFixed(4),
+            updated_at: toMysqlTimestamp(),
+          })
+          .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id));
+      }
     }
     await this.movementLog.record({
       tenantId,
@@ -2673,6 +3083,134 @@ export class BatchService {
       userId: userPayload?.userId,
     });
     await this.schedulerHeaderService.syncAnimalWiseCounts(batch.batch_id);
+    return { valueRelieved, batch };
+  }
+
+  /**
+   * One animal registered straight into an ACTIVE batch (POST /animal with current_batch_id): the batch's head
+   * count, its bio-asset head and value, the movement log and the stage counts take her in, as a transfer in
+   * would. They did not, so an animal-wise batch's closing quantity fell behind its live animals. Returns the
+   * batch she joined, or null when it is not ACTIVE (a DRAFT batch counts its animals when it activates).
+   */
+  async recordAnimalEntry(
+    animal: {
+      animal_id: string;
+      company_id: string;
+      current_batch_id: string | null;
+      current_stage_id: string | null;
+      current_location_id: string | null;
+      book_value?: string | null;
+    },
+    entryDate: string,
+    tenantId: string,
+    userPayload?: UserContext,
+  ): Promise<typeof schema.batchHeader.$inferSelect | null> {
+    if (!animal.current_batch_id) return null;
+    const [batch] = await this.db
+      .select()
+      .from(schema.batchHeader)
+      .where(eq(schema.batchHeader.batch_id, animal.current_batch_id))
+      .limit(1)
+      .for('update');
+    if (!batch || batch.status !== 'ACTIVE') return null;
+
+    await this.db
+      .update(schema.batchHeader)
+      .set({
+        closing_quantity: sql`COALESCE(${schema.batchHeader.closing_quantity}, ${schema.batchHeader.opening_quantity}, 0) + 1`,
+        updated_by: userPayload?.userId || null,
+        updated_at: toMysqlTimestamp(),
+      })
+      .where(eq(schema.batchHeader.batch_id, batch.batch_id));
+    if (batch.costing_method === 'BIO_ASSET') {
+      const value = Number(animal.book_value) || 0;
+      const [state] = await this.db
+        .select({ state_id: schema.batchBioAssetState.state_id })
+        .from(schema.batchBioAssetState)
+        .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id))
+        .limit(1);
+      if (state) {
+        await this.db
+          .update(schema.batchBioAssetState)
+          .set({
+            current_quantity: sql`${schema.batchBioAssetState.current_quantity} + 1`,
+            nca_book_value: sql`${schema.batchBioAssetState.nca_book_value} + ${value.toFixed(4)}`,
+            updated_at: toMysqlTimestamp(),
+          })
+          .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id));
+      } else {
+        await this.db.insert(schema.batchBioAssetState).values({
+          state_id: randomUUID(),
+          batch_id: batch.batch_id,
+          stage: 'PREMATURE',
+          current_quantity: '1.0000',
+          nca_book_value: value.toFixed(4),
+        });
+      }
+    }
+    await this.movementLog.record({
+      tenantId,
+      companyId: animal.company_id,
+      animalId: animal.animal_id,
+      movementType: 'ASSIGN',
+      eventDate: entryDate,
+      toBatchId: batch.batch_id,
+      toStageId: animal.current_stage_id,
+      toLocationId: animal.current_location_id,
+      entryNo: batch.batch_no,
+      userId: userPayload?.userId,
+    });
+    await this.schedulerHeaderService.syncAnimalWiseCounts(batch.batch_id);
+    return batch;
+  }
+
+  /**
+   * The GL side of one animal sold or culled out of the herd — the same two entries the batch-level sale
+   * posts (disposeBioAsset): Dr Trade Receivables / Cr Biological Assets for the proceeds
+   * (BIO_SALE_PROCEEDS), then the gain or loss taking the asset credit to the book value that left
+   * (BIO_DISPOSAL_SOLD). A cull with no proceeds posts the whole book value as a loss.
+   */
+  async postAnimalDisposalJournal(params: {
+    tenantId: string;
+    companyId: string;
+    documentNo: string;
+    postingDate: string;
+    bookValue: number;
+    proceeds: number;
+    nobId?: string | null;
+    lobId?: string | null;
+    stageId?: string | null;
+    label: string;
+    userId?: string;
+  }): Promise<void> {
+    const common = {
+      tenantId: params.tenantId,
+      companyId: params.companyId,
+      documentNo: params.documentNo,
+      postingDate: params.postingDate,
+      nobId: params.nobId || undefined,
+      lobId: params.lobId || undefined,
+      stageId: params.stageId || undefined,
+      userId: params.userId,
+    };
+    if (params.proceeds >= 0.005) {
+      await this.glPostingService.postBatchCostEntry({
+        ...common,
+        transactionType: 'BIO_SALE_PROCEEDS',
+        amount: params.proceeds,
+        description: `${params.label} — ${params.documentNo}, 1 head`,
+      });
+    }
+    const gainLoss = params.proceeds - params.bookValue;
+    if (Math.abs(gainLoss) >= 0.005) {
+      await this.glPostingService.postBatchCostEntry({
+        ...common,
+        transactionType: 'BIO_DISPOSAL_SOLD',
+        amount: Math.abs(gainLoss),
+        description: `Disposal (${params.label.toLowerCase()}) — ${params.documentNo}`,
+        reverseDirection: gainLoss < 0,
+      });
+    }
   }
 
   /** One death event as a unit: every animal posts, or none does. */
@@ -2733,7 +3271,13 @@ export class BatchService {
    */
   async releaseHeadToAnimals(
     id: string,
-    params: { quantity: number; date: string; reference: string; remarks?: string; value_per_head?: number },
+    params: {
+      quantity: number;
+      date: string;
+      reference: string;
+      remarks?: string;
+      value_per_head?: number;
+    },
     tenantId: string,
     userPayload?: UserContext,
   ): Promise<{ per_head: number; total: number; remaining: number }> {
@@ -2741,37 +3285,77 @@ export class BatchService {
       const batch = await this.findOne(id);
       this.assertStatus(batch, 'ACTIVE');
       this.assertBioAsset(batch, 'Selecting animals out of a batch');
-      if ((batch as { tracking_mode?: string | null }).tracking_mode === 'ANIMAL_WISE') {
-        throw new BadRequestException(`Batch ${batch.batch_no} already holds registered animals, so there is no head count to take them from.`);
+      if (
+        (batch as { tracking_mode?: string | null }).tracking_mode ===
+        'ANIMAL_WISE'
+      ) {
+        throw new BadRequestException(
+          `Batch ${batch.batch_no} already holds registered animals, so there is no head count to take them from.`,
+        );
       }
-      if (!(params.quantity > 0)) throw new BadRequestException('Select at least one animal.');
+      if (!(params.quantity > 0))
+        throw new BadRequestException('Select at least one animal.');
       const bio = await this.ensureBioState(batch, id);
-      const headCount = Number(bio.current_quantity) > 0 ? Number(bio.current_quantity) : Number(batch.closing_quantity) || Number(batch.opening_quantity) || 0;
+      const headCount =
+        Number(bio.current_quantity) > 0
+          ? Number(bio.current_quantity)
+          : Number(batch.closing_quantity) ||
+            Number(batch.opening_quantity) ||
+            0;
       if (params.quantity > headCount + 1e-9) {
-        throw new BadRequestException(`Batch ${batch.batch_no} holds ${headCount} head; ${params.quantity} cannot be selected from it.`);
+        throw new BadRequestException(
+          `Batch ${batch.batch_no} holds ${headCount} head; ${params.quantity} cannot be selected from it.`,
+        );
       }
       const ncaBookValue = Number(bio.nca_book_value) || 0;
       // A litter's gilts carry that litter's own cost per piglet (value_per_head), not the average of a batch that has mixed litters; the batch then loses just that.
       const hasOwnValuePerHead = params.value_per_head !== undefined;
-      const perHead = hasOwnValuePerHead ? Math.round(Number(params.value_per_head) * 1e4) / 1e4 : headCount > 0 ? Math.round((ncaBookValue / headCount) * 1e4) / 1e4 : 0;
+      const perHead = hasOwnValuePerHead
+        ? Math.round(Number(params.value_per_head) * 1e4) / 1e4
+        : headCount > 0
+          ? Math.round((ncaBookValue / headCount) * 1e4) / 1e4
+          : 0;
       // Without one, the last head takes whatever is left, so the figures add up to the batch's value to the cent.
       const releasedValue = hasOwnValuePerHead
-        ? Math.min(Math.round(ncaBookValue * 1e4) / 1e4, Math.round(perHead * params.quantity * 1e4) / 1e4)
-        : params.quantity >= headCount - 1e-9 ? Math.round(ncaBookValue * 1e4) / 1e4 : Math.round(perHead * params.quantity * 1e4) / 1e4;
-      const remaining = Math.max(0, Math.round((headCount - params.quantity) * 1e4) / 1e4);
+        ? Math.min(
+            Math.round(ncaBookValue * 1e4) / 1e4,
+            Math.round(perHead * params.quantity * 1e4) / 1e4,
+          )
+        : params.quantity >= headCount - 1e-9
+          ? Math.round(ncaBookValue * 1e4) / 1e4
+          : Math.round(perHead * params.quantity * 1e4) / 1e4;
+      const remaining = Math.max(
+        0,
+        Math.round((headCount - params.quantity) * 1e4) / 1e4,
+      );
 
       await this.db
         .update(schema.batchBioAssetState)
-        .set({ current_quantity: remaining.toString(), nca_book_value: Math.max(0, ncaBookValue - releasedValue).toFixed(4), updated_at: toMysqlTimestamp() })
+        .set({
+          current_quantity: remaining.toString(),
+          nca_book_value: Math.max(0, ncaBookValue - releasedValue).toFixed(4),
+          updated_at: toMysqlTimestamp(),
+        })
         .where(eq(schema.batchBioAssetState.batch_id, id));
       await this.db
         .update(schema.batchHeader)
-        .set({ closing_quantity: remaining.toString(), updated_at: toMysqlTimestamp() })
+        .set({
+          closing_quantity: remaining.toString(),
+          updated_at: toMysqlTimestamp(),
+        })
         .where(eq(schema.batchHeader.batch_id, id));
       const [acquired] = await this.db
-        .select({ item_id: schema.bioAssetLedger.bio_asset_item_id, lot_no: schema.bioAssetLedger.lot_no })
+        .select({
+          item_id: schema.bioAssetLedger.bio_asset_item_id,
+          lot_no: schema.bioAssetLedger.lot_no,
+        })
         .from(schema.bioAssetLedger)
-        .where(and(eq(schema.bioAssetLedger.batch_id, id), bioEventCondition(schema.bioAssetLedger, 'ACQUISITION')))
+        .where(
+          and(
+            eq(schema.bioAssetLedger.batch_id, id),
+            bioEventCondition(schema.bioAssetLedger, 'ACQUISITION'),
+          ),
+        )
         .orderBy(schema.bioAssetLedger.entry_no)
         .limit(1);
       const itemId = acquired?.item_id ?? batch.input_lines?.[0]?.item_id;
@@ -2791,23 +3375,39 @@ export class BatchService {
           quantity: (-params.quantity).toString(),
           cost_amount: (-releasedValue).toFixed(4),
           cost_amount_each_unit: perHead.toFixed(4),
-          costing_method: bio.stage === 'MATURE' ? 'AMORTIZED_COST' : 'COST_ACCUMULATION',
+          costing_method:
+            bio.stage === 'MATURE' ? 'AMORTIZED_COST' : 'COST_ACCUMULATION',
           nob_id: batch.nob_id,
           lob_id: batch.lob_id,
           created_by: userPayload?.userId || null,
         });
       }
       // The stage headcount follows the head, as it does for a death.
-      await this.applyMortalityEffects(batch, { transaction_date: params.date, transaction_type: 'MORTALITY', quantity: params.quantity } as any, { animal: undefined, reason: undefined } as any, tenantId, userPayload);
-      if (remaining <= 1e-9) {
-        await this.db
-          .update(schema.batchHeader)
-          .set({ status: 'CLOSED', actual_end_date: params.date, closing_quantity: '0.0000', closed_at: sql`CURRENT_TIMESTAMP`, closed_by: userPayload?.userId || null, updated_by: userPayload?.userId || null })
-          .where(and(eq(schema.batchHeader.batch_id, id), eq(schema.batchHeader.status, 'ACTIVE')));
-      }
+      await this.applyMortalityEffects(
+        batch,
+        {
+          transaction_date: params.date,
+          transaction_type: 'MORTALITY',
+          quantity: params.quantity,
+        } as any,
+        { animal: undefined, reason: undefined } as any,
+        tenantId,
+        userPayload,
+      );
+      // A batch emptied by this release stays ACTIVE at nil head until a user closes it (Rishi, 19 Oct).
       await this.auditService.log({
-        tenantId, companyId: batch.company_id, userId: userPayload?.userId, action: 'UPDATE', entityName: 'batch_header', entityId: id,
-        newValues: { gilt_selection: params.reference, head_released: params.quantity, value_released: releasedValue, remaining },
+        tenantId,
+        companyId: batch.company_id,
+        userId: userPayload?.userId,
+        action: 'UPDATE',
+        entityName: 'batch_header',
+        entityId: id,
+        newValues: {
+          gilt_selection: params.reference,
+          head_released: params.quantity,
+          value_released: releasedValue,
+          remaining,
+        },
       });
       return { per_head: perHead, total: releasedValue, remaining };
     });
@@ -2835,7 +3435,11 @@ export class BatchService {
             eq(schema.reasonMaster.reason_id, reasonId),
             eq(schema.reasonMaster.tenant_id, tenantId),
             eq(schema.reasonMaster.is_active, true),
-            ...masterScopeConditions(this.cls, schema.reasonMaster, batch.company_id),
+            ...masterScopeConditions(
+              this.cls,
+              schema.reasonMaster,
+              batch.company_id,
+            ),
           ),
         )
         .limit(1);
@@ -2860,7 +3464,11 @@ export class BatchService {
       return { reason, animal: undefined };
     }
 
-    if (dto.quantity !== undefined && dto.quantity !== null && Number(dto.quantity) !== 1) {
+    if (
+      dto.quantity !== undefined &&
+      dto.quantity !== null &&
+      Number(dto.quantity) !== 1
+    ) {
       throw new BadRequestException(
         'A death attributed to one animal has a quantity of 1.',
       );
@@ -2883,7 +3491,10 @@ export class BatchService {
         `Animal '${animal.animal_code}' is not a member of batch '${batch.batch_no}'.`,
       );
     }
-    if (!animal.is_active || ['DEAD', 'SOLD', 'CULLED', 'SLAUGHTERED'].includes(animal.status)) {
+    if (
+      !animal.is_active ||
+      ['DEAD', 'SOLD', 'CULLED', 'SLAUGHTERED'].includes(animal.status)
+    ) {
       throw new BadRequestException(
         `Animal '${animal.animal_code}' is already ${animal.status.toLowerCase()} and cannot be recorded as dead again.`,
       );
@@ -2931,7 +3542,8 @@ export class BatchService {
         fromStageId: animal.current_stage_id,
         fromLocationId: animal.current_location_id,
         entryNo: batch.batch_no,
-        reason: reason?.reason_name ?? dto.mortality_detail?.cause_of_death ?? null,
+        reason:
+          reason?.reason_name ?? dto.mortality_detail?.cause_of_death ?? null,
         remarks: dto.remarks ?? null,
         userId: userPayload?.userId,
       });
@@ -2944,7 +3556,11 @@ export class BatchService {
       // +/- fair value), so her ledger sums to nil after the death. The register column is only a cache and is read
       // here only for an animal whose ledger has no rows yet.
       const derived = await this.animalBookValue.valueOf(animal.animal_id);
-      const bookValue = derived.hasRows ? derived.bookValue : animal.book_value != null ? Number(animal.book_value) : null;
+      const bookValue = derived.hasRows
+        ? derived.bookValue
+        : animal.book_value != null
+          ? Number(animal.book_value)
+          : null;
       if (bookValue != null) {
         await this.db.insert(schema.bioAssetLedger).values({
           entry_id: randomUUID(),
@@ -2973,7 +3589,12 @@ export class BatchService {
         // The accumulated-amortisation leg of the BBP's death entry: what the costing runs have amortised her to date is cleared
         // against the acquisition cost, so the account holds nothing for an animal that is gone. Nothing happens for an animal no
         // profile costs or that was never amortised.
-        await this.bioCostingExit.clearOnDeath(animal.animal_id, dto.transaction_date, tenantId, userPayload?.userId);
+        await this.bioCostingExit.clearOnDeath(
+          animal.animal_id,
+          dto.transaction_date,
+          tenantId,
+          userPayload?.userId,
+        );
       }
     }
 
@@ -3018,7 +3639,9 @@ export class BatchService {
               : eq(schema.schedulerHeader.stage_id, stageId),
           ),
         );
-      schedulerId = (candidates.find((c) => c.stage_id === stageId) ?? candidates[0])?.scheduler_id;
+      schedulerId = (
+        candidates.find((c) => c.stage_id === stageId) ?? candidates[0]
+      )?.scheduler_id;
     } else {
       const [header] = await this.db
         .select({ scheduler_id: schema.schedulerHeader.scheduler_id })
@@ -3073,9 +3696,13 @@ export class BatchService {
       );
     }
 
-    let mortality: Awaited<ReturnType<BatchService['prepareMortality']>> | undefined;
+    let mortality:
+      Awaited<ReturnType<BatchService['prepareMortality']>> | undefined;
     if (dto.transaction_type === 'MORTALITY') {
-      if (dto.animal_id && (dto.quantity === undefined || dto.quantity === null)) {
+      if (
+        dto.animal_id &&
+        (dto.quantity === undefined || dto.quantity === null)
+      ) {
         dto.quantity = 1;
       }
       mortality = await this.prepareMortality(batch, dto, tenantId);
@@ -3088,18 +3715,31 @@ export class BatchService {
     }
 
     const isBioAsset = batch.costing_method === 'BIO_ASSET';
-    const bioState = isBioAsset ? await this.ensureBioState(batch, id) : undefined;
+    const bioState = isBioAsset
+      ? await this.ensureBioState(batch, id)
+      : undefined;
     const bio = bioState;
     // A registered animal whose costing has begun on this date is fed at expense, not capitalised (TDD rows 7 and 9).
     const animalExpensed =
       !!dto.animal_id &&
-      (dto.transaction_type === 'CONSUMPTION' || dto.transaction_type === 'OVERHEAD') &&
-      (await this.animalsPastCostingStart(batch, [dto.animal_id], dto.transaction_date)).has(dto.animal_id);
-    const isCostCapitalised = isBioAsset && bio?.stage === 'PREMATURE' && !animalExpensed;
+      (dto.transaction_type === 'CONSUMPTION' ||
+        dto.transaction_type === 'OVERHEAD') &&
+      (
+        await this.animalsPastCostingStart(
+          batch,
+          [dto.animal_id],
+          dto.transaction_date,
+        )
+      ).has(dto.animal_id);
+    const isCostCapitalised =
+      isBioAsset && bio?.stage === 'PREMATURE' && !animalExpensed;
 
     // A registered animal's death is booked under her own item; an animal-wise batch has no input lines, so the
     // "first active item" fallback below used to name whatever item came first.
-    let bioAssetSubjectItemId = dto.item_id || mortality?.animal?.item_id || batch.input_lines?.[0]?.item_id;
+    let bioAssetSubjectItemId =
+      dto.item_id ||
+      mortality?.animal?.item_id ||
+      batch.input_lines?.[0]?.item_id;
     if (!bioAssetSubjectItemId && isBioAsset) {
       const [fallbackItem] = await this.db
         .select({ item_id: schema.itemMaster.item_id })
@@ -3157,7 +3797,15 @@ export class BatchService {
       await this.glPostingService.postInventoryLedgerEntry(
         ledgerEntry,
         userPayload?.userId,
-        isBioAsset && isCostCapitalised ? { debitAccountId: dto.animal_id ? await this.glPostingService.animalAssetAccountId(dto.animal_id) : await this.batchClassAccount(id) } : {},
+        isBioAsset && isCostCapitalised
+          ? {
+              debitAccountId: dto.animal_id
+                ? await this.glPostingService.animalAssetAccountId(
+                    dto.animal_id,
+                  )
+                : await this.batchClassAccount(id),
+            }
+          : {},
       );
       ledgerId = ledgerEntry.ledger_id;
       rate = Number(ledgerEntry.rate);
@@ -3198,7 +3846,8 @@ export class BatchService {
           lob_id: batch.lob_id,
           created_by: userPayload?.userId || null,
         });
-        if (dto.animal_id) await this.animalBookValue.refreshCache([dto.animal_id]);
+        if (dto.animal_id)
+          await this.animalBookValue.refreshCache([dto.animal_id]);
       }
     } else if (dto.transaction_type === 'OUTPUT') {
       if (!dto.item_id || !dto.quantity || !dto.uom) {
@@ -3228,10 +3877,15 @@ export class BatchService {
         .from(schema.itemMaster)
         .where(eq(schema.itemMaster.item_id, dto.item_id))
         .limit(1);
-      const outputWarehouseId = (await farmStoreOf(this.db, batch.farm_id)) ?? undefined;
+      const outputWarehouseId =
+        (await farmStoreOf(this.db, batch.farm_id)) ?? undefined;
       let outputLotNo = dto.lot_no;
       if (!outputLotNo && !dto.serial_no && outputItem?.is_lot_tracked) {
-        outputLotNo = await this.numberSeriesService.generateNext('ITEM_LOT', tenantId, batch.company_id);
+        outputLotNo = await this.numberSeriesService.generateNext(
+          'ITEM_LOT',
+          tenantId,
+          batch.company_id,
+        );
       }
       let outputExpiry: string | undefined;
       if (outputItem?.shelf_life_days) {
@@ -3264,7 +3918,14 @@ export class BatchService {
         ledgerEntry,
         userPayload?.userId,
         // A pre-mature herd's value sits in the pre-mature asset account, so that is what its output leaves, not the mature one the mapping names.
-        isBioAsset && bio?.stage === 'PREMATURE' ? { creditAccountId: await this.prematureAssetAccount(batch, tenantId) } : {},
+        isBioAsset && bio?.stage === 'PREMATURE'
+          ? {
+              creditAccountId: await this.prematureAssetAccount(
+                batch,
+                tenantId,
+              ),
+            }
+          : {},
       );
       ledgerId = ledgerEntry.ledger_id;
       rate = Number(ledgerEntry.rate);
@@ -3340,7 +4001,6 @@ export class BatchService {
             userId: userPayload?.userId,
           });
         }
-
       }
 
       // Every output leaves an output line, not only a by-product: it is what a QR pack and a QC
@@ -3350,12 +4010,18 @@ export class BatchService {
         line_id: transactionId,
         batch_id: id,
         item_id: dto.item_id,
-        output_type: dto.output_type || (isByProductRemoval ? 'BY_PRODUCT' : 'MAIN'),
+        output_type:
+          dto.output_type || (isByProductRemoval ? 'BY_PRODUCT' : 'MAIN'),
         cost_split_pct: '0',
         quantity: dto.quantity.toString(),
         uom: dto.uom,
-        computed_cost: isByProductRemoval ? (Number(dto.nrv_rate || 0) * dto.quantity).toString() : amount.toString(),
-        unit_cost: (isByProductRemoval ? Number(dto.nrv_rate || 0) : rate ?? 0).toString(),
+        computed_cost: isByProductRemoval
+          ? (Number(dto.nrv_rate || 0) * dto.quantity).toString()
+          : amount.toString(),
+        unit_cost: (isByProductRemoval
+          ? Number(dto.nrv_rate || 0)
+          : (rate ?? 0)
+        ).toString(),
         warehouse_id: outputWarehouseId ?? null,
       });
     } else if (dto.transaction_type === 'MORTALITY') {
@@ -3365,7 +4031,11 @@ export class BatchService {
         );
       }
       if (isBioAsset && bio) {
-        await this.assertBioPeriodOpen(batch, String(dto.transaction_date).slice(0, 10), tenantId);
+        await this.assertBioPeriodOpen(
+          batch,
+          String(dto.transaction_date).slice(0, 10),
+          tenantId,
+        );
         const currentQty =
           Number(bio.current_quantity) > 0
             ? Number(bio.current_quantity)
@@ -3391,46 +4061,58 @@ export class BatchService {
           const [animalLevel] = await this.db
             .select({ n: sql<string>`COUNT(*)` })
             .from(schema.bioAssetLedger)
-            .where(and(
-              eq(schema.bioAssetLedger.batch_id, id),
-              bioEventCondition(schema.bioAssetLedger, 'CONSUMPTION'),
-              isNotNull(schema.bioAssetLedger.animal_id),
-            ));
+            .where(
+              and(
+                eq(schema.bioAssetLedger.batch_id, id),
+                bioEventCondition(schema.bioAssetLedger, 'CONSUMPTION'),
+                isNotNull(schema.bioAssetLedger.animal_id),
+              ),
+            );
           if (Number(animalLevel?.n ?? 0) > 0) {
-            const animalOwnValue = await this.animalBookValue.valueOf(dto.animal_id);
-            nbvShare = Math.min(Math.max(0, animalOwnValue.capitalised), Number(bio.nca_book_value));
+            const animalOwnValue = await this.animalBookValue.valueOf(
+              dto.animal_id,
+            );
+            nbvShare = Math.min(
+              Math.max(0, animalOwnValue.capitalised),
+              Number(bio.nca_book_value),
+            );
             perUnitNca = nbvShare / dto.quantity;
             glWriteOff = nbvShare;
             // The batch's carrying value holds her capitalised cost only; the GL also holds what she cost to buy once her acquisition was journalled
             // (the receipt's, or her registration's), so what leaves the GL is her whole book value, not only the capitalised part of it.
             if (await this.animalAcquisitionIsInGl(dto.animal_id)) {
-              glWriteOff = Math.max(nbvShare, Math.max(0, animalOwnValue.bookValue));
+              glWriteOff = Math.max(
+                nbvShare,
+                Math.max(0, animalOwnValue.bookValue),
+              );
               // ... out of the account she is carried in.
-              animalAssetAccount = await this.glPostingService.animalAssetAccountId(dto.animal_id);
+              animalAssetAccount =
+                await this.glPostingService.animalAssetAccountId(dto.animal_id);
             }
           }
         }
         rate = perUnitNca;
         amount = -nbvShare;
         // A herd carried at nil (the piglets of a farrowing) loses nothing to journal.
-        if (glWriteOff >= 0.005) await this.glPostingService.postBatchCostEntry({
-          tenantId,
-          companyId: batch.company_id,
-          transactionType:
-            bio.stage === 'PREMATURE'
-              ? 'BIO_MORTALITY_PREMATURE'
-              : 'BIO_MORTALITY_MATURE',
-          amount: glWriteOff,
-          creditAccountId: animalAssetAccount,
-          documentNo: batch.batch_no,
-          documentLineId: transactionId,
-          postingDate: dto.transaction_date,
-          description: `Mortality — ${batch.batch_no}`,
-          nobId: batch.nob_id || undefined,
-          lobId: batch.lob_id,
-          stageId: batch.stage_id || undefined,
-          userId: userPayload?.userId,
-        });
+        if (glWriteOff >= 0.005)
+          await this.glPostingService.postBatchCostEntry({
+            tenantId,
+            companyId: batch.company_id,
+            transactionType:
+              bio.stage === 'PREMATURE'
+                ? 'BIO_MORTALITY_PREMATURE'
+                : 'BIO_MORTALITY_MATURE',
+            amount: glWriteOff,
+            creditAccountId: animalAssetAccount,
+            documentNo: batch.batch_no,
+            documentLineId: transactionId,
+            postingDate: dto.transaction_date,
+            description: `Mortality — ${batch.batch_no}`,
+            nobId: batch.nob_id || undefined,
+            lobId: batch.lob_id,
+            stageId: batch.stage_id || undefined,
+            userId: userPayload?.userId,
+          });
         await this.db
           .update(schema.batchBioAssetState)
           .set({
@@ -3462,7 +4144,13 @@ export class BatchService {
             : await this.db
                 .select({ lot_no: schema.bioAssetLedger.lot_no })
                 .from(schema.bioAssetLedger)
-                .where(and(eq(schema.bioAssetLedger.batch_id, id), bioEventCondition(schema.bioAssetLedger, 'ACQUISITION'), isNotNull(schema.bioAssetLedger.lot_no)))
+                .where(
+                  and(
+                    eq(schema.bioAssetLedger.batch_id, id),
+                    bioEventCondition(schema.bioAssetLedger, 'ACQUISITION'),
+                    isNotNull(schema.bioAssetLedger.lot_no),
+                  ),
+                )
                 .orderBy(schema.bioAssetLedger.entry_no)
                 .limit(1);
           await this.db.insert(schema.bioAssetLedger).values({
@@ -3492,20 +4180,21 @@ export class BatchService {
         const unitCost = await this.computeRunningUnitCost(batch);
         rate = unitCost;
         amount = -(dto.quantity * unitCost);
-        if (Math.abs(amount) >= 0.005) await this.glPostingService.postBatchCostEntry({
-          tenantId,
-          companyId: batch.company_id,
-          transactionType: 'MORTALITY',
-          amount: Math.abs(amount),
-          documentNo: batch.batch_no,
-          documentLineId: transactionId,
-          postingDate: dto.transaction_date,
-          description: `Mortality — ${batch.batch_no}`,
-          nobId: batch.nob_id || undefined,
-          lobId: batch.lob_id,
-          stageId: batch.stage_id || undefined,
-          userId: userPayload?.userId,
-        });
+        if (Math.abs(amount) >= 0.005)
+          await this.glPostingService.postBatchCostEntry({
+            tenantId,
+            companyId: batch.company_id,
+            transactionType: 'MORTALITY',
+            amount: Math.abs(amount),
+            documentNo: batch.batch_no,
+            documentLineId: transactionId,
+            postingDate: dto.transaction_date,
+            description: `Mortality — ${batch.batch_no}`,
+            nobId: batch.nob_id || undefined,
+            lobId: batch.lob_id,
+            stageId: batch.stage_id || undefined,
+            userId: userPayload?.userId,
+          });
         await this.db
           .update(schema.batchHeader)
           .set({
@@ -3553,7 +4242,10 @@ export class BatchService {
         lobId: batch.lob_id,
         stageId: batch.stage_id || undefined,
         // Capitalised overhead goes into the class account its animals are carried in.
-        debitAccountId: isBioAsset && isCostCapitalised ? await this.batchClassAccount(id) : undefined,
+        debitAccountId:
+          isBioAsset && isCostCapitalised
+            ? await this.batchClassAccount(id)
+            : undefined,
         userId: userPayload?.userId,
       });
 
@@ -3588,7 +4280,8 @@ export class BatchService {
             lob_id: batch.lob_id,
             created_by: userPayload?.userId || null,
           });
-          if (dto.animal_id) await this.animalBookValue.refreshCache([dto.animal_id]);
+          if (dto.animal_id)
+            await this.animalBookValue.refreshCache([dto.animal_id]);
         }
       }
     }
@@ -3645,7 +4338,13 @@ export class BatchService {
     }
 
     if (mortality) {
-      await this.applyMortalityEffects(batch, dto, mortality, tenantId, userPayload);
+      await this.applyMortalityEffects(
+        batch,
+        dto,
+        mortality,
+        tenantId,
+        userPayload,
+      );
     }
 
     if (dto.treatment_detail) {
@@ -3690,7 +4389,13 @@ export class BatchService {
     const [stage] = await this.db
       .select({ stage_id: schema.stageMaster.stage_id })
       .from(schema.stageMaster)
-      .where(and(eq(schema.stageMaster.lob_id, lobId), eq(schema.stageMaster.is_active, true), isNull(schema.stageMaster.deleted_at)))
+      .where(
+        and(
+          eq(schema.stageMaster.lob_id, lobId),
+          eq(schema.stageMaster.is_active, true),
+          isNull(schema.stageMaster.deleted_at),
+        ),
+      )
       .orderBy(asc(schema.stageMaster.stage_sequence))
       .limit(1);
     return stage?.stage_id ?? null;
@@ -3867,7 +4572,11 @@ export class BatchService {
         case 'WEEKLY':
           return line.day_of_week === isoWeekday;
         case 'MONTHLY':
-          return (line.day_of_week != null ? Number(line.day_of_week) : stageStartDayOfMonth) === dayOfMonth;
+          return (
+            (line.day_of_week != null
+              ? Number(line.day_of_week)
+              : stageStartDayOfMonth) === dayOfMonth
+          );
         case 'ONCE':
           return dayOfStage === line.start_day;
         case 'CUSTOM':
@@ -4078,6 +4787,15 @@ export class BatchService {
   }): Promise<string> {
     const today = new Date().toISOString().slice(0, 10);
     const startDate = batch.start_date || today;
+    // Walk every day from the start to today: a fixed cap of 365 made a batch more than a year old report
+    // its 366th day as pending for ever, so no later day could be posted.
+    const maxDays = Math.max(
+      365,
+      Math.ceil(
+        (Date.parse(today) - Date.parse(String(startDate).slice(0, 10))) /
+          86400000,
+      ) + 2,
+    );
 
     try {
       if (typeof this.db?.select !== 'function') return startDate;
@@ -4104,66 +4822,56 @@ export class BatchService {
       };
 
       if (batch.tracking_mode === 'ANIMAL_WISE') {
-        const liveAnimals =
-          (await this.db
-            .select({
-              animal_id: schema.animalRegister.animal_id,
-              current_stage_id: schema.animalRegister.current_stage_id,
-            })
-            .from(schema.animalRegister)
-            .where(
-              and(
-                eq(schema.animalRegister.current_batch_id, batch.batch_id),
-                eq(schema.animalRegister.is_active, true),
-              ),
-            )) || [];
-        let activeStageIds = new Set(
-          liveAnimals.map((a: any) => a.current_stage_id).filter(Boolean),
-        );
-        // A stage with animals in it but no scheduler cannot be entered or locked: the data-entry screen does not even list it. Counting it would
-        // pin the pending date to the day they arrived for ever (sows moved to Farrowing before its scheduler was made), so only stages that have
-        // a scheduler for this batch are owed an entry.
-        const headerRows =
-          (await this.db
-            .select({ stage_id: schema.schedulerHeader.stage_id })
-            .from(schema.schedulerHeader)
-            .where(eq(schema.schedulerHeader.batch_id, batch.batch_id))) || [];
-        if (activeStageIds.size && headerRows.length) {
-          const codeRows =
-            (await this.db
-              .select({ stage_id: schema.stageMaster.stage_id, stage_code: schema.stageMaster.stage_code })
+        // A day is owed only for the animals the batch HAD that day, at the stage each was at then (Rishi, 21 Oct):
+        // a day with none is not owed, and a stage nobody was in that day is not asked for. Reading today's animals
+        // instead made days pending that nobody could enter, and asked for animals that had not yet arrived.
+        const membership = await loadBatchMembership(this.db, batch.batch_id);
+        // A stage is only owed where the batch has a scheduler for it: without one the screen offers no entry, so a
+        // day could never be completed. Stages are compared by code, as the entry screen groups them.
+        const schedulerStages = await this.db
+          .select({ stage_id: schema.schedulerHeader.stage_id })
+          .from(schema.schedulerHeader)
+          .where(eq(schema.schedulerHeader.batch_id, batch.batch_id));
+        const stageIds = [
+          ...new Set([
+            ...schedulerStages.map((r) => r.stage_id),
+            ...locks.map((l: any) => l.stage_id),
+          ]),
+        ];
+        const stageRows = stageIds.length
+          ? await this.db
+              .select({
+                stage_id: schema.stageMaster.stage_id,
+                stage_code: schema.stageMaster.stage_code,
+              })
               .from(schema.stageMaster)
-              .where(inArray(schema.stageMaster.stage_id, [...new Set([...activeStageIds, ...headerRows.map((h: any) => h.stage_id)])] as string[]))) || [];
-          const codeOf = new Map(codeRows.map((c: any) => [c.stage_id, c.stage_code]));
-          const scheduledCodes = new Set(headerRows.map((h: any) => codeOf.get(h.stage_id) ?? h.stage_id));
-          const scheduled = new Set([...activeStageIds].filter((sId) => scheduledCodes.has(codeOf.get(sId as string) ?? sId)));
-          if (scheduled.size) activeStageIds = scheduled;
-        }
-        // A stage is owed a day's entry only from the day its animals entered it. Counting
-        // from the batch start, sows moved into Farrowing on 13 Sep made 9 Sep the next
-        // pending date — a day they had already been posted on, under Insemination.
-        const stageStart = new Map<string, string>();
-        for (const sId of activeStageIds) {
-          const entered = await this.schedulerHeaderService.stageEntryDate(batch.batch_id, sId as string);
-          stageStart.set(sId as string, entered && entered > startDate ? entered : startDate);
-        }
+              .where(inArray(schema.stageMaster.stage_id, stageIds))
+          : [];
+        const codeOf = new Map(
+          stageRows.map((r) => [r.stage_id, r.stage_code]),
+        );
+        const stageKey = (id: string) => codeOf.get(id) || id;
+        const scheduledKeys = new Set(
+          schedulerStages.map((r) => stageKey(r.stage_id)),
+        );
 
         let cursor = startDate;
         let count = 0;
-        while (count < 365) {
-          let isComplete = false;
-          if (activeStageIds.size === 0) {
-            isComplete = locks.some((l: any) => l.entry_date === cursor);
-          } else {
-            const lockedStages = new Set(
-              locks
-                .filter((l: any) => l.entry_date === cursor)
-                .map((l: any) => l.stage_id),
-            );
-            isComplete = Array.from(activeStageIds)
-              .filter((sId) => (stageStart.get(sId as string) ?? startDate) <= cursor)
-              .every((sId) => lockedStages.has(sId!));
+        while (count < maxDays) {
+          const owedStages = new Set<string>();
+          for (const m of membership.on(cursor)) {
+            if (!m.stage_id) continue;
+            const key = stageKey(m.stage_id);
+            if (scheduledKeys.has(key)) owedStages.add(key);
           }
+          const lockedStages = new Set(
+            locks
+              .filter((l: any) => l.entry_date === cursor)
+              .map((l: any) => stageKey(l.stage_id)),
+          );
+          const isComplete = Array.from(owedStages).every((key) =>
+            lockedStages.has(key),
+          );
 
           if (!isComplete) {
             return cursor;
@@ -4179,7 +4887,7 @@ export class BatchService {
         const lockedDates = new Set(locks.map((l: any) => l.entry_date));
         let cursor = startDate;
         let count = 0;
-        while (count < 365) {
+        while (count < maxDays) {
           if (!lockedDates.has(cursor)) {
             return cursor;
           }
@@ -4274,7 +4982,10 @@ export class BatchService {
           .where(
             and(
               eq(schema.stageMaster.lob_id, batch.lob_id),
-              gt(schema.stageMaster.stage_sequence, currentStage.stage_sequence),
+              gt(
+                schema.stageMaster.stage_sequence,
+                currentStage.stage_sequence,
+              ),
               eq(schema.stageMaster.is_active, true),
               isNull(schema.stageMaster.deleted_at),
             ),
@@ -4292,7 +5003,10 @@ export class BatchService {
           .where(
             and(
               eq(schema.stageMaster.lob_id, batch.lob_id),
-              gt(schema.stageMaster.stage_sequence, currentStage.stage_sequence),
+              gt(
+                schema.stageMaster.stage_sequence,
+                currentStage.stage_sequence,
+              ),
               eq(schema.stageMaster.is_active, true),
               isNull(schema.stageMaster.deleted_at),
             ),
@@ -4373,7 +5087,20 @@ export class BatchService {
    * form. ANIMAL_WISE batches have no single current stage, so they delegate
    * to getDataEntryByStage() instead — see that method's comment.
    */
+  /** The Data Entry screen's lines, with why the batch takes no entry when it does not (see entry-blocked.ts). */
   async getDataEntry(id: string, dateStr: string, stageId?: string) {
+    const result = await this.getDataEntryLines(id, dateStr, stageId);
+    return {
+      ...result,
+      entry_blocked_reason: await entryBlockedReason(this.db, id, dateStr),
+    };
+  }
+
+  private async getDataEntryLines(
+    id: string,
+    dateStr: string,
+    stageId?: string,
+  ) {
     const batch = await this.findOne(id);
     if (batch.tracking_mode === 'ANIMAL_WISE') {
       return this.getDataEntryByStage(batch, dateStr);
@@ -4400,14 +5127,19 @@ export class BatchService {
       dateStr,
       activeStageId || undefined,
     );
-    const lockInfo = (activeStageId || batch.stage_id)
-      ? await this.getLockInfo(id, (activeStageId || batch.stage_id)!, dateStr)
-      : {
-          lock_status: null,
-          locked_by: null,
-          locked_at: null,
-          reopen_reason: null,
-        };
+    const lockInfo =
+      activeStageId || batch.stage_id
+        ? await this.getLockInfo(
+            id,
+            (activeStageId || batch.stage_id)!,
+            dateStr,
+          )
+        : {
+            lock_status: null,
+            locked_by: null,
+            locked_at: null,
+            reopen_reason: null,
+          };
 
     const scheduledStages = await this.loadBatchScheduledStages(
       batch,
@@ -4665,7 +5397,9 @@ export class BatchService {
                 line_id: row.line_id,
                 entry_date: dateStr,
                 entered_value:
-                  row.entered_value != null ? Number(row.entered_value) : undefined,
+                  row.entered_value != null
+                    ? Number(row.entered_value)
+                    : undefined,
                 entered_text: row.entered_text || undefined,
                 lot_no: row.lot_no || undefined,
                 serial_no: row.serial_no || undefined,
@@ -4695,7 +5429,11 @@ export class BatchService {
         // on. The lock below moves no stock, so checking here rather than
         // after it loses nothing; reevaluateFeedLevels never throws, so it
         // cannot mask the original error.
-        if (postedDrafts) await this.batchDailyDataService.reevaluateFeedLevels(batch.farm_id, tenantId);
+        if (postedDrafts)
+          await this.batchDailyDataService.reevaluateFeedLevels(
+            batch.farm_id,
+            tenantId,
+          );
       }
     }
 
@@ -4761,15 +5499,25 @@ export class BatchService {
     batch: Awaited<ReturnType<BatchService['findOne']>>,
     dateStr: string,
   ) {
-    const liveAnimals = await this.db
-      .select()
-      .from(schema.animalRegister)
-      .where(
-        and(
-          eq(schema.animalRegister.current_batch_id, batch.batch_id),
-          eq(schema.animalRegister.is_active, true),
-        ),
-      );
+    // The animals in the batch ON this date, each at the stage it was at that day (Rishi, 21 Oct): a past day asks
+    // for those animals only, at their stage then — not for whoever is in the batch now.
+    const members = await animalsInBatchOn(this.db, batch.batch_id, dateStr);
+    const memberStage = new Map(members.map((m) => [m.animal_id, m.stage_id]));
+    const memberRows = members.length
+      ? await this.db
+          .select()
+          .from(schema.animalRegister)
+          .where(
+            inArray(
+              schema.animalRegister.animal_id,
+              members.map((m) => m.animal_id),
+            ),
+          )
+      : [];
+    const liveAnimals = memberRows.map((a) => ({
+      ...a,
+      current_stage_id: memberStage.get(a.animal_id) ?? null,
+    }));
 
     const animalStageIds = [
       ...new Set(
@@ -5089,13 +5837,22 @@ export class BatchService {
           animals.length,
         );
         dayOfStage = built.dayOfStage;
-        const hasOutputLine = (built.lines as Array<{ line_type: string }>).some((l) => l.line_type === 'OUTPUT');
+        const hasOutputLine = (
+          built.lines as Array<{ line_type: string }>
+        ).some((l) => l.line_type === 'OUTPUT');
         animalLines.push({
           animal_id: animal.animal_id,
           animal_code: animal.animal_code,
-          is_posted: isStageLocked || fullyPostedAnimalSet.has(animal.animal_id),
+          is_posted:
+            isStageLocked || fullyPostedAnimalSet.has(animal.animal_id),
           lines: built.lines,
-          output_event: hasOutputLine ? await animalOutputEvent(this.db, animal.animal_id, header.stage_id) : null,
+          output_event: hasOutputLine
+            ? await animalOutputEvent(
+                this.db,
+                animal.animal_id,
+                header.stage_id,
+              )
+            : null,
         });
       }
 
@@ -5166,19 +5923,25 @@ export class BatchService {
       }
     }
 
-    const allStageAnimals = await this.db
-      .select()
-      .from(schema.animalRegister)
-      .where(
-        and(
-          eq(schema.animalRegister.current_batch_id, batchId),
-          eq(schema.animalRegister.current_stage_id, stageId),
-          eq(schema.animalRegister.is_active, true),
-        ),
-      );
+    // The stage's animals ON the date being posted - those the batch had then at this stage, whether or not they
+    // are still there (Rishi, 21 Oct).
+    const stageMembers = (
+      await animalsInBatchOn(this.db, batchId, dateStr)
+    ).filter((m) => m.stage_id === stageId);
+    const allStageAnimals = stageMembers.length
+      ? await this.db
+          .select()
+          .from(schema.animalRegister)
+          .where(
+            inArray(
+              schema.animalRegister.animal_id,
+              stageMembers.map((m) => m.animal_id),
+            ),
+          )
+      : [];
     if (!allStageAnimals.length) {
       throw new BadRequestException(
-        'No animals are currently in this stage — nothing to post.',
+        `No animals were in this stage on ${dateStr} — nothing to post.`,
       );
     }
 
@@ -5207,7 +5970,10 @@ export class BatchService {
     );
     const animalsWithPosted = new Set(
       alreadyPostedEntries
-        .filter((e) => e.posted === true || (e.posted as any) === 1 || e.posted == null)
+        .filter(
+          (e) =>
+            e.posted === true || (e.posted as any) === 1 || e.posted == null,
+        )
         .map((e) => e.animal_id)
         .filter((id): id is string => Boolean(id)),
     );
@@ -5220,7 +5986,7 @@ export class BatchService {
       const match = allStageAnimals.find((a) => a.animal_id === animalId);
       if (!match) {
         throw new BadRequestException(
-          `Animal '${animalId}' is not active in this stage — cannot post.`,
+          `Animal '${animalId}' was not in this stage on ${dateStr} — cannot post.`,
         );
       }
       if (alreadyPostedAnimalIds.has(animalId)) {
@@ -5353,11 +6119,15 @@ export class BatchService {
             // of the batch, after which her other entries of the day no longer match where she is. So the day's
             // feed, observations and the rest post first, their consumption is issued, and then the outputs and
             // the transfers.
-            const lineTypeOf = new Map(activePairs.map(({ line }) => [line.line_id, line.line_type]));
+            const lineTypeOf = new Map(
+              activePairs.map(({ line }) => [line.line_id, line.line_type]),
+            );
             // A death goes after everything else of the day: the animal's feed and observations for that day are
             // real, and once she is recorded dead her other entries no longer match where she is.
             const deathLineIds = new Set(
-              activePairs.filter(({ line }) => line.kpi_metric === 'MORTALITY_COUNT').map(({ line }) => line.line_id),
+              activePairs
+                .filter(({ line }) => line.kpi_metric === 'MORTALITY_COUNT')
+                .map(({ line }) => line.line_id),
             );
             const movesLast = (row: { line_id: string }) =>
               lineTypeOf.get(row.line_id) === 'OUTPUT' ||
@@ -5365,13 +6135,20 @@ export class BatchService {
               deathLineIds.has(row.line_id);
             const ordered = [
               ...draftRows.filter((row) => !movesLast(row)),
-              ...draftRows.filter((row) => lineTypeOf.get(row.line_id) === 'OUTPUT'),
-              ...draftRows.filter((row) => lineTypeOf.get(row.line_id) === 'TRANSFER'),
+              ...draftRows.filter(
+                (row) => lineTypeOf.get(row.line_id) === 'OUTPUT',
+              ),
+              ...draftRows.filter(
+                (row) => lineTypeOf.get(row.line_id) === 'TRANSFER',
+              ),
               ...draftRows.filter((row) => deathLineIds.has(row.line_id)),
             ];
             const firstMover = ordered.findIndex(movesLast);
             for (const [index, row] of ordered.entries()) {
-              if (index === firstMover) await this.batchDailyDataService.postCollected(collector.splice(0));
+              if (index === firstMover)
+                await this.batchDailyDataService.postCollected(
+                  collector.splice(0),
+                );
               await this.batchDailyDataService.postEntry(
                 batchId,
                 {
@@ -5389,7 +6166,7 @@ export class BatchService {
                   item_id: row.item_id || undefined,
                   destination_batch_id: row.destination_batch_id || undefined,
                   pool_animal_ids: parsePoolIds(row.pool_animal_ids),
-                reason_id: row.reason_id || undefined,
+                  reason_id: row.reason_id || undefined,
                   empty_bags: row.empty_bags ?? undefined,
                   remarks: row.remarks || undefined,
                 } as any,
@@ -5406,7 +6183,11 @@ export class BatchService {
           throw err;
         } finally {
           // As in postBatchDay: once per call, and even when a later line throws.
-          if (postedDrafts) await this.batchDailyDataService.reevaluateFeedLevels(batch.farm_id, tenantId);
+          if (postedDrafts)
+            await this.batchDailyDataService.reevaluateFeedLevels(
+              batch.farm_id,
+              tenantId,
+            );
         }
       }
     }
@@ -5562,11 +6343,18 @@ export class BatchService {
         )
         .limit(1);
       if (!lock || lock.status !== 'LOCKED') {
-        throw new BadRequestException('This stage/date is not currently locked.');
+        throw new BadRequestException(
+          'This stage/date is not currently locked.',
+        );
       }
 
       const unposted = await this.dayReversal.unpostDay(
-        batchId, stageId, dateStr, reason, tenantId, userPayload?.userId,
+        batchId,
+        stageId,
+        dateStr,
+        reason,
+        tenantId,
+        userPayload?.userId,
       );
 
       const now = toMysqlTimestamp();
@@ -5589,12 +6377,20 @@ export class BatchService {
         entityName: 'batch_data_entry_lock',
         entityId: lock.lock_id,
         oldValues: { status: 'LOCKED' },
-        newValues: { status: 'REOPENED', reopen_reason: reason, unposted: unposted.unposted, kept: unposted.kept.length },
+        newValues: {
+          status: 'REOPENED',
+          reopen_reason: reason,
+          unposted: unposted.unposted,
+          kept: unposted.kept.length,
+        },
       });
 
       // Stock returned to a silo changes its level.
       if (unposted.consumption_reversed) {
-        await this.batchDailyDataService.reevaluateFeedLevels(batch.farm_id, tenantId);
+        await this.batchDailyDataService.reevaluateFeedLevels(
+          batch.farm_id,
+          tenantId,
+        );
       }
 
       return {
@@ -5724,7 +6520,16 @@ export class BatchService {
       ? await this.db
           .select({ item_id: schema.breedLifecycleStages.feed_item_id })
           .from(schema.breedLifecycleStages)
-          .where(and(inArray(schema.breedLifecycleStages.feed_item_id, consumptionItemIds), eq(schema.breedLifecycleStages.feed_form, 'BAGGED'), isNull(schema.breedLifecycleStages.retired_at)))
+          .where(
+            and(
+              inArray(
+                schema.breedLifecycleStages.feed_item_id,
+                consumptionItemIds,
+              ),
+              eq(schema.breedLifecycleStages.feed_form, 'BAGGED'),
+              isNull(schema.breedLifecycleStages.retired_at),
+            ),
+          )
       : [];
     const baggedItemIds = new Set((baggedRows ?? []).map((r) => r.item_id));
     const itemLabel = (itemId: string | null) => {
@@ -5841,7 +6646,10 @@ export class BatchService {
         withdrawal_days: isTracked ? (itemRow?.withdrawal_days ?? null) : null,
         is_lot_tracked: isLot,
         is_serial_tracked: isSerial,
-        is_bagged_feed: line.line_type === 'CONSUMPTION' && !!line.item_id && baggedItemIds.has(line.item_id),
+        is_bagged_feed:
+          line.line_type === 'CONSUMPTION' &&
+          !!line.item_id &&
+          baggedItemIds.has(line.item_id),
         resource_id: line.resource_id,
         uom,
         occurrence: line.occurrence,
@@ -5855,7 +6663,8 @@ export class BatchService {
           stageAnimalCount,
         ),
         already_entered_qty: alreadyEntered,
-        already_entered_lot: enteredEntry?.lot_no || enteredEntry?.serial_no || null,
+        already_entered_lot:
+          enteredEntry?.lot_no || enteredEntry?.serial_no || null,
         already_entered_serial: enteredEntry?.serial_no || null,
         // An output's chosen item and a transfer's (or weaning's) destination, as the draft holds them.
         already_entered_item_id: enteredEntry?.item_id || null,
@@ -5875,8 +6684,59 @@ export class BatchService {
   }
 
   /**
+   * A user closes a bio-asset batch (Rishi, 19 Oct: a batch is closed by a user, never by a posting). Its value went
+   * out with its animals — by disposal, harvest or transfer — so there is nothing to allocate: it may close only once
+   * it holds no head on its bio-asset state and, for an animal-wise batch, no live animal.
+   */
+  private async closeEmptyBioAsset(
+    batch: Awaited<ReturnType<BatchService['findOne']>>,
+    dto: CloseBatchDto,
+    userPayload?: UserContext,
+  ) {
+    const [state] = await this.db
+      .select({ current_quantity: schema.batchBioAssetState.current_quantity })
+      .from(schema.batchBioAssetState)
+      .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id))
+      .limit(1);
+    const [{ live }] = await this.db
+      .select({ live: count() })
+      .from(schema.animalRegister)
+      .where(
+        and(
+          eq(schema.animalRegister.current_batch_id, batch.batch_id),
+          eq(schema.animalRegister.is_active, true),
+        ),
+      );
+    const head = Math.max(Number(state?.current_quantity ?? 0), Number(live));
+    if (head > 1e-9) {
+      throw new BadRequestException(
+        `Batch '${batch.batch_no}' still holds ${head} head. Move, sell or dispose of them before closing it.`,
+      );
+    }
+    await this.db
+      .update(schema.batchHeader)
+      .set({
+        status: 'CLOSED',
+        actual_end_date:
+          dto.actual_end_date || new Date().toISOString().slice(0, 10),
+        closing_quantity: '0.0000',
+        closed_at: toMysqlTimestamp(),
+        closed_by: userPayload?.userId || null,
+        updated_by: userPayload?.userId || null,
+        updated_at: toMysqlTimestamp(),
+      })
+      .where(
+        and(
+          eq(schema.batchHeader.batch_id, batch.batch_id),
+          eq(schema.batchHeader.status, 'ACTIVE'),
+        ),
+      );
+    return this.findOne(batch.batch_id);
+  }
+
+  /**
    * Closes an ACTIVE batch: splits its accumulated cost across the output lines by percentage, posts the outputs to stock
-   * and any variance journals, and writes the batch total. Bio-asset batches do not close here — they close themselves when the last animal is disposed.
+   * and any variance journals, and writes the batch total. A bio-asset batch takes no output lines and goes to closeEmptyBioAsset.
    */
   async close(
     id: string,
@@ -5886,9 +6746,11 @@ export class BatchService {
   ) {
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'ACTIVE');
-    if (batch.costing_method === 'BIO_ASSET') {
+    if (batch.costing_method === 'BIO_ASSET')
+      return this.closeEmptyBioAsset(batch, dto, userPayload);
+    if (!dto.output_lines?.length) {
       throw new BadRequestException(
-        "BIO_ASSET batches don't close via this action — use the dispose endpoint to exit animals from the herd; the batch closes automatically once the herd is fully disposed.",
+        'Closing a batch needs its output lines, with cost splits adding up to 100.',
       );
     }
 
@@ -6277,14 +7139,32 @@ export class BatchService {
   }
 
   /** A sale's customer must be one of the batch's company (or tenant-wide), and still active. */
-  private async assertCustomerOfCompany(customerId: string, companyId: string, tenantId: string) {
+  private async assertCustomerOfCompany(
+    customerId: string,
+    companyId: string,
+    tenantId: string,
+  ) {
     const [customer] = await this.db
-      .select({ company_id: schema.customerMaster.company_id, is_active: schema.customerMaster.is_active })
+      .select({
+        company_id: schema.customerMaster.company_id,
+        is_active: schema.customerMaster.is_active,
+      })
       .from(schema.customerMaster)
-      .where(and(eq(schema.customerMaster.customer_id, customerId), eq(schema.customerMaster.tenant_id, tenantId)))
+      .where(
+        and(
+          eq(schema.customerMaster.customer_id, customerId),
+          eq(schema.customerMaster.tenant_id, tenantId),
+        ),
+      )
       .limit(1);
-    if (!customer || (customer.company_id && customer.company_id !== companyId) || customer.is_active === false) {
-      throw new BadRequestException('The customer is not an active customer of this company.');
+    if (
+      !customer ||
+      (customer.company_id && customer.company_id !== companyId) ||
+      customer.is_active === false
+    ) {
+      throw new BadRequestException(
+        'The customer is not an active customer of this company.',
+      );
     }
   }
 
@@ -6305,12 +7185,21 @@ export class BatchService {
    * path credits the mature asset account directly where the runs credit the accumulated-amortisation account. Count-only herds, and
    * registered herds none of whose animals has a profile, keep using the batch path.
    */
-  private async assertNotCostedPerAnimal(batch: { animal_tracking?: string | null; batch_no: string }, id: string, action: string) {
+  private async assertNotCostedPerAnimal(
+    batch: { animal_tracking?: string | null; batch_no: string },
+    id: string,
+    action: string,
+  ) {
     if (batch.animal_tracking !== 'REGISTERED') return;
     const [row] = await this.db
       .select({ n: sql<string>`COUNT(*)` })
       .from(schema.animalRegister)
-      .where(and(eq(schema.animalRegister.current_batch_id, id), isNotNull(schema.animalRegister.costing_profile_id)));
+      .where(
+        and(
+          eq(schema.animalRegister.current_batch_id, id),
+          isNotNull(schema.animalRegister.costing_profile_id),
+        ),
+      );
     if (Number(row?.n ?? 0) > 0) {
       throw new BadRequestException(
         `${action} is not done on batch ${batch.batch_no}: its animals are costed one by one by their costing profiles. ` +
@@ -6320,13 +7209,24 @@ export class BatchService {
   }
 
   /** A bio-asset posting dated inside a CLOSED reporting period is refused, as every other posting is. */
-  private async assertBioPeriodOpen(batch: { company_id: string }, postingDate: string, tenantId: string) {
-    await assertPostingPeriodOpen(this.db, { tenantId, companyId: batch.company_id, postingDate });
+  private async assertBioPeriodOpen(
+    batch: { company_id: string },
+    postingDate: string,
+    tenantId: string,
+  ) {
+    await assertPostingPeriodOpen(this.db, {
+      tenantId,
+      companyId: batch.company_id,
+      postingDate,
+    });
   }
 
   /** Calendar months from the month of `from` to the month of `to` (YYYY-MM-DD both); 0 inside the same month. */
   private monthsBetween(from: string, to: string): number {
-    return (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 + (Number(to.slice(5, 7)) - Number(from.slice(5, 7)));
+    return (
+      (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 +
+      (Number(to.slice(5, 7)) - Number(from.slice(5, 7)))
+    );
   }
 
   /** PREMATURE → MATURE: reclassifies the NCA and sets up the amortization schedule. */
@@ -6341,7 +7241,10 @@ export class BatchService {
     this.assertBioAsset(batch, 'Maturity transition');
     // A batch of registered animals is never made mature as a herd: one switch for animals of different ages is wrong for each of them. Each animal
     // is costed from her own start age (her costing start date), by the central costing run (Finance > Bio-Asset Costing Runs).
-    if ((batch as { tracking_mode?: string | null }).tracking_mode === 'ANIMAL_WISE') {
+    if (
+      (batch as { tracking_mode?: string | null }).tracking_mode ===
+      'ANIMAL_WISE'
+    ) {
       throw new BadRequestException(
         `Batch ${batch.batch_no} holds registered animals, so it is not made mature as a herd: each animal is costed from her own start age. Use Finance > Bio-Asset Costing Runs.`,
       );
@@ -6472,14 +7375,20 @@ export class BatchService {
     await this.assertBioPeriodOpen(batch, postingDay, tenantId);
     // An amortization run belongs to the life of the herd: not before it matured, and not past its useful life.
     // (JE-000014 in nf_devco was dated two months before its batch matured.)
-    const maturedOn = bioState.matured_at ? String(bioState.matured_at).slice(0, 10) : null;
+    const maturedOn = bioState.matured_at
+      ? String(bioState.matured_at).slice(0, 10)
+      : null;
     if (maturedOn && postingDay < maturedOn) {
       throw new BadRequestException(
         `Amortization cannot be dated ${postingDay} — the batch matured on ${maturedOn}.`,
       );
     }
     const lifeMonths = bioState.productive_life_months;
-    if (maturedOn && lifeMonths && this.monthsBetween(maturedOn, postingDay) >= lifeMonths) {
+    if (
+      maturedOn &&
+      lifeMonths &&
+      this.monthsBetween(maturedOn, postingDay) >= lifeMonths
+    ) {
       throw new BadRequestException(
         `The useful life of ${lifeMonths} months from ${maturedOn} is complete — nothing more to amortize.`,
       );
@@ -6506,14 +7415,21 @@ export class BatchService {
     // carrying value all use this one figure. The carrying value used to be floored at 0 while the journal still
     // posted the full charge, so the three could part.
     // (A residual below zero, as one batch in nf_devco carries, is read as none: it must not raise the room.)
-    const residualTotal = Math.max(0, Number(bioState.residual_value_per_unit ?? 0)) * currentQty;
+    const residualTotal =
+      Math.max(0, Number(bioState.residual_value_per_unit ?? 0)) * currentQty;
     const room = Math.max(0, Number(bioState.nca_book_value) - residualTotal);
     if (room < 0.005) {
       throw new BadRequestException(
         'Nothing to amortize — the carrying value is already at the residual value.',
       );
     }
-    const amount = Math.round(Math.min(Number(bioState.monthly_amortization_rate) * currentQty, room) * 1e4) / 1e4;
+    const amount =
+      Math.round(
+        Math.min(
+          Number(bioState.monthly_amortization_rate) * currentQty,
+          room,
+        ) * 1e4,
+      ) / 1e4;
     if (amount < 0.005) {
       throw new BadRequestException('The amortization for this period is nil.');
     }
@@ -6532,7 +7448,8 @@ export class BatchService {
       userId: userPayload?.userId,
     });
 
-    const newNca = Math.round((Number(bioState.nca_book_value) - amount) * 1e4) / 1e4;
+    const newNca =
+      Math.round((Number(bioState.nca_book_value) - amount) * 1e4) / 1e4;
     await this.db
       .update(schema.batchBioAssetState)
       .set({
@@ -6581,12 +7498,17 @@ export class BatchService {
       throw new BadRequestException('No animals remain in this herd.');
     }
     if (!(dto.fair_value_per_unit >= 0)) {
-      throw new BadRequestException('The fair value per unit cannot be negative.');
+      throw new BadRequestException(
+        'The fair value per unit cannot be negative.',
+      );
     }
     const postingDay = dto.posting_date.slice(0, 10);
     await this.assertBioPeriodOpen(batch, postingDay, tenantId);
     const currentPerUnit = Number(bioState.nca_book_value) / currentQty;
-    const gainLoss = Math.round((dto.fair_value_per_unit - currentPerUnit) * currentQty * 1e4) / 1e4;
+    const gainLoss =
+      Math.round(
+        (dto.fair_value_per_unit - currentPerUnit) * currentQty * 1e4,
+      ) / 1e4;
 
     if (Math.abs(gainLoss) < 0.005) {
       return this.findOne(id);
@@ -6597,7 +7519,10 @@ export class BatchService {
       companyId: batch.company_id,
       // A premature herd's value sits in the pre-mature asset account, so its revaluation posts there, not to
       // the mature account (it used to debit the mature account whatever the stage).
-      transactionType: bioState.stage === 'PREMATURE' ? 'BIO_FAIR_VALUE_PREMATURE' : 'BIO_FAIR_VALUE',
+      transactionType:
+        bioState.stage === 'PREMATURE'
+          ? 'BIO_FAIR_VALUE_PREMATURE'
+          : 'BIO_FAIR_VALUE',
       amount: Math.abs(gainLoss),
       documentNo: batch.batch_no,
       postingDate: dto.posting_date,
@@ -6610,26 +7535,45 @@ export class BatchService {
     });
 
     // The herd now stands at fair value x head; journal, ledger and carrying value agree (no floor to part them).
-    const newNca = Math.round((Number(bioState.nca_book_value) + gainLoss) * 1e4) / 1e4;
+    const newNca =
+      Math.round((Number(bioState.nca_book_value) + gainLoss) * 1e4) / 1e4;
     // A mature herd's monthly charge was fixed from the old cost basis. Re-spread what is left above residual over
     // the amortization runs that remain, so the next charge follows the new carrying value.
     let newRate: string | undefined;
-    if (bioState.stage === 'MATURE' && bioState.monthly_amortization_rate != null && bioState.productive_life_months) {
+    if (
+      bioState.stage === 'MATURE' &&
+      bioState.monthly_amortization_rate != null &&
+      bioState.productive_life_months
+    ) {
       const [done] = await this.db
         .select({ runs: sql<string>`COUNT(*)` })
         .from(schema.bioAssetLedger)
-        .where(and(eq(schema.bioAssetLedger.batch_id, id), bioEventCondition(schema.bioAssetLedger, 'AMORTIZATION')));
-      const remainingRuns = bioState.productive_life_months - Number(done?.runs ?? 0);
-      const residualTotal = Math.max(0, Number(bioState.residual_value_per_unit ?? 0)) * currentQty;
-      newRate = remainingRuns > 0
-        ? (Math.max(0, newNca - residualTotal) / remainingRuns / currentQty).toFixed(6)
-        : '0.000000';
+        .where(
+          and(
+            eq(schema.bioAssetLedger.batch_id, id),
+            bioEventCondition(schema.bioAssetLedger, 'AMORTIZATION'),
+          ),
+        );
+      const remainingRuns =
+        bioState.productive_life_months - Number(done?.runs ?? 0);
+      const residualTotal =
+        Math.max(0, Number(bioState.residual_value_per_unit ?? 0)) * currentQty;
+      newRate =
+        remainingRuns > 0
+          ? (
+              Math.max(0, newNca - residualTotal) /
+              remainingRuns /
+              currentQty
+            ).toFixed(6)
+          : '0.000000';
     }
     await this.db
       .update(schema.batchBioAssetState)
       .set({
         nca_book_value: newNca.toString(),
-        ...(newRate !== undefined ? { monthly_amortization_rate: newRate } : {}),
+        ...(newRate !== undefined
+          ? { monthly_amortization_rate: newRate }
+          : {}),
         updated_at: toMysqlTimestamp(),
       })
       .where(eq(schema.batchBioAssetState.batch_id, id));
@@ -6669,7 +7613,11 @@ export class BatchService {
     this.assertBioAsset(batch, 'Disposal');
     const bioState = await this.getBioAssetState(id);
 
-    await this.assertBioPeriodOpen(batch, dto.posting_date.slice(0, 10), tenantId);
+    await this.assertBioPeriodOpen(
+      batch,
+      dto.posting_date.slice(0, 10),
+      tenantId,
+    );
     const currentQty = Number(bioState.current_quantity);
     if (dto.quantity <= 0 || dto.quantity > currentQty) {
       throw new BadRequestException(
@@ -6713,13 +7661,27 @@ export class BatchService {
       await this.glPostingService.postInventoryLedgerEntry(
         ledgerEntry,
         userPayload?.userId,
-        bioState.stage === 'PREMATURE' ? { creditAccountId: await this.prematureAssetAccount(batch, tenantId) } : {},
+        bioState.stage === 'PREMATURE'
+          ? {
+              creditAccountId: await this.prematureAssetAccount(
+                batch,
+                tenantId,
+              ),
+            }
+          : {},
       );
     } else {
       if (dto.sale_proceeds === undefined || dto.sale_proceeds === null) {
-        throw new BadRequestException('A sale disposal needs the sale proceeds.');
+        throw new BadRequestException(
+          'A sale disposal needs the sale proceeds.',
+        );
       }
-      if (dto.customer_id) await this.assertCustomerOfCompany(dto.customer_id, batch.company_id, tenantId);
+      if (dto.customer_id)
+        await this.assertCustomerOfCompany(
+          dto.customer_id,
+          batch.company_id,
+          tenantId,
+        );
       // The sale: Dr Trade Receivables / Cr Biological Assets for the proceeds (BIO_SALE_PROCEEDS), then the
       // gain or loss below takes the asset credit down to the book value sold. Before this only the gain
       // posted — Dr Biological Assets / Cr Disposal Gain — so a sale raised the asset it should have relieved
@@ -6737,7 +7699,10 @@ export class BatchService {
           lobId: batch.lob_id,
           stageId: batch.stage_id || undefined,
           userId: userPayload?.userId,
-          creditAccountId: bioState.stage === 'PREMATURE' ? await this.prematureAssetAccount(batch, tenantId) : undefined,
+          creditAccountId:
+            bioState.stage === 'PREMATURE'
+              ? await this.prematureAssetAccount(batch, tenantId)
+              : undefined,
         });
       }
       const gainLoss = dto.sale_proceeds - nbvDisposed;
@@ -6754,7 +7719,10 @@ export class BatchService {
           lobId: batch.lob_id,
           stageId: batch.stage_id || undefined,
           userId: userPayload?.userId,
-          debitAccountId: bioState.stage === 'PREMATURE' ? await this.prematureAssetAccount(batch, tenantId) : undefined,
+          debitAccountId:
+            bioState.stage === 'PREMATURE'
+              ? await this.prematureAssetAccount(batch, tenantId)
+              : undefined,
           reverseDirection: gainLoss < 0,
         });
       }
@@ -6776,7 +7744,10 @@ export class BatchService {
       tenant_id: tenantId,
       company_id: batch.company_id,
       bio_asset_item_id: await this.resolveBioAssetItemId(batch, tenantId),
-      ...bioCodes.disposal({ sold: dto.disposal_type === 'SOLD', scope: 'BATCH' }),
+      ...bioCodes.disposal({
+        sold: dto.disposal_type === 'SOLD',
+        scope: 'BATCH',
+      }),
       document_no: batch.batch_no,
       batch_id: id,
       batch_no: batch.batch_no,
@@ -6788,7 +7759,8 @@ export class BatchService {
         bioState.stage === 'MATURE' ? 'AMORTIZED_COST' : 'COST_ACCUMULATION',
       nob_id: batch.nob_id,
       lob_id: batch.lob_id,
-      customer_id: dto.disposal_type === 'SOLD' ? dto.customer_id || null : null,
+      customer_id:
+        dto.disposal_type === 'SOLD' ? dto.customer_id || null : null,
       created_by: userPayload?.userId || null,
     });
 
@@ -6798,29 +7770,37 @@ export class BatchService {
     if (newQty > 0) {
       await this.db
         .update(schema.batchHeader)
-        .set({ closing_quantity: newQty.toString(), updated_at: toMysqlTimestamp() })
+        .set({
+          closing_quantity: newQty.toString(),
+          updated_at: toMysqlTimestamp(),
+        })
         .where(eq(schema.batchHeader.batch_id, id));
       if (batch.tracking_mode === 'BATCH_WISE' && batch.stage_id) {
         await this.db
           .update(schema.schedulerHeader)
-          .set({ animal_count: newQty.toString(), updated_at: toMysqlTimestamp() })
-          .where(and(eq(schema.schedulerHeader.batch_id, id), eq(schema.schedulerHeader.stage_id, batch.stage_id)));
+          .set({
+            animal_count: newQty.toString(),
+            updated_at: toMysqlTimestamp(),
+          })
+          .where(
+            and(
+              eq(schema.schedulerHeader.batch_id, id),
+              eq(schema.schedulerHeader.stage_id, batch.stage_id),
+            ),
+          );
       }
     }
 
-    let closedNow = false;
+    // The last head out leaves the batch at nil head, still ACTIVE: a batch is closed by a user, never by a
+    // posting (Rishi, 19 Oct). POST /batch/:id/close accepts a bio-asset batch once it holds no head.
+    const closedNow = false;
     if (newQty <= 0) {
-      closedNow = true;
       await this.db
         .update(schema.batchHeader)
         .set({
-          status: 'CLOSED',
-          actual_end_date: dto.posting_date,
           closing_quantity: '0.0000',
           total_cost: newNca.toString(),
           unit_cost: '0.000000',
-          closed_at: toMysqlTimestamp(),
-          closed_by: userPayload?.userId || null,
           updated_by: userPayload?.userId || null,
           updated_at: toMysqlTimestamp(),
         })
@@ -7240,9 +8220,7 @@ export class BatchService {
   ) {
     const batch = await this.findOne(batchId);
     if (tenantId && batch.tenant_id && batch.tenant_id !== tenantId) {
-      throw new NotFoundException(
-        'Batch not found.',
-      );
+      throw new NotFoundException('Batch not found.');
     }
     const startDate = new Date(batch.start_date);
     const today = new Date();
@@ -7274,7 +8252,10 @@ export class BatchService {
               eq(schema.batchTransaction.animal_id, animalId),
               isNull(schema.batchTransaction.reversed_at),
             )
-          : and(eq(schema.batchTransaction.batch_id, batchId), isNull(schema.batchTransaction.reversed_at)),
+          : and(
+              eq(schema.batchTransaction.batch_id, batchId),
+              isNull(schema.batchTransaction.reversed_at),
+            ),
       )
       .orderBy(schema.batchTransaction.transaction_date);
 
@@ -7327,10 +8308,20 @@ export class BatchService {
         return date >= from && (!to || date <= to);
       });
       if (!header) return [];
-      const dayOfStage = Math.floor((date.getTime() - new Date(header.effective_from).getTime()) / (1000 * 60 * 60 * 24)) + 1;
-      return schedulerLines.filter((l) =>
-        l.scheduler_id === header.scheduler_id && l.line_type === 'CONSUMPTION' && l.occurrence === 'DAILY' && l.standard_qty
-        && dayOfStage >= l.start_day && (l.end_day == null || dayOfStage <= l.end_day));
+      const dayOfStage =
+        Math.floor(
+          (date.getTime() - new Date(header.effective_from).getTime()) /
+            (1000 * 60 * 60 * 24),
+        ) + 1;
+      return schedulerLines.filter(
+        (l) =>
+          l.scheduler_id === header.scheduler_id &&
+          l.line_type === 'CONSUMPTION' &&
+          l.occurrence === 'DAILY' &&
+          l.standard_qty &&
+          dayOfStage >= l.start_day &&
+          (l.end_day == null || dayOfStage <= l.end_day),
+      );
     };
 
     // Also fetch breed lifecycle stages for reference
@@ -7372,7 +8363,10 @@ export class BatchService {
       );
       const qty = Number(batchTransaction.quantity || 0);
 
-      if (batchTransaction.transaction_type === 'CONSUMPTION' || item?.item_type === 'FEED') {
+      if (
+        batchTransaction.transaction_type === 'CONSUMPTION' ||
+        item?.item_type === 'FEED'
+      ) {
         dayActualFeed[dayNo] = (dayActualFeed[dayNo] || 0) + qty;
       } else if (batchTransaction.transaction_type === 'MORTALITY') {
         dayActualMort[dayNo] = (dayActualMort[dayNo] || 0) + qty;
@@ -7414,7 +8408,10 @@ export class BatchService {
       // Several feeds can share a day (14 Oct): the standard is the day's feed lines added up, as the actual is.
       const dayFeedLines = feedLinesForDate(curDateObj);
       if (dayFeedLines.length) {
-        stdDailyFeedPerHead = dayFeedLines.reduce((sum, l) => sum + Number(l.standard_qty), 0);
+        stdDailyFeedPerHead = dayFeedLines.reduce(
+          (sum, l) => sum + Number(l.standard_qty),
+          0,
+        );
       } else {
         // Fallback to breed standards
         const matchingStandards = lifecycleStandards.filter((l) => {
@@ -7424,7 +8421,10 @@ export class BatchService {
         });
         const firstStandard = matchingStandards[0];
         if (firstStandard) {
-          stdDailyFeedPerHead = matchingStandards.reduce((sum, l) => sum + Number(l.feed_qty_per_head_per_day_kg || 0), 0);
+          stdDailyFeedPerHead = matchingStandards.reduce(
+            (sum, l) => sum + Number(l.feed_qty_per_head_per_day_kg || 0),
+            0,
+          );
           stdTargetWeight = Number(firstStandard.std_body_weight_kg || 0);
           stdMortPct = Number(firstStandard.std_mortality_rate_pct || 0);
         }

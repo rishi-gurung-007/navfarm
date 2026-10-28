@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, type CSSProperties, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, Circle, Layers, X, XCircle } from "lucide-react";
+import type { RemoteOptions } from "@/modules/master-data/SearchableEntitySelect";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Button } from "@/components/ui/button";
 import { errorsOf, issueFor, type Issue, type Row } from "./breeding-rules";
@@ -228,9 +229,11 @@ export function BatchPicker({
   countOf,
   noun,
   issues,
+  remote,
 }: {
   id: string;
   batches: Row[];
+  remote?: RemoteOptions;
   value: string;
   onChange: (batchId: string) => void;
   countOf: (batchId: string) => number;
@@ -254,6 +257,7 @@ export function BatchPicker({
         }))}
         columns={[{ key: "batch_no", label: "Batch" }, { key: "head", label: "Held" }]}
         disabled={!usable.length}
+        remote={remote}
       />
       {!usable.length && (
         <p className="text-[11px] mt-1 flex items-start gap-1" style={{ color: "var(--warning)" }}>

@@ -1,23 +1,25 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useState } from "react";
-import { 
-  Tag, 
-  Search, 
-  Check, 
-  X, 
-  Sparkles, 
-  RotateCcw, 
-  CheckCircle2, 
+import { NA } from '@/utils/na';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Tag,
+  Search,
+  Check,
+  X,
+  Sparkles,
+  RotateCcw,
+  CheckCircle2,
   Lock,
   Package,
-  Loader2
-} from "lucide-react";
-import { Dialog } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Toast } from "@/components/ui/toast";
-import { api } from "@/services/api-client";
+  Loader2,
+} from 'lucide-react';
+import { Dialog } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Toast } from '@/components/ui/toast';
+import { Select } from '@/components/ui/select';
+import { api } from '@/services/api-client';
 
 type Row = Record<string, any>;
 
@@ -40,16 +42,19 @@ interface AnimalSerialAssignmentModalProps {
 }
 
 function unwrap<T = any>(res: any): T {
-  return (Array.isArray(res) ? res : res?.data ?? res) as T;
+  return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 }
 
 const S = {
-  surface: { backgroundColor: "var(--surface)", borderColor: "var(--border)" },
-  raised: { backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" },
-  primary: { color: "var(--text-primary)" },
-  sub: { color: "var(--text-secondary)" },
-  muted: { color: "var(--text-muted)" },
-  accent: { color: "var(--accent)" },
+  surface: { backgroundColor: 'var(--surface)', borderColor: 'var(--border)' },
+  raised: {
+    backgroundColor: 'var(--surface-raised)',
+    borderColor: 'var(--border)',
+  },
+  primary: { color: 'var(--text-primary)' },
+  sub: { color: 'var(--text-secondary)' },
+  muted: { color: 'var(--text-muted)' },
+  accent: { color: 'var(--accent)' },
 };
 
 export default function AnimalSerialAssignmentModal({
@@ -65,15 +70,18 @@ export default function AnimalSerialAssignmentModal({
   const [availableSerials, setAvailableSerials] = useState<SerialOption[]>([]);
   const [loadingSerials, setLoadingSerials] = useState(false);
   const [assignments, setAssignments] = useState<Record<string, string>>({});
-  const [searchFilter, setSearchFilter] = useState("");
-  const [feedback, setFeedback] = useState<{ message: string; type: "success" | "info" | "warning" } | null>(null);
+  const [searchFilter, setSearchFilter] = useState('');
+  const [feedback, setFeedback] = useState<{
+    message: string;
+    type: 'success' | 'info' | 'warning';
+  } | null>(null);
 
   // Synchronize state when modal opens
   useEffect(() => {
     if (!open || !line) return;
     setAssignments({ ...currentAssignments });
     setFeedback(null);
-    setSearchFilter("");
+    setSearchFilter('');
 
     if (!line.item_id) {
       setAvailableSerials([]);
@@ -84,8 +92,8 @@ export default function AnimalSerialAssignmentModal({
     setLoadingSerials(true);
 
     const params = new URLSearchParams();
-    params.set("item_id", line.item_id);
-    if (warehouseId) params.set("warehouse_id", warehouseId);
+    params.set('item_id', line.item_id);
+    if (warehouseId) params.set('warehouse_id', warehouseId);
 
     api
       .get(`/inventory-ledger/available-serials?${params.toString()}`)
@@ -95,7 +103,10 @@ export default function AnimalSerialAssignmentModal({
         setAvailableSerials(list);
       })
       .catch((err) => {
-        console.error("Failed to load available serials for animal assignment:", err);
+        console.error(
+          'Failed to load available serials for animal assignment:',
+          err,
+        );
         if (active) setAvailableSerials([]);
       })
       .finally(() => {
@@ -117,7 +128,7 @@ export default function AnimalSerialAssignmentModal({
     return animals.filter(
       (a) =>
         a.animal_code?.toLowerCase().includes(q) ||
-        (assignments[a.animal_id] || "").toLowerCase().includes(q)
+        (assignments[a.animal_id] || '').toLowerCase().includes(q),
     );
   }, [animals, searchFilter, assignments]);
 
@@ -127,13 +138,17 @@ export default function AnimalSerialAssignmentModal({
   }, [assignments]);
 
   const assignedCount = useMemo(() => {
-    return pendingAnimals.filter((a) => Boolean(assignments[a.animal_id])).length;
+    return pendingAnimals.filter((a) => Boolean(assignments[a.animal_id]))
+      .length;
   }, [pendingAnimals, assignments]);
 
   // Auto-Assign (FIFO): Assign available serials sequentially to unassigned pending animals
   const handleAutoAssignFifo = () => {
     if (!availableSerials.length) {
-      setFeedback({ message: "No available serial numbers found in stock.", type: "warning" });
+      setFeedback({
+        message: 'No available serial numbers found in stock.',
+        type: 'warning',
+      });
       return;
     }
 
@@ -143,7 +158,7 @@ export default function AnimalSerialAssignmentModal({
 
     // Filter available serials that are not already assigned to another animal
     const unassignedSerials = availableSerials.filter(
-      (s) => !Object.values(newAssignments).includes(s.serial_no)
+      (s) => !Object.values(newAssignments).includes(s.serial_no),
     );
 
     for (const animal of pendingAnimals) {
@@ -158,16 +173,22 @@ export default function AnimalSerialAssignmentModal({
     setAssignments(newAssignments);
 
     if (assignedNow === 0) {
-      setFeedback({ message: "All pending animals already have serial numbers assigned.", type: "info" });
-    } else if (serialIdx < unassignedSerials.length || assignedCount + assignedNow >= pendingAnimals.length) {
       setFeedback({
-        message: `Auto-assigned ${assignedNow} serial number${assignedNow > 1 ? "s" : ""} in FIFO order.`,
-        type: "success",
+        message: 'All pending animals already have serial numbers assigned.',
+        type: 'info',
+      });
+    } else if (
+      serialIdx < unassignedSerials.length ||
+      assignedCount + assignedNow >= pendingAnimals.length
+    ) {
+      setFeedback({
+        message: `Auto-assigned ${assignedNow} serial number${assignedNow > 1 ? 's' : ''} in FIFO order.`,
+        type: 'success',
       });
     } else {
       setFeedback({
         message: `Assigned all ${assignedNow} available serials. ${pendingAnimals.length - (assignedCount + assignedNow)} animal(s) still require serials.`,
-        type: "warning",
+        type: 'warning',
       });
     }
   };
@@ -178,7 +199,10 @@ export default function AnimalSerialAssignmentModal({
       delete newAssignments[animal.animal_id];
     }
     setAssignments(newAssignments);
-    setFeedback({ message: "Cleared all unposted serial assignments.", type: "info" });
+    setFeedback({
+      message: 'Cleared all unposted serial assignments.',
+      type: 'info',
+    });
   };
 
   const handleSelectSerial = (animalId: string, serialNo: string) => {
@@ -212,7 +236,7 @@ export default function AnimalSerialAssignmentModal({
           <div className="text-xs" style={S.sub}>
             <span className="font-semibold" style={S.primary}>
               {assignedCount} of {pendingAnimals.length}
-            </span>{" "}
+            </span>{' '}
             animals assigned ({availableSerials.length} available in stock)
           </div>
           <div className="flex items-center gap-2">
@@ -250,9 +274,12 @@ export default function AnimalSerialAssignmentModal({
                 </span>
               )}
             </div>
-            <div className="text-sm font-semibold flex items-center gap-1.5" style={S.primary}>
+            <div
+              className="text-sm font-semibold flex items-center gap-1.5"
+              style={S.primary}
+            >
               <Package className="w-4 h-4 text-[var(--text-muted)]" />
-              <span>{line.item_label || line.item_name || "—"}</span>
+              <span>{line.item_label || line.item_name || NA}</span>
               {line.uom && (
                 <span className="text-xs font-mono font-normal" style={S.muted}>
                   ({line.uom})
@@ -290,7 +317,11 @@ export default function AnimalSerialAssignmentModal({
         </div>
 
         {/* Feedback Alert */}
-        <Toast variant={feedback?.type} message={feedback?.message ?? ""} onClose={() => setFeedback(null)} />
+        <Toast
+          variant={feedback?.type}
+          message={feedback?.message ?? ''}
+          onClose={() => setFeedback(null)}
+        />
 
         {/* Search & Stats Filter */}
         <div className="flex items-center justify-between gap-3">
@@ -303,15 +334,15 @@ export default function AnimalSerialAssignmentModal({
               placeholder="Search animal code or assigned serial…"
               className="w-full rounded-[var(--radius-sm)] border py-1.5 pl-8 pr-3 text-xs outline-none focus:border-[var(--accent)]"
               style={{
-                backgroundColor: "var(--input-bg)",
-                borderColor: "var(--input-border)",
-                color: "var(--input-text)",
+                backgroundColor: 'var(--input-bg)',
+                borderColor: 'var(--input-border)',
+                color: 'var(--input-text)',
               }}
             />
             {searchFilter && (
               <button
                 type="button"
-                onClick={() => setSearchFilter("")}
+                onClick={() => setSearchFilter('')}
                 className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-muted)] hover:text-[var(--text-primary)]"
               >
                 <X className="w-3.5 h-3.5" />
@@ -322,11 +353,12 @@ export default function AnimalSerialAssignmentModal({
           <div className="flex items-center gap-2">
             <span
               className={`text-xs px-2.5 py-1 rounded-full font-semibold border ${
-                assignedCount === pendingAnimals.length && pendingAnimals.length > 0
-                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                assignedCount === pendingAnimals.length &&
+                pendingAnimals.length > 0
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
                   : assignedCount > 0
-                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                  : "bg-[var(--surface-raised)] text-[var(--text-secondary)] border-[var(--border)]"
+                    ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                    : 'bg-[var(--surface-raised)] text-[var(--text-secondary)] border-[var(--border)]'
               }`}
             >
               {assignedCount} / {pendingAnimals.length} Assigned
@@ -340,7 +372,10 @@ export default function AnimalSerialAssignmentModal({
           style={S.surface}
         >
           {loadingSerials ? (
-            <div className="py-12 flex flex-col items-center justify-center gap-2 text-xs" style={S.muted}>
+            <div
+              className="py-12 flex flex-col items-center justify-center gap-2 text-xs"
+              style={S.muted}
+            >
               <Loader2 className="w-5 h-5 animate-spin text-[var(--accent)]" />
               <span>Loading available stock serial numbers…</span>
             </div>
@@ -353,9 +388,9 @@ export default function AnimalSerialAssignmentModal({
               <thead
                 className="sticky top-0 z-10 border-b text-[10px] font-bold uppercase tracking-wider select-none"
                 style={{
-                  backgroundColor: "var(--surface-raised)",
-                  borderColor: "var(--border)",
-                  color: "var(--text-muted)",
+                  backgroundColor: 'var(--surface-raised)',
+                  borderColor: 'var(--border)',
+                  color: 'var(--text-muted)',
                 }}
               >
                 <tr>
@@ -370,11 +405,13 @@ export default function AnimalSerialAssignmentModal({
               <tbody className="divide-y divide-[var(--border-subtle)]">
                 {filteredAnimals.map((animal, idx) => {
                   const isPosted = Boolean(animal.is_posted);
-                  const assignedSerial = assignments[animal.animal_id] || "";
-                  const selectedOption = availableSerials.find((s) => s.serial_no === assignedSerial);
+                  const assignedSerial = assignments[animal.animal_id] || '';
+                  const selectedOption = availableSerials.find(
+                    (s) => s.serial_no === assignedSerial,
+                  );
                   const expiryText = selectedOption?.expiry_date
                     ? String(selectedOption.expiry_date).slice(0, 10)
-                    : "—";
+                    : NA;
 
                   return (
                     <tr
@@ -386,7 +423,10 @@ export default function AnimalSerialAssignmentModal({
                         {idx + 1}
                       </td>
                       <td className="px-3 py-2">
-                        <div className="flex items-center gap-2 font-mono font-semibold" style={S.primary}>
+                        <div
+                          className="flex items-center gap-2 font-mono font-semibold"
+                          style={S.primary}
+                        >
                           <Tag className="w-3.5 h-3.5 text-[var(--text-muted)]" />
                           <span>{animal.animal_code}</span>
                         </div>
@@ -405,25 +445,41 @@ export default function AnimalSerialAssignmentModal({
                       </td>
                       <td className="px-3 py-2">
                         {isPosted ? (
-                          <div className="flex items-center gap-1.5 font-mono text-xs" style={S.sub}>
+                          <div
+                            className="flex items-center gap-1.5 font-mono text-xs"
+                            style={S.sub}
+                          >
                             <Lock className="w-3 h-3 text-[var(--text-muted)]" />
-                            <span>{assignedSerial || "—"}</span>
+                            <span>{assignedSerial || NA}</span>
                           </div>
                         ) : (
-                          <select
+                          <Select
                             value={assignedSerial}
-                            onChange={(e) => handleSelectSerial(animal.animal_id, e.target.value)}
+                            onChange={(e) =>
+                              handleSelectSerial(
+                                animal.animal_id,
+                                e.target.value,
+                              )
+                            }
                             className="nf-input-sm w-full font-mono text-xs rounded border px-2 py-1 outline-none focus:border-[var(--accent)]"
                             style={{
-                              backgroundColor: "var(--input-bg)",
-                              borderColor: assignedSerial ? "var(--accent)" : "var(--input-border)",
-                              color: assignedSerial ? "var(--text-primary)" : "var(--text-muted)",
+                              backgroundColor: 'var(--input-bg)',
+                              borderColor: assignedSerial
+                                ? 'var(--accent)'
+                                : 'var(--input-border)',
+                              color: assignedSerial
+                                ? 'var(--text-primary)'
+                                : 'var(--text-muted)',
                             }}
                           >
                             <option value="">-- Select Serial No. --</option>
                             {availableSerials.map((s) => {
-                              const isTaken = assignedSerialsSet.has(s.serial_no) && s.serial_no !== assignedSerial;
-                              const exp = s.expiry_date ? ` (Exp: ${String(s.expiry_date).slice(0, 10)})` : "";
+                              const isTaken =
+                                assignedSerialsSet.has(s.serial_no) &&
+                                s.serial_no !== assignedSerial;
+                              const exp = s.expiry_date
+                                ? ` (Exp: ${String(s.expiry_date).slice(0, 10)})`
+                                : '';
                               return (
                                 <option
                                   key={s.serial_no}
@@ -432,21 +488,26 @@ export default function AnimalSerialAssignmentModal({
                                 >
                                   {s.serial_no}
                                   {exp}
-                                  {isTaken ? " — [Already Assigned]" : ""}
+                                  {isTaken ? ' — [Already Assigned]' : ''}
                                 </option>
                               );
                             })}
-                          </select>
+                          </Select>
                         )}
                       </td>
-                      <td className="px-3 py-2 text-right font-mono text-[11px]" style={S.sub}>
+                      <td
+                        className="px-3 py-2 text-right font-mono text-[11px]"
+                        style={S.sub}
+                      >
                         {expiryText}
                       </td>
                       <td className="px-3 py-2 text-center">
                         {!isPosted && assignedSerial && (
                           <button
                             type="button"
-                            onClick={() => handleSelectSerial(animal.animal_id, "")}
+                            onClick={() =>
+                              handleSelectSerial(animal.animal_id, '')
+                            }
                             className="p-1 rounded hover:bg-[var(--surface-raised)] text-[var(--text-muted)] hover:text-[var(--danger)]"
                             title="Remove assignment"
                           >

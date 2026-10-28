@@ -8,6 +8,7 @@ import {
 import { api } from "@/services/api-client";
 import { Toast } from "@/components/ui/toast";
 import { StatRow, StatCard } from "@/components/ui/stat-row";
+import { usePagedOptions } from "@/hooks/usePagedOptions";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -40,7 +41,8 @@ export default function HerdAnalyticsPanel() {
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState("");
   const [data, setData]         = useState<Row | null>(null);
-  const [batches, setBatches]   = useState<Row[]>([]);
+  const pagedBatches = usePagedOptions({ path: "/batch", params: { companyId }, idKey: "batch_id", enabled: !!companyId });
+  const batches = pagedBatches.options;
   const [selectedBatchId, setSelectedBatchId] = useState("");
 
   const loadAnalytics = async (batchId?: string) => {
@@ -61,9 +63,6 @@ export default function HerdAnalyticsPanel() {
 
   useEffect(() => {
     loadAnalytics();
-    if (companyId) {
-      api.get(`/batch?companyId=${companyId}&limit=200`).then((r) => setBatches(unwrap<Row[]>(r) || [])).catch(() => setBatches([]));
-    }
   }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleBatchFilterChange = (batchId: string) => {
@@ -98,6 +97,7 @@ export default function HerdAnalyticsPanel() {
               ]}
               columnHeaders={false}
               placeholder={t("hapAllBatches")}
+              remote={pagedBatches}
               triggerClassName="nf-input-sm min-w-[14rem] h-9"
             />
           </div>

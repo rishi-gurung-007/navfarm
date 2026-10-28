@@ -28,6 +28,46 @@
           "command": "node --import tsx src/scripts/seed-documented-reasons.ts"
         }
       },
+      "db-seed-triplec": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-triplec.ts"
+        }
+      },
+      "db-seed-triplec-history": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env ../../node_modules/ts-node/dist/bin.js --transpile-only --project tsconfig.scripts.json src/scripts/seed-triplec-history.ts"
+        }
+      },
+      "db-seed-triplec-export": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-triplec-export.ts"
+        }
+      },
+      "db-seed-triplec-import": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-triplec-import.ts"
+        }
+      },
+      "db-seed-triplec-showcase": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-triplec-showcase.ts"
+        }
+      },
       "db-seed-inventory-ledger": {
         "executor": "nx:run-commands",
         "cache": false,
@@ -160,7 +200,7 @@
           "cwd": "apps/api"
         }
       },
-"db-align-production-permissions": {
+      "db-align-production-permissions": {
         "executor": "nx:run-commands",
         "options": {
           "cwd": "apps/api",
@@ -335,12 +375,20 @@
           "command": "node --import tsx src/scripts/resync-animal-wise-scheduler-counts.ts"
         }
       },
-      "db-close-emptied-bio-asset-batches": {
+      "db-repair-animal-wise-head-counts": {
         "executor": "nx:run-commands",
         "cache": false,
         "options": {
           "cwd": "apps/api",
-          "command": "node --import tsx src/scripts/close-emptied-bio-asset-batches.ts"
+          "command": "node --import tsx src/scripts/repair-animal-wise-head-counts.ts"
+        }
+      },
+      "db-repair-bio-asset-residual-value": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/repair-bio-asset-residual-value.ts"
         }
       },
       "db-align-stages-to-tdd": {
@@ -451,7 +499,9 @@
       "start": {
         "executor": "nx:run-commands",
         "continuous": true,
-        "dependsOn": ["build"],
+        "dependsOn": [
+          "build"
+        ],
         "options": {
           "cwd": "apps/api",
           "command": "node --env-file-if-exists=.env dist/main.js",

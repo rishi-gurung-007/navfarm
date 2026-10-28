@@ -5,7 +5,8 @@ import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { FeedForecastService } from '../../inventory/feed-forecast/feed-forecast.service';
+import { FeedForecastService, draftForecastRange } from '../../inventory/feed-forecast/feed-forecast.service';
+import { exceedsCapacity } from './feed-requisition.rules';
 import { isoProductionWeek } from '../../inventory/feed-forecast/feed-plan.rules';
 import type { CreateFeedConsolidationDto, FeedConsolidationQueryDto } from './dto/feed-requisition.dto';
 import { activeBinAssignments } from './feed-bin-assignments.query';
@@ -14,8 +15,25 @@ import { FeedLoadingService, transfersByRequisitionLine } from './feed-loading.s
 import { MillCapacityService, type CapacityObserver } from '../../inventory/feed-forecast/mill-capacity.service';
 import { FeedAlertService } from '../../inventory/feed-alert/feed-alert.service';
 import type { DietCapacity } from '../../inventory/feed-forecast/mill-capacity.rules';
+import { SiloFeedService } from '../../inventory/silo-feed/silo-feed.service';
+import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
 
 type User = { userId?: string; userType?: string };
+
+// Requisition §1 row 34's priorities (feed-requisition.rules.ts), most urgent first.
+const PRIORITY_RANK: Record<string, number> = { CRITICAL_FIRST_PRIORITY: 0, CRITICAL: 1, WARNING: 2, INFO: 3 };
+/** Most urgent first: the earliest shortage, then the fewest days left, then priority, then the delivery date asked for. */
+export function byUrgency(
+  a: { first_shortage_date: string | null; days_remaining: number | null; priority: string | null; proposed_delivery_date: string | null; req_no: string },
+  b: { first_shortage_date: string | null; days_remaining: number | null; priority: string | null; proposed_delivery_date: string | null; req_no: string },
+): number {
+  const last = '9999-12-31';
+  return (a.first_shortage_date ?? last).localeCompare(b.first_shortage_date ?? last)
+    || (a.days_remaining ?? Number.POSITIVE_INFINITY) - (b.days_remaining ?? Number.POSITIVE_INFINITY)
+    || (PRIORITY_RANK[a.priority ?? ''] ?? 9) - (PRIORITY_RANK[b.priority ?? ''] ?? 9)
+    || String(a.proposed_delivery_date ?? last).localeCompare(String(b.proposed_delivery_date ?? last))
+    || a.req_no.localeCompare(b.req_no);
+}
 
 @Injectable()
 export class FeedConsolidationService {
@@ -26,7 +44,38 @@ export class FeedConsolidationService {
     private readonly loading: FeedLoadingService,
     @Optional() private readonly millCapacity?: MillCapacityService,
     @Optional() private readonly feedAlerts?: FeedAlertService,
+    @Optional() private readonly siloFeed?: SiloFeedService,
+    @Optional() private readonly ledger?: InventoryLedgerService,
   ) {}
+
+  /**
+   * What is in each destination now, by the ledger — the System Balance a requisition drafted from the
+   * calculation stores (feed-requisition.service currentBalances), not the forecast's projected opening.
+   * Keyed `${locationId}|${itemId}`; a silo holding another item, or nothing, has 0 of this one.
+   */
+  private async ledgerBalances(
+    lines: Array<{ destination_silo_id: string | null; item_id: string | null; company_id: string | null }>,
+    tenantId: string,
+  ): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    const ids = [...new Set(lines.map((l) => l.destination_silo_id).filter((id): id is string => Boolean(id)))];
+    if (!ids.length) return result;
+    const types = await this.db.select({ location_id: schema.locationMaster.location_id, location_type: schema.locationMaster.location_type })
+      .from(schema.locationMaster).where(inArray(schema.locationMaster.location_id, ids));
+    const typeOf = new Map(types.map((t) => [t.location_id, t.location_type]));
+    for (const line of lines) {
+      const id = line.destination_silo_id;
+      if (!id || !line.item_id || !line.company_id || result.has(`${id}|${line.item_id}`)) continue;
+      if (typeOf.get(id) === 'SILO' && this.siloFeed) {
+        const resident = (await this.siloFeed.currentItems([id], line.company_id, tenantId)).get(id);
+        result.set(`${id}|${line.item_id}`, resident && resident.item_id === line.item_id ? resident.on_hand_qty : 0);
+      } else if (this.ledger) {
+        const rows = await this.ledger.getStockBalance({ companyId: line.company_id, warehouseId: id } as any, tenantId);
+        result.set(`${id}|${line.item_id}`, rows.filter((r: any) => r.item_id === line.item_id && r.uom === 'KG').reduce((sum: number, r: any) => sum + Number(r.on_hand_qty), 0));
+      }
+    }
+    return result;
+  }
 
   /**
    * W4G1 (checkpoint 34): CAPACITY_EXCEEDED follows the capacity check — raised, for each farm asking for the diet on
@@ -168,6 +217,112 @@ export class FeedConsolidationService {
         mill_demand_kg: diet?.demandKg ?? null,
       };
     });
+  }
+
+  /**
+   * The eligible lines with what the mill needs to rank them: how soon each farm's silo runs out, its
+   * balance and daily use, the silo's capacity and the batches it feeds. A requisition made from a saved
+   * calculation carries the forecast it was drafted from; a manual one has none, so its figures are read
+   * from today's forecast for that farm and marked live. Sorted most urgent first.
+   */
+  async eligibleWithPriority(query: FeedConsolidationQueryDto, tenantId: string, user: User) {
+    const rows = await this.eligible(query, tenantId, user);
+    if (!rows.length) return [];
+    const R = schema.requisition;
+    const L = schema.requisitionLine;
+    const lineIds = rows.map((r) => r.line_id);
+    const stored = await this.db.select({
+      line_id: L.line_id,
+      priority: L.priority,
+      requisition_type: R.requisition_type,
+      system_balance_kg: L.system_balance_kg,
+      daily_requirement_kg: L.daily_requirement_kg,
+      days_remaining: L.days_remaining,
+      first_shortage_date: L.first_shortage_date,
+      recommended_qty_kg: L.recommended_qty_kg,
+      recommended_delivery_date: L.recommended_delivery_date,
+      is_next_diet: L.is_next_diet,
+      needs_silo_changeover: L.needs_silo_changeover,
+      exceeds_silo_capacity: L.exceeds_silo_capacity,
+    }).from(L).innerJoin(R, eq(R.requisition_id, L.requisition_id)).where(inArray(L.line_id, lineIds));
+    const storedById = new Map(stored.map((s) => [s.line_id, s]));
+
+    const siloIds = [...new Set(rows.map((r) => r.destination_silo_id).filter((id): id is string => Boolean(id)))];
+    const capacities = siloIds.length
+      ? await this.db.select({ location_id: schema.locationMaster.location_id, location_type: schema.locationMaster.location_type, silo_capacity_kg: schema.locationMaster.silo_capacity_kg })
+        .from(schema.locationMaster).where(inArray(schema.locationMaster.location_id, siloIds))
+      : [];
+    const capacityById = new Map(capacities.map((c) => [c.location_id, c.location_type === 'SILO' && c.silo_capacity_kg != null ? Number(c.silo_capacity_kg) : null]));
+
+    const B = schema.requisitionLineBatch;
+    const batchRows = await this.db.select({
+      line_id: B.line_id, batch_id: B.batch_id, heads: B.heads, demand_kg: B.demand_kg,
+      batch_no: schema.batchHeader.batch_no, shed_code: schema.locationMaster.location_code,
+    }).from(B)
+      .leftJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, B.batch_id))
+      .leftJoin(schema.locationMaster, eq(schema.locationMaster.location_id, B.shed_id))
+      .where(inArray(B.line_id, lineIds));
+    const batchesByLine = new Map<string, Array<{ batch_id: string; batch_no: string | null; shed_code: string | null; heads: number | null; demand_kg: number | null }>>();
+    for (const b of batchRows) {
+      const list = batchesByLine.get(b.line_id) ?? [];
+      list.push({ batch_id: b.batch_id, batch_no: b.batch_no ?? null, shed_code: b.shed_code ?? null, heads: b.heads == null ? null : Number(b.heads), demand_kg: b.demand_kg == null ? null : Number(b.demand_kg) });
+      batchesByLine.set(b.line_id, list);
+    }
+
+    const hasStored = (s: (typeof stored)[number] | undefined) =>
+      !!s && (s.first_shortage_date != null || s.days_remaining != null || s.system_balance_kg != null);
+    // One live forecast per farm whose lines carry nothing stored; a farm the forecast cannot read is left N/A.
+    const liveFarms = [...new Map(rows.filter((r) => !hasStored(storedById.get(r.line_id))).map((r) => [r.farm_id, r.company_id])).entries()];
+    const liveByFarm = new Map<string, Awaited<ReturnType<FeedForecastService['computeForFarm']>>['sources']>();
+    for (const [farmId, companyId] of liveFarms) {
+      if (!farmId || !companyId) continue;
+      try {
+        const clock = await this.forecast.farmToday(companyId, tenantId);
+        const result = await this.forecast.withFarmScope(farmId, companyId, () =>
+          this.forecast.computeForFarm(farmId, companyId, tenantId, draftForecastRange(clock.today), clock));
+        liveByFarm.set(farmId, result.sources);
+      } catch (err) {
+        this.logger.warn(`Live forecast for farm ${farmId} could not be read: ${(err as Error).message}`);
+      }
+    }
+
+    const balances = await this.ledgerBalances(rows.filter((r) => !hasStored(storedById.get(r.line_id))), tenantId);
+    const num = (v: unknown) => (v == null ? null : Number(v));
+    const ranked = rows.map((row) => {
+      const s = storedById.get(row.line_id);
+      const capacityKg = row.destination_silo_id ? capacityById.get(row.destination_silo_id) ?? null : null;
+      const base = { ...row, priority: s?.priority ?? null, silo_capacity_kg: capacityKg, batches: batchesByLine.get(row.line_id) ?? [] };
+      if (hasStored(s)) {
+        return {
+          ...base,
+          figures_source: 'STORED' as const,
+          system_balance_kg: num(s!.system_balance_kg),
+          daily_requirement_kg: num(s!.daily_requirement_kg),
+          days_remaining: num(s!.days_remaining),
+          first_shortage_date: s!.first_shortage_date ? String(s!.first_shortage_date).slice(0, 10) : null,
+          recommended_qty_kg: num(s!.recommended_qty_kg),
+          recommended_delivery_date: s!.recommended_delivery_date ? String(s!.recommended_delivery_date).slice(0, 10) : null,
+          is_next_diet: !!s!.is_next_diet,
+          needs_silo_changeover: !!s!.needs_silo_changeover,
+          exceeds_silo_capacity: !!s!.exceeds_silo_capacity,
+        };
+      }
+      const live = (row.farm_id ? liveByFarm.get(row.farm_id) : undefined)?.find((src) => src.locationId === row.destination_silo_id && src.itemId === row.item_id);
+      return {
+        ...base,
+        figures_source: live ? ('LIVE' as const) : ('NONE' as const),
+        system_balance_kg: row.destination_silo_id ? balances.get(`${row.destination_silo_id}|${row.item_id}`) ?? null : null,
+        daily_requirement_kg: live ? (live.planningDayDemandKg > 0 ? live.planningDayDemandKg : live.firstDayDemandKg) : null,
+        days_remaining: live ? live.daysLeft : null,
+        first_shortage_date: live?.shortageDate ?? null,
+        recommended_qty_kg: live ? live.shortfallKg : null,
+        recommended_delivery_date: null,
+        is_next_diet: live?.isNextDiet ?? false,
+        needs_silo_changeover: live?.noSiloHoldsItem ?? false,
+        exceeds_silo_capacity: live ? exceedsCapacity(Number(row.quantity), live.deliveryDayOpeningKg, capacityKg) : false,
+      };
+    });
+    return ranked.sort(byUrgency);
   }
 
   private productionDateOf(row: { production_date: string | null; proposed_delivery_date: string | null }) {

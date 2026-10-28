@@ -18,10 +18,12 @@
  *    the transfer shipment for feed are 'edit'. No delete.
  *  - INVENTORY/STOCK_COUNT     view + create + edit + approve: the mill's monthly
  *    stock take (feed-stock-count.controller; finalize is 'approve').
+ *  - INVENTORY/MILL_OUTPUT     view + create: Mill Production Output — the feed the mill produced into a BIN
+ *    (mill-output.controller; 20 Oct). No edit or delete: a posted output is corrected by a stock adjustment.
  *  - INVENTORY/LEDGER          view: feed forecast, feed plan, mill comparison and
  *    the in-app feed alerts all read INVENTORY/LEDGER 'view'.
- *  - MASTER_DATA/BIN_DIET_ASSIGNMENT view + create + edit: production output and
- *    mill capacity are the BIN diet assignment. No delete.
+ *  - MASTER_DATA/BIN_DIET_ASSIGNMENT view + create + edit: which feed each BIN takes on a
+ *    production date, and so the mill's capacity per diet. No delete.
  *  - MASTER_DATA/<lookups>     view only, so the screens resolve items, warehouses,
  *    farms, UOMs and feed formulas by id.
  *  - COMPANY/SETTINGS          view, as the other starter roles.
@@ -31,7 +33,8 @@
 export const MILL_MANAGER_ROLE = {
   role_code: 'MILL_MANAGER',
   role_name: 'Feed Mill Manager',
-  role_description: 'Feed mill: consolidates approved demand, loading sheets and dispatch, production output, mill capacity and the mill stock take',
+  role_description:
+    'Feed mill: consolidates approved demand, loading sheets and dispatch, production output, mill capacity and the mill stock take',
 } as const;
 
 export interface MillManagerGrant {
@@ -46,12 +49,43 @@ export interface MillManagerGrant {
 
 export const MILL_MANAGER_GRANTS: MillManagerGrant[] = [
   { module: 'PROCUREMENT', resource: 'REQUISITION', view: true, approve: true },
-  { module: 'INVENTORY', resource: 'STOCK_TRANSFER', view: true, create: true, edit: true },
-  { module: 'INVENTORY', resource: 'STOCK_COUNT', view: true, create: true, edit: true, approve: true },
+  {
+    module: 'INVENTORY',
+    resource: 'STOCK_TRANSFER',
+    view: true,
+    create: true,
+    edit: true,
+  },
+  {
+    module: 'INVENTORY',
+    resource: 'STOCK_COUNT',
+    view: true,
+    create: true,
+    edit: true,
+    approve: true,
+  },
+  { module: 'INVENTORY', resource: 'MILL_OUTPUT', view: true, create: true },
   { module: 'INVENTORY', resource: 'LEDGER', view: true },
-  { module: 'MASTER_DATA', resource: 'BIN_DIET_ASSIGNMENT', view: true, create: true, edit: true },
-  ...['FARM', 'FEED_FORMULA', 'ITEM', 'ITEM_CATEGORY', 'ITEM_TYPE', 'LOCATION', 'UOM', 'WAREHOUSE'].map(
-    (resource): MillManagerGrant => ({ module: 'MASTER_DATA', resource, view: true }),
-  ),
+  {
+    module: 'MASTER_DATA',
+    resource: 'BIN_DIET_ASSIGNMENT',
+    view: true,
+    create: true,
+    edit: true,
+  },
+  ...[
+    'FARM',
+    'FEED_FORMULA',
+    'ITEM',
+    'ITEM_CATEGORY',
+    'ITEM_TYPE',
+    'LOCATION',
+    'UOM',
+    'WAREHOUSE',
+  ].map((resource): MillManagerGrant => ({
+    module: 'MASTER_DATA',
+    resource,
+    view: true,
+  })),
   { module: 'COMPANY', resource: 'SETTINGS', view: true },
 ];

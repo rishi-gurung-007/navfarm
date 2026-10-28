@@ -318,9 +318,9 @@ describe('RequisitionNewDialog — farm chosen on the header when the caller has
 // mock, since that mock answers with the key name regardless of its value.
 describe('RequisitionNewDialog — manual line labels match the workbook (gap #16, Req r43-r56)', () => {
   const en = translations.en;
-  it("uses the workbook's own words for Silo Code, Feed Item No. to Order, Requested Qty KG and Proposed Delivery Date", () => {
+  it("uses the workbook's own words for Silo Code, Item No. to Order, Requested Qty KG and Proposed Delivery Date", () => {
     expect(en.rqNewDestination).toBe('Silo Code, line {{line}}');
-    expect(en.rqNewItem).toBe('Feed Item No. to Order, line {{line}}');
+    expect(en.rqNewItem).toBe('Item No. to Order, line {{line}}');
     expect(en.rqNewKg).toBe('Requested Qty KG, line {{line}}');
     expect(en.rqNewDate).toBe('Proposed Delivery Date, line {{line}}');
   });
@@ -359,7 +359,8 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
     expect(valueOf('rqdSupply')).toContain('reqSupplyMill');
     expect(valueOf('rqdPurpose')).toContain('reqPurposeTransfer');
     expect(valueOf('rqdStatus')).toContain('reqStatusDraft');
-    expect(valueOf('rqdPriority')).toContain('rqnDerivedOnSave');
+    // Row 34 is per line (0212): the header shows no priority.
+    expect(within(dialog).queryByText('rqdPriority')).toBeNull();
     expect(valueOf('rqdDeadline')).toContain('rqnSetOnSave');
     // Required Delivery Date is derived from the lines (Rishi 4 Oct): read-only, nothing to type.
     expect(valueOf('rqdRequiredDate')).toContain('rqnFromLines');

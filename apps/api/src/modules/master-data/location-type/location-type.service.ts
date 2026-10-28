@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
-import { and, eq, isNull, like, ne, or, sql } from 'drizzle-orm';
+import { count as sqlCount, and, eq, isNull, like, ne, or, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
@@ -121,12 +121,23 @@ export class LocationTypeService {
       .orderBy(sql`${schema.locationTypeMaster.company_id} IS NULL`,
                listOrderBy(schema.locationTypeMaster, query, schema.locationTypeMaster.type_code))
       .limit(query.limit || 50).offset(query.offset || 0);
-    if (!query.companyId) return rows;
+    const limit = query.limit || 50;
+    const offset = query.offset || 0;
+    if (!query.companyId) {
+      const [counted] = await this.db.select({ total: sqlCount() }).from(schema.locationTypeMaster).where(and(...conditions));
+      return { data: rows, total: Number(counted?.total ?? 0), limit, offset };
+    }
     // A company override replaces the tenant-wide definition in dropdowns;
     // it must not appear as a second option with the same Type Code.
     const effective = new Map<string, typeof rows[number]>();
     rows.forEach((row) => { if (!effective.has(row.type_code)) effective.set(row.type_code, row); });
-    return Array.from(effective.values());
+    // The total counts distinct Type Codes, because that is what the caller
+    // receives once overrides have replaced the tenant rows — counting the raw
+    // rows would promise pages that dedupe away to nothing.
+    const [counted] = await this.db
+      .select({ total: sql<number>`COUNT(DISTINCT ${schema.locationTypeMaster.type_code})` })
+      .from(schema.locationTypeMaster).where(and(...conditions));
+    return { data: Array.from(effective.values()), total: Number(counted?.total ?? 0), limit, offset };
   }
 
   async findOne(id: string, tenantId: string) {

@@ -8,6 +8,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import BioCostingRunsPanel from "../src/components/console/finance/bio-costing-runs-panel";
 import { api } from "../src/services/api-client";
 import { confirmAction } from "../src/components/ui/confirm-dialog";
+import { chooseOption, optionLabels } from "./support/searchable-select";
 
 jest.mock("../src/services/api-client", () => ({ api: { get: jest.fn(), post: jest.fn() } }));
 jest.mock("../src/hooks/useLanguage", () => ({ useLanguage: () => ({ t: (key: string, vars?: Record<string, unknown>) => (vars?.runNo ? `${key}:${vars.runNo}` : key) }) }));
@@ -71,10 +72,11 @@ describe("BioCostingRunsPanel", () => {
 
   it("picks a batch (or every batch) rather than a profile, and says what a run will cover", async () => {
     render(<BioCostingRunsPanel />);
-    const select = (await screen.findByLabelText("bcrBatch")) as HTMLSelectElement;
-    await waitFor(() => expect(select.options.length).toBe(2));
-    expect(select.options[0].textContent).toBe("bcrAllBatches");
-    expect(select.options[1].textContent).toContain("BATCH-000001");
+    const select = await screen.findByLabelText("bcrBatch");
+    await waitFor(() => expect(optionLabels(select)).toHaveLength(2));
+    const labels = optionLabels(select);
+    expect(labels[0]).toBe("bcrAllBatches");
+    expect(labels[1]).toContain("BATCH-000001");
     expect(screen.getByText("bcrBatchHint")).toBeTruthy();
     expect(screen.queryByLabelText("bcrProfile")).toBeNull();
   });
@@ -82,9 +84,9 @@ describe("BioCostingRunsPanel", () => {
   it("calculates, then shows each animal with a skip said in words and the totals", async () => {
     (api.post as jest.Mock).mockResolvedValue(calculated(run("CALCULATED")));
     render(<BioCostingRunsPanel />);
-    const select = (await screen.findByLabelText("bcrBatch")) as HTMLSelectElement;
-    await waitFor(() => expect(select.options.length).toBe(2));
-    fireEvent.change(select, { target: { value: "b1" } });
+    const select = await screen.findByLabelText("bcrBatch");
+    await waitFor(() => expect(optionLabels(select)).toHaveLength(2));
+    chooseOption(select, /BATCH-000001/);
     fireEvent.click(screen.getByRole("button", { name: /bcrCalculate/ }));
     await waitFor(() => expect(api.post).toHaveBeenCalledWith("/bio-costing/runs/calculate-batch", expect.objectContaining({ batch_id: "b1", period_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) })));
     const table = (await screen.findByText("DLNA8228")).closest("table")!;
@@ -154,9 +156,9 @@ describe("BioCostingRunsPanel", () => {
     (api.post as jest.Mock).mockResolvedValueOnce({ data: { runs: [first, second], failed: [{ profile_code: "LOC-M", error: "already run" }] } }).mockResolvedValue({ data: run("POSTED") });
     (confirmAction as jest.Mock).mockResolvedValue(true);
     render(<BioCostingRunsPanel />);
-    const select = (await screen.findByLabelText("bcrBatch")) as HTMLSelectElement;
-    await waitFor(() => expect(select.options.length).toBe(2));
-    fireEvent.change(select, { target: { value: "b1" } });
+    const select = await screen.findByLabelText("bcrBatch");
+    await waitFor(() => expect(optionLabels(select)).toHaveLength(2));
+    chooseOption(select, /BATCH-000001/);
     fireEvent.click(screen.getByRole("button", { name: /bcrCalculate/ }));
     expect(await screen.findByText(/LOC-M: already run/)).toBeTruthy();
     const postAll = await screen.findByRole("button", { name: /bcrPostAll/ });

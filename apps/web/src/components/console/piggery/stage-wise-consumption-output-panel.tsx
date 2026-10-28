@@ -1,7 +1,8 @@
-"use client";
+'use client';
 
-import React, { useState, useEffect, useMemo, useRef } from "react";
-import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { NA } from '@/utils/na';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import {
   Download,
   CheckCircle2,
@@ -24,18 +25,19 @@ import {
   X,
   Calendar,
   Eye,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { useLanguage } from "@/hooks/useLanguage";
-import { api } from "@/services/api-client";
-import { stageWindows } from "./build-lifecycle-stages";
-import { apportionToAnimal } from "./apportion-to-animal";
-import { getActiveCompanyId } from "@/hooks/useAuth";
-import type { AnimalOption } from "../production/animal-multi-select";
-import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
-import { SearchableSelect } from "@/components/ui/searchable-select";
-import { confirmAction } from "@/components/ui/confirm-dialog";
-import { formatQuantity } from "@/lib/utils";
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { useLanguage } from '@/hooks/useLanguage';
+import { api } from '@/services/api-client';
+import { stageWindows } from './build-lifecycle-stages';
+import { apportionToAnimal } from './apportion-to-animal';
+import { getActiveCompanyId } from '@/hooks/useAuth';
+import type { AnimalOption } from '../production/animal-multi-select';
+import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
+import { usePagedOptions, usePickedRow, withPicked } from '@/hooks/usePagedOptions';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import { confirmAction } from '@/components/ui/confirm-dialog';
+import { formatQuantity } from '@/lib/utils';
 
 interface BatchProfile {
   id: string;
@@ -147,13 +149,13 @@ interface StageProfile {
 
 // Activity line types as per NAVFarm scheduler and data entry model, plus photo uploader
 export const TAB_KEYS = [
-  "CONSUMPTION",
-  "OUTPUT",
-  "DESCRIPTIVE",
-  "RESOURCE",
-  "OVERHEAD",
-  "TRANSFER",
-  "PHOTO_UPLOADER",
+  'CONSUMPTION',
+  'OUTPUT',
+  'DESCRIPTIVE',
+  'RESOURCE',
+  'OVERHEAD',
+  'TRANSFER',
+  'PHOTO_UPLOADER',
 ] as const;
 export type TabKey = (typeof TAB_KEYS)[number];
 
@@ -161,31 +163,39 @@ function buildStageProfiles(
   b: any,
   txs: any[],
   stageLog: any[] = [],
-  attachments: any[] = []
+  attachments: any[] = [],
 ): StageProfile[] {
   const windows = stageWindows({
     stageLog: (stageLog || []).map((l: any) => ({
       from_stage_code: l.from_stage_code ?? null,
       to_stage_code: l.to_stage_code,
-      transferred_at: String(l.transferred_at || ""),
+      transferred_at: String(l.transferred_at || ''),
     })),
-    batchStartDate: String(b.start_date || "").slice(0, 10),
+    batchStartDate: String(b.start_date || '').slice(0, 10),
     currentStageCode: b.current_stage_code ?? null,
-    batchEndDate: b.actual_end_date ? String(b.actual_end_date).slice(0, 10) : null,
+    batchEndDate: b.actual_end_date
+      ? String(b.actual_end_date).slice(0, 10)
+      : null,
   });
 
-  if (windows.length <= 1) return [buildStageProfile(b, txs, stageLog, attachments)];
+  if (windows.length <= 1)
+    return [buildStageProfile(b, txs, stageLog, attachments)];
 
   return windows.map((w, i) => {
     const inWindow = (txs || []).filter((t: any) => {
-      const d = String(t.transaction_date || "").slice(0, 10);
+      const d = String(t.transaction_date || '').slice(0, 10);
       return d >= w.from && d <= w.to;
     });
     const profile = buildStageProfile(
-      { ...b, current_stage_code: w.code, start_date: w.from, expected_end_date: w.to },
+      {
+        ...b,
+        current_stage_code: w.code,
+        start_date: w.from,
+        expected_end_date: w.to,
+      },
       inWindow,
       stageLog,
-      attachments
+      attachments,
     );
     return { ...profile, id: `st-${b.batch_id}-${i}` };
   });
@@ -195,54 +205,78 @@ function buildStageProfile(
   b: any,
   txs: any[],
   stageLog: any[] = [],
-  attachments: any[] = []
+  attachments: any[] = [],
 ): StageProfile {
   const isMedicine = (t: any) => {
-    if (t.item_type === "MEDICINE" || t.item_category_code === "MEDICINE") return true;
-    const uom = (t.uom || "").toUpperCase();
-    if (["ML", "DOSES", "VIAL", "BOTTLE", "TAB", "AMPOULE", "SYRINGE", "MG"].includes(uom)) return true;
-    const text = `${t.item_name || ""} ${t.item_code || ""} ${t.remarks || ""}`.toLowerCase();
+    if (t.item_type === 'MEDICINE' || t.item_category_code === 'MEDICINE')
+      return true;
+    const uom = (t.uom || '').toUpperCase();
+    if (
+      [
+        'ML',
+        'DOSES',
+        'VIAL',
+        'BOTTLE',
+        'TAB',
+        'AMPOULE',
+        'SYRINGE',
+        'MG',
+      ].includes(uom)
+    )
+      return true;
+    const text =
+      `${t.item_name || ''} ${t.item_code || ''} ${t.remarks || ''}`.toLowerCase();
     return (
-      text.includes("med") ||
-      text.includes("vaccin") ||
-      text.includes("deworm") ||
-      text.includes("iron") ||
-      text.includes("antibiotic") ||
-      text.includes("dextran") ||
-      text.includes("ivermectin") ||
-      text.includes("vitamin") ||
-      text.includes("electrolyt") ||
-      text.includes("inject") ||
-      text.includes("dose") ||
-      text.includes("treatment") ||
-      text.includes("clinical") ||
-      text.includes("parvovirus") ||
-      text.includes("circovirus") ||
-      text.includes("amoxicillin") ||
-      text.includes("oxytetracycline")
+      text.includes('med') ||
+      text.includes('vaccin') ||
+      text.includes('deworm') ||
+      text.includes('iron') ||
+      text.includes('antibiotic') ||
+      text.includes('dextran') ||
+      text.includes('ivermectin') ||
+      text.includes('vitamin') ||
+      text.includes('electrolyt') ||
+      text.includes('inject') ||
+      text.includes('dose') ||
+      text.includes('treatment') ||
+      text.includes('clinical') ||
+      text.includes('parvovirus') ||
+      text.includes('circovirus') ||
+      text.includes('amoxicillin') ||
+      text.includes('oxytetracycline')
     );
   };
 
-  const feedTxs = txs.filter((t: any) => t.transaction_type === "CONSUMPTION" && !isMedicine(t));
-  const medTxs = txs.filter((t: any) => t.transaction_type === "CONSUMPTION" && isMedicine(t));
-  const overheadTxs = txs.filter((t: any) => t.transaction_type === "OVERHEAD");
-  const mortalityTxs = txs.filter((t: any) => t.transaction_type === "MORTALITY");
+  const feedTxs = txs.filter(
+    (t: any) => t.transaction_type === 'CONSUMPTION' && !isMedicine(t),
+  );
+  const medTxs = txs.filter(
+    (t: any) => t.transaction_type === 'CONSUMPTION' && isMedicine(t),
+  );
+  const overheadTxs = txs.filter((t: any) => t.transaction_type === 'OVERHEAD');
+  const mortalityTxs = txs.filter(
+    (t: any) => t.transaction_type === 'MORTALITY',
+  );
 
-  const feedMap = new Map<string, {
-    item: string;
-    uom: string;
-    opening: number;
-    issued: number;
-    consumed: number;
-    wastage: number;
-    rate: number;
-  }>();
+  const feedMap = new Map<
+    string,
+    {
+      item: string;
+      uom: string;
+      opening: number;
+      issued: number;
+      consumed: number;
+      wastage: number;
+      rate: number;
+    }
+  >();
 
   feedTxs.forEach((t: any) => {
-    const itemName = t.remarks || t.item_name || t.item_code || "Standard Feed Ration";
+    const itemName =
+      t.remarks || t.item_name || t.item_code || 'Standard Feed Ration';
     const qty = Number(t.quantity || 0);
     const rate = Number(t.rate || 35.0);
-    const uom = t.uom || "KG";
+    const uom = t.uom || 'KG';
 
     if (feedMap.has(itemName)) {
       const existing = feedMap.get(itemName)!;
@@ -263,21 +297,25 @@ function buildStageProfile(
 
   const feedData = Array.from(feedMap.values());
 
-  const medMap = new Map<string, {
-    item: string;
-    uom: string;
-    issued: number;
-    consumed: number;
-    wastage: number;
-    cost: number;
-  }>();
+  const medMap = new Map<
+    string,
+    {
+      item: string;
+      uom: string;
+      issued: number;
+      consumed: number;
+      wastage: number;
+      cost: number;
+    }
+  >();
 
   medTxs.forEach((t: any) => {
-    const itemName = t.remarks || t.item_name || t.item_code || "Clinical Medication";
+    const itemName =
+      t.remarks || t.item_name || t.item_code || 'Clinical Medication';
     const qty = Number(t.quantity || 0);
     const rate = Number(t.rate || 20.0);
-    const cost = Math.abs(Number(t.amount ?? (qty * rate)));
-    const uom = t.uom || "ML";
+    const cost = Math.abs(Number(t.amount ?? qty * rate));
+    const uom = t.uom || 'ML';
 
     if (medMap.has(itemName)) {
       const existing = medMap.get(itemName)!;
@@ -298,34 +336,36 @@ function buildStageProfile(
 
   const medData = Array.from(medMap.values());
 
-  const labourTxs = overheadTxs.filter((t: any) =>
-    (t.remarks || "").toLowerCase().includes("labour") || t.uom === "HRS"
+  const labourTxs = overheadTxs.filter(
+    (t: any) =>
+      (t.remarks || '').toLowerCase().includes('labour') || t.uom === 'HRS',
   );
-  const generalOverheadTxs = overheadTxs.filter((t: any) =>
-    !((t.remarks || "").toLowerCase().includes("labour") || t.uom === "HRS")
+  const generalOverheadTxs = overheadTxs.filter(
+    (t: any) =>
+      !((t.remarks || '').toLowerCase().includes('labour') || t.uom === 'HRS'),
   );
 
   const labourData = labourTxs.map((t: any) => {
     const qty = Number(t.quantity ?? 1);
     const rate = Number(t.rate ?? 0);
-    const cost = Math.abs(Number(t.amount ?? (qty * rate)));
+    const cost = Math.abs(Number(t.amount ?? qty * rate));
     return {
-      resource: t.remarks || "Farm Operations Labour",
-      date: t.transaction_date || "",
+      resource: t.remarks || 'Farm Operations Labour',
+      date: t.transaction_date || '',
       hours: qty,
       rate,
       cost,
-      remarks: t.remarks || "Daily Farm Operations",
+      remarks: t.remarks || 'Daily Farm Operations',
     };
   });
 
   const overheadData = generalOverheadTxs.map((t: any) => {
     const qty = Number(t.quantity ?? 1);
     const rate = Number(t.rate ?? 0);
-    const cost = Math.abs(Number(t.amount ?? (qty * rate)));
+    const cost = Math.abs(Number(t.amount ?? qty * rate));
     return {
-      item: t.remarks || "Operational Overhead",
-      basis: t.uom || "Units",
+      item: t.remarks || 'Operational Overhead',
+      basis: t.uom || 'Units',
       rate,
       qty,
       cost,
@@ -333,44 +373,60 @@ function buildStageProfile(
   });
 
   const mortalityLogs = mortalityTxs.map((t: any) => ({
-    date: t.transaction_date || "",
+    date: t.transaction_date || '',
     count: Number(t.quantity || 1),
-    reason: t.remarks || "Mortality Recorded",
-    pen: "Main Shed",
-    vetAction: "Recorded in clinical register",
+    reason: t.remarks || 'Mortality Recorded',
+    pen: 'Main Shed',
+    vetAction: 'Recorded in clinical register',
   }));
 
-  const weightTxs = txs.filter((t: any) =>
-    t.transaction_type === "WEIGHT_ENTRY" ||
-    (t.transaction_type === "OBSERVATION" &&
-      ((t.remarks || "").toLowerCase().includes("weight") || t.uom === "KG"))
+  const weightTxs = txs.filter(
+    (t: any) =>
+      t.transaction_type === 'WEIGHT_ENTRY' ||
+      (t.transaction_type === 'OBSERVATION' &&
+        ((t.remarks || '').toLowerCase().includes('weight') || t.uom === 'KG')),
   );
   const weightLogs = weightTxs.map((t: any) => ({
-    date: t.transaction_date || "",
+    date: t.transaction_date || '',
     avgWeightKg: Number(t.quantity || 0),
-    remarks: t.remarks || "Body Weight Sampling Recorded",
+    remarks: t.remarks || 'Body Weight Sampling Recorded',
   }));
 
-  const obsTxs = txs.filter((t: any) =>
-    t.transaction_type === "OBSERVATION" &&
-    !((t.remarks || "").toLowerCase().includes("weight") && t.uom === "KG")
+  const obsTxs = txs.filter(
+    (t: any) =>
+      t.transaction_type === 'OBSERVATION' &&
+      !((t.remarks || '').toLowerCase().includes('weight') && t.uom === 'KG'),
   );
   const observationLogs = obsTxs.map((t: any) => ({
-    date: t.transaction_date || "",
-    type: t.uom === "°C" ? "Temperature" : t.uom === "L" ? "Water Intake" : t.uom === "%" ? "Humidity" : "Daily Observation",
-    value: `${t.quantity != null ? formatQuantity(t.quantity, t.uom) : ""} ${t.uom || ""}`.trim(),
-    notes: t.remarks || "Observation Logged",
+    date: t.transaction_date || '',
+    type:
+      t.uom === '°C'
+        ? 'Temperature'
+        : t.uom === 'L'
+          ? 'Water Intake'
+          : t.uom === '%'
+            ? 'Humidity'
+            : 'Daily Observation',
+    value:
+      `${t.quantity != null ? formatQuantity(t.quantity, t.uom) : ''} ${t.uom || ''}`.trim(),
+    notes: t.remarks || 'Observation Logged',
   }));
 
   const opening = Number(b.opening_quantity) || 20;
-  const recordedMortality = mortalityLogs.reduce((sum: number, m: any) => sum + m.count, 0);
-  const closing = b.closing_quantity != null ? Number(b.closing_quantity) : opening - recordedMortality;
+  const recordedMortality = mortalityLogs.reduce(
+    (sum: number, m: any) => sum + m.count,
+    0,
+  );
+  const closing =
+    b.closing_quantity != null
+      ? Number(b.closing_quantity)
+      : opening - recordedMortality;
   const totalMortality = Math.max(0, opening - closing);
 
   return {
     id: `st-${b.batch_id}`,
-    code: b.current_stage_code || "ACTIVE",
-    name: `${(b.current_stage_code || "Production").replace(/_/g, " ")} Stage`,
+    code: b.current_stage_code || 'ACTIVE',
+    name: `${(b.current_stage_code || 'Production').replace(/_/g, ' ')} Stage`,
     startDate: b.start_date || new Date().toISOString().slice(0, 10),
     endDate: b.expected_end_date || new Date().toISOString().slice(0, 10),
     standardDays: 60,
@@ -386,18 +442,20 @@ function buildStageProfile(
     weightLogs,
     observationLogs,
     transferLogs: (stageLog || []).map((l: any) => ({
-      date: (l.transferred_at || "").toString().slice(0, 10),
-      fromStage: l.from_stage_code || "—",
-      toStage: l.to_stage_code || "—",
-      remarks: l.remarks || "",
+      date: (l.transferred_at || '').toString().slice(0, 10),
+      fromStage: l.from_stage_code || NA,
+      toStage: l.to_stage_code || NA,
+      remarks: l.remarks || '',
     })),
     attachments: (attachments || []).map((a: any) => ({
       id: a.attachment_id || a.id,
-      date: (a.log_date || a.uploaded_at || a.created_at || "").toString().slice(0, 10),
-      fileName: a.file_name || a.original_name || "Attachment",
-      fileType: a.file_type || a.mime_type || "",
-      url: a.file_url || a.file_path || "",
-      type: a.attachment_type || "IMAGE",
+      date: (a.log_date || a.uploaded_at || a.created_at || '')
+        .toString()
+        .slice(0, 10),
+      fileName: a.file_name || a.original_name || 'Attachment',
+      fileType: a.file_type || a.mime_type || '',
+      url: a.file_url || a.file_path || '',
+      type: a.attachment_type || 'IMAGE',
     })),
     outputHead: closing,
   };
@@ -411,56 +469,123 @@ export default function StageWiseConsumptionOutputPanel() {
   const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [batches, setBatches] = useState<BatchProfile[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedBatchId, setSelectedBatchId] = useState<string>("");
+  const companyId = getActiveCompanyId();
+  const pagedBatches = usePagedOptions({
+    path: '/batch',
+    params: { companyId },
+    idKey: 'batch_id',
+    enabled: !!companyId,
+  });
+  const [selectedBatchId, setSelectedBatchId] = useState<string>('');
+  const pickedBatchRow = usePickedRow({
+    path: '/batch',
+    idParam: 'batchId',
+    idKey: 'batch_id',
+    id: selectedBatchId,
+    loaded: pagedBatches.options,
+  });
+  const listRows = useMemo(
+    () => withPicked(pagedBatches.options, pickedBatchRow, 'batch_id'),
+    [pagedBatches.options, pickedBatchRow],
+  );
+  // Full profiles (stages, transactions) are read only for the batch on screen
+  // and its split groups, not for every batch the picker has loaded.
+  const [profiles, setProfiles] = useState<Record<string, BatchProfile>>({});
+  const batches: BatchProfile[] = useMemo(
+    () =>
+      listRows.map(
+        (b: any) =>
+          profiles[b.batch_id] ?? {
+            id: b.batch_id,
+            code: b.batch_no,
+            name: b.remarks || b.batch_no,
+            breed: b.breed_name || b.breed_code || NA,
+            batchType: b.lob_name || 'Piggery Production Batch',
+            startCount: Number(b.opening_quantity) || 0,
+            stages: [],
+          },
+      ),
+    [listRows, profiles],
+  );
+  const loading = !!companyId && !pagedBatches.ready;
 
   // Data entry stages for the currently selected batch
-  const [batchDataEntryStages, setBatchDataEntryStages] = useState<DataEntryStageOption[]>([]);
+  const [batchDataEntryStages, setBatchDataEntryStages] = useState<
+    DataEntryStageOption[]
+  >([]);
   const [stagesLoading, setStagesLoading] = useState(false);
-  const [selectedStageId, setSelectedStageId] = useState<string>("ALL");
+  const [selectedStageId, setSelectedStageId] = useState<string>('ALL');
 
   // Raw per-batch transactions/metadata, cached at fetch time
   const [rawTxsByBatch, setRawTxsByBatch] = useState<Record<string, any[]>>({});
   const [rawBatchMeta, setRawBatchMeta] = useState<Record<string, any>>({});
 
   // Animal filter — narrows every tab below to one animal's own transactions
-  const [selectedAnimalId, setSelectedAnimalId] = useState("");
+  const [selectedAnimalId, setSelectedAnimalId] = useState('');
   const [includeChildren, setIncludeChildren] = useState(false);
-  const [batchAnimalOptions, setBatchAnimalOptions] = useState<AnimalOption[]>([]);
+  const [batchAnimalOptions, setBatchAnimalOptions] = useState<AnimalOption[]>(
+    [],
+  );
 
   // Sub-filters inside tabs
-  const [consumptionFilter, setConsumptionFilter] = useState<"ALL" | "FEED" | "MEDICINE">("ALL");
-  const [descriptiveFilter, setDescriptiveFilter] = useState<"ALL" | "WEIGHT" | "MORTALITY" | "OBSERVATION">("ALL");
+  const [consumptionFilter, setConsumptionFilter] = useState<
+    'ALL' | 'FEED' | 'MEDICINE'
+  >('ALL');
+  const [descriptiveFilter, setDescriptiveFilter] = useState<
+    'ALL' | 'WEIGHT' | 'MORTALITY' | 'OBSERVATION'
+  >('ALL');
 
   // Date range filters
-  const [dateFrom, setDateFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [dateFrom, setDateFrom] = useState(
+    new Date().toISOString().slice(0, 10),
+  );
   const [dateTo, setDateTo] = useState(new Date().toISOString().slice(0, 10));
 
   // Toast / feedback message
-  const [toastMsg, setToastMsg] = useState("");
+  const [toastMsg, setToastMsg] = useState('');
 
   // Photo Uploader state
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
-  const [photoDate, setPhotoDate] = useState(new Date().toISOString().slice(0, 10));
-  const [photoType, setPhotoType] = useState<string>("IMAGE");
+  const [photoDate, setPhotoDate] = useState(
+    new Date().toISOString().slice(0, 10),
+  );
+  const [photoType, setPhotoType] = useState<string>('IMAGE');
   const [photoUploading, setPhotoUploading] = useState(false);
-  const [photoError, setPhotoError] = useState("");
-  const [uploadedPhotos, setUploadedPhotos] = useState<BatchAttachmentItem[]>([]);
-  const [selectedGalleryImage, setSelectedGalleryImage] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState('');
+  const [uploadedPhotos, setUploadedPhotos] = useState<BatchAttachmentItem[]>(
+    [],
+  );
+  const [selectedGalleryImage, setSelectedGalleryImage] = useState<
+    string | null
+  >(null);
 
   // Active tab management with query param synchronization and backward-compat mapping
-  const sectionParam = searchParams.get("section")?.toUpperCase() || "";
+  const sectionParam = searchParams.get('section')?.toUpperCase() || '';
   const initialTab: TabKey = useMemo(() => {
-    if (sectionParam === "FEED" || sectionParam === "MEDICINE" || sectionParam === "CONSUMPTION") return "CONSUMPTION";
-    if (sectionParam === "OUTPUT") return "OUTPUT";
-    if (sectionParam === "WEIGHT" || sectionParam === "MORTALITY" || sectionParam === "OBSERVATIONS" || sectionParam === "DESCRIPTIVE") return "DESCRIPTIVE";
-    if (sectionParam === "LABOUR" || sectionParam === "RESOURCE") return "RESOURCE";
-    if (sectionParam === "OVERHEAD" || sectionParam === "OVERHEADS") return "OVERHEAD";
-    if (sectionParam === "TRANSFER" || sectionParam === "TRANSFERS") return "TRANSFER";
-    if (sectionParam === "ATTACHMENTS" || sectionParam === "PHOTO_UPLOADER") return "PHOTO_UPLOADER";
-    return "CONSUMPTION";
+    if (
+      sectionParam === 'FEED' ||
+      sectionParam === 'MEDICINE' ||
+      sectionParam === 'CONSUMPTION'
+    )
+      return 'CONSUMPTION';
+    if (sectionParam === 'OUTPUT') return 'OUTPUT';
+    if (
+      sectionParam === 'WEIGHT' ||
+      sectionParam === 'MORTALITY' ||
+      sectionParam === 'OBSERVATIONS' ||
+      sectionParam === 'DESCRIPTIVE'
+    )
+      return 'DESCRIPTIVE';
+    if (sectionParam === 'LABOUR' || sectionParam === 'RESOURCE')
+      return 'RESOURCE';
+    if (sectionParam === 'OVERHEAD' || sectionParam === 'OVERHEADS')
+      return 'OVERHEAD';
+    if (sectionParam === 'TRANSFER' || sectionParam === 'TRANSFERS')
+      return 'TRANSFER';
+    if (sectionParam === 'ATTACHMENTS' || sectionParam === 'PHOTO_UPLOADER')
+      return 'PHOTO_UPLOADER';
+    return 'CONSUMPTION';
   }, [sectionParam]);
 
   const [activeTab, setActiveTabState] = useState<TabKey>(initialTab);
@@ -468,100 +593,89 @@ export default function StageWiseConsumptionOutputPanel() {
   const setActiveTab = (tab: TabKey) => {
     setActiveTabState(tab);
     const params = new URLSearchParams(searchParams.toString());
-    params.set("section", tab.toLowerCase());
+    params.set('section', tab.toLowerCase());
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
   const currentBatch = useMemo(
-    () => batches.find((b) => b.id === selectedBatchId) || batches[0] || {
-      id: "",
-      code: "—",
-      name: t("bpNoBatches"),
-      breed: "—",
-      batchType: "—",
-      startCount: 0,
-      stages: [],
-    },
-    [batches, selectedBatchId, t]
+    () =>
+      batches.find((b) => b.id === selectedBatchId) ||
+      batches[0] || {
+        id: '',
+        code: NA,
+        name: t('bpNoBatches'),
+        breed: NA,
+        batchType: NA,
+        startCount: 0,
+        stages: [],
+      },
+    [batches, selectedBatchId, t],
   );
 
-  // Load batch list and initial metadata
-  const loadBatches = (preserveSelection?: boolean) => {
-    const companyId = getActiveCompanyId();
-    if (!companyId) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    api.get(`/batch?companyId=${companyId}&limit=50`)
-      .then(async (res) => {
-        const list: any[] = Array.isArray(res) ? res : (res?.data ?? []);
-        if (list.length === 0) {
-          setBatches([]);
-          setLoading(false);
-          return;
-        }
-
-        const rawTxs: Record<string, any[]> = {};
-        const rawMeta: Record<string, any> = {};
-
-        const detailedBatches: BatchProfile[] = await Promise.all(
-          list.map(async (b: any) => {
-            try {
-              const detailsRes = await api.get(`/batch/${b.batch_id}`).catch(() => null);
-              const details = detailsRes?.data ?? detailsRes ?? b;
-              const txs: any[] = details.transactions || [];
-              const stageLog: any[] = details.stage_log || [];
-              const atts: any[] = details.attachments || [];
-              rawTxs[b.batch_id] = txs;
-              rawMeta[b.batch_id] = { ...b, stage_log: stageLog, attachments: atts };
-
-              const stageProfiles = buildStageProfiles(b, txs, stageLog, atts);
-
-              return {
-                id: b.batch_id,
-                code: b.batch_no,
-                name: b.remarks || b.batch_no,
-                breed: b.breed_name || b.breed_code || "—",
-                batchType: b.lob_name || "Piggery Production Batch",
-                startCount: stageProfiles[0]?.startAnimals ?? (b.opening_quantity != null ? Number(b.opening_quantity) : 0),
-                stages: stageProfiles,
-              };
-            } catch {
-              return {
-                id: b.batch_id,
-                code: b.batch_no,
-                name: b.remarks || b.batch_no,
-                breed: b.breed_name || b.breed_code || "—",
-                batchType: b.lob_name || "Piggery Production Batch",
-                startCount: Number(b.opening_quantity) || 20,
-                stages: [],
-              };
-            }
-          })
-        );
-
-        setRawTxsByBatch(rawTxs);
-        setRawBatchMeta(rawMeta);
-        setBatches(detailedBatches);
-
-        if (detailedBatches.length > 0) {
-          const existingMatch = preserveSelection ? detailedBatches.find((b) => b.id === selectedBatchId) : undefined;
-          const target = existingMatch || detailedBatches[0];
-          if (!preserveSelection || !existingMatch) {
-            setSelectedBatchId(target.id);
-          }
-        }
-        setLoading(false);
-      })
-      .catch(() => {
-        setLoading(false);
-      });
-  };
-
+  // The first loaded batch is the one shown until another is picked.
   useEffect(() => {
-    loadBatches();
-  }, []);
+    if (!selectedBatchId && pagedBatches.options.length)
+      setSelectedBatchId(pagedBatches.options[0].batch_id);
+  }, [selectedBatchId, pagedBatches.options]);
+
+  // Split groups of the batch on screen, among the batches the picker knows.
+  const childBatchIds = useMemo(
+    () =>
+      listRows
+        .filter((m: any) => m?.parent_batch_id === selectedBatchId)
+        .map((m: any) => m.batch_id as string),
+    [listRows, selectedBatchId],
+  );
+
+  // Details for the batch on screen and its split groups, each read once.
+  useEffect(() => {
+    const wanted = [selectedBatchId, ...childBatchIds].filter(
+      (id) => id && !rawBatchMeta[id],
+    );
+    if (!wanted.length) return;
+    let live = true;
+    (async () => {
+      const rawTxs: Record<string, any[]> = {};
+      const rawMeta: Record<string, any> = {};
+      const built: Record<string, BatchProfile> = {};
+      await Promise.all(
+        wanted.map(async (id) => {
+          const b: any = listRows.find((r: any) => r.batch_id === id);
+          if (!b) return;
+          try {
+            const detailsRes = await api.get(`/batch/${b.batch_id}`).catch(() => null);
+            const details = detailsRes?.data ?? detailsRes ?? b;
+            const txs: any[] = details.transactions || [];
+            const stageLog: any[] = details.stage_log || [];
+            const atts: any[] = details.attachments || [];
+            rawTxs[b.batch_id] = txs;
+            rawMeta[b.batch_id] = { ...b, stage_log: stageLog, attachments: atts };
+            const stageProfiles = buildStageProfiles(b, txs, stageLog, atts);
+            built[b.batch_id] = {
+              id: b.batch_id,
+              code: b.batch_no,
+              name: b.remarks || b.batch_no,
+              breed: b.breed_name || b.breed_code || NA,
+              batchType: b.lob_name || 'Piggery Production Batch',
+              startCount:
+                stageProfiles[0]?.startAnimals ??
+                (b.opening_quantity != null ? Number(b.opening_quantity) : 0),
+              stages: stageProfiles,
+            };
+          } catch {
+            rawMeta[b.batch_id] = { ...b };
+          }
+        }),
+      );
+      if (!live) return;
+      setRawTxsByBatch((prev) => ({ ...prev, ...rawTxs }));
+      setRawBatchMeta((prev) => ({ ...prev, ...rawMeta }));
+      setProfiles((prev) => ({ ...prev, ...built }));
+    })();
+    return () => {
+      live = false;
+    };
+  }, [selectedBatchId, childBatchIds, listRows, rawBatchMeta]);
 
   // When a batch is selected, load its stages as per data entry on that batch
   useEffect(() => {
@@ -579,7 +693,9 @@ export default function StageWiseConsumptionOutputPanel() {
       .then(([dataEntryRes, batchRes, stageMasterRes]) => {
         const schedData = dataEntryRes?.data ?? dataEntryRes;
         const batchData = batchRes?.data ?? batchRes;
-        const stageMasters: any[] = Array.isArray(stageMasterRes) ? stageMasterRes : (stageMasterRes?.data ?? []);
+        const stageMasters: any[] = Array.isArray(stageMasterRes)
+          ? stageMasterRes
+          : (stageMasterRes?.data ?? []);
 
         const progress: any[] = schedData?.progress || [];
         const schedStages: any[] = schedData?.stages || [];
@@ -610,11 +726,13 @@ export default function StageWiseConsumptionOutputPanel() {
             stageLog: stageLog.map((l: any) => ({
               from_stage_code: l.from_stage_code ?? null,
               to_stage_code: l.to_stage_code,
-              transferred_at: String(l.transferred_at || ""),
+              transferred_at: String(l.transferred_at || ''),
             })),
-            batchStartDate: String(batchData?.start_date || "").slice(0, 10),
+            batchStartDate: String(batchData?.start_date || '').slice(0, 10),
             currentStageCode: batchData?.current_stage_code ?? null,
-            batchEndDate: batchData?.actual_end_date ? String(batchData.actual_end_date).slice(0, 10) : null,
+            batchEndDate: batchData?.actual_end_date
+              ? String(batchData.actual_end_date).slice(0, 10)
+              : null,
           });
 
           resolvedStages = windows.map((w, idx) => {
@@ -622,7 +740,7 @@ export default function StageWiseConsumptionOutputPanel() {
             return {
               id: master?.stage_id || w.code,
               code: w.code,
-              name: master?.stage_name || `${w.code.replace(/_/g, " ")} Stage`,
+              name: master?.stage_name || `${w.code.replace(/_/g, ' ')} Stage`,
               sequence: master?.stage_sequence ?? idx + 1,
               startDate: w.from,
               endDate: w.to,
@@ -643,9 +761,11 @@ export default function StageWiseConsumptionOutputPanel() {
 
         // Keep current selected stage if present in resolved stages, else default to ALL
         setSelectedStageId((prev) => {
-          if (prev === "ALL") return "ALL";
-          const exists = uniqueStages.some((s) => s.id === prev || s.code === prev);
-          return exists ? prev : "ALL";
+          if (prev === 'ALL') return 'ALL';
+          const exists = uniqueStages.some(
+            (s) => s.id === prev || s.code === prev,
+          );
+          return exists ? prev : 'ALL';
         });
       })
       .catch(() => {
@@ -658,23 +778,27 @@ export default function StageWiseConsumptionOutputPanel() {
 
   // Load animals belonging to this batch
   useEffect(() => {
-    setSelectedAnimalId("");
+    setSelectedAnimalId('');
     if (!selectedBatchId) {
       setBatchAnimalOptions([]);
       return;
     }
     const companyId = getActiveCompanyId();
-    api.get(`/animal?companyId=${companyId}&currentBatchId=${selectedBatchId}&limit=500`)
+    api
+      .get(
+        `/animal?companyId=${companyId}&currentBatchId=${selectedBatchId}&limit=500`,
+      )
       .then((res) => {
         const list: any[] = Array.isArray(res) ? res : (res?.data ?? []);
         setBatchAnimalOptions(
           list.map((a) => {
-            const stg = a.current_stage_code || a.stage_code || a.current_stage_name;
+            const stg =
+              a.current_stage_code || a.stage_code || a.current_stage_name;
             return {
               animal_id: a.animal_id,
-              label: `${a.rfid_tag || a.animal_code}${stg ? ` [${stg}]` : ""}`,
+              label: `${a.rfid_tag || a.animal_code}${stg ? ` [${stg}]` : ''}`,
             };
-          })
+          }),
         );
       })
       .catch(() => setBatchAnimalOptions([]));
@@ -700,19 +824,15 @@ export default function StageWiseConsumptionOutputPanel() {
     }
   }, [selectedBatchId, rawBatchMeta]);
 
-  // Child batches from split cohort
-  const childBatchIds = useMemo(
-    () =>
-      Object.values(rawBatchMeta)
-        .filter((m: any) => m?.parent_batch_id === selectedBatchId)
-        .map((m: any) => m.batch_id),
-    [rawBatchMeta, selectedBatchId]
-  );
 
   // Selected stage details
   const activeStageInfo = useMemo(() => {
-    if (selectedStageId === "ALL") return null;
-    return batchDataEntryStages.find((s) => s.id === selectedStageId || s.code === selectedStageId) || null;
+    if (selectedStageId === 'ALL') return null;
+    return (
+      batchDataEntryStages.find(
+        (s) => s.id === selectedStageId || s.code === selectedStageId,
+      ) || null
+    );
   }, [selectedStageId, batchDataEntryStages]);
 
   // Filter transactions by selected stage and animal
@@ -720,9 +840,9 @@ export default function StageWiseConsumptionOutputPanel() {
     const rawB = rawBatchMeta[selectedBatchId];
     if (!rawB) {
       return {
-        id: "st-empty",
-        code: "—",
-        name: "No Stage Data",
+        id: 'st-empty',
+        code: NA,
+        name: 'No Stage Data',
         startDate: dateFrom,
         endDate: dateTo,
         standardDays: 30,
@@ -747,32 +867,39 @@ export default function StageWiseConsumptionOutputPanel() {
 
     // Include child batches if requested
     if (includeChildren && childBatchIds.length > 0) {
-      txs = [
-        ...txs,
-        ...childBatchIds.flatMap((id) => rawTxsByBatch[id] || []),
-      ];
+      txs = [...txs, ...childBatchIds.flatMap((id) => rawTxsByBatch[id] || [])];
     }
 
     // 1. Stage Filtering
     if (activeStageInfo) {
-      const codeUpper = (activeStageInfo.code || "").toUpperCase();
-      const nameUpper = (activeStageInfo.name || "").toUpperCase();
+      const codeUpper = (activeStageInfo.code || '').toUpperCase();
+      const nameUpper = (activeStageInfo.name || '').toUpperCase();
 
       txs = txs.filter((t: any) => {
         // Direct stage_id match
-        if (t.stage_id && (t.stage_id === activeStageInfo.id || t.stage_id === activeStageInfo.code)) {
+        if (
+          t.stage_id &&
+          (t.stage_id === activeStageInfo.id ||
+            t.stage_id === activeStageInfo.code)
+        ) {
           return true;
         }
 
         // Remarks or item_name containing stage code or stage name
-        const text = `${t.remarks || ""} ${t.item_name || ""} ${t.item_code || ""}`.toUpperCase();
+        const text =
+          `${t.remarks || ''} ${t.item_name || ''} ${t.item_code || ''}`.toUpperCase();
         if (codeUpper && text.includes(codeUpper)) return true;
         if (nameUpper && text.includes(nameUpper)) return true;
 
         // Date window match
         if (activeStageInfo.startDate && activeStageInfo.endDate) {
-          const d = String(t.transaction_date || "").slice(0, 10);
-          if (d && d >= activeStageInfo.startDate && d <= activeStageInfo.endDate) return true;
+          const d = String(t.transaction_date || '').slice(0, 10);
+          if (
+            d &&
+            d >= activeStageInfo.startDate &&
+            d <= activeStageInfo.endDate
+          )
+            return true;
         }
 
         return false;
@@ -781,27 +908,36 @@ export default function StageWiseConsumptionOutputPanel() {
 
     // 2. Animal Filtering (per-animal view)
     if (selectedAnimalId) {
-      const headCount = batchAnimalOptions.length || Number(rawB.closing_quantity ?? rawB.opening_quantity) || 1;
+      const headCount =
+        batchAnimalOptions.length ||
+        Number(rawB.closing_quantity ?? rawB.opening_quantity) ||
+        1;
       txs = apportionToAnimal(txs, selectedAnimalId, headCount);
     }
 
-    const attachmentsList = uploadedPhotos.length > 0 ? uploadedPhotos : (rawB.attachments || []);
+    const attachmentsList =
+      uploadedPhotos.length > 0 ? uploadedPhotos : rawB.attachments || [];
     const profile = buildStageProfile(
       {
         ...rawB,
-        current_stage_code: activeStageInfo ? activeStageInfo.code : rawB.current_stage_code,
+        current_stage_code: activeStageInfo
+          ? activeStageInfo.code
+          : rawB.current_stage_code,
         start_date: activeStageInfo?.startDate || rawB.start_date,
         expected_end_date: activeStageInfo?.endDate || rawB.expected_end_date,
       },
       txs,
       rawB.stage_log || [],
-      attachmentsList
+      attachmentsList,
     );
 
     // If an active stage with animal count is selected, adjust start/end animals
     if (activeStageInfo && activeStageInfo.animalCount != null) {
       profile.startAnimals = activeStageInfo.animalCount;
-      profile.endAnimals = Math.max(0, activeStageInfo.animalCount - profile.mortality);
+      profile.endAnimals = Math.max(
+        0,
+        activeStageInfo.animalCount - profile.mortality,
+      );
       profile.outputHead = profile.endAnimals;
     }
 
@@ -823,40 +959,51 @@ export default function StageWiseConsumptionOutputPanel() {
   // Derived financial & KPI figures
   const totalFeedKg = useMemo(
     () => displayStage.feedData.reduce((sum, f) => sum + f.consumed, 0),
-    [displayStage]
+    [displayStage],
   );
   const totalFeedCost = useMemo(
-    () => displayStage.feedData.reduce((sum, f) => sum + f.consumed * f.rate, 0),
-    [displayStage]
+    () =>
+      displayStage.feedData.reduce((sum, f) => sum + f.consumed * f.rate, 0),
+    [displayStage],
   );
   const totalMedCost = useMemo(
     () => displayStage.medData.reduce((sum, m) => sum + m.cost, 0),
-    [displayStage]
+    [displayStage],
   );
   const totalLabourCost = useMemo(
     () => (displayStage.labourData || []).reduce((sum, l) => sum + l.cost, 0),
-    [displayStage]
+    [displayStage],
   );
   const totalOverheadCost = useMemo(
     () => displayStage.overheadData.reduce((sum, o) => sum + o.cost, 0),
-    [displayStage]
+    [displayStage],
   );
-  const totalStageWipCost = totalFeedCost + totalMedCost + totalLabourCost + totalOverheadCost;
+  const totalStageWipCost =
+    totalFeedCost + totalMedCost + totalLabourCost + totalOverheadCost;
   const durationDays = displayStage.standardDays || 30;
-  const avgAnimals = (displayStage.startAnimals + displayStage.endAnimals) / 2 || 1;
-  const costPerHeadDay = avgAnimals > 0 && durationDays > 0 ? (totalStageWipCost / (avgAnimals * durationDays)).toFixed(2) : "0.00";
-  const mortalityPct = displayStage.startAnimals > 0 ? ((displayStage.mortality / displayStage.startAnimals) * 100).toFixed(1) : "0.0";
+  const avgAnimals =
+    (displayStage.startAnimals + displayStage.endAnimals) / 2 || 1;
+  const costPerHeadDay =
+    avgAnimals > 0 && durationDays > 0
+      ? (totalStageWipCost / (avgAnimals * durationDays)).toFixed(2)
+      : '0.00';
+  const mortalityPct =
+    displayStage.startAnimals > 0
+      ? ((displayStage.mortality / displayStage.startAnimals) * 100).toFixed(1)
+      : '0.0';
 
   // Handlers
   const handleBatchChange = (batchId: string) => {
     setSelectedBatchId(batchId);
-    setSelectedStageId("ALL");
-    setSelectedAnimalId("");
+    setSelectedStageId('ALL');
+    setSelectedAnimalId('');
   };
 
   const handleStageChange = (stageId: string) => {
     setSelectedStageId(stageId);
-    const stage = batchDataEntryStages.find((s) => s.id === stageId || s.code === stageId);
+    const stage = batchDataEntryStages.find(
+      (s) => s.id === stageId || s.code === stageId,
+    );
     if (stage?.startDate && stage?.endDate) {
       setDateFrom(stage.startDate);
       setDateTo(stage.endDate);
@@ -864,13 +1011,16 @@ export default function StageWiseConsumptionOutputPanel() {
   };
 
   const handleExportCSV = () => {
-    const stageLabel = activeStageInfo ? `${activeStageInfo.code} - ${activeStageInfo.name}` : "All Stages (Batch Total)";
+    const stageLabel = activeStageInfo
+      ? `${activeStageInfo.code} - ${activeStageInfo.name}`
+      : 'All Stages (Batch Total)';
     const animalLabel = selectedAnimalId
-      ? batchAnimalOptions.find((a) => a.animal_id === selectedAnimalId)?.label || selectedAnimalId
-      : "Whole Batch";
+      ? batchAnimalOptions.find((a) => a.animal_id === selectedAnimalId)
+          ?.label || selectedAnimalId
+      : 'Whole Batch';
 
     const csvContent =
-      "data:text/csv;charset=utf-8," +
+      'data:text/csv;charset=utf-8,' +
       `Batch,${currentBatch.code} (${currentBatch.name})\n` +
       `Stage,${stageLabel}\n` +
       `Animal,${animalLabel}\n` +
@@ -886,15 +1036,18 @@ export default function StageWiseConsumptionOutputPanel() {
       `Cost per Animal Day,${costPerHeadDay}\n`;
 
     const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Batch_History_${currentBatch.code}_${activeStageInfo?.code || "ALL"}.csv`);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute(
+      'download',
+      `Batch_History_${currentBatch.code}_${activeStageInfo?.code || 'ALL'}.csv`,
+    );
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
 
-    setToastMsg("✓ Batch history dataset exported successfully.");
-    setTimeout(() => setToastMsg(""), 3000);
+    setToastMsg('✓ Batch history dataset exported successfully.');
+    setTimeout(() => setToastMsg(''), 3000);
   };
 
   // Photo Uploader handlers
@@ -902,7 +1055,7 @@ export default function StageWiseConsumptionOutputPanel() {
     const file = e.target.files?.[0];
     if (!file) return;
     setPhotoFile(file);
-    setPhotoError("");
+    setPhotoError('');
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -914,12 +1067,12 @@ export default function StageWiseConsumptionOutputPanel() {
   const handlePhotoUpload = async () => {
     if (!photoFile || !selectedBatchId) return;
     setPhotoUploading(true);
-    setPhotoError("");
+    setPhotoError('');
     try {
       const formData = new FormData();
-      formData.append("file", photoFile);
-      formData.append("log_date", photoDate);
-      formData.append("attachment_type", photoType);
+      formData.append('file', photoFile);
+      formData.append('log_date', photoDate);
+      formData.append('attachment_type', photoType);
 
       await api.upload(`/batch/${selectedBatchId}/attachment`, formData);
 
@@ -928,11 +1081,14 @@ export default function StageWiseConsumptionOutputPanel() {
 
       setPhotoFile(null);
       setPhotoPreview(null);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      setToastMsg("✓ Photo uploaded successfully.");
-      setTimeout(() => setToastMsg(""), 3500);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setToastMsg('✓ Photo uploaded successfully.');
+      setTimeout(() => setToastMsg(''), 3500);
     } catch (err: any) {
-      setPhotoError(err?.message || "Failed to upload photo. Please check image format and size.");
+      setPhotoError(
+        err?.message ||
+          'Failed to upload photo. Please check image format and size.',
+      );
     } finally {
       setPhotoUploading(false);
     }
@@ -940,31 +1096,45 @@ export default function StageWiseConsumptionOutputPanel() {
 
   const handleDeletePhoto = async (attachmentId: string) => {
     if (!selectedBatchId || !attachmentId) return;
-    if (!(await confirmAction({ title: t("cfRemovePhotoTitle"), message: "Are you sure you want to remove this photo attachment?", tone: "danger" }))) return;
+    if (
+      !(await confirmAction({
+        title: t('cfRemovePhotoTitle'),
+        message: 'Are you sure you want to remove this photo attachment?',
+        tone: 'danger',
+      }))
+    )
+      return;
 
     try {
       await api.delete(`/batch/${selectedBatchId}/attachment/${attachmentId}`);
       await reloadAttachments(selectedBatchId);
-      setToastMsg("✓ Photo deleted successfully.");
-      setTimeout(() => setToastMsg(""), 3000);
+      setToastMsg('✓ Photo deleted successfully.');
+      setTimeout(() => setToastMsg(''), 3000);
     } catch (err: any) {
-      setToastMsg(`Failed to delete photo: ${err?.message || "Error"}`);
-      setTimeout(() => setToastMsg(""), 3500);
+      setToastMsg(`Failed to delete photo: ${err?.message || 'Error'}`);
+      setTimeout(() => setToastMsg(''), 3500);
     }
   };
 
   // Counts for tab badges
-  const totalConsumptionCount = displayStage.feedData.length + displayStage.medData.length;
-  const totalDescriptiveCount = displayStage.weightLogs.length + displayStage.mortalityLogs.length + displayStage.observationLogs.length;
+  const totalConsumptionCount =
+    displayStage.feedData.length + displayStage.medData.length;
+  const totalDescriptiveCount =
+    displayStage.weightLogs.length +
+    displayStage.mortalityLogs.length +
+    displayStage.observationLogs.length;
   const totalLabourCount = (displayStage.labourData || []).length;
   const totalOverheadCount = displayStage.overheadData.length;
   const totalTransferCount = displayStage.transferLogs.length;
-  const totalPhotosCount = uploadedPhotos.length || displayStage.attachments.length;
+  const totalPhotosCount =
+    uploadedPhotos.length || displayStage.attachments.length;
 
   if (loading) {
     return (
       <div className="rounded-[var(--radius-lg)] border border-[var(--border)] bg-[var(--surface)] p-8 text-center">
-        <p className="text-sm font-medium text-[var(--text-muted)]">{t("swLoadingStageData")}</p>
+        <p className="text-sm font-medium text-[var(--text-muted)]">
+          {t('swLoadingStageData')}
+        </p>
       </div>
     );
   }
@@ -976,18 +1146,21 @@ export default function StageWiseConsumptionOutputPanel() {
         <div className="flex items-center gap-4 flex-wrap">
           {/* Batch Selector */}
           <div>
-            <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">{t("swBatch")}</span>
+            <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">
+              {t('swBatch')}
+            </span>
             <div className="w-72 sm:w-80">
               <SearchableSelect
-                ariaLabel={t("swBatch")}
+                ariaLabel={t('swBatch')}
                 value={selectedBatchId}
                 onChange={(val) => handleBatchChange(val)}
                 options={batches.map((b) => ({
                   value: b.id,
-                  label: `${b.code}${(rawBatchMeta as any)[b.id]?.parent_batch_id ? " ↳ split group" : ""} — ${b.name} (${b.breed})`,
+                  label: `${b.code}${listRows.find((r: any) => r.batch_id === b.id)?.parent_batch_id ? ' ↳ split group' : ''} — ${b.name} (${b.breed})`,
                 }))}
-                placeholder={t("swBatch")}
+                placeholder={t('swBatch')}
                 searchPlaceholder="Search batches…"
+                remote={pagedBatches}
               />
             </div>
           </div>
@@ -995,22 +1168,27 @@ export default function StageWiseConsumptionOutputPanel() {
           {/* Stages as per Data Entry on that Batch */}
           <div>
             <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">
-              {t("swStage")} {stagesLoading && <span className="text-[9px] text-[var(--text-muted)]">(loading…)</span>}
+              {t('swStage')}{' '}
+              {stagesLoading && (
+                <span className="text-[9px] text-[var(--text-muted)]">
+                  (loading…)
+                </span>
+              )}
             </span>
             <div className="w-72 sm:w-80">
               <SearchableSelect
-                ariaLabel={t("swStage")}
+                ariaLabel={t('swStage')}
                 value={selectedStageId}
                 columnHeaders={false}
                 onChange={(val) => handleStageChange(val)}
                 options={[
-                  { value: "ALL", label: "All Stages (Batch Total)" },
+                  { value: 'ALL', label: 'All Stages (Batch Total)' },
                   ...batchDataEntryStages.map((s) => ({
                     value: s.id,
-                    label: `${s.code} · ${s.name}${s.animalCount != null ? ` (${s.animalCount} animals)` : ""}`,
+                    label: `${s.code} · ${s.name}${s.animalCount != null ? ` (${s.animalCount} animals)` : ''}`,
                   })),
                 ]}
-                placeholder={t("swStage")}
+                placeholder={t('swStage')}
                 searchPlaceholder="Search stages…"
               />
             </div>
@@ -1020,24 +1198,26 @@ export default function StageWiseConsumptionOutputPanel() {
           {batchAnimalOptions.length > 0 && (
             <div>
               <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">
-                {t("swAnimal")} ({batchAnimalOptions.length})
+                {t('swAnimal')} ({batchAnimalOptions.length})
               </span>
               <div className="w-56 sm:w-64">
                 <SearchableSelect
-                  ariaLabel={t("swAnimal")}
+                  ariaLabel={t('swAnimal')}
                   value={selectedAnimalId}
                   columnHeaders={false}
                   onChange={(val) => setSelectedAnimalId(val)}
                   options={[
-                    { value: "", label: t("schedWholeBatch") },
+                    { value: '', label: t('schedWholeBatch') },
                     ...batchAnimalOptions.map((a) => ({
                       value: a.animal_id,
                       label: a.label,
                     })),
                   ]}
-                  placeholder={t("schedWholeBatch")}
+                  placeholder={t('schedWholeBatch')}
                   searchPlaceholder="Search animals…"
-                  onClear={selectedAnimalId ? () => setSelectedAnimalId("") : undefined}
+                  onClear={
+                    selectedAnimalId ? () => setSelectedAnimalId('') : undefined
+                  }
                 />
               </div>
             </div>
@@ -1045,7 +1225,9 @@ export default function StageWiseConsumptionOutputPanel() {
 
           {/* Date Range */}
           <div>
-            <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">{t("swDateRange")}</span>
+            <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">
+              {t('swDateRange')}
+            </span>
             <div className="flex items-center gap-1.5 text-xs">
               <input
                 type="date"
@@ -1066,7 +1248,9 @@ export default function StageWiseConsumptionOutputPanel() {
           {/* Cohort Split Groups Checkbox */}
           {childBatchIds.length > 0 && (
             <div>
-              <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">Cohort</span>
+              <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">
+                Cohort
+              </span>
               <label className="nf-input-sm flex h-9 cursor-pointer items-center gap-2 whitespace-nowrap px-3 text-xs">
                 <input
                   type="checkbox"
@@ -1074,7 +1258,8 @@ export default function StageWiseConsumptionOutputPanel() {
                   onChange={(e) => setIncludeChildren(e.target.checked)}
                 />
                 <span className="text-[var(--text-secondary)]">
-                  Include {childBatchIds.length} split group{childBatchIds.length === 1 ? "" : "s"}
+                  Include {childBatchIds.length} split group
+                  {childBatchIds.length === 1 ? '' : 's'}
                 </span>
               </label>
             </div>
@@ -1089,7 +1274,7 @@ export default function StageWiseConsumptionOutputPanel() {
             onClick={handleExportCSV}
             className="text-xs h-8 gap-1.5 font-medium"
           >
-            <Download className="h-3.5 w-3.5" /> {t("swExport")}
+            <Download className="h-3.5 w-3.5" /> {t('swExport')}
           </Button>
         </div>
       </div>
@@ -1103,11 +1288,11 @@ export default function StageWiseConsumptionOutputPanel() {
             </span>
             <button
               type="button"
-              onClick={() => setSelectedStageId("ALL")}
+              onClick={() => setSelectedStageId('ALL')}
               className={`px-3 py-1.5 rounded-full text-xs font-semibold shrink-0 transition-all flex items-center gap-1.5 ${
-                selectedStageId === "ALL"
-                  ? "bg-[var(--accent)] text-white shadow-xs"
-                  : "bg-[var(--surface-raised)] border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                selectedStageId === 'ALL'
+                  ? 'bg-[var(--accent)] text-white shadow-xs'
+                  : 'bg-[var(--surface-raised)] border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
               }`}
             >
               <span>All Stages</span>
@@ -1116,7 +1301,8 @@ export default function StageWiseConsumptionOutputPanel() {
               </span>
             </button>
             {batchDataEntryStages.map((stg) => {
-              const isSelected = selectedStageId === stg.id || selectedStageId === stg.code;
+              const isSelected =
+                selectedStageId === stg.id || selectedStageId === stg.code;
               return (
                 <button
                   key={stg.id}
@@ -1124,8 +1310,8 @@ export default function StageWiseConsumptionOutputPanel() {
                   onClick={() => handleStageChange(stg.id)}
                   className={`px-3 py-1.5 rounded-full text-xs font-semibold shrink-0 transition-all flex items-center gap-1.5 ${
                     isSelected
-                      ? "bg-[var(--accent)] text-white shadow-xs scale-102"
-                      : "bg-[var(--surface-raised)] border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                      ? 'bg-[var(--accent)] text-white shadow-xs scale-102'
+                      : 'bg-[var(--surface-raised)] border border-[var(--border)] text-[var(--text-secondary)] hover:border-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                   }`}
                 >
                   <span>{stg.name}</span>
@@ -1133,10 +1319,10 @@ export default function StageWiseConsumptionOutputPanel() {
                     <span
                       className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
                         isSelected
-                          ? "bg-black/20 text-white"
+                          ? 'bg-black/20 text-white'
                           : stg.animalCount > 0
-                          ? "bg-[var(--accent)]/15 text-[var(--accent)]"
-                          : "bg-zinc-200 dark:bg-zinc-700 text-zinc-500"
+                            ? 'bg-[var(--accent)]/15 text-[var(--accent)]'
+                            : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-500'
                       }`}
                     >
                       {stg.animalCount}
@@ -1160,70 +1346,199 @@ export default function StageWiseConsumptionOutputPanel() {
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
         <div
           className="rounded-[var(--radius-md)] border p-3.5 text-center transition-all hover:bg-[var(--surface-raised)]"
-          style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
+          style={{
+            backgroundColor: 'var(--surface)',
+            borderColor: 'var(--border)',
+          }}
         >
-          <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>{t("swAnimalsStart")}</p>
-          <p className="text-xl font-bold font-mono mt-1" style={{ color: "var(--text-primary)" }}>{displayStage.startAnimals}</p>
-        </div>
-        <div
-          className="rounded-[var(--radius-md)] border p-3.5 text-center transition-all hover:bg-[var(--surface-raised)]"
-          style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
-        >
-          <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>{t("swAnimalsEnd")}</p>
-          <p className="text-xl font-bold font-mono mt-1" style={{ color: "var(--text-primary)" }}>{displayStage.endAnimals}</p>
-        </div>
-        <div
-          className="rounded-[var(--radius-md)] border p-3.5 text-center transition-all hover:bg-[var(--surface-raised)]"
-          style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
-        >
-          <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>{t("swAvgAge")}</p>
-          <p className="text-xl font-bold font-mono mt-1" style={{ color: "var(--text-primary)" }}>
-            {displayStage.avgAgeDays} <span className="text-xs font-normal" style={{ color: "var(--text-secondary)" }}>d</span>
+          <p
+            className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            {t('swAnimalsStart')}
+          </p>
+          <p
+            className="text-xl font-bold font-mono mt-1"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {displayStage.startAnimals}
           </p>
         </div>
         <div
           className="rounded-[var(--radius-md)] border p-3.5 text-center transition-all hover:bg-[var(--surface-raised)]"
-          style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
+          style={{
+            backgroundColor: 'var(--surface)',
+            borderColor: 'var(--border)',
+          }}
         >
-          <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>{t("swDuration")}</p>
-          <p className="text-xl font-bold font-mono mt-1" style={{ color: "var(--text-primary)" }}>
-            {durationDays} <span className="text-xs font-normal" style={{ color: "var(--text-secondary)" }}>d</span>
+          <p
+            className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            {t('swAnimalsEnd')}
+          </p>
+          <p
+            className="text-xl font-bold font-mono mt-1"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {displayStage.endAnimals}
           </p>
         </div>
         <div
           className="rounded-[var(--radius-md)] border p-3.5 text-center transition-all hover:bg-[var(--surface-raised)]"
-          style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
+          style={{
+            backgroundColor: 'var(--surface)',
+            borderColor: 'var(--border)',
+          }}
         >
-          <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>{t("swFeedConsumed")}</p>
-          <p className="text-xl font-bold font-mono mt-1" style={{ color: "var(--text-primary)" }}>
-            {totalFeedKg.toLocaleString(undefined, { minimumFractionDigits: 1 })} <span className="text-xs font-normal" style={{ color: "var(--text-secondary)" }}>KG</span>
+          <p
+            className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            {t('swAvgAge')}
+          </p>
+          <p
+            className="text-xl font-bold font-mono mt-1"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {displayStage.avgAgeDays}{' '}
+            <span
+              className="text-xs font-normal"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              d
+            </span>
           </p>
         </div>
         <div
           className="rounded-[var(--radius-md)] border p-3.5 text-center transition-all hover:bg-[var(--surface-raised)]"
-          style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
+          style={{
+            backgroundColor: 'var(--surface)',
+            borderColor: 'var(--border)',
+          }}
         >
-          <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>{t("swMedCost")}</p>
-          <p className="text-xl font-bold font-mono mt-1" style={{ color: "var(--text-primary)" }}>
+          <p
+            className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            {t('swDuration')}
+          </p>
+          <p
+            className="text-xl font-bold font-mono mt-1"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {durationDays}{' '}
+            <span
+              className="text-xs font-normal"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              d
+            </span>
+          </p>
+        </div>
+        <div
+          className="rounded-[var(--radius-md)] border p-3.5 text-center transition-all hover:bg-[var(--surface-raised)]"
+          style={{
+            backgroundColor: 'var(--surface)',
+            borderColor: 'var(--border)',
+          }}
+        >
+          <p
+            className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            {t('swFeedConsumed')}
+          </p>
+          <p
+            className="text-xl font-bold font-mono mt-1"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {totalFeedKg.toLocaleString(undefined, {
+              minimumFractionDigits: 1,
+            })}{' '}
+            <span
+              className="text-xs font-normal"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              KG
+            </span>
+          </p>
+        </div>
+        <div
+          className="rounded-[var(--radius-md)] border p-3.5 text-center transition-all hover:bg-[var(--surface-raised)]"
+          style={{
+            backgroundColor: 'var(--surface)',
+            borderColor: 'var(--border)',
+          }}
+        >
+          <p
+            className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            {t('swMedCost')}
+          </p>
+          <p
+            className="text-xl font-bold font-mono mt-1"
+            style={{ color: 'var(--text-primary)' }}
+          >
             {formatMoney(totalMedCost)}
           </p>
         </div>
         <div
           className="rounded-[var(--radius-md)] border p-3.5 text-center transition-all hover:bg-[var(--surface-raised)]"
-          style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
+          style={{
+            backgroundColor: 'var(--surface)',
+            borderColor: 'var(--border)',
+          }}
         >
-          <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>{t("bdeMortality")}</p>
-          <p className="text-xl font-bold font-mono mt-1" style={{ color: displayStage.mortality > 0 ? "var(--danger)" : "var(--text-primary)" }}>
-            {displayStage.mortality} <span className="text-xs font-normal" style={{ color: "var(--text-secondary)" }}>({mortalityPct}%)</span>
+          <p
+            className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            {t('bdeMortality')}
+          </p>
+          <p
+            className="text-xl font-bold font-mono mt-1"
+            style={{
+              color:
+                displayStage.mortality > 0
+                  ? 'var(--danger)'
+                  : 'var(--text-primary)',
+            }}
+          >
+            {displayStage.mortality}{' '}
+            <span
+              className="text-xs font-normal"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              ({mortalityPct}%)
+            </span>
           </p>
         </div>
         <div
           className="rounded-[var(--radius-md)] border p-3.5 text-center transition-all hover:bg-[var(--surface-raised)]"
-          style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }}
+          style={{
+            backgroundColor: 'var(--surface)',
+            borderColor: 'var(--border)',
+          }}
         >
-          <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--text-secondary)" }}>{t("swStageOutput")}</p>
-          <p className="text-xl font-bold font-mono mt-1" style={{ color: "var(--text-primary)" }}>
-            {displayStage.outputHead} <span className="text-xs font-normal" style={{ color: "var(--text-secondary)" }}>{t("head")}</span>
+          <p
+            className="text-[10px] font-semibold uppercase tracking-wider"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            {t('swStageOutput')}
+          </p>
+          <p
+            className="text-xl font-bold font-mono mt-1"
+            style={{ color: 'var(--text-primary)' }}
+          >
+            {displayStage.outputHead}{' '}
+            <span
+              className="text-xs font-normal"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              {t('head')}
+            </span>
           </p>
         </div>
       </div>
@@ -1233,44 +1548,44 @@ export default function StageWiseConsumptionOutputPanel() {
         <div className="flex items-center gap-1 border-b border-[var(--border)] bg-[var(--surface-raised)] px-4 pt-2 text-xs font-semibold overflow-x-auto">
           {[
             {
-              key: "CONSUMPTION" as const,
-              label: "Consumption",
+              key: 'CONSUMPTION' as const,
+              label: 'Consumption',
               count: totalConsumptionCount,
               icon: Wheat,
             },
             {
-              key: "OUTPUT" as const,
-              label: "Output",
+              key: 'OUTPUT' as const,
+              label: 'Output',
               count: displayStage.outputHead,
               icon: TrendingUp,
             },
             {
-              key: "DESCRIPTIVE" as const,
-              label: "Descriptive",
+              key: 'DESCRIPTIVE' as const,
+              label: 'Descriptive',
               count: totalDescriptiveCount,
               icon: Activity,
             },
             {
-              key: "RESOURCE" as const,
-              label: "Resource",
+              key: 'RESOURCE' as const,
+              label: 'Resource',
               count: totalLabourCount,
               icon: Users,
             },
             {
-              key: "OVERHEAD" as const,
-              label: "Overhead",
+              key: 'OVERHEAD' as const,
+              label: 'Overhead',
               count: totalOverheadCount,
               icon: DollarSign,
             },
             {
-              key: "TRANSFER" as const,
-              label: "Transfer",
+              key: 'TRANSFER' as const,
+              label: 'Transfer',
               count: totalTransferCount,
               icon: ArrowRightLeft,
             },
             {
-              key: "PHOTO_UPLOADER" as const,
-              label: "Photo Uploader",
+              key: 'PHOTO_UPLOADER' as const,
+              label: 'Photo Uploader',
               count: totalPhotosCount,
               icon: Camera,
             },
@@ -1283,8 +1598,8 @@ export default function StageWiseConsumptionOutputPanel() {
                 onClick={() => setActiveTab(tab.key)}
                 className={`flex items-center gap-2 px-3.5 py-2.5 border-b-2 font-medium transition-colors whitespace-nowrap ${
                   isTabActive
-                    ? "border-[var(--accent)] text-[var(--accent)] font-bold"
-                    : "border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                    ? 'border-[var(--accent)] text-[var(--accent)] font-bold'
+                    : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
                 }`}
               >
                 <Icon className="h-3.5 w-3.5" />
@@ -1292,8 +1607,8 @@ export default function StageWiseConsumptionOutputPanel() {
                 <span
                   className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${
                     isTabActive
-                      ? "bg-[var(--accent)]/15 text-[var(--accent)]"
-                      : "bg-[var(--surface)] text-[var(--text-muted)] border border-[var(--border)]"
+                      ? 'bg-[var(--accent)]/15 text-[var(--accent)]'
+                      : 'bg-[var(--surface)] text-[var(--text-muted)] border border-[var(--border)]'
                   }`}
                 >
                   {tab.count}
@@ -1307,35 +1622,43 @@ export default function StageWiseConsumptionOutputPanel() {
           {/* ══════════════════════════════════════════════════════════════════
               TAB 1: CONSUMPTION (Feed & Medicine)
               ══════════════════════════════════════════════════════════════════ */}
-          {activeTab === "CONSUMPTION" && (
+          {activeTab === 'CONSUMPTION' && (
             <div className="space-y-4">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] uppercase font-bold text-[var(--text-muted)]">Category:</span>
+                  <span className="text-[10px] uppercase font-bold text-[var(--text-muted)]">
+                    Category:
+                  </span>
                   <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] p-0.5 text-xs font-medium">
                     <button
                       type="button"
-                      onClick={() => setConsumptionFilter("ALL")}
+                      onClick={() => setConsumptionFilter('ALL')}
                       className={`px-2.5 py-1 rounded-md transition-colors ${
-                        consumptionFilter === "ALL" ? "bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
+                        consumptionFilter === 'ALL'
+                          ? 'bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]'
+                          : 'text-[var(--text-secondary)]'
                       }`}
                     >
                       All Consumption ({totalConsumptionCount})
                     </button>
                     <button
                       type="button"
-                      onClick={() => setConsumptionFilter("FEED")}
+                      onClick={() => setConsumptionFilter('FEED')}
                       className={`px-2.5 py-1 rounded-md transition-colors ${
-                        consumptionFilter === "FEED" ? "bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
+                        consumptionFilter === 'FEED'
+                          ? 'bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]'
+                          : 'text-[var(--text-secondary)]'
                       }`}
                     >
                       Feed Rations ({displayStage.feedData.length})
                     </button>
                     <button
                       type="button"
-                      onClick={() => setConsumptionFilter("MEDICINE")}
+                      onClick={() => setConsumptionFilter('MEDICINE')}
                       className={`px-2.5 py-1 rounded-md transition-colors ${
-                        consumptionFilter === "MEDICINE" ? "bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
+                        consumptionFilter === 'MEDICINE'
+                          ? 'bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]'
+                          : 'text-[var(--text-secondary)]'
                       }`}
                     >
                       Clinical & Medicine ({displayStage.medData.length})
@@ -1344,12 +1667,16 @@ export default function StageWiseConsumptionOutputPanel() {
                 </div>
 
                 <div className="text-xs text-[var(--text-secondary)] font-mono">
-                  Total Consumption Cost: <strong className="text-[var(--text-primary)]">{formatMoney(totalFeedCost + totalMedCost)}</strong>
+                  Total Consumption Cost:{' '}
+                  <strong className="text-[var(--text-primary)]">
+                    {formatMoney(totalFeedCost + totalMedCost)}
+                  </strong>
                 </div>
               </div>
 
               {/* Feed Consumption Section */}
-              {(consumptionFilter === "ALL" || consumptionFilter === "FEED") && (
+              {(consumptionFilter === 'ALL' ||
+                consumptionFilter === 'FEED') && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]">
                     <Wheat className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
@@ -1365,43 +1692,91 @@ export default function StageWiseConsumptionOutputPanel() {
                         <thead>
                           <tr className="border-b border-[var(--border)] bg-[var(--surface-raised)] text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
                             <th className="px-3 py-2 font-bold">#</th>
-                            <th className="px-3 py-2 font-bold">{t("swFeedItemFormula")}</th>
-                            <th className="px-3 py-2 font-bold">{t("colUom")}</th>
-                            <th className="px-3 py-2 font-bold text-right">{t("swOpeningStock")}</th>
-                            <th className="px-3 py-2 font-bold text-right">{t("colIssued")}</th>
-                            <th className="px-3 py-2 font-bold text-right">{t("colConsumed")}</th>
-                            <th className="px-3 py-2 font-bold text-right">{t("colWastage")}</th>
-                            <th className="px-3 py-2 font-bold text-right">{t("swClosingStock")}</th>
-                            <th className="px-3 py-2 font-bold text-right">{t("swStdRate")}</th>
-                            <th className="px-3 py-2 font-bold text-right">{t("swTotalCost")}</th>
+                            <th className="px-3 py-2 font-bold">
+                              {t('swFeedItemFormula')}
+                            </th>
+                            <th className="px-3 py-2 font-bold">
+                              {t('colUom')}
+                            </th>
+                            <th className="px-3 py-2 font-bold text-right">
+                              {t('swOpeningStock')}
+                            </th>
+                            <th className="px-3 py-2 font-bold text-right">
+                              {t('colIssued')}
+                            </th>
+                            <th className="px-3 py-2 font-bold text-right">
+                              {t('colConsumed')}
+                            </th>
+                            <th className="px-3 py-2 font-bold text-right">
+                              {t('colWastage')}
+                            </th>
+                            <th className="px-3 py-2 font-bold text-right">
+                              {t('swClosingStock')}
+                            </th>
+                            <th className="px-3 py-2 font-bold text-right">
+                              {t('swStdRate')}
+                            </th>
+                            <th className="px-3 py-2 font-bold text-right">
+                              {t('swTotalCost')}
+                            </th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[var(--border)]">
                           {displayStage.feedData.map((f, index) => {
-                            const closing = f.opening + f.issued - f.consumed - f.wastage;
+                            const closing =
+                              f.opening + f.issued - f.consumed - f.wastage;
                             const cost = f.consumed * f.rate;
                             return (
-                              <tr key={f.item} className="hover:bg-[var(--surface-raised)] transition-colors">
-                                <td className="px-3 py-2 text-[var(--text-muted)]">{index + 1}</td>
-                                <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">{f.item}</td>
-                                <td className="px-3 py-2 text-[var(--text-secondary)] font-mono">{f.uom}</td>
-                                <td className="px-3 py-2 text-right font-mono">{f.opening.toFixed(2)}</td>
-                                <td className="px-3 py-2 text-right font-mono">{f.issued.toFixed(2)}</td>
-                                <td className="px-3 py-2 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">{f.consumed.toFixed(2)}</td>
-                                <td className="px-3 py-2 text-right font-mono text-[var(--text-muted)]">{f.wastage.toFixed(2)}</td>
-                                <td className="px-3 py-2 text-right font-mono">{closing.toFixed(2)}</td>
-                                <td className="px-3 py-2 text-right font-mono">{formatMoney(f.rate.toFixed(2))}</td>
-                                <td className="px-3 py-2 text-right font-mono font-bold text-[var(--text-primary)]">{formatMoney(cost)}</td>
+                              <tr
+                                key={f.item}
+                                className="hover:bg-[var(--surface-raised)] transition-colors"
+                              >
+                                <td className="px-3 py-2 text-[var(--text-muted)]">
+                                  {index + 1}
+                                </td>
+                                <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">
+                                  {f.item}
+                                </td>
+                                <td className="px-3 py-2 text-[var(--text-secondary)] font-mono">
+                                  {f.uom}
+                                </td>
+                                <td className="px-3 py-2 text-right font-mono">
+                                  {f.opening.toFixed(2)}
+                                </td>
+                                <td className="px-3 py-2 text-right font-mono">
+                                  {f.issued.toFixed(2)}
+                                </td>
+                                <td className="px-3 py-2 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                  {f.consumed.toFixed(2)}
+                                </td>
+                                <td className="px-3 py-2 text-right font-mono text-[var(--text-muted)]">
+                                  {f.wastage.toFixed(2)}
+                                </td>
+                                <td className="px-3 py-2 text-right font-mono">
+                                  {closing.toFixed(2)}
+                                </td>
+                                <td className="px-3 py-2 text-right font-mono">
+                                  {formatMoney(f.rate.toFixed(2))}
+                                </td>
+                                <td className="px-3 py-2 text-right font-mono font-bold text-[var(--text-primary)]">
+                                  {formatMoney(cost)}
+                                </td>
                               </tr>
                             );
                           })}
                         </tbody>
                         <tfoot>
                           <tr className="border-t-2 border-[var(--border)] font-bold text-xs bg-[var(--surface-raised)]">
-                            <td colSpan={5} className="py-2.5 px-3">Feed Totals</td>
-                            <td className="px-3 py-2.5 text-right text-emerald-600 dark:text-emerald-400 font-mono">{totalFeedKg.toFixed(2)} KG</td>
+                            <td colSpan={5} className="py-2.5 px-3">
+                              Feed Totals
+                            </td>
+                            <td className="px-3 py-2.5 text-right text-emerald-600 dark:text-emerald-400 font-mono">
+                              {totalFeedKg.toFixed(2)} KG
+                            </td>
                             <td colSpan={3} className="py-2.5"></td>
-                            <td className="px-3 py-2.5 text-right font-mono text-[var(--accent)]">{formatMoney(totalFeedCost)}</td>
+                            <td className="px-3 py-2.5 text-right font-mono text-[var(--accent)]">
+                              {formatMoney(totalFeedCost)}
+                            </td>
                           </tr>
                         </tfoot>
                       </table>
@@ -1411,7 +1786,8 @@ export default function StageWiseConsumptionOutputPanel() {
               )}
 
               {/* Medicine & Clinical Section */}
-              {(consumptionFilter === "ALL" || consumptionFilter === "MEDICINE") && (
+              {(consumptionFilter === 'ALL' ||
+                consumptionFilter === 'MEDICINE') && (
                 <div className="space-y-2 pt-2">
                   <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]">
                     <Pill className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
@@ -1419,7 +1795,8 @@ export default function StageWiseConsumptionOutputPanel() {
                   </div>
                   {displayStage.medData.length === 0 ? (
                     <div className="p-4 text-center text-xs text-[var(--text-muted)] bg-[var(--surface-raised)] rounded-[var(--radius-sm)] border border-[var(--border)]">
-                      No clinical medication or vaccines logged for this selection.
+                      No clinical medication or vaccines logged for this
+                      selection.
                     </div>
                   ) : (
                     <div className="overflow-x-auto rounded-[var(--radius-sm)] border border-[var(--border)]">
@@ -1427,31 +1804,64 @@ export default function StageWiseConsumptionOutputPanel() {
                         <thead>
                           <tr className="border-b border-[var(--border)] bg-[var(--surface-raised)] text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
                             <th className="px-3 py-2 font-bold">#</th>
-                            <th className="px-3 py-2 font-bold">{t("swMedicineVaccineItem")}</th>
-                            <th className="px-3 py-2 font-bold">{t("colUom")}</th>
-                            <th className="px-3 py-2 font-bold text-right">{t("colIssued")}</th>
-                            <th className="px-3 py-2 font-bold text-right">{t("colConsumed")}</th>
-                            <th className="px-3 py-2 font-bold text-right">{t("colWastage")}</th>
-                            <th className="px-3 py-2 font-bold text-right">{t("swTotalCost")}</th>
+                            <th className="px-3 py-2 font-bold">
+                              {t('swMedicineVaccineItem')}
+                            </th>
+                            <th className="px-3 py-2 font-bold">
+                              {t('colUom')}
+                            </th>
+                            <th className="px-3 py-2 font-bold text-right">
+                              {t('colIssued')}
+                            </th>
+                            <th className="px-3 py-2 font-bold text-right">
+                              {t('colConsumed')}
+                            </th>
+                            <th className="px-3 py-2 font-bold text-right">
+                              {t('colWastage')}
+                            </th>
+                            <th className="px-3 py-2 font-bold text-right">
+                              {t('swTotalCost')}
+                            </th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[var(--border)]">
                           {displayStage.medData.map((m, index) => (
-                            <tr key={m.item} className="hover:bg-[var(--surface-raised)] transition-colors">
-                              <td className="px-3 py-2 text-[var(--text-muted)]">{index + 1}</td>
-                              <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">{m.item}</td>
-                              <td className="px-3 py-2 text-[var(--text-secondary)] font-mono">{m.uom}</td>
-                              <td className="px-3 py-2 text-right font-mono">{m.issued}</td>
-                              <td className="px-3 py-2 text-right font-mono font-bold text-blue-600 dark:text-blue-400">{m.consumed}</td>
-                              <td className="px-3 py-2 text-right font-mono text-[var(--text-muted)]">{m.wastage}</td>
-                              <td className="px-3 py-2 text-right font-mono font-bold text-[var(--text-primary)]">{formatMoney(m.cost)}</td>
+                            <tr
+                              key={m.item}
+                              className="hover:bg-[var(--surface-raised)] transition-colors"
+                            >
+                              <td className="px-3 py-2 text-[var(--text-muted)]">
+                                {index + 1}
+                              </td>
+                              <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">
+                                {m.item}
+                              </td>
+                              <td className="px-3 py-2 text-[var(--text-secondary)] font-mono">
+                                {m.uom}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono">
+                                {m.issued}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono font-bold text-blue-600 dark:text-blue-400">
+                                {m.consumed}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono text-[var(--text-muted)]">
+                                {m.wastage}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono font-bold text-[var(--text-primary)]">
+                                {formatMoney(m.cost)}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
                         <tfoot>
                           <tr className="border-t-2 border-[var(--border)] font-bold text-xs bg-[var(--surface-raised)]">
-                            <td colSpan={6} className="py-2.5 px-3">Clinical & Medicine Totals</td>
-                            <td className="px-3 py-2.5 text-right font-mono text-[var(--accent)]">{formatMoney(totalMedCost)}</td>
+                            <td colSpan={6} className="py-2.5 px-3">
+                              Clinical & Medicine Totals
+                            </td>
+                            <td className="px-3 py-2.5 text-right font-mono text-[var(--accent)]">
+                              {formatMoney(totalMedCost)}
+                            </td>
                           </tr>
                         </tfoot>
                       </table>
@@ -1465,13 +1875,18 @@ export default function StageWiseConsumptionOutputPanel() {
           {/* ══════════════════════════════════════════════════════════════════
               TAB 2: OUTPUT (Stage Output & Harvested Yield)
               ══════════════════════════════════════════════════════════════════ */}
-          {activeTab === "OUTPUT" && (
+          {activeTab === 'OUTPUT' && (
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="p-4 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)]">
-                  <span className="text-[10px] uppercase font-bold text-[var(--text-muted)]">Stage Output Head Count</span>
+                  <span className="text-[10px] uppercase font-bold text-[var(--text-muted)]">
+                    Stage Output Head Count
+                  </span>
                   <div className="text-2xl font-bold font-mono mt-1 text-[var(--text-primary)]">
-                    {displayStage.outputHead} <span className="text-xs font-normal text-[var(--text-secondary)]">Head</span>
+                    {displayStage.outputHead}{' '}
+                    <span className="text-xs font-normal text-[var(--text-secondary)]">
+                      Head
+                    </span>
                   </div>
                   <p className="text-[11px] text-[var(--text-secondary)] mt-1">
                     Closing animals eligible for transfer or weaning
@@ -1479,24 +1894,36 @@ export default function StageWiseConsumptionOutputPanel() {
                 </div>
 
                 <div className="p-4 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)]">
-                  <span className="text-[10px] uppercase font-bold text-[var(--text-muted)]">Survival Rate</span>
+                  <span className="text-[10px] uppercase font-bold text-[var(--text-muted)]">
+                    Survival Rate
+                  </span>
                   <div className="text-2xl font-bold font-mono mt-1 text-emerald-600 dark:text-emerald-400">
                     {displayStage.startAnimals > 0
-                      ? (((displayStage.startAnimals - displayStage.mortality) / displayStage.startAnimals) * 100).toFixed(1)
-                      : "100.0"}%
+                      ? (
+                          ((displayStage.startAnimals -
+                            displayStage.mortality) /
+                            displayStage.startAnimals) *
+                          100
+                        ).toFixed(1)
+                      : '100.0'}
+                    %
                   </div>
                   <p className="text-[11px] text-[var(--text-secondary)] mt-1">
-                    {displayStage.mortality} mortality recorded during this period
+                    {displayStage.mortality} mortality recorded during this
+                    period
                   </p>
                 </div>
 
                 <div className="p-4 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)]">
-                  <span className="text-[10px] uppercase font-bold text-[var(--text-muted)]">Accumulated Stage WIP</span>
+                  <span className="text-[10px] uppercase font-bold text-[var(--text-muted)]">
+                    Accumulated Stage WIP
+                  </span>
                   <div className="text-2xl font-bold font-mono mt-1 text-[var(--accent)]">
                     {formatMoney(totalStageWipCost)}
                   </div>
                   <p className="text-[11px] text-[var(--text-secondary)] mt-1">
-                    {formatMoney(costPerHeadDay)} / head-day across {durationDays} days
+                    {formatMoney(costPerHeadDay)} / head-day across{' '}
+                    {durationDays} days
                   </p>
                 </div>
               </div>
@@ -1507,24 +1934,42 @@ export default function StageWiseConsumptionOutputPanel() {
                 </h4>
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between py-1 border-b border-[var(--border)]">
-                    <span className="text-[var(--text-secondary)]">Batch Number</span>
-                    <span className="font-mono font-bold text-[var(--text-primary)]">{currentBatch.code}</span>
+                    <span className="text-[var(--text-secondary)]">
+                      Batch Number
+                    </span>
+                    <span className="font-mono font-bold text-[var(--text-primary)]">
+                      {currentBatch.code}
+                    </span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-[var(--border)]">
-                    <span className="text-[var(--text-secondary)]">Target Stage</span>
-                    <span className="font-semibold text-[var(--text-primary)]">{activeStageInfo?.name || displayStage.name}</span>
+                    <span className="text-[var(--text-secondary)]">
+                      Target Stage
+                    </span>
+                    <span className="font-semibold text-[var(--text-primary)]">
+                      {activeStageInfo?.name || displayStage.name}
+                    </span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-[var(--border)]">
-                    <span className="text-[var(--text-secondary)]">Opening Head Count</span>
-                    <span className="font-mono">{displayStage.startAnimals} Head</span>
+                    <span className="text-[var(--text-secondary)]">
+                      Opening Head Count
+                    </span>
+                    <span className="font-mono">
+                      {displayStage.startAnimals} Head
+                    </span>
                   </div>
                   <div className="flex justify-between py-1 border-b border-[var(--border)]">
-                    <span className="text-[var(--text-secondary)]">Recorded Mortality</span>
-                    <span className="font-mono text-rose-500">{displayStage.mortality} Head</span>
+                    <span className="text-[var(--text-secondary)]">
+                      Recorded Mortality
+                    </span>
+                    <span className="font-mono text-rose-500">
+                      {displayStage.mortality} Head
+                    </span>
                   </div>
                   <div className="flex justify-between py-1 font-bold text-sm">
                     <span>Net Output Quantity</span>
-                    <span className="font-mono text-emerald-600 dark:text-emerald-400">{displayStage.outputHead} Head</span>
+                    <span className="font-mono text-emerald-600 dark:text-emerald-400">
+                      {displayStage.outputHead} Head
+                    </span>
                   </div>
                 </div>
               </div>
@@ -1534,43 +1979,53 @@ export default function StageWiseConsumptionOutputPanel() {
           {/* ══════════════════════════════════════════════════════════════════
               TAB 3: DESCRIPTIVE (Weight, Mortality & Observations)
               ══════════════════════════════════════════════════════════════════ */}
-          {activeTab === "DESCRIPTIVE" && (
+          {activeTab === 'DESCRIPTIVE' && (
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <span className="text-[10px] uppercase font-bold text-[var(--text-muted)]">Type:</span>
+                <span className="text-[10px] uppercase font-bold text-[var(--text-muted)]">
+                  Type:
+                </span>
                 <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] p-0.5 text-xs font-medium">
                   <button
                     type="button"
-                    onClick={() => setDescriptiveFilter("ALL")}
+                    onClick={() => setDescriptiveFilter('ALL')}
                     className={`px-2.5 py-1 rounded-md transition-colors ${
-                      descriptiveFilter === "ALL" ? "bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
+                      descriptiveFilter === 'ALL'
+                        ? 'bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]'
+                        : 'text-[var(--text-secondary)]'
                     }`}
                   >
                     All Descriptive ({totalDescriptiveCount})
                   </button>
                   <button
                     type="button"
-                    onClick={() => setDescriptiveFilter("WEIGHT")}
+                    onClick={() => setDescriptiveFilter('WEIGHT')}
                     className={`px-2.5 py-1 rounded-md transition-colors ${
-                      descriptiveFilter === "WEIGHT" ? "bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
+                      descriptiveFilter === 'WEIGHT'
+                        ? 'bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]'
+                        : 'text-[var(--text-secondary)]'
                     }`}
                   >
                     Weight Sampling ({displayStage.weightLogs.length})
                   </button>
                   <button
                     type="button"
-                    onClick={() => setDescriptiveFilter("MORTALITY")}
+                    onClick={() => setDescriptiveFilter('MORTALITY')}
                     className={`px-2.5 py-1 rounded-md transition-colors ${
-                      descriptiveFilter === "MORTALITY" ? "bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
+                      descriptiveFilter === 'MORTALITY'
+                        ? 'bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]'
+                        : 'text-[var(--text-secondary)]'
                     }`}
                   >
                     Mortality ({displayStage.mortalityLogs.length})
                   </button>
                   <button
                     type="button"
-                    onClick={() => setDescriptiveFilter("OBSERVATION")}
+                    onClick={() => setDescriptiveFilter('OBSERVATION')}
                     className={`px-2.5 py-1 rounded-md transition-colors ${
-                      descriptiveFilter === "OBSERVATION" ? "bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]" : "text-[var(--text-secondary)]"
+                      descriptiveFilter === 'OBSERVATION'
+                        ? 'bg-[var(--surface)] shadow-2xs font-bold text-[var(--text-primary)]'
+                        : 'text-[var(--text-secondary)]'
                     }`}
                   >
                     Observations ({displayStage.observationLogs.length})
@@ -1579,7 +2034,8 @@ export default function StageWiseConsumptionOutputPanel() {
               </div>
 
               {/* Weight Sampling */}
-              {(descriptiveFilter === "ALL" || descriptiveFilter === "WEIGHT") && (
+              {(descriptiveFilter === 'ALL' ||
+                descriptiveFilter === 'WEIGHT') && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]">
                     <Scale className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
@@ -1587,7 +2043,7 @@ export default function StageWiseConsumptionOutputPanel() {
                   </div>
                   {displayStage.weightLogs.length === 0 ? (
                     <div className="p-4 text-center text-xs text-[var(--text-muted)] bg-[var(--surface-raised)] rounded-[var(--radius-sm)] border border-[var(--border)]">
-                      {t("swNoWeightSampling")}
+                      {t('swNoWeightSampling')}
                     </div>
                   ) : (
                     <div className="overflow-x-auto rounded-[var(--radius-sm)] border border-[var(--border)]">
@@ -1595,20 +2051,37 @@ export default function StageWiseConsumptionOutputPanel() {
                         <thead>
                           <tr className="border-b border-[var(--border)] bg-[var(--surface-raised)] text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
                             <th className="px-3 py-2 font-bold">#</th>
-                            <th className="px-3 py-2 font-bold">{t("swSamplingDate")}</th>
-                            <th className="px-3 py-2 font-bold text-right">{t("swAvgBodyWeightKg")}</th>
-                            <th className="px-3 py-2 font-bold">{t("swSamplingRemarks")}</th>
+                            <th className="px-3 py-2 font-bold">
+                              {t('swSamplingDate')}
+                            </th>
+                            <th className="px-3 py-2 font-bold text-right">
+                              {t('swAvgBodyWeightKg')}
+                            </th>
+                            <th className="px-3 py-2 font-bold">
+                              {t('swSamplingRemarks')}
+                            </th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[var(--border)]">
                           {displayStage.weightLogs.map((w, index) => (
-                            <tr key={index} className="hover:bg-[var(--surface-raised)] transition-colors">
-                              <td className="px-3 py-2 text-[var(--text-muted)]">{index + 1}</td>
-                              <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">{w.date || "—"}</td>
-                              <td className="px-3 py-2 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                                {w.avgWeightKg > 0 ? `${w.avgWeightKg.toFixed(2)} KG` : "—"}
+                            <tr
+                              key={index}
+                              className="hover:bg-[var(--surface-raised)] transition-colors"
+                            >
+                              <td className="px-3 py-2 text-[var(--text-muted)]">
+                                {index + 1}
                               </td>
-                              <td className="px-3 py-2 text-[var(--text-primary)]">{w.remarks}</td>
+                              <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
+                                {w.date || NA}
+                              </td>
+                              <td className="px-3 py-2 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                {w.avgWeightKg > 0
+                                  ? `${w.avgWeightKg.toFixed(2)} KG`
+                                  : NA}
+                              </td>
+                              <td className="px-3 py-2 text-[var(--text-primary)]">
+                                {w.remarks}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -1619,7 +2092,8 @@ export default function StageWiseConsumptionOutputPanel() {
               )}
 
               {/* Mortality Logs */}
-              {(descriptiveFilter === "ALL" || descriptiveFilter === "MORTALITY") && (
+              {(descriptiveFilter === 'ALL' ||
+                descriptiveFilter === 'MORTALITY') && (
                 <div className="space-y-2 pt-2">
                   <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]">
                     <AlertTriangle className="h-3.5 w-3.5 text-rose-500" />
@@ -1627,7 +2101,8 @@ export default function StageWiseConsumptionOutputPanel() {
                   </div>
                   {displayStage.mortalityLogs.length === 0 ? (
                     <div className="p-4 text-center text-xs text-[var(--text-muted)] bg-[var(--surface-raised)] rounded-[var(--radius-sm)] border border-[var(--border)]">
-                      Zero mortality logged for this selection. Herd condition is optimal.
+                      Zero mortality logged for this selection. Herd condition
+                      is optimal.
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -1639,18 +2114,25 @@ export default function StageWiseConsumptionOutputPanel() {
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-rose-500 flex items-center gap-1">
-                                <AlertTriangle className="h-3.5 w-3.5" /> {m.count} Head Mortality
+                                <AlertTriangle className="h-3.5 w-3.5" />{' '}
+                                {m.count} Head Mortality
                               </span>
-                              <span className="text-[var(--text-muted)] font-mono text-[11px]">({m.date})</span>
+                              <span className="text-[var(--text-muted)] font-mono text-[11px]">
+                                ({m.date})
+                              </span>
                               <span className="px-2 py-0.5 rounded-[var(--radius-xs)] text-[10px] font-semibold bg-rose-500/10 text-rose-600 border border-rose-500/20">
                                 {m.pen}
                               </span>
                             </div>
-                            <p className="mt-1 font-semibold text-[var(--text-primary)]">{m.reason}</p>
-                            <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">{m.vetAction}</p>
+                            <p className="mt-1 font-semibold text-[var(--text-primary)]">
+                              {m.reason}
+                            </p>
+                            <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                              {m.vetAction}
+                            </p>
                           </div>
                           <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] shrink-0 bg-[var(--surface)] px-2 py-1 rounded-[var(--radius-xs)] border border-[var(--border)]">
-                            {t("swNecropsyRecorded")}
+                            {t('swNecropsyRecorded')}
                           </span>
                         </div>
                       ))}
@@ -1660,7 +2142,8 @@ export default function StageWiseConsumptionOutputPanel() {
               )}
 
               {/* Observation & KPI Logs */}
-              {(descriptiveFilter === "ALL" || descriptiveFilter === "OBSERVATION") && (
+              {(descriptiveFilter === 'ALL' ||
+                descriptiveFilter === 'OBSERVATION') && (
                 <div className="space-y-2 pt-2">
                   <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)]">
                     <Activity className="h-3.5 w-3.5 text-[var(--accent)]" />
@@ -1668,7 +2151,7 @@ export default function StageWiseConsumptionOutputPanel() {
                   </div>
                   {displayStage.observationLogs.length === 0 ? (
                     <div className="p-4 text-center text-xs text-[var(--text-muted)] bg-[var(--surface-raised)] rounded-[var(--radius-sm)] border border-[var(--border)]">
-                      {t("swNoObservationsLogged")}
+                      {t('swNoObservationsLogged')}
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -1679,15 +2162,21 @@ export default function StageWiseConsumptionOutputPanel() {
                         >
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className="font-bold text-[var(--accent)]">{obs.type}</span>
+                              <span className="font-bold text-[var(--accent)]">
+                                {obs.type}
+                              </span>
                               {obs.value && (
                                 <span className="px-2 py-0.5 rounded-[var(--radius-xs)] text-[10px] font-bold bg-[var(--accent)]/10 text-[var(--accent)] border border-[var(--accent)]/20">
                                   {obs.value}
                                 </span>
                               )}
-                              <span className="text-[var(--text-muted)] font-mono text-[11px]">({obs.date})</span>
+                              <span className="text-[var(--text-muted)] font-mono text-[11px]">
+                                ({obs.date})
+                              </span>
                             </div>
-                            <p className="mt-1 font-semibold text-[var(--text-primary)]">{obs.notes}</p>
+                            <p className="mt-1 font-semibold text-[var(--text-primary)]">
+                              {obs.notes}
+                            </p>
                           </div>
                         </div>
                       ))}
@@ -1701,11 +2190,11 @@ export default function StageWiseConsumptionOutputPanel() {
           {/* ══════════════════════════════════════════════════════════════════
               TAB 4: RESOURCE (Labour & Manpower)
               ══════════════════════════════════════════════════════════════════ */}
-          {activeTab === "RESOURCE" && (
+          {activeTab === 'RESOURCE' && (
             <div className="space-y-3">
               {(displayStage.labourData || []).length === 0 ? (
                 <div className="p-6 text-center text-xs text-[var(--text-muted)] bg-[var(--surface-raised)] rounded-[var(--radius-sm)] border border-[var(--border)]">
-                  {t("swNoLabourLogged")}
+                  {t('swNoLabourLogged')}
                 </div>
               ) : (
                 <div className="overflow-x-auto rounded-[var(--radius-sm)] border border-[var(--border)]">
@@ -1713,21 +2202,44 @@ export default function StageWiseConsumptionOutputPanel() {
                     <thead>
                       <tr className="border-b border-[var(--border)] bg-[var(--surface-raised)] text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
                         <th className="px-3 py-2 font-bold">#</th>
-                        <th className="px-3 py-2 font-bold">{t("btColDate")}</th>
-                        <th className="px-3 py-2 font-bold">{t("swLabourResourceActivity")}</th>
-                        <th className="px-3 py-2 font-bold text-right">{t("swHoursLogged")}</th>
-                        <th className="px-3 py-2 font-bold text-right">{t("obHourlyRate")}</th>
-                        <th className="px-3 py-2 font-bold text-right">{t("swTotalCost")}</th>
+                        <th className="px-3 py-2 font-bold">
+                          {t('btColDate')}
+                        </th>
+                        <th className="px-3 py-2 font-bold">
+                          {t('swLabourResourceActivity')}
+                        </th>
+                        <th className="px-3 py-2 font-bold text-right">
+                          {t('swHoursLogged')}
+                        </th>
+                        <th className="px-3 py-2 font-bold text-right">
+                          {t('obHourlyRate')}
+                        </th>
+                        <th className="px-3 py-2 font-bold text-right">
+                          {t('swTotalCost')}
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--border)]">
                       {(displayStage.labourData || []).map((l, index) => (
-                        <tr key={index} className="hover:bg-[var(--surface-raised)] transition-colors">
-                          <td className="px-3 py-2 text-[var(--text-muted)]">{index + 1}</td>
-                          <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">{l.date || "—"}</td>
-                          <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">{l.resource}</td>
-                          <td className="px-3 py-2 text-right font-mono font-bold">{l.hours} hrs</td>
-                          <td className="px-3 py-2 text-right font-mono">{formatMoney(l.rate.toFixed(2))}</td>
+                        <tr
+                          key={index}
+                          className="hover:bg-[var(--surface-raised)] transition-colors"
+                        >
+                          <td className="px-3 py-2 text-[var(--text-muted)]">
+                            {index + 1}
+                          </td>
+                          <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
+                            {l.date || NA}
+                          </td>
+                          <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">
+                            {l.resource}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono font-bold">
+                            {l.hours} hrs
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono">
+                            {formatMoney(l.rate.toFixed(2))}
+                          </td>
                           <td className="px-3 py-2 text-right font-mono font-bold text-[var(--text-primary)]">
                             {formatMoney(l.cost)}
                           </td>
@@ -1736,7 +2248,9 @@ export default function StageWiseConsumptionOutputPanel() {
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 border-[var(--border)] font-bold text-xs bg-[var(--surface-raised)]">
-                        <td colSpan={5} className="py-2.5 px-3">{t("swTotalStageLabourCost")}</td>
+                        <td colSpan={5} className="py-2.5 px-3">
+                          {t('swTotalStageLabourCost')}
+                        </td>
                         <td className="px-3 py-2.5 text-right font-mono text-[var(--accent)]">
                           {formatMoney(totalLabourCost)}
                         </td>
@@ -1751,11 +2265,11 @@ export default function StageWiseConsumptionOutputPanel() {
           {/* ══════════════════════════════════════════════════════════════════
               TAB 5: OVERHEAD (Utilities & Indirect Costs)
               ══════════════════════════════════════════════════════════════════ */}
-          {activeTab === "OVERHEAD" && (
+          {activeTab === 'OVERHEAD' && (
             <div className="space-y-3">
               {displayStage.overheadData.length === 0 ? (
                 <div className="p-6 text-center text-xs text-[var(--text-muted)] bg-[var(--surface-raised)] rounded-[var(--radius-sm)] border border-[var(--border)]">
-                  {t("swNoOverheadAllocations")}
+                  {t('swNoOverheadAllocations')}
                 </div>
               ) : (
                 <div className="overflow-x-auto rounded-[var(--radius-sm)] border border-[var(--border)]">
@@ -1763,21 +2277,44 @@ export default function StageWiseConsumptionOutputPanel() {
                     <thead>
                       <tr className="border-b border-[var(--border)] bg-[var(--surface-raised)] text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
                         <th className="px-3 py-2 font-bold">#</th>
-                        <th className="px-3 py-2 font-bold">{t("swOverheadActivityDesc")}</th>
-                        <th className="px-3 py-2 font-bold">{t("swAllocationBasis")}</th>
-                        <th className="px-3 py-2 font-bold text-right">Standard Rate</th>
-                        <th className="px-3 py-2 font-bold text-right">{t("swAppliedQty")}</th>
-                        <th className="px-3 py-2 font-bold text-right">Allocated Cost</th>
+                        <th className="px-3 py-2 font-bold">
+                          {t('swOverheadActivityDesc')}
+                        </th>
+                        <th className="px-3 py-2 font-bold">
+                          {t('swAllocationBasis')}
+                        </th>
+                        <th className="px-3 py-2 font-bold text-right">
+                          Standard Rate
+                        </th>
+                        <th className="px-3 py-2 font-bold text-right">
+                          {t('swAppliedQty')}
+                        </th>
+                        <th className="px-3 py-2 font-bold text-right">
+                          Allocated Cost
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--border)]">
                       {displayStage.overheadData.map((o, index) => (
-                        <tr key={index} className="hover:bg-[var(--surface-raised)] transition-colors">
-                          <td className="px-3 py-2 text-[var(--text-muted)]">{index + 1}</td>
-                          <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">{o.item}</td>
-                          <td className="px-3 py-2 text-[var(--text-secondary)]">{o.basis}</td>
-                          <td className="px-3 py-2 text-right font-mono">{formatMoney(o.rate.toFixed(2))}</td>
-                          <td className="px-3 py-2 text-right font-mono font-bold">{formatQuantity(o.qty)}</td>
+                        <tr
+                          key={index}
+                          className="hover:bg-[var(--surface-raised)] transition-colors"
+                        >
+                          <td className="px-3 py-2 text-[var(--text-muted)]">
+                            {index + 1}
+                          </td>
+                          <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">
+                            {o.item}
+                          </td>
+                          <td className="px-3 py-2 text-[var(--text-secondary)]">
+                            {o.basis}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono">
+                            {formatMoney(o.rate.toFixed(2))}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono font-bold">
+                            {formatQuantity(o.qty)}
+                          </td>
                           <td className="px-3 py-2 text-right font-mono font-bold text-[var(--text-primary)]">
                             {formatMoney(o.cost)}
                           </td>
@@ -1786,7 +2323,9 @@ export default function StageWiseConsumptionOutputPanel() {
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 border-[var(--border)] font-bold text-xs bg-[var(--surface-raised)]">
-                        <td colSpan={5} className="py-2.5 px-3">{t("swTotalStageOverheads")}</td>
+                        <td colSpan={5} className="py-2.5 px-3">
+                          {t('swTotalStageOverheads')}
+                        </td>
                         <td className="px-3 py-2.5 text-right font-mono text-[var(--accent)]">
                           {formatMoney(totalOverheadCost)}
                         </td>
@@ -1801,11 +2340,11 @@ export default function StageWiseConsumptionOutputPanel() {
           {/* ══════════════════════════════════════════════════════════════════
               TAB 6: TRANSFER (Stage & Pen Movements)
               ══════════════════════════════════════════════════════════════════ */}
-          {activeTab === "TRANSFER" && (
+          {activeTab === 'TRANSFER' && (
             <div className="space-y-3">
               {displayStage.transferLogs.length === 0 ? (
                 <div className="p-6 text-center text-xs text-[var(--text-muted)] bg-[var(--surface-raised)] rounded-[var(--radius-sm)] border border-[var(--border)]">
-                  {t("swNoStageTransfers")}
+                  {t('swNoStageTransfers')}
                 </div>
               ) : (
                 <div className="overflow-x-auto rounded-[var(--radius-sm)] border border-[var(--border)]">
@@ -1818,19 +2357,38 @@ export default function StageWiseConsumptionOutputPanel() {
                     </colgroup>
                     <thead>
                       <tr className="border-b border-[var(--border)] bg-[var(--surface-raised)] text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
-                        <th className="px-3 py-2 font-bold">{t("swColTransferDate")}</th>
-                        <th className="px-3 py-2 font-bold">{t("swColFromStage")}</th>
-                        <th className="px-3 py-2 font-bold">{t("swColToStage")}</th>
-                        <th className="px-3 py-2 font-bold">{t("swColRemarks")}</th>
+                        <th className="px-3 py-2 font-bold">
+                          {t('swColTransferDate')}
+                        </th>
+                        <th className="px-3 py-2 font-bold">
+                          {t('swColFromStage')}
+                        </th>
+                        <th className="px-3 py-2 font-bold">
+                          {t('swColToStage')}
+                        </th>
+                        <th className="px-3 py-2 font-bold">
+                          {t('swColRemarks')}
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--border)]">
                       {displayStage.transferLogs.map((tr, idx) => (
-                        <tr key={idx} className="hover:bg-[var(--surface-raised)]">
-                          <td className="px-3 py-2.5 align-top whitespace-nowrap font-mono text-[var(--text-secondary)]">{tr.date}</td>
-                          <td className="px-3 py-2.5 align-top font-mono text-[var(--text-secondary)]">{tr.fromStage}</td>
-                          <td className="px-3 py-2.5 align-top font-mono font-semibold text-[var(--text-primary)]">{tr.toStage}</td>
-                          <td className="px-3 py-2.5 align-top text-[var(--text-secondary)]">{tr.remarks || "—"}</td>
+                        <tr
+                          key={idx}
+                          className="hover:bg-[var(--surface-raised)]"
+                        >
+                          <td className="px-3 py-2.5 align-top whitespace-nowrap font-mono text-[var(--text-secondary)]">
+                            {tr.date}
+                          </td>
+                          <td className="px-3 py-2.5 align-top font-mono text-[var(--text-secondary)]">
+                            {tr.fromStage}
+                          </td>
+                          <td className="px-3 py-2.5 align-top font-mono font-semibold text-[var(--text-primary)]">
+                            {tr.toStage}
+                          </td>
+                          <td className="px-3 py-2.5 align-top text-[var(--text-secondary)]">
+                            {tr.remarks || NA}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1843,7 +2401,7 @@ export default function StageWiseConsumptionOutputPanel() {
           {/* ══════════════════════════════════════════════════════════════════
               TAB 7: PHOTO UPLOADER (Interactive Uploader + Attached Media)
               ══════════════════════════════════════════════════════════════════ */}
-          {activeTab === "PHOTO_UPLOADER" && (
+          {activeTab === 'PHOTO_UPLOADER' && (
             <div className="space-y-6">
               {/* Photo Upload Card */}
               <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-raised)] p-5">
@@ -1912,7 +2470,8 @@ export default function StageWiseConsumptionOutputPanel() {
                             onClick={() => {
                               setPhotoFile(null);
                               setPhotoPreview(null);
-                              if (fileInputRef.current) fileInputRef.current.value = "";
+                              if (fileInputRef.current)
+                                fileInputRef.current.value = '';
                             }}
                             className="text-[11px] font-semibold text-rose-500 hover:underline mt-1 flex items-center gap-1"
                           >
@@ -1948,10 +2507,16 @@ export default function StageWiseConsumptionOutputPanel() {
                           columnHeaders={false}
                           onChange={(val) => setPhotoType(val)}
                           options={[
-                            { value: "IMAGE", label: "Stage Inspection Photo" },
-                            { value: "CLINICAL", label: "Clinical / Post-Mortem" },
-                            { value: "VACCINATION", label: "Vaccination Record" },
-                            { value: "GENERAL", label: "General Attachment" },
+                            { value: 'IMAGE', label: 'Stage Inspection Photo' },
+                            {
+                              value: 'CLINICAL',
+                              label: 'Clinical / Post-Mortem',
+                            },
+                            {
+                              value: 'VACCINATION',
+                              label: 'Vaccination Record',
+                            },
+                            { value: 'GENERAL', label: 'General Attachment' },
                           ]}
                           placeholder="Select photo type…"
                           searchPlaceholder="Search types…"
@@ -1965,8 +2530,10 @@ export default function StageWiseConsumptionOutputPanel() {
                       disabled={!photoFile || photoUploading}
                       className="w-full text-xs font-semibold gap-2 nf-btn-primary"
                     >
-                      <Upload className={`h-3.5 w-3.5 ${photoUploading ? "animate-spin" : ""}`} />
-                      {photoUploading ? "Uploading Photo…" : "Upload Photo"}
+                      <Upload
+                        className={`h-3.5 w-3.5 ${photoUploading ? 'animate-spin' : ''}`}
+                      />
+                      {photoUploading ? 'Uploading Photo…' : 'Upload Photo'}
                     </Button>
                   </div>
                 </div>
@@ -1985,14 +2552,20 @@ export default function StageWiseConsumptionOutputPanel() {
 
                 {uploadedPhotos.length === 0 ? (
                   <div className="p-8 text-center text-xs text-[var(--text-muted)] bg-[var(--surface-raised)] rounded-[var(--radius-sm)] border border-[var(--border)]">
-                    No photos or attachments uploaded for this batch yet. Use the uploader above to attach inspection photos.
+                    No photos or attachments uploaded for this batch yet. Use
+                    the uploader above to attach inspection photos.
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                     {uploadedPhotos.map((att: any, idx: number) => {
                       const attId = att.attachment_id || att.id || String(idx);
-                      const isImage = (att.file_type || att.mime_type || "").toLowerCase().includes("image") ||
-                        /\.(png|jpe?g|webp|gif|bmp)$/i.test(att.file_name || att.url || "");
+                      const isImage =
+                        (att.file_type || att.mime_type || '')
+                          .toLowerCase()
+                          .includes('image') ||
+                        /\.(png|jpe?g|webp|gif|bmp)$/i.test(
+                          att.file_name || att.url || '',
+                        );
 
                       return (
                         <div
@@ -2008,13 +2581,15 @@ export default function StageWiseConsumptionOutputPanel() {
                                 className="w-full h-full object-cover transition-transform group-hover:scale-105"
                                 onError={(e) => {
                                   // Fallback to placeholder icon
-                                  (e.target as any).style.display = "none";
+                                  (e.target as any).style.display = 'none';
                                 }}
                               />
                             ) : (
                               <div className="flex flex-col items-center justify-center text-zinc-500">
                                 <ImageIcon className="h-10 w-10 mb-1" />
-                                <span className="text-[10px] font-mono uppercase">{att.file_type || "DOCUMENT"}</span>
+                                <span className="text-[10px] font-mono uppercase">
+                                  {att.file_type || 'DOCUMENT'}
+                                </span>
                               </div>
                             )}
 
@@ -2022,7 +2597,9 @@ export default function StageWiseConsumptionOutputPanel() {
                             {att.file_url && (
                               <button
                                 type="button"
-                                onClick={() => setSelectedGalleryImage(att.file_url)}
+                                onClick={() =>
+                                  setSelectedGalleryImage(att.file_url)
+                                }
                                 className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white gap-1.5 text-xs font-semibold"
                               >
                                 <Eye className="h-4 w-4" /> View Full
@@ -2031,19 +2608,25 @@ export default function StageWiseConsumptionOutputPanel() {
 
                             {/* Type badge */}
                             <span className="absolute top-2 left-2 px-2 py-0.5 rounded-[var(--radius-xs)] text-[9px] font-bold uppercase tracking-wider bg-black/60 text-white backdrop-blur-xs">
-                              {att.attachment_type || "PHOTO"}
+                              {att.attachment_type || 'PHOTO'}
                             </span>
                           </div>
 
                           {/* Details & Actions footer */}
                           <div className="p-3 flex-1 flex flex-col justify-between space-y-2">
                             <div>
-                              <p className="text-xs font-semibold text-[var(--text-primary)] truncate" title={att.file_name}>
+                              <p
+                                className="text-xs font-semibold text-[var(--text-primary)] truncate"
+                                title={att.file_name}
+                              >
                                 {att.file_name}
                               </p>
                               <p className="text-[10px] font-mono text-[var(--text-muted)] mt-0.5 flex items-center gap-1">
                                 <Calendar className="h-2.5 w-2.5" />
-                                {att.log_date || (att.created_at ? String(att.created_at).slice(0, 10) : "—")}
+                                {att.log_date ||
+                                  (att.created_at
+                                    ? String(att.created_at).slice(0, 10)
+                                    : NA)}
                               </p>
                             </div>
 
@@ -2058,7 +2641,9 @@ export default function StageWiseConsumptionOutputPanel() {
                                   <ExternalLink className="h-3 w-3" /> Open
                                 </a>
                               ) : (
-                                <span className="text-[10px] text-[var(--text-muted)]">—</span>
+                                <span className="text-[10px] text-[var(--text-muted)]">
+                                  {NA}
+                                </span>
                               )}
 
                               <button

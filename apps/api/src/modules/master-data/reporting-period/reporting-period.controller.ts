@@ -13,7 +13,10 @@ import { CreateReportingPeriodDto, GenerateReportingPeriodsDto, QueryReportingPe
 export class ReportingPeriodController {
   constructor(private readonly periods: ReportingPeriodService) {}
   @Get() @RequirePermission('MASTER_DATA', 'REPORTING_PERIOD', 'view')
-  async list(@Query() query: QueryReportingPeriodDto, @Req() req: any) { return { data: await this.periods.findAll(query, req.user.tenantId) }; }
+  async list(@Query() query: QueryReportingPeriodDto, @Req() req: any) {
+    const page = await this.periods.findAll(query, req.user.tenantId);
+    return { data: page.data, total: page.total, limit: page.limit, offset: page.offset };
+  }
   @Get(':id') @RequirePermission('MASTER_DATA', 'REPORTING_PERIOD', 'view')
   async get(@Param('id') id: string, @Req() req: any) { return { data: await this.periods.findOne(id, req.user.tenantId) }; }
   @Post('generate') @RequirePermission('MASTER_DATA', 'REPORTING_PERIOD', 'create')

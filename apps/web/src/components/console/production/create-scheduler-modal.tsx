@@ -1,6 +1,7 @@
-"use client";
+'use client';
 
-import { useEffect, useState, useMemo } from "react";
+import { NA } from '@/utils/na';
+import { useEffect, useState, useMemo } from 'react';
 import {
   CalendarClock,
   ChevronDown,
@@ -10,99 +11,134 @@ import {
   Pencil,
   Plus,
   Trash2,
-} from "lucide-react";
-import { api } from "@/services/api-client";
-import { Dialog } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Toast } from "@/components/ui/toast";
-import { TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
-import { useLanguage } from "@/hooks/useLanguage";
-import { getActiveCompanyId } from "@/hooks/useAuth";
-import { findConflictingSchedulerLine } from "./scheduler-line-overlap";
-import { toApiLine } from "./scheduler-line-payload";
-import { toInputNumber } from "@/lib/utils";
-import { SearchableSelect } from "@/components/ui/searchable-select";
-import { confirmAction } from "@/components/ui/confirm-dialog";
-import CopyActivitiesDialog, { CopySourceType } from "./copy-activities-dialog";
+} from 'lucide-react';
+import { api } from '@/services/api-client';
+import { Dialog } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Toast } from '@/components/ui/toast';
+import {
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from '@/components/ui/table';
+import { useLanguage } from '@/hooks/useLanguage';
+import { getActiveCompanyId } from '@/hooks/useAuth';
+import { findConflictingSchedulerLine } from './scheduler-line-overlap';
+import { toApiLine } from './scheduler-line-payload';
+import { toInputNumber } from '@/lib/utils';
+import { usePagedOptions, usePickedRow } from '@/hooks/usePagedOptions';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import { confirmAction } from '@/components/ui/confirm-dialog';
+import CopyActivitiesDialog, { CopySourceType } from './copy-activities-dialog';
 
 type Row = Record<string, any>;
 
 const S = {
-  surface: { backgroundColor: "var(--surface)", borderColor: "var(--border)" },
-  raised: { backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" },
-  primary: { color: "var(--text-primary)" },
-  sub: { color: "var(--text-secondary)" },
-  muted: { color: "var(--text-muted)" },
-  input: { backgroundColor: "var(--input-bg)", color: "var(--input-text)", borderColor: "var(--input-border)" },
+  surface: { backgroundColor: 'var(--surface)', borderColor: 'var(--border)' },
+  raised: {
+    backgroundColor: 'var(--surface-raised)',
+    borderColor: 'var(--border)',
+  },
+  primary: { color: 'var(--text-primary)' },
+  sub: { color: 'var(--text-secondary)' },
+  muted: { color: 'var(--text-muted)' },
+  input: {
+    backgroundColor: 'var(--input-bg)',
+    color: 'var(--input-text)',
+    borderColor: 'var(--input-border)',
+  },
 };
 
-const inputCls = "nf-input";
+const inputCls = 'nf-input';
 
-const LINE_TYPES = ["CONSUMPTION", "OUTPUT", "DESCRIPTIVE", "OVERHEAD", "RESOURCE", "TRANSFER"] as const;
-const OCCURRENCES = ["DAILY", "WEEKLY", "MONTHLY", "ONCE", "CUSTOM"] as const;
-const QTY_BASES = ["PER_HEAD", "TOTAL_BATCH"] as const;
-const OUTPUT_BASES = ["PER_SOW", "PER_BATCH", "PER_PEN"] as const;
-const DATA_ENTRY_LEVELS = ["SHED", "PEN", "FARM"] as const;
-const ALERT_SEVERITIES = ["INFO", "WARNING", "CRITICAL"] as const;
-const OVERHEAD_CATEGORIES = ["ELECTRICITY", "WATER", "FUEL", "REPAIR", "CLEANING", "CUSTOM"] as const;
+const LINE_TYPES = [
+  'CONSUMPTION',
+  'OUTPUT',
+  'DESCRIPTIVE',
+  'OVERHEAD',
+  'RESOURCE',
+  'TRANSFER',
+] as const;
+const OCCURRENCES = ['DAILY', 'WEEKLY', 'MONTHLY', 'ONCE', 'CUSTOM'] as const;
+const QTY_BASES = ['PER_HEAD', 'TOTAL_BATCH'] as const;
+const OUTPUT_BASES = ['PER_SOW', 'PER_BATCH', 'PER_PEN'] as const;
+const DATA_ENTRY_LEVELS = ['SHED', 'PEN', 'FARM'] as const;
+const ALERT_SEVERITIES = ['INFO', 'WARNING', 'CRITICAL'] as const;
+const OVERHEAD_CATEGORIES = [
+  'ELECTRICITY',
+  'WATER',
+  'FUEL',
+  'REPAIR',
+  'CLEANING',
+  'CUSTOM',
+] as const;
 
 export const DAYS_OF_WEEK_OPTIONS = [
-  { value: "1", label: "Monday (Day 1)" },
-  { value: "2", label: "Tuesday (Day 2)" },
-  { value: "3", label: "Wednesday (Day 3)" },
-  { value: "4", label: "Thursday (Day 4)" },
-  { value: "5", label: "Friday (Day 5)" },
-  { value: "6", label: "Saturday (Day 6)" },
-  { value: "7", label: "Sunday (Day 7)" },
+  { value: '1', label: 'Monday (Day 1)' },
+  { value: '2', label: 'Tuesday (Day 2)' },
+  { value: '3', label: 'Wednesday (Day 3)' },
+  { value: '4', label: 'Thursday (Day 4)' },
+  { value: '5', label: 'Friday (Day 5)' },
+  { value: '6', label: 'Saturday (Day 6)' },
+  { value: '7', label: 'Sunday (Day 7)' },
 ];
 
 export const DAYS_OF_MONTH_OPTIONS = Array.from({ length: 28 }, (_, i) => {
   const d = i + 1;
-  const sfx = (d % 10 === 1 && d !== 11) ? "st" : (d % 10 === 2 && d !== 12) ? "nd" : (d % 10 === 3 && d !== 13) ? "rd" : "th";
+  const sfx =
+    d % 10 === 1 && d !== 11
+      ? 'st'
+      : d % 10 === 2 && d !== 12
+        ? 'nd'
+        : d % 10 === 3 && d !== 13
+          ? 'rd'
+          : 'th';
   return { value: String(d), label: `Day ${d} (${d}${sfx} of month)` };
 });
 
 const KPI_METRICS = [
-  "BODY_WEIGHT",
-  "FCR",
-  "ADG",
-  "BCS_SCORE",
-  "MORTALITY_COUNT",
-  "TEMPERATURE",
-  "HEAD_COUNT",
-  "LITTER_SIZE",
-  "WEANING_WEIGHT",
-  "PIGLETS_BORN",
-  "SEMEN_MOTILITY",
-  "EGG_COUNT",
-  "MILK_LITRES",
-  "CUSTOM",
+  'BODY_WEIGHT',
+  'FCR',
+  'ADG',
+  'BCS_SCORE',
+  'MORTALITY_COUNT',
+  'TEMPERATURE',
+  'HEAD_COUNT',
+  'LITTER_SIZE',
+  'WEANING_WEIGHT',
+  'PIGLETS_BORN',
+  'SEMEN_MOTILITY',
+  'EGG_COUNT',
+  'MILK_LITRES',
+  'CUSTOM',
 ] as const;
 
-const CAPTURE_PERS = ["AVERAGE", "TOTAL", "PER_HEAD"] as const;
+const CAPTURE_PERS = ['AVERAGE', 'TOTAL', 'PER_HEAD'] as const;
 
 const KPI_UOM_MAP: Record<string, string> = {
-  BODY_WEIGHT: "KG",
-  FCR: "RATIO",
-  ADG: "G_DAY",
-  BCS_SCORE: "SCORE",
-  MORTALITY_COUNT: "HEAD",
-  TEMPERATURE: "CELSIUS",
-  HEAD_COUNT: "HEAD",
-  LITTER_SIZE: "HEAD",
-  WEANING_WEIGHT: "KG",
-  PIGLETS_BORN: "HEAD",
-  SEMEN_MOTILITY: "PCT",
-  EGG_COUNT: "NOS",
-  MILK_LITRES: "LITRES",
-  CUSTOM: "",
+  BODY_WEIGHT: 'KG',
+  FCR: 'RATIO',
+  ADG: 'G_DAY',
+  BCS_SCORE: 'SCORE',
+  MORTALITY_COUNT: 'HEAD',
+  TEMPERATURE: 'CELSIUS',
+  HEAD_COUNT: 'HEAD',
+  LITTER_SIZE: 'HEAD',
+  WEANING_WEIGHT: 'KG',
+  PIGLETS_BORN: 'HEAD',
+  SEMEN_MOTILITY: 'PCT',
+  EGG_COUNT: 'NOS',
+  MILK_LITRES: 'LITRES',
+  CUSTOM: '',
 };
 
 function unwrap<T = any>(res: any): T {
-  return (Array.isArray(res) ? res : res?.data ?? res) as T;
+  return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 }
 
-const blank = (v: unknown) => v === "" || v === null || v === undefined;
+const blank = (v: unknown) => v === '' || v === null || v === undefined;
 const numberOrNull = (v: unknown) => (blank(v) ? null : Number(v));
 
 /**
@@ -113,16 +149,26 @@ const numberOrNull = (v: unknown) => (blank(v) ? null : Number(v));
  * Day (1)". Lines added by hand were already cleaned; now every line goes through here.
  */
 function toLinePayload(line: Row): Row {
-  const dayField = line.occurrence === "WEEKLY" || line.occurrence === "MONTHLY";
+  const dayField =
+    line.occurrence === 'WEEKLY' || line.occurrence === 'MONTHLY';
   const customDays = Array.isArray(line.custom_days)
     ? line.custom_days.map(Number)
-    : String(line.custom_days ?? "").split(",").filter((d) => d.trim() !== "").map((d) => Number(d.trim()));
+    : String(line.custom_days ?? '')
+        .split(',')
+        .filter((d) => d.trim() !== '')
+        .map((d) => Number(d.trim()));
   return {
     ...line,
     start_day: Number(line.start_day) || 1,
-    end_day: blank(line.end_day) || Number(line.end_day) === 0 ? null : Number(line.end_day),
+    end_day:
+      blank(line.end_day) || Number(line.end_day) === 0
+        ? null
+        : Number(line.end_day),
     day_of_week: dayField ? numberOrNull(line.day_of_week) : null,
-    custom_days: line.occurrence === "CUSTOM" ? customDays.filter((n) => !Number.isNaN(n)) : null,
+    custom_days:
+      line.occurrence === 'CUSTOM'
+        ? customDays.filter((n) => !Number.isNaN(n))
+        : null,
     standard_qty: numberOrNull(line.standard_qty),
     std_value: numberOrNull(line.std_value),
     lower_alert_limit: numberOrNull(line.lower_alert_limit),
@@ -133,38 +179,38 @@ function toLinePayload(line: Row): Row {
 
 const emptyLineForm = (seq = 1) => ({
   line_seq: seq,
-  line_type: "CONSUMPTION",
-  activity_name: "",
-  occurrence: "DAILY",
+  line_type: 'CONSUMPTION',
+  activity_name: '',
+  occurrence: 'DAILY',
   start_day: 1,
-  end_day: "",
-  day_of_week: "",
-  custom_days: "",
+  end_day: '',
+  day_of_week: '',
+  custom_days: '',
   is_mandatory: false,
   // Consumption & Output
-  item_id: "",
-  item_description: "",
-  standard_qty: "",
-  qty_basis: "PER_HEAD",
+  item_id: '',
+  item_description: '',
+  standard_qty: '',
+  qty_basis: 'PER_HEAD',
   allow_qty_edit: true,
   lot_required: false,
   creates_inventory: true,
   output_lot_auto: true,
-  output_basis: "PER_BATCH",
+  output_basis: 'PER_BATCH',
   // Descriptive
-  kpi_metric: "",
-  kpi_uom: "",
-  std_value: "",
-  lower_alert_limit: "",
-  upper_alert_limit: "",
-  alert_severity: "WARNING",
-  capture_per: "AVERAGE",
+  kpi_metric: '',
+  kpi_uom: '',
+  std_value: '',
+  lower_alert_limit: '',
+  upper_alert_limit: '',
+  alert_severity: 'WARNING',
+  capture_per: 'AVERAGE',
   // Overhead & Resource
-  overhead_category: "",
-  gl_account: "",
-  estimated_cost: "",
-  resource_id: "",
-  resource_name: "",
+  overhead_category: '',
+  gl_account: '',
+  estimated_cost: '',
+  resource_id: '',
+  resource_name: '',
 });
 
 /** A line from a system scheduler, another scheduler or the stage prefill, as the form edits it. */
@@ -175,33 +221,35 @@ function toDialogLine(l: any, idx: number): Row {
     activity_name: l.activity_name,
     occurrence: l.occurrence,
     start_day: l.start_day ?? 1,
-    end_day: l.end_day != null ? l.end_day : "",
-    day_of_week: l.day_of_week != null ? l.day_of_week : "",
+    end_day: l.end_day != null ? l.end_day : '',
+    day_of_week: l.day_of_week != null ? l.day_of_week : '',
     custom_days: Array.isArray(l.custom_days)
-      ? l.custom_days.map((d: any) => (typeof d === "object" ? d.day_number : d)).join(", ")
-      : (l.custom_days ?? ""),
+      ? l.custom_days
+          .map((d: any) => (typeof d === 'object' ? d.day_number : d))
+          .join(', ')
+      : (l.custom_days ?? ''),
     is_mandatory: !!l.is_mandatory,
-    item_id: l.item_id || "",
-    item_description: l.item_description || "",
+    item_id: l.item_id || '',
+    item_description: l.item_description || '',
     standard_qty: toInputNumber(l.standard_qty),
-    qty_basis: l.qty_basis || "PER_HEAD",
+    qty_basis: l.qty_basis || 'PER_HEAD',
     allow_qty_edit: l.allow_qty_edit !== false,
     lot_required: !!l.lot_required,
     creates_inventory: l.creates_inventory !== false,
     output_lot_auto: l.output_lot_auto !== false,
-    output_basis: l.output_basis || "PER_BATCH",
-    kpi_metric: l.kpi_metric || "",
-    kpi_uom: l.kpi_uom || "",
+    output_basis: l.output_basis || 'PER_BATCH',
+    kpi_metric: l.kpi_metric || '',
+    kpi_uom: l.kpi_uom || '',
     std_value: toInputNumber(l.std_value),
     lower_alert_limit: toInputNumber(l.lower_alert_limit),
     upper_alert_limit: toInputNumber(l.upper_alert_limit),
-    alert_severity: l.alert_severity || "WARNING",
-    capture_per: l.capture_per || "AVERAGE",
-    overhead_category: l.overhead_category || "",
-    gl_account: l.gl_account || "",
+    alert_severity: l.alert_severity || 'WARNING',
+    capture_per: l.capture_per || 'AVERAGE',
+    overhead_category: l.overhead_category || '',
+    gl_account: l.gl_account || '',
     estimated_cost: toInputNumber(l.estimated_cost),
-    resource_id: l.resource_id || "",
-    resource_name: l.resource_name || "",
+    resource_id: l.resource_id || '',
+    resource_name: l.resource_name || '',
     extension_config: l.extension_config ?? null,
     // The breed lifecycle row this activity was filled in from: sent back on create so the line records where it
     // came from, the same as a scheduler the server filled in itself.
@@ -216,84 +264,106 @@ interface CreateSchedulerModalProps {
   companyId?: string;
 }
 
-export default function CreateSchedulerModal({ open, onClose, onCreated, companyId }: CreateSchedulerModalProps) {
+export default function CreateSchedulerModal({
+  open,
+  onClose,
+  onCreated,
+  companyId,
+}: CreateSchedulerModalProps) {
   const { t } = useLanguage();
-  const [batches, setBatches] = useState<Row[]>([]);
+  // Read only while the modal is open, a page at a time.
+  const pagedBatches = usePagedOptions({
+    path: '/batch',
+    params: { companyId },
+    idKey: 'batch_id',
+    enabled: open,
+  });
+  const batches = pagedBatches.options;
   const [stages, setStages] = useState<Row[]>([]);
   const [items, setItems] = useState<Row[]>([]);
   const [resources, setResources] = useState<Row[]>([]);
   const [activities, setActivities] = useState<Row[]>([]);
 
-  const [loadingBatches, setLoadingBatches] = useState(false);
+  const loadingBatches = pagedBatches.loading;
   const [loadingStages, setLoadingStages] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
 
   // Header state
-  const [batchId, setBatchId] = useState("");
-  const [stageId, setStageId] = useState("");
-  const [dataEntryLevel, setDataEntryLevel] = useState<string>("SHED");
-  const [effectiveFrom, setEffectiveFrom] = useState("");
-  const [effectiveTo, setEffectiveTo] = useState("");
-  const [animalCount, setAnimalCount] = useState<string>("");
-  const [status, setStatus] = useState("DRAFT");
-  const [notes, setNotes] = useState("");
+  const [batchId, setBatchId] = useState('');
+  const [stageId, setStageId] = useState('');
+  const [dataEntryLevel, setDataEntryLevel] = useState<string>('SHED');
+  const [effectiveFrom, setEffectiveFrom] = useState('');
+  const [effectiveTo, setEffectiveTo] = useState('');
+  const [animalCount, setAnimalCount] = useState<string>('');
+  const [status, setStatus] = useState('DRAFT');
+  const [notes, setNotes] = useState('');
 
   // Staged Activities (Lines)
   const [lines, setLines] = useState<Row[]>([]);
   const [showLineModal, setShowLineModal] = useState(false);
   const [editingLineIndex, setEditingLineIndex] = useState<number | null>(null);
   const [lineForm, setLineForm] = useState<Row>(emptyLineForm());
-  const [lineFormError, setLineFormError] = useState("");
+  const [lineFormError, setLineFormError] = useState('');
 
   // Collapsible sections
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [linesCollapsed, setLinesCollapsed] = useState(false);
 
-  const selectedBatch = batches.find((b) => b.batch_id === batchId) || null;
+  // The picked batch stays known after a search moves past it.
+  const selectedBatch = usePickedRow({
+    path: '/batch',
+    idParam: 'batchId',
+    idKey: 'batch_id',
+    id: batchId,
+    loaded: batches,
+  });
+  useEffect(() => {
+    if (pagedBatches.error) setError(pagedBatches.error || 'Failed to load batches.');
+  }, [pagedBatches.error]);
   const selectedStage = stages.find((s) => s.stage_id === stageId) || null;
 
   // Load initial lookups
   useEffect(() => {
     if (!open) return;
-    setError("");
-    setBatchId("");
-    setStageId("");
-    setNotes("");
-    setStatus("DRAFT");
-    setDataEntryLevel("SHED");
+    setError('');
+    setBatchId('');
+    setStageId('');
+    setNotes('');
+    setStatus('DRAFT');
+    setDataEntryLevel('SHED');
     setLines([]);
     setCopiedSystemSchedulerId(null);
     setShowLineModal(false);
 
-    setLoadingBatches(true);
-    const params = new URLSearchParams();
-    if (companyId) params.set("companyId", companyId);
-    params.set("limit", "100");
-    api.get(`/batch?${params.toString()}`)
-      .then((res) => setBatches(unwrap<Row[]>(res) || []))
-      .catch((err) => setError(err?.message || "Failed to load batches."))
-      .finally(() => setLoadingBatches(false));
-
     // Items and resources for lines
     const itemParams = new URLSearchParams();
-    if (companyId) itemParams.set("companyId", companyId);
-    itemParams.set("limit", "500");
-    itemParams.set("isActive", "true");
-    itemParams.set("isBlocked", "false");
-    api.get(`/item?${itemParams.toString()}`)
-      .then((res) => setItems((unwrap<Row[]>(res) || []).filter((i) => !i.is_blocked && i.is_active !== false)))
+    if (companyId) itemParams.set('companyId', companyId);
+    itemParams.set('limit', '500');
+    itemParams.set('isActive', 'true');
+    itemParams.set('isBlocked', 'false');
+    api
+      .get(`/item?${itemParams.toString()}`)
+      .then((res) =>
+        setItems(
+          (unwrap<Row[]>(res) || []).filter(
+            (i) => !i.is_blocked && i.is_active !== false,
+          ),
+        ),
+      )
       .catch(() => setItems([]));
 
-    api.get(`/resource?${itemParams.toString()}`)
+    api
+      .get(`/resource?${itemParams.toString()}`)
       .then((res) => setResources(unwrap<Row[]>(res) || []))
       .catch(() => setResources([]));
 
     const actParams = new URLSearchParams();
-    if (companyId) actParams.set("companyId", companyId);
-    actParams.set("isActive", "true");
-    actParams.set("limit", "500");
-    api.get(`/activity?${actParams.toString()}`)
+    if (companyId) actParams.set('companyId', companyId);
+    actParams.set('isActive', 'true');
+    actParams.set('limit', '500');
+    api
+      .get(`/activity?${actParams.toString()}`)
       .then((res) => setActivities(unwrap<Row[]>(res) || []))
       .catch(() => setActivities([]));
   }, [open, companyId]);
@@ -302,22 +372,25 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
   useEffect(() => {
     if (!selectedBatch) {
       setStages([]);
-      setStageId("");
-      setEffectiveFrom("");
-      setEffectiveTo("");
-      setAnimalCount("");
+      setStageId('');
+      setEffectiveFrom('');
+      setEffectiveTo('');
+      setAnimalCount('');
       return;
     }
 
     const today = new Date().toISOString().slice(0, 10);
     setEffectiveFrom(selectedBatch.start_date || today);
     // An edit box: a plain whole number ("1200", not the grouped "1,200" a screen shows), since it is read back.
-    const heads = toInputNumber(selectedBatch.closing_quantity ?? selectedBatch.opening_quantity);
-    setAnimalCount(heads === "" ? "" : String(Math.round(Number(heads))));
+    const heads = toInputNumber(
+      selectedBatch.closing_quantity ?? selectedBatch.opening_quantity,
+    );
+    setAnimalCount(heads === '' ? '' : String(Math.round(Number(heads))));
 
     if (selectedBatch.lob_id) {
       setLoadingStages(true);
-      api.get(`/stage?lobId=${selectedBatch.lob_id}&isActive=true`)
+      api
+        .get(`/stage?lobId=${selectedBatch.lob_id}&isActive=true`)
         .then((res) => {
           const stgList = unwrap<Row[]>(res) || [];
           setStages(stgList);
@@ -350,16 +423,28 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
     if (!open || !batchId || !stageId) return;
     let cancelled = false;
     setPrefilling(true);
-    const params = new URLSearchParams({ batch_id: batchId, stage_id: stageId });
-    if (effectiveFrom) params.set("effective_from", effectiveFrom);
+    const params = new URLSearchParams({
+      batch_id: batchId,
+      stage_id: stageId,
+    });
+    if (effectiveFrom) params.set('effective_from', effectiveFrom);
     (async () => {
       try {
-        const prefill = unwrap<Row>(await api.get(`/scheduler-header/prefill?${params.toString()}`));
+        const prefill = unwrap<Row>(
+          await api.get(`/scheduler-header/prefill?${params.toString()}`),
+        );
         let next: Row[] = [];
         let fromSystem: string | null = null;
-        if (prefill?.source === "SYSTEM_SCHEDULER" && prefill.system_scheduler_id) {
-          const data = unwrap<Row>(await api.get(`/system-scheduler/${prefill.system_scheduler_id}`));
-          next = (data?.lines || []).filter((l: Row) => l.is_active !== false).map(toDialogLine);
+        if (
+          prefill?.source === 'SYSTEM_SCHEDULER' &&
+          prefill.system_scheduler_id
+        ) {
+          const data = unwrap<Row>(
+            await api.get(`/system-scheduler/${prefill.system_scheduler_id}`),
+          );
+          next = (data?.lines || [])
+            .filter((l: Row) => l.is_active !== false)
+            .map(toDialogLine);
           fromSystem = prefill.system_scheduler_id;
         } else {
           next = (prefill?.lines || []).map(toDialogLine);
@@ -369,27 +454,34 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
           setCopiedSystemSchedulerId(fromSystem);
         }
       } catch (err: any) {
-        if (!cancelled) setError(err?.message || "The stage's activities could not be loaded.");
+        if (!cancelled)
+          setError(
+            err?.message || "The stage's activities could not be loaded.",
+          );
       } finally {
         if (!cancelled) setPrefilling(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [open, batchId, stageId]);
 
   // Copy from a system scheduler or a batch's scheduler — the same picker the scheduler view uses.
   const [copyOpen, setCopyOpen] = useState(false);
   // Set when the lines came from a system scheduler — sent as their recorded origin.
-  const [copiedSystemSchedulerId, setCopiedSystemSchedulerId] = useState<string | null>(null);
+  const [copiedSystemSchedulerId, setCopiedSystemSchedulerId] = useState<
+    string | null
+  >(null);
 
   const consumableItems = useMemo(() => {
     return items.filter(
       (it) =>
         (!it.is_biological_asset &&
           it.is_biological_asset !== 1 &&
-          it.is_biological_asset !== "1" &&
-          it.item_type !== "LIVING_ASSET") ||
-        it.item_id === lineForm.item_id
+          it.is_biological_asset !== '1' &&
+          it.item_type !== 'LIVING_ASSET') ||
+        it.item_id === lineForm.item_id,
     );
   }, [items, lineForm.item_id]);
 
@@ -398,17 +490,29 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
    * already added (after asking). Throws on failure so the picker shows why;
    * returns false to keep the picker open when the user keeps their own.
    */
-  const loadActivitiesFrom = async (sourceType: CopySourceType, sourceId: string): Promise<boolean> => {
-    if (lines.length > 0 && !(await confirmAction({
-      title: t("scCopyReplaceTitle"),
-      message: t("scCopyReplaceMessage", { n: lines.length }),
-    }))) {
+  const loadActivitiesFrom = async (
+    sourceType: CopySourceType,
+    sourceId: string,
+  ): Promise<boolean> => {
+    if (
+      lines.length > 0 &&
+      !(await confirmAction({
+        title: t('scCopyReplaceTitle'),
+        message: t('scCopyReplaceMessage', { n: lines.length }),
+      }))
+    ) {
       return false;
     }
-    const fromSystem = sourceType === "SYSTEM";
-    const data = unwrap<Row>(await api.get(`${fromSystem ? "/system-scheduler" : "/scheduler-header"}/${sourceId}`));
-    const rawLines = (data?.lines || []).filter((l: Row) => l.is_active !== false);
-    if (!rawLines.length) throw new Error(t("scCopyNoActivities"));
+    const fromSystem = sourceType === 'SYSTEM';
+    const data = unwrap<Row>(
+      await api.get(
+        `${fromSystem ? '/system-scheduler' : '/scheduler-header'}/${sourceId}`,
+      ),
+    );
+    const rawLines = (data?.lines || []).filter(
+      (l: Row) => l.is_active !== false,
+    );
+    if (!rawLines.length) throw new Error(t('scCopyNoActivities'));
     const mappedLines = rawLines.map(toDialogLine);
     setLines(mappedLines);
     setCopiedSystemSchedulerId(fromSystem ? sourceId : null);
@@ -419,7 +523,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
   const handleOpenAddLine = () => {
     setEditingLineIndex(null);
     setLineForm(emptyLineForm(lines.length + 1));
-    setLineFormError("");
+    setLineFormError('');
     setShowLineModal(true);
   };
 
@@ -428,7 +532,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
     setEditingLineIndex(index);
     const lineToEdit = { ...lines[index] };
     setLineForm(lineToEdit);
-    setLineFormError("");
+    setLineFormError('');
     setShowLineModal(true);
   };
 
@@ -441,16 +545,23 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
       if (act) {
         if (act.default_occurrence) updated.occurrence = act.default_occurrence;
         if (act.default_qty_basis) updated.qty_basis = act.default_qty_basis;
-        if (act.default_output_basis) updated.output_basis = act.default_output_basis;
+        if (act.default_output_basis)
+          updated.output_basis = act.default_output_basis;
         if (act.default_kpi_metric) updated.kpi_metric = act.default_kpi_metric;
-        if (act.default_capture_per) updated.capture_per = act.default_capture_per;
-        if (act.default_overhead_category) updated.overhead_category = act.default_overhead_category;
+        if (act.default_capture_per)
+          updated.capture_per = act.default_capture_per;
+        if (act.default_overhead_category)
+          updated.overhead_category = act.default_overhead_category;
         if (act.default_gl_account) updated.gl_account = act.default_gl_account;
-        if (act.default_is_mandatory !== undefined) updated.is_mandatory = !!act.default_is_mandatory;
-        if (act.default_lot_required !== undefined) updated.lot_required = !!act.default_lot_required;
+        if (act.default_is_mandatory !== undefined)
+          updated.is_mandatory = !!act.default_is_mandatory;
+        if (act.default_lot_required !== undefined)
+          updated.lot_required = !!act.default_lot_required;
         if (act.default_item_id && !f.item_id) {
           updated.item_id = act.default_item_id;
-          const matchedItem = items.find((it) => it.item_id === act.default_item_id);
+          const matchedItem = items.find(
+            (it) => it.item_id === act.default_item_id,
+          );
           if (matchedItem) {
             updated.item_label = matchedItem.item_name;
             updated.uom = matchedItem.uom_primary || updated.uom;
@@ -458,7 +569,9 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
         }
         if (act.default_resource_id && !f.resource_id) {
           updated.resource_id = act.default_resource_id;
-          const matchedRes = resources.find((r) => r.resource_id === act.default_resource_id);
+          const matchedRes = resources.find(
+            (r) => r.resource_id === act.default_resource_id,
+          );
           if (matchedRes) updated.resource_name = matchedRes.resource_name;
         }
       }
@@ -468,69 +581,91 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
 
   // Delete line from local staged list
   const handleDeleteLine = (index: number) => {
-    setLines((prev) => prev.filter((_, i) => i !== index).map((l, i) => ({ ...l, line_seq: i + 1 })));
+    setLines((prev) =>
+      prev
+        .filter((_, i) => i !== index)
+        .map((l, i) => ({ ...l, line_seq: i + 1 })),
+    );
   };
 
   // Commit line from modal into local staged list
   const handleSaveLineForm = () => {
     if (!lineForm.activity_name.trim()) {
-      setLineFormError("Activity Name is required.");
+      setLineFormError('Activity Name is required.');
       return;
     }
-    if (lineForm.line_type === "CONSUMPTION" && !lineForm.item_id) {
-      setLineFormError("Item is required for Consumption activity.");
+    if (lineForm.line_type === 'CONSUMPTION' && !lineForm.item_id) {
+      setLineFormError('Item is required for Consumption activity.');
       return;
     }
-    if (lineForm.line_type === "OUTPUT" && !lineForm.item_id) {
-      setLineFormError("Output Item is required.");
+    if (lineForm.line_type === 'OUTPUT' && !lineForm.item_id) {
+      setLineFormError('Output Item is required.');
       return;
     }
-    if (lineForm.line_type === "DESCRIPTIVE" && !lineForm.kpi_metric) {
-      setLineFormError("KPI Metric is required for Descriptive activity.");
+    if (lineForm.line_type === 'DESCRIPTIVE' && !lineForm.kpi_metric) {
+      setLineFormError('KPI Metric is required for Descriptive activity.');
       return;
     }
-    if (lineForm.line_type === "RESOURCE" && !lineForm.resource_id) {
-      setLineFormError("Resource is required.");
+    if (lineForm.line_type === 'RESOURCE' && !lineForm.resource_id) {
+      setLineFormError('Resource is required.');
       return;
     }
-    if (lineForm.end_day !== "" && lineForm.end_day != null && Number(lineForm.start_day) > Number(lineForm.end_day)) {
-      setLineFormError("Start Day cannot be greater than End Day.");
+    if (
+      lineForm.end_day !== '' &&
+      lineForm.end_day != null &&
+      Number(lineForm.start_day) > Number(lineForm.end_day)
+    ) {
+      setLineFormError('Start Day cannot be greater than End Day.');
       return;
     }
-    if (lineForm.occurrence === "WEEKLY") {
+    if (lineForm.occurrence === 'WEEKLY') {
       if (!lineForm.day_of_week) {
-        setLineFormError("Day of Week (1-7) is required for Weekly occurrence.");
+        setLineFormError(
+          'Day of Week (1-7) is required for Weekly occurrence.',
+        );
         return;
       }
       const dow = Number(lineForm.day_of_week);
       if (!Number.isInteger(dow) || dow < 1 || dow > 7) {
-        setLineFormError("Day of Week must be between 1 (Monday) and 7 (Sunday).");
+        setLineFormError(
+          'Day of Week must be between 1 (Monday) and 7 (Sunday).',
+        );
         return;
       }
     }
-    if (lineForm.occurrence === "MONTHLY") {
+    if (lineForm.occurrence === 'MONTHLY') {
       if (!lineForm.day_of_week) {
-        setLineFormError("Specific Entry Day of Month (1–28) is required for Monthly occurrence.");
+        setLineFormError(
+          'Specific Entry Day of Month (1–28) is required for Monthly occurrence.',
+        );
         return;
       }
       const dom = Number(lineForm.day_of_week);
       if (!Number.isInteger(dom) || dom < 1 || dom > 28) {
-        setLineFormError("Specific Entry Day of Month must be between 1 and 28.");
+        setLineFormError(
+          'Specific Entry Day of Month must be between 1 and 28.',
+        );
         return;
       }
     }
-    if (lineForm.occurrence === "CUSTOM" && !lineForm.custom_days) {
-      setLineFormError("At least one Custom Day number is required for Custom occurrence.");
+    if (lineForm.occurrence === 'CUSTOM' && !lineForm.custom_days) {
+      setLineFormError(
+        'At least one Custom Day number is required for Custom occurrence.',
+      );
       return;
     }
 
     const cleanedLine: Row = toLinePayload(lineForm);
 
     // Prevent duplicate items, resources, or activities with overlapping time periods
-    const otherLines = editingLineIndex !== null
-      ? lines.filter((_, i) => i !== editingLineIndex)
-      : lines;
-    const conflict = findConflictingSchedulerLine(cleanedLine, otherLines, { items, resources });
+    const otherLines =
+      editingLineIndex !== null
+        ? lines.filter((_, i) => i !== editingLineIndex)
+        : lines;
+    const conflict = findConflictingSchedulerLine(cleanedLine, otherLines, {
+      items,
+      resources,
+    });
     if (conflict) {
       setLineFormError(conflict.message);
       return;
@@ -551,17 +686,21 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
   // Submit complete unified scheduler (Header + Lines)
   const handleSaveAll = async () => {
     if (!batchId) {
-      setError("Please select a batch.");
+      setError('Please select a batch.');
       return;
     }
     if (!stageId) {
-      setError("Please select a stage.");
+      setError('Please select a stage.');
       return;
     }
 
     // Validate lines pairwise for any overlapping duplicate items/periods
     for (let i = 0; i < lines.length; i++) {
-      const conflict = findConflictingSchedulerLine(lines[i], lines.slice(0, i), { items, resources });
+      const conflict = findConflictingSchedulerLine(
+        lines[i],
+        lines.slice(0, i),
+        { items, resources },
+      );
       if (conflict) {
         setError(conflict.message);
         return;
@@ -569,7 +708,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
     }
 
     setSaving(true);
-    setError("");
+    setError('');
 
     try {
       const payload: Record<string, any> = {
@@ -578,19 +717,22 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
         data_entry_level: dataEntryLevel,
         effective_from: effectiveFrom || undefined,
         effective_to: effectiveTo || undefined,
-        animal_count: animalCount !== "" ? Number(animalCount) : undefined,
+        animal_count: animalCount !== '' ? Number(animalCount) : undefined,
         scheduler_status: status,
         notes: notes || undefined,
         lines: lines.length > 0 ? lines.map(toApiLine) : undefined,
-        system_scheduler_id: lines.length > 0 && copiedSystemSchedulerId ? copiedSystemSchedulerId : undefined,
+        system_scheduler_id:
+          lines.length > 0 && copiedSystemSchedulerId
+            ? copiedSystemSchedulerId
+            : undefined,
       };
 
-      const res = await api.post("/scheduler-header", payload);
+      const res = await api.post('/scheduler-header', payload);
       const created = unwrap<Row>(res);
       onCreated(created?.scheduler_id || created?.data?.scheduler_id);
       onClose();
     } catch (err: any) {
-      setError(err?.message || "Failed to create scheduler.");
+      setError(err?.message || 'Failed to create scheduler.');
     } finally {
       setSaving(false);
     }
@@ -598,24 +740,47 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
 
   return (
     <>
-      <Dialog open={open} onClose={() => !saving && onClose()} title="Create New Scheduler & Activities" maxWidth="xl">
+      <Dialog
+        open={open}
+        onClose={() => !saving && onClose()}
+        title="Create New Scheduler & Activities"
+        maxWidth="xl"
+      >
         <div className="flex flex-col gap-5 text-xs max-h-[78vh] overflow-y-auto pr-1">
-          <Toast variant="danger" message={error} onClose={() => setError("")} />
+          <Toast
+            variant="danger"
+            message={error}
+            onClose={() => setError('')}
+          />
 
           {/* Section 1: Header Configuration (Collapsible) */}
-          <div className="rounded-[var(--radius-sm)] border overflow-hidden" style={S.surface}>
+          <div
+            className="rounded-[var(--radius-sm)] border overflow-hidden"
+            style={S.surface}
+          >
             <div
               className="flex items-center justify-between p-3.5 cursor-pointer select-none hover:bg-(--surface-raised) transition-colors"
               onClick={() => setHeaderCollapsed((prev) => !prev)}
             >
               <div className="flex items-center gap-2 flex-wrap">
-                <CalendarClock className="h-4 w-4" style={{ color: "var(--accent)" }} />
-                <span className="text-xs font-bold uppercase tracking-wider" style={S.primary}>
+                <CalendarClock
+                  className="h-4 w-4"
+                  style={{ color: 'var(--accent)' }}
+                />
+                <span
+                  className="text-xs font-bold uppercase tracking-wider"
+                  style={S.primary}
+                >
                   1. Scheduler Header
                 </span>
                 {headerCollapsed && selectedBatch && (
-                  <span className="rounded px-2 py-0.5 text-[11px] font-medium" style={S.raised}>
-                    {selectedBatch.batch_no} • {selectedStage?.stage_name || "Stage"} • {animalCount || 0} heads • {status}
+                  <span
+                    className="rounded px-2 py-0.5 text-[11px] font-medium"
+                    style={S.raised}
+                  >
+                    {selectedBatch.batch_no} •{' '}
+                    {selectedStage?.stage_name || 'Stage'} • {animalCount || 0}{' '}
+                    heads • {status}
                   </span>
                 )}
               </div>
@@ -626,10 +791,16 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                   e.stopPropagation();
                   setHeaderCollapsed((prev) => !prev);
                 }}
-                title={headerCollapsed ? "Expand Header" : "Collapse Header"}
-                aria-label={headerCollapsed ? "Expand Header" : "Collapse Header"}
+                title={headerCollapsed ? 'Expand Header' : 'Collapse Header'}
+                aria-label={
+                  headerCollapsed ? 'Expand Header' : 'Collapse Header'
+                }
               >
-                {headerCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+                {headerCollapsed ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronUp className="h-4 w-4" />
+                )}
               </button>
             </div>
 
@@ -639,10 +810,16 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                   {/* Batch Selector */}
                   <div>
                     <label className="mb-1 block font-semibold" style={S.sub}>
-                      {t("schColBatch")} <span className="text-red-500">*</span>
+                      {t('schColBatch')} <span className="text-red-500">*</span>
                     </label>
                     {loadingBatches ? (
-                      <div className="flex items-center gap-2 py-1.5"><Loader2 className="h-4 w-4 animate-spin" style={S.muted} /><span style={S.muted}>Loading batches...</span></div>
+                      <div className="flex items-center gap-2 py-1.5">
+                        <Loader2
+                          className="h-4 w-4 animate-spin"
+                          style={S.muted}
+                        />
+                        <span style={S.muted}>Loading batches...</span>
+                      </div>
                     ) : (
                       <SearchableSelect
                         ariaLabel="Batch"
@@ -650,10 +827,12 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                         onChange={(val) => setBatchId(val)}
                         options={batches.map((b) => ({
                           value: b.batch_id,
-                          label: `${b.batch_no} ${b.stage_name ? `(${b.stage_name})` : ""} ${b.breed_name ? `• ${b.breed_name}` : ""}`.trim(),
+                          label:
+                            `${b.batch_no} ${b.stage_name ? `(${b.stage_name})` : ''} ${b.breed_name ? `• ${b.breed_name}` : ''}`.trim(),
                         }))}
                         placeholder="— Select a batch —"
                         searchPlaceholder="Search batches…"
+                        remote={pagedBatches}
                       />
                     )}
                   </div>
@@ -661,10 +840,16 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                   {/* Stage Selector (LOB-Filtered) */}
                   <div>
                     <label className="mb-1 block font-semibold" style={S.sub}>
-                      {t("schColStage")} <span className="text-red-500">*</span>
+                      {t('schColStage')} <span className="text-red-500">*</span>
                     </label>
                     {loadingStages ? (
-                      <div className="flex items-center gap-2 py-1.5"><Loader2 className="h-4 w-4 animate-spin" style={S.muted} /><span style={S.muted}>Loading stages...</span></div>
+                      <div className="flex items-center gap-2 py-1.5">
+                        <Loader2
+                          className="h-4 w-4 animate-spin"
+                          style={S.muted}
+                        />
+                        <span style={S.muted}>Loading stages...</span>
+                      </div>
                     ) : (
                       <SearchableSelect
                         ariaLabel="Stage"
@@ -673,7 +858,8 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                         disabled={!batchId}
                         options={stages.map((s) => ({
                           value: s.stage_id,
-                          label: `${s.stage_name} ${s.typical_duration_days ? `(${s.typical_duration_days} days)` : ""}`.trim(),
+                          label:
+                            `${s.stage_name} ${s.typical_duration_days ? `(${s.typical_duration_days} days)` : ''}`.trim(),
                         }))}
                         placeholder="— Select stage —"
                         searchPlaceholder="Search stages…"
@@ -697,7 +883,8 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                   {/* Effective From */}
                   <div>
                     <label className="mb-1 block font-semibold" style={S.sub}>
-                      Effective From (Start Date) <span className="text-red-500">*</span>
+                      Effective From (Start Date){' '}
+                      <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="date"
@@ -749,8 +936,11 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                       value={status}
                       onChange={(val) => setStatus(val)}
                       options={[
-                        { value: "DRAFT", label: "DRAFT (Review & Finalize)" },
-                        { value: "ACTIVE", label: "ACTIVE (Ready for Daily Entry)" },
+                        { value: 'DRAFT', label: 'DRAFT (Review & Finalize)' },
+                        {
+                          value: 'ACTIVE',
+                          label: 'ACTIVE (Ready for Daily Entry)',
+                        },
                       ]}
                     />
                   </div>
@@ -774,20 +964,32 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
           </div>
 
           {/* Section 2: Staged Activities (Lines) (Collapsible) */}
-          <div className="rounded-[var(--radius-sm)] border overflow-hidden" style={S.surface}>
+          <div
+            className="rounded-[var(--radius-sm)] border overflow-hidden"
+            style={S.surface}
+          >
             <div
               className="flex items-center justify-between p-3.5 cursor-pointer select-none hover:bg-(--surface-raised) transition-colors"
               onClick={() => setLinesCollapsed((prev) => !prev)}
             >
               <div className="flex items-center gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider" style={S.primary}>
+                <span
+                  className="text-xs font-bold uppercase tracking-wider"
+                  style={S.primary}
+                >
                   2. Scheduled Activities (Lines)
                 </span>
-                <span className="rounded-full px-2 py-0.5 text-[10px] font-bold" style={{ backgroundColor: "var(--accent)", color: "white" }}>
+                <span
+                  className="rounded-full px-2 py-0.5 text-[10px] font-bold"
+                  style={{ backgroundColor: 'var(--accent)', color: 'white' }}
+                >
                   {lines.length}
                 </span>
               </div>
-              <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+              <div
+                className="flex items-center gap-2"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <Button
                   size="sm"
                   variant="outline"
@@ -796,9 +998,13 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                   className="flex items-center gap-1.5 text-xs font-medium"
                 >
                   <Copy className="h-3.5 w-3.5" />
-                  {t("scCopyActivities")}
+                  {t('scCopyActivities')}
                 </Button>
-                <Button size="sm" onClick={handleOpenAddLine} className="flex items-center gap-1.5 text-xs font-medium">
+                <Button
+                  size="sm"
+                  onClick={handleOpenAddLine}
+                  className="flex items-center gap-1.5 text-xs font-medium"
+                >
                   <Plus className="h-3.5 w-3.5" />
                   Add Activity
                 </Button>
@@ -806,10 +1012,16 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                   type="button"
                   className="p-1 rounded hover:bg-(--surface) text-[var(--text-secondary)] transition-transform"
                   onClick={() => setLinesCollapsed((prev) => !prev)}
-                  title={linesCollapsed ? "Expand Lines" : "Collapse Lines"}
-                  aria-label={linesCollapsed ? "Expand Lines" : "Collapse Lines"}
+                  title={linesCollapsed ? 'Expand Lines' : 'Collapse Lines'}
+                  aria-label={
+                    linesCollapsed ? 'Expand Lines' : 'Collapse Lines'
+                  }
                 >
-                  {linesCollapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
+                  {linesCollapsed ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronUp className="h-4 w-4" />
+                  )}
                 </button>
               </div>
             </div>
@@ -817,63 +1029,155 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
             {!linesCollapsed && (
               <div className="p-4 pt-2 border-t border-[var(--border)]">
                 {lines.length === 0 ? (
-                  <div className="rounded-[var(--radius-sm)] border border-dashed py-6 text-center" style={{ borderColor: "var(--border)" }}>
+                  <div
+                    className="rounded-[var(--radius-sm)] border border-dashed py-6 text-center"
+                    style={{ borderColor: 'var(--border)' }}
+                  >
                     <p className="text-xs font-medium" style={S.sub}>
-                      {prefilling ? "Filling in the stage's activities…" : "This stage has no activities to fill in."}
+                      {prefilling
+                        ? "Filling in the stage's activities…"
+                        : 'This stage has no activities to fill in.'}
                     </p>
                     <p className="text-[11px] mt-1" style={S.muted}>
-                      A scheduler's activities are filled in from the batch's breed lifecycle stage — its feed, resources,
-                      vaccinations, medication and KPIs. Add them to the stage in Breed Master, or click{" "}
-                      <strong>Add Activity</strong> above to schedule one here. They are fixed once the scheduler is created.
+                      A scheduler's activities are filled in from the batch's
+                      breed lifecycle stage — its feed, resources, vaccinations,
+                      medication and KPIs. Add them to the stage in Breed
+                      Master, or click <strong>Add Activity</strong> above to
+                      schedule one here. They are fixed once the scheduler is
+                      created.
                     </p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto rounded-[var(--radius-sm)] border" style={S.surface}>
+                  <div
+                    className="overflow-x-auto rounded-[var(--radius-sm)] border"
+                    style={S.surface}
+                  >
                     <table className="w-full border-collapse text-left text-xs">
                       <TableHeader>
                         <tr className="border-b border-[var(--row-border)]">
-                          <TableHead className="h-auto px-3 py-2">Seq</TableHead>
-                          <TableHead className="h-auto px-3 py-2">Type</TableHead>
-                          <TableHead className="h-auto px-3 py-2">Activity Name</TableHead>
-                          <TableHead className="h-auto px-3 py-2">Occurrence</TableHead>
-                          <TableHead className="h-auto px-3 py-2">Item / Metric / Resource</TableHead>
-                          <TableHead className="h-auto px-3 py-2">Std Qty / Target</TableHead>
-                          <TableHead className="h-auto px-3 py-2">Mandatory</TableHead>
+                          <TableHead className="h-auto px-3 py-2">
+                            Seq
+                          </TableHead>
+                          <TableHead className="h-auto px-3 py-2">
+                            Type
+                          </TableHead>
+                          <TableHead className="h-auto px-3 py-2">
+                            Activity Name
+                          </TableHead>
+                          <TableHead className="h-auto px-3 py-2">
+                            Occurrence
+                          </TableHead>
+                          <TableHead className="h-auto px-3 py-2">
+                            Item / Metric / Resource
+                          </TableHead>
+                          <TableHead className="h-auto px-3 py-2">
+                            Std Qty / Target
+                          </TableHead>
+                          <TableHead className="h-auto px-3 py-2">
+                            Mandatory
+                          </TableHead>
                           <TableHead className="h-auto px-3 py-2"></TableHead>
                         </tr>
                       </TableHeader>
                       <TableBody>
                         {lines.map((line, idx) => {
-                          const itemObj = items.find((i) => i.item_id === line.item_id);
-                          const resObj = resources.find((r) => r.resource_id === line.resource_id);
-                          const uom = line.line_type === "DESCRIPTIVE"
-                            ? line.kpi_uom || (line.kpi_metric ? KPI_UOM_MAP[line.kpi_metric] : "")
-                            : itemObj?.uom_primary || itemObj?.uom || resObj?.uom || "";
+                          const itemObj = items.find(
+                            (i) => i.item_id === line.item_id,
+                          );
+                          const resObj = resources.find(
+                            (r) => r.resource_id === line.resource_id,
+                          );
+                          const uom =
+                            line.line_type === 'DESCRIPTIVE'
+                              ? line.kpi_uom ||
+                                (line.kpi_metric
+                                  ? KPI_UOM_MAP[line.kpi_metric]
+                                  : '')
+                              : itemObj?.uom_primary ||
+                                itemObj?.uom ||
+                                resObj?.uom ||
+                                '';
 
                           return (
                             <TableRow key={idx}>
-                              <TableCell className="px-3 py-2 font-mono text-[11px]" style={S.sub}>{line.line_seq || idx + 1}</TableCell>
+                              <TableCell
+                                className="px-3 py-2 font-mono text-[11px]"
+                                style={S.sub}
+                              >
+                                {line.line_seq || idx + 1}
+                              </TableCell>
                               <TableCell className="px-3 py-2">
-                                <span className="inline-block rounded px-1.5 py-0.5 text-[10px] font-bold" style={{ backgroundColor: "var(--surface-raised)", color: "var(--accent)" }}>
+                                <span
+                                  className="inline-block rounded px-1.5 py-0.5 text-[10px] font-bold"
+                                  style={{
+                                    backgroundColor: 'var(--surface-raised)',
+                                    color: 'var(--accent)',
+                                  }}
+                                >
                                   {line.line_type}
                                 </span>
                               </TableCell>
-                              <TableCell className="px-3 py-2 font-medium" style={S.primary}>{line.activity_name}</TableCell>
+                              <TableCell
+                                className="px-3 py-2 font-medium"
+                                style={S.primary}
+                              >
+                                {line.activity_name}
+                              </TableCell>
                               <TableCell className="px-3 py-2" style={S.sub}>
                                 {(() => {
-                                  if (line.occurrence === "WEEKLY" && line.day_of_week) {
-                                    const days = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-                                    const dayName = days[Number(line.day_of_week)] || `Day ${line.day_of_week}`;
-                                    return <span className="font-medium text-sky-700 dark:text-sky-300">WEEKLY ({dayName})</span>;
+                                  if (
+                                    line.occurrence === 'WEEKLY' &&
+                                    line.day_of_week
+                                  ) {
+                                    const days = [
+                                      '',
+                                      'Mon',
+                                      'Tue',
+                                      'Wed',
+                                      'Thu',
+                                      'Fri',
+                                      'Sat',
+                                      'Sun',
+                                    ];
+                                    const dayName =
+                                      days[Number(line.day_of_week)] ||
+                                      `Day ${line.day_of_week}`;
+                                    return (
+                                      <span className="font-medium text-sky-700 dark:text-sky-300">
+                                        WEEKLY ({dayName})
+                                      </span>
+                                    );
                                   }
-                                  if (line.occurrence === "MONTHLY" && line.day_of_week) {
+                                  if (
+                                    line.occurrence === 'MONTHLY' &&
+                                    line.day_of_week
+                                  ) {
                                     const d = Number(line.day_of_week);
-                                    const sfx = (d % 10 === 1 && d !== 11) ? "st" : (d % 10 === 2 && d !== 12) ? "nd" : (d % 10 === 3 && d !== 13) ? "rd" : "th";
-                                    return <span className="font-medium text-indigo-700 dark:text-indigo-300">MONTHLY (Day {d}{sfx})</span>;
+                                    const sfx =
+                                      d % 10 === 1 && d !== 11
+                                        ? 'st'
+                                        : d % 10 === 2 && d !== 12
+                                          ? 'nd'
+                                          : d % 10 === 3 && d !== 13
+                                            ? 'rd'
+                                            : 'th';
+                                    return (
+                                      <span className="font-medium text-indigo-700 dark:text-indigo-300">
+                                        MONTHLY (Day {d}
+                                        {sfx})
+                                      </span>
+                                    );
                                   }
-                                  if (line.occurrence === "CUSTOM" && line.custom_days) {
-                                    const cDays = Array.isArray(line.custom_days)
-                                      ? line.custom_days.map((d: any) => d.day_number ?? d).join(", ")
+                                  if (
+                                    line.occurrence === 'CUSTOM' &&
+                                    line.custom_days
+                                  ) {
+                                    const cDays = Array.isArray(
+                                      line.custom_days,
+                                    )
+                                      ? line.custom_days
+                                          .map((d: any) => d.day_number ?? d)
+                                          .join(', ')
                                       : line.custom_days;
                                     return <span>CUSTOM [{cDays}]</span>;
                                   }
@@ -881,64 +1185,119 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                                 })()}
                               </TableCell>
                               <TableCell className="px-3 py-2" style={S.sub}>
-                                {line.line_type === "DESCRIPTIVE"
-                                  ? (line.kpi_metric ? line.kpi_metric.replace(/_/g, " ") : "—")
-                                  : line.line_type === "RESOURCE"
-                                  ? (resObj?.resource_name || line.resource_id || "—")
-                                  : (itemObj?.item_name || line.item_description || "—")}
+                                {line.line_type === 'DESCRIPTIVE'
+                                  ? line.kpi_metric
+                                    ? line.kpi_metric.replace(/_/g, ' ')
+                                    : NA
+                                  : line.line_type === 'RESOURCE'
+                                    ? resObj?.resource_name ||
+                                      line.resource_id ||
+                                      NA
+                                    : itemObj?.item_name ||
+                                      line.item_description ||
+                                      NA}
                                 {itemObj?.withdrawal_days ? (
-                                  <span className="ml-1 text-[10px] font-bold text-amber-600">({itemObj.withdrawal_days}d w/d)</span>
+                                  <span className="ml-1 text-[10px] font-bold text-amber-600">
+                                    ({itemObj.withdrawal_days}d w/d)
+                                  </span>
                                 ) : null}
                               </TableCell>
-                              <TableCell className="px-3 py-2 font-medium" style={S.primary}>
+                              <TableCell
+                                className="px-3 py-2 font-medium"
+                                style={S.primary}
+                              >
                                 <div className="flex items-center gap-1.5 flex-wrap">
                                   <span>
-                                    {line.line_type === "DESCRIPTIVE"
-                                      ? (line.std_value != null ? line.std_value : "—")
-                                      : (line.standard_qty != null ? line.standard_qty : "—")}
+                                    {line.line_type === 'DESCRIPTIVE'
+                                      ? line.std_value != null
+                                        ? line.std_value
+                                        : NA
+                                      : line.standard_qty != null
+                                        ? line.standard_qty
+                                        : NA}
                                   </span>
                                   {uom && (
                                     <span className="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-600 dark:text-sky-400">
                                       {uom}
                                     </span>
                                   )}
-                                  {line.qty_basis && <span className="text-[10px]" style={S.muted}>({line.qty_basis})</span>}
-                                  {line.output_basis && <span className="text-[10px]" style={S.muted}>({line.output_basis})</span>}
+                                  {line.qty_basis && (
+                                    <span
+                                      className="text-[10px]"
+                                      style={S.muted}
+                                    >
+                                      ({line.qty_basis})
+                                    </span>
+                                  )}
+                                  {line.output_basis && (
+                                    <span
+                                      className="text-[10px]"
+                                      style={S.muted}
+                                    >
+                                      ({line.output_basis})
+                                    </span>
+                                  )}
                                 </div>
                               </TableCell>
-                              <TableCell className="px-3 py-2" style={S.sub}>{line.is_mandatory ? "Yes" : "No"}</TableCell>
+                              <TableCell className="px-3 py-2" style={S.sub}>
+                                {line.is_mandatory ? 'Yes' : 'No'}
+                              </TableCell>
                               <TableCell className="px-3 py-2 text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <button onClick={() => handleOpenEditLine(idx)} className="rounded p-1 hover:opacity-70" title="Edit">
-                                <Pencil className="h-3.5 w-3.5" style={S.sub} />
-                              </button>
-                              <button onClick={() => handleDeleteLine(idx)} className="rounded p-1 hover:opacity-70" title="Delete">
-                                <Trash2 className="h-3.5 w-3.5" style={{ color: "var(--danger)" }} />
-                              </button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </table>
-              </div>
-            )}
+                                <div className="flex items-center justify-end gap-1">
+                                  <button
+                                    onClick={() => handleOpenEditLine(idx)}
+                                    className="rounded p-1 hover:opacity-70"
+                                    title="Edit"
+                                  >
+                                    <Pencil
+                                      className="h-3.5 w-3.5"
+                                      style={S.sub}
+                                    />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteLine(idx)}
+                                    className="rounded p-1 hover:opacity-70"
+                                    title="Delete"
+                                  >
+                                    <Trash2
+                                      className="h-3.5 w-3.5"
+                                      style={{ color: 'var(--danger)' }}
+                                    />
+                                  </button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
           </div>
 
           {/* Dialog Action Buttons */}
-          <div className="mt-2 flex items-center justify-between border-t pt-3" style={{ borderColor: "var(--border)" }}>
+          <div
+            className="mt-2 flex items-center justify-between border-t pt-3"
+            style={{ borderColor: 'var(--border)' }}
+          >
             <span className="text-[11px]" style={S.muted}>
               {prefilling
                 ? "Filling in the stage's activities…"
-                : `${lines.length} ${lines.length === 1 ? "activity" : "activities"} configured — filled in from the stage; change them here, they are fixed once the scheduler is created`}
+                : `${lines.length} ${lines.length === 1 ? 'activity' : 'activities'} configured — filled in from the stage; change them here, they are fixed once the scheduler is created`}
             </span>
             <div className="flex items-center gap-2">
-              <Button size="sm" onClick={handleSaveAll} disabled={saving || !batchId || !stageId} className="nf-btn-primary">
+              <Button
+                size="sm"
+                onClick={handleSaveAll}
+                disabled={saving || !batchId || !stageId}
+                className="nf-btn-primary"
+              >
                 {saving ? (
-                  <span className="flex items-center gap-1.5"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving...</span>
+                  <span className="flex items-center gap-1.5">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving...
+                  </span>
                 ) : (
                   `Create Scheduler & Activities (${lines.length})`
                 )}
@@ -952,11 +1311,19 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
       <Dialog
         open={showLineModal}
         onClose={() => setShowLineModal(false)}
-        title={editingLineIndex !== null ? "Edit Activity (Line)" : "Add Activity (Line)"}
+        title={
+          editingLineIndex !== null
+            ? 'Edit Activity (Line)'
+            : 'Add Activity (Line)'
+        }
         maxWidth="lg"
       >
         <div className="flex flex-col gap-4 text-xs">
-          <Toast variant="danger" message={lineFormError} onClose={() => setLineFormError("")} />
+          <Toast
+            variant="danger"
+            message={lineFormError}
+            onClose={() => setLineFormError('')}
+          />
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {/* Line Type */}
@@ -967,7 +1334,9 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
               <SearchableSelect
                 ariaLabel="Line Type"
                 value={lineForm.line_type}
-                onChange={(val) => setLineForm((f: Row) => ({ ...f, line_type: val }))}
+                onChange={(val) =>
+                  setLineForm((f: Row) => ({ ...f, line_type: val }))
+                }
                 options={LINE_TYPES}
               />
             </div>
@@ -1005,11 +1374,11 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                     ...f,
                     occurrence: val,
                     day_of_week:
-                      val === "WEEKLY" && Number(f.day_of_week) > 7
-                        ? ""
-                        : val === "WEEKLY" || val === "MONTHLY"
-                        ? f.day_of_week
-                        : "",
+                      val === 'WEEKLY' && Number(f.day_of_week) > 7
+                        ? ''
+                        : val === 'WEEKLY' || val === 'MONTHLY'
+                          ? f.day_of_week
+                          : '',
                   }))
                 }
                 options={OCCURRENCES}
@@ -1019,24 +1388,35 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
             {/* Start Day & End Day */}
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="mb-1 block font-semibold" style={S.sub}>Start Day</label>
+                <label className="mb-1 block font-semibold" style={S.sub}>
+                  Start Day
+                </label>
                 <input
                   type="number"
                   min={1}
                   value={lineForm.start_day}
-                  onChange={(e) => setLineForm((f: Row) => ({ ...f, start_day: e.target.value }))}
+                  onChange={(e) =>
+                    setLineForm((f: Row) => ({
+                      ...f,
+                      start_day: e.target.value,
+                    }))
+                  }
                   className={`${inputCls} w-full`}
                   style={S.input}
                 />
               </div>
               <div>
-                <label className="mb-1 block font-semibold" style={S.sub}>End Day</label>
+                <label className="mb-1 block font-semibold" style={S.sub}>
+                  End Day
+                </label>
                 <input
                   type="number"
                   min={1}
                   placeholder="Stage close"
                   value={lineForm.end_day}
-                  onChange={(e) => setLineForm((f: Row) => ({ ...f, end_day: e.target.value }))}
+                  onChange={(e) =>
+                    setLineForm((f: Row) => ({ ...f, end_day: e.target.value }))
+                  }
                   className={`${inputCls} w-full`}
                   style={S.input}
                 />
@@ -1044,67 +1424,100 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
             </div>
 
             {/* Conditional: Day of week for WEEKLY */}
-            {lineForm.occurrence === "WEEKLY" && (
+            {lineForm.occurrence === 'WEEKLY' && (
               <div>
                 <div className="mb-1 flex items-center justify-between">
                   <label className="font-semibold" style={S.sub}>
-                    Day of Week (1=Mon..7=Sun) <span className="text-red-500">*</span>
+                    Day of Week (1=Mon..7=Sun){' '}
+                    <span className="text-red-500">*</span>
                   </label>
-                  {lineForm.day_of_week && Number(lineForm.day_of_week) >= 1 && Number(lineForm.day_of_week) <= 7 && (
-                    <span className="font-medium text-[10px]" style={S.sub}>
-                      {DAYS_OF_WEEK_OPTIONS.find((o) => o.value === String(lineForm.day_of_week))?.label}
-                    </span>
-                  )}
+                  {lineForm.day_of_week &&
+                    Number(lineForm.day_of_week) >= 1 &&
+                    Number(lineForm.day_of_week) <= 7 && (
+                      <span className="font-medium text-[10px]" style={S.sub}>
+                        {
+                          DAYS_OF_WEEK_OPTIONS.find(
+                            (o) => o.value === String(lineForm.day_of_week),
+                          )?.label
+                        }
+                      </span>
+                    )}
                 </div>
                 <SearchableSelect
                   ariaLabel="Day of Week"
                   placeholder="Select day of week (Monday–Sunday)…"
                   searchPlaceholder="Search day (e.g. Monday)…"
-                  value={lineForm.day_of_week ? String(lineForm.day_of_week) : ""}
-                  onChange={(val) => setLineForm((f: Row) => ({ ...f, day_of_week: val }))}
+                  value={
+                    lineForm.day_of_week ? String(lineForm.day_of_week) : ''
+                  }
+                  onChange={(val) =>
+                    setLineForm((f: Row) => ({ ...f, day_of_week: val }))
+                  }
                   options={DAYS_OF_WEEK_OPTIONS}
                 />
               </div>
             )}
 
             {/* Conditional: Entry Day of Month for MONTHLY */}
-            {lineForm.occurrence === "MONTHLY" && (
+            {lineForm.occurrence === 'MONTHLY' && (
               <div>
                 <div className="mb-1 flex items-center justify-between">
                   <label className="font-semibold" style={S.sub}>
-                    Specific Entry Day of Month (1–28) <span className="text-red-500">*</span>
+                    Specific Entry Day of Month (1–28){' '}
+                    <span className="text-red-500">*</span>
                   </label>
-                  {lineForm.day_of_week && Number(lineForm.day_of_week) >= 1 && Number(lineForm.day_of_week) <= 28 && (
-                    <span className="font-medium text-[10px]" style={S.sub}>
-                      {(() => {
-                        const d = Number(lineForm.day_of_week);
-                        const sfx = (d % 10 === 1 && d !== 11) ? "st" : (d % 10 === 2 && d !== 12) ? "nd" : (d % 10 === 3 && d !== 13) ? "rd" : "th";
-                        return `${d}${sfx} of every month`;
-                      })()}
-                    </span>
-                  )}
+                  {lineForm.day_of_week &&
+                    Number(lineForm.day_of_week) >= 1 &&
+                    Number(lineForm.day_of_week) <= 28 && (
+                      <span className="font-medium text-[10px]" style={S.sub}>
+                        {(() => {
+                          const d = Number(lineForm.day_of_week);
+                          const sfx =
+                            d % 10 === 1 && d !== 11
+                              ? 'st'
+                              : d % 10 === 2 && d !== 12
+                                ? 'nd'
+                                : d % 10 === 3 && d !== 13
+                                  ? 'rd'
+                                  : 'th';
+                          return `${d}${sfx} of every month`;
+                        })()}
+                      </span>
+                    )}
                 </div>
                 <SearchableSelect
                   ariaLabel="Specific Entry Day of Month"
                   placeholder="Select entry day (1–28)…"
                   searchPlaceholder="Search day (e.g. 15)…"
-                  value={lineForm.day_of_week ? String(lineForm.day_of_week) : ""}
-                  onChange={(val) => setLineForm((f: Row) => ({ ...f, day_of_week: val }))}
+                  value={
+                    lineForm.day_of_week ? String(lineForm.day_of_week) : ''
+                  }
+                  onChange={(val) =>
+                    setLineForm((f: Row) => ({ ...f, day_of_week: val }))
+                  }
                   options={DAYS_OF_MONTH_OPTIONS}
                 />
                 <p className="mt-1 text-[10px]" style={S.muted}>
-                  Specifies the recurring day of the month (1–28) for this activity entry.
+                  Specifies the recurring day of the month (1–28) for this
+                  activity entry.
                 </p>
               </div>
             )}
 
             {/* Conditional: Custom Days for CUSTOM */}
-            {lineForm.occurrence === "CUSTOM" && (
+            {lineForm.occurrence === 'CUSTOM' && (
               <div>
-                <label className="mb-1 block font-semibold" style={S.sub}>Custom Days (comma-separated)</label>
+                <label className="mb-1 block font-semibold" style={S.sub}>
+                  Custom Days (comma-separated)
+                </label>
                 <input
                   value={lineForm.custom_days}
-                  onChange={(e) => setLineForm((f: Row) => ({ ...f, custom_days: e.target.value }))}
+                  onChange={(e) =>
+                    setLineForm((f: Row) => ({
+                      ...f,
+                      custom_days: e.target.value,
+                    }))
+                  }
                   placeholder="e.g. 7, 21, 35"
                   className={`${inputCls} w-full`}
                   style={S.input}
@@ -1118,25 +1531,42 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 type="checkbox"
                 id="is_mandatory_cb"
                 checked={!!lineForm.is_mandatory}
-                onChange={(e) => setLineForm((f: Row) => ({ ...f, is_mandatory: e.target.checked }))}
+                onChange={(e) =>
+                  setLineForm((f: Row) => ({
+                    ...f,
+                    is_mandatory: e.target.checked,
+                  }))
+                }
               />
-              <label htmlFor="is_mandatory_cb" className="font-semibold cursor-pointer" style={S.sub}>
+              <label
+                htmlFor="is_mandatory_cb"
+                className="font-semibold cursor-pointer"
+                style={S.sub}
+              >
                 Mandatory data entry (required to complete daily post)
               </label>
             </div>
           </div>
 
           {/* Conditional Line Type Section */}
-          <div className="rounded-[var(--radius-sm)] border p-3 bg-(--surface-raised)" style={{ borderColor: "var(--border)" }}>
-            <p className="mb-2 text-[10px] font-bold uppercase tracking-wider" style={S.primary}>
+          <div
+            className="rounded-[var(--radius-sm)] border p-3 bg-(--surface-raised)"
+            style={{ borderColor: 'var(--border)' }}
+          >
+            <p
+              className="mb-2 text-[10px] font-bold uppercase tracking-wider"
+              style={S.primary}
+            >
               {lineForm.line_type} Specific Configuration
             </p>
 
             {/* CONSUMPTION */}
-            {lineForm.line_type === "CONSUMPTION" && (
+            {lineForm.line_type === 'CONSUMPTION' && (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Feed / Medicine Item <span className="text-red-500">*</span></label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Feed / Medicine Item <span className="text-red-500">*</span>
+                  </label>
                   <SearchableSelect
                     ariaLabel="Feed / Medicine Item"
                     value={lineForm.item_id}
@@ -1146,7 +1576,9 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                         ...f,
                         item_id: val,
                         item_description: sel?.item_name || f.item_description,
-                        lot_required: val ? !!(sel?.is_lot_tracked || sel?.is_serial_tracked) : f.lot_required,
+                        lot_required: val
+                          ? !!(sel?.is_lot_tracked || sel?.is_serial_tracked)
+                          : f.lot_required,
                       }));
                     }}
                     options={consumableItems.map((it) => ({
@@ -1160,9 +1592,13 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
 
                 <div>
                   <div className="mb-1 flex items-center justify-between">
-                    <label className="font-semibold" style={S.sub}>Standard Qty per Occurrence</label>
+                    <label className="font-semibold" style={S.sub}>
+                      Standard Qty per Occurrence
+                    </label>
                     {(() => {
-                      const sel = items.find((i) => i.item_id === lineForm.item_id);
+                      const sel = items.find(
+                        (i) => i.item_id === lineForm.item_id,
+                      );
                       const uom = sel?.uom_primary || sel?.uom;
                       return uom ? (
                         <span className="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-600 dark:text-sky-400">
@@ -1176,58 +1612,88 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                       type="number"
                       step="any"
                       value={lineForm.standard_qty}
-                      onChange={(e) => setLineForm((f: Row) => ({ ...f, standard_qty: e.target.value }))}
+                      onChange={(e) =>
+                        setLineForm((f: Row) => ({
+                          ...f,
+                          standard_qty: e.target.value,
+                        }))
+                      }
                       placeholder={(() => {
-                        const sel = items.find((i) => i.item_id === lineForm.item_id);
+                        const sel = items.find(
+                          (i) => i.item_id === lineForm.item_id,
+                        );
                         const uom = sel?.uom_primary || sel?.uom;
-                        return uom ? `e.g. 1.5 (${uom})` : "e.g. 1.5";
+                        return uom ? `e.g. 1.5 (${uom})` : 'e.g. 1.5';
                       })()}
                       className={`${inputCls} w-full pr-16`}
                       style={S.input}
                     />
-                   
                   </div>
                   <p className="mt-1 text-[10px]" style={S.muted}>
                     {(() => {
-                      const sel = items.find((i) => i.item_id === lineForm.item_id);
+                      const sel = items.find(
+                        (i) => i.item_id === lineForm.item_id,
+                      );
                       const uom = sel?.uom_primary || sel?.uom;
                       return uom
-                        ? `Units consumed in ${uom} (${lineForm.qty_basis || "PER_HEAD"})`
-                        : "Select an item above to view its consumption unit of measure.";
+                        ? `Units consumed in ${uom} (${lineForm.qty_basis || 'PER_HEAD'})`
+                        : 'Select an item above to view its consumption unit of measure.';
                     })()}
                   </p>
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Qty Basis</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Qty Basis
+                  </label>
                   <SearchableSelect
                     ariaLabel="Qty Basis"
                     value={lineForm.qty_basis}
-                    onChange={(val) => setLineForm((f: Row) => ({ ...f, qty_basis: val }))}
+                    onChange={(val) =>
+                      setLineForm((f: Row) => ({ ...f, qty_basis: val }))
+                    }
                     options={QTY_BASES}
                   />
                 </div>
 
                 <div className="flex flex-col gap-2 pt-2">
-                  <label className="flex items-center gap-1.5 cursor-pointer" style={S.sub}>
+                  <label
+                    className="flex items-center gap-1.5 cursor-pointer"
+                    style={S.sub}
+                  >
                     <input
                       type="checkbox"
                       checked={!!lineForm.allow_qty_edit}
-                      onChange={(e) => setLineForm((f: Row) => ({ ...f, allow_qty_edit: e.target.checked }))}
+                      onChange={(e) =>
+                        setLineForm((f: Row) => ({
+                          ...f,
+                          allow_qty_edit: e.target.checked,
+                        }))
+                      }
                     />
                     Allow quantity edit at data entry
                   </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer" style={S.sub}>
+                  <label
+                    className="flex items-center gap-1.5 cursor-pointer"
+                    style={S.sub}
+                  >
                     <input
                       type="checkbox"
                       checked={!!lineForm.lot_required}
                       disabled={!!lineForm.item_id}
-                      onChange={(e) => setLineForm((f: Row) => ({ ...f, lot_required: e.target.checked }))}
+                      onChange={(e) =>
+                        setLineForm((f: Row) => ({
+                          ...f,
+                          lot_required: e.target.checked,
+                        }))
+                      }
                     />
                     Lot number required (FIFO traceability)
                   </label>
                   {lineForm.item_id && (
-                    <span className="text-[10px] pl-5" style={S.muted}>Auto-set from item's lot/serial tracking flag</span>
+                    <span className="text-[10px] pl-5" style={S.muted}>
+                      Auto-set from item's lot/serial tracking flag
+                    </span>
                   )}
                 </div>
 
@@ -1236,7 +1702,9 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                   return it?.withdrawal_days ? (
                     <div className="col-span-2 text-[11px] font-medium text-amber-600 flex items-center gap-1">
                       <span>⚠️ Medicine/Vaccine Withdrawal Period:</span>
-                      <span className="font-bold">{it.withdrawal_days} days</span>
+                      <span className="font-bold">
+                        {it.withdrawal_days} days
+                      </span>
                     </div>
                   ) : null;
                 })()}
@@ -1244,17 +1712,21 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
             )}
 
             {/* OUTPUT */}
-            {lineForm.line_type === "OUTPUT" && (
+            {lineForm.line_type === 'OUTPUT' && (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Output Item <span className="text-red-500">*</span></label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Output Item <span className="text-red-500">*</span>
+                  </label>
                   <SearchableSelect
                     ariaLabel="Output Item"
                     value={lineForm.item_id}
-                    onChange={(val) => setLineForm((f: Row) => ({ ...f, item_id: val }))}
+                    onChange={(val) =>
+                      setLineForm((f: Row) => ({ ...f, item_id: val }))
+                    }
                     options={items.map((it) => ({
                       value: it.item_id,
-                      label: `${it.item_name} ${it.uom_primary ? `(${it.uom_primary})` : ""}`,
+                      label: `${it.item_name} ${it.uom_primary ? `(${it.uom_primary})` : ''}`,
                     }))}
                     placeholder="— Select output item —"
                     searchPlaceholder="Search output items…"
@@ -1263,9 +1735,13 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
 
                 <div>
                   <div className="mb-1 flex items-center justify-between">
-                    <label className="font-semibold" style={S.sub}>Standard Output Qty</label>
+                    <label className="font-semibold" style={S.sub}>
+                      Standard Output Qty
+                    </label>
                     {(() => {
-                      const sel = items.find((i) => i.item_id === lineForm.item_id);
+                      const sel = items.find(
+                        (i) => i.item_id === lineForm.item_id,
+                      );
                       const uom = sel?.uom_primary || sel?.uom;
                       return uom ? (
                         <span className="rounded bg-sky-500/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-600 dark:text-sky-400">
@@ -1279,20 +1755,35 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                       type="number"
                       step="any"
                       value={lineForm.standard_qty}
-                      onChange={(e) => setLineForm((f: Row) => ({ ...f, standard_qty: e.target.value }))}
+                      onChange={(e) =>
+                        setLineForm((f: Row) => ({
+                          ...f,
+                          standard_qty: e.target.value,
+                        }))
+                      }
                       placeholder={(() => {
-                        const sel = items.find((i) => i.item_id === lineForm.item_id);
+                        const sel = items.find(
+                          (i) => i.item_id === lineForm.item_id,
+                        );
                         const uom = sel?.uom_primary || sel?.uom;
-                        return uom ? `e.g. 10 (${uom})` : "e.g. 10";
+                        return uom ? `e.g. 10 (${uom})` : 'e.g. 10';
                       })()}
                       className={`${inputCls} w-full pr-16`}
                       style={S.input}
                     />
                     {(() => {
-                      const sel = items.find((i) => i.item_id === lineForm.item_id);
+                      const sel = items.find(
+                        (i) => i.item_id === lineForm.item_id,
+                      );
                       const uom = sel?.uom_primary || sel?.uom;
                       return uom ? (
-                        <span className="pointer-events-none absolute right-2 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold" style={{ backgroundColor: "var(--surface-raised)", color: "var(--accent)" }}>
+                        <span
+                          className="pointer-events-none absolute right-2 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold"
+                          style={{
+                            backgroundColor: 'var(--surface-raised)',
+                            color: 'var(--accent)',
+                          }}
+                        >
                           {uom}
                         </span>
                       ) : null;
@@ -1300,39 +1791,61 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                   </div>
                   <p className="mt-1 text-[10px]" style={S.muted}>
                     {(() => {
-                      const sel = items.find((i) => i.item_id === lineForm.item_id);
+                      const sel = items.find(
+                        (i) => i.item_id === lineForm.item_id,
+                      );
                       const uom = sel?.uom_primary || sel?.uom;
                       return uom
-                        ? `Units produced in ${uom} (${lineForm.output_basis || "PER_BATCH"})`
-                        : "Select an output item above.";
+                        ? `Units produced in ${uom} (${lineForm.output_basis || 'PER_BATCH'})`
+                        : 'Select an output item above.';
                     })()}
                   </p>
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Output Basis</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Output Basis
+                  </label>
                   <SearchableSelect
                     ariaLabel="Output Basis"
                     value={lineForm.output_basis}
-                    onChange={(val) => setLineForm((f: Row) => ({ ...f, output_basis: val }))}
+                    onChange={(val) =>
+                      setLineForm((f: Row) => ({ ...f, output_basis: val }))
+                    }
                     options={OUTPUT_BASES}
                   />
                 </div>
 
                 <div className="flex flex-col gap-2 pt-2">
-                  <label className="flex items-center gap-1.5 cursor-pointer" style={S.sub}>
+                  <label
+                    className="flex items-center gap-1.5 cursor-pointer"
+                    style={S.sub}
+                  >
                     <input
                       type="checkbox"
                       checked={!!lineForm.creates_inventory}
-                      onChange={(e) => setLineForm((f: Row) => ({ ...f, creates_inventory: e.target.checked }))}
+                      onChange={(e) =>
+                        setLineForm((f: Row) => ({
+                          ...f,
+                          creates_inventory: e.target.checked,
+                        }))
+                      }
                     />
                     Creates inventory receipt
                   </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer" style={S.sub}>
+                  <label
+                    className="flex items-center gap-1.5 cursor-pointer"
+                    style={S.sub}
+                  >
                     <input
                       type="checkbox"
                       checked={!!lineForm.output_lot_auto}
-                      onChange={(e) => setLineForm((f: Row) => ({ ...f, output_lot_auto: e.target.checked }))}
+                      onChange={(e) =>
+                        setLineForm((f: Row) => ({
+                          ...f,
+                          output_lot_auto: e.target.checked,
+                        }))
+                      }
                     />
                     Auto-generate lot number
                   </label>
@@ -1341,10 +1854,12 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
             )}
 
             {/* DESCRIPTIVE */}
-            {lineForm.line_type === "DESCRIPTIVE" && (
+            {lineForm.line_type === 'DESCRIPTIVE' && (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>KPI Metric <span className="text-red-500">*</span></label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    KPI Metric <span className="text-red-500">*</span>
+                  </label>
                   <SearchableSelect
                     ariaLabel="KPI Metric"
                     value={lineForm.kpi_metric}
@@ -1352,21 +1867,33 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                       setLineForm((f: Row) => ({
                         ...f,
                         kpi_metric: metric,
-                        kpi_uom: KPI_UOM_MAP[metric] || (metric === "CUSTOM" ? f.kpi_uom : ""),
+                        kpi_uom:
+                          KPI_UOM_MAP[metric] ||
+                          (metric === 'CUSTOM' ? f.kpi_uom : ''),
                       }));
                     }}
-                    options={KPI_METRICS.map((m) => ({ value: m, label: m.replace(/_/g, " ") }))}
+                    options={KPI_METRICS.map((m) => ({
+                      value: m,
+                      label: m.replace(/_/g, ' '),
+                    }))}
                     placeholder="— Select KPI Metric —"
                     searchPlaceholder="Search KPI metrics…"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>KPI UOM</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    KPI UOM
+                  </label>
                   <input
                     value={lineForm.kpi_uom}
-                    disabled={lineForm.kpi_metric !== "CUSTOM"}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, kpi_uom: e.target.value }))}
+                    disabled={lineForm.kpi_metric !== 'CUSTOM'}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        kpi_uom: e.target.value,
+                      }))
+                    }
                     placeholder="e.g. KG, SCORE, HEAD"
                     className={`${inputCls} w-full`}
                     style={S.input}
@@ -1374,12 +1901,19 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Standard Target Value</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Standard Target Value
+                  </label>
                   <input
                     type="number"
                     step="any"
                     value={lineForm.std_value}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, std_value: e.target.value }))}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        std_value: e.target.value,
+                      }))
+                    }
                     placeholder="e.g. 1.8"
                     className={`${inputCls} w-full`}
                     style={S.input}
@@ -1387,45 +1921,70 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Capture Per</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Capture Per
+                  </label>
                   <SearchableSelect
                     ariaLabel="Capture Per"
                     value={lineForm.capture_per}
-                    onChange={(val) => setLineForm((f: Row) => ({ ...f, capture_per: val }))}
-                    options={CAPTURE_PERS.map((cp) => ({ value: cp, label: cp.replace(/_/g, " ") }))}
+                    onChange={(val) =>
+                      setLineForm((f: Row) => ({ ...f, capture_per: val }))
+                    }
+                    options={CAPTURE_PERS.map((cp) => ({
+                      value: cp,
+                      label: cp.replace(/_/g, ' '),
+                    }))}
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Lower Alert Limit</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Lower Alert Limit
+                  </label>
                   <input
                     type="number"
                     step="any"
                     value={lineForm.lower_alert_limit}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, lower_alert_limit: e.target.value }))}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        lower_alert_limit: e.target.value,
+                      }))
+                    }
                     className={`${inputCls} w-full`}
                     style={S.input}
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Upper Alert Limit</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Upper Alert Limit
+                  </label>
                   <input
                     type="number"
                     step="any"
                     value={lineForm.upper_alert_limit}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, upper_alert_limit: e.target.value }))}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        upper_alert_limit: e.target.value,
+                      }))
+                    }
                     className={`${inputCls} w-full`}
                     style={S.input}
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Alert Severity</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Alert Severity
+                  </label>
                   <SearchableSelect
                     ariaLabel="Alert Severity"
                     value={lineForm.alert_severity}
-                    onChange={(val) => setLineForm((f: Row) => ({ ...f, alert_severity: val }))}
+                    onChange={(val) =>
+                      setLineForm((f: Row) => ({ ...f, alert_severity: val }))
+                    }
                     options={ALERT_SEVERITIES}
                   />
                 </div>
@@ -1433,24 +1992,38 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
             )}
 
             {/* OVERHEAD */}
-            {lineForm.line_type === "OVERHEAD" && (
+            {lineForm.line_type === 'OVERHEAD' && (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Overhead Category</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Overhead Category
+                  </label>
                   <SearchableSelect
                     ariaLabel="Overhead Category"
                     value={lineForm.overhead_category}
-                    onChange={(val) => setLineForm((f: Row) => ({ ...f, overhead_category: val }))}
+                    onChange={(val) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        overhead_category: val,
+                      }))
+                    }
                     options={OVERHEAD_CATEGORIES}
                     placeholder="— Select category —"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>GL Account</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    GL Account
+                  </label>
                   <input
                     value={lineForm.gl_account}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, gl_account: e.target.value }))}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        gl_account: e.target.value,
+                      }))
+                    }
                     placeholder="e.g. 7200"
                     className={`${inputCls} w-full`}
                     style={S.input}
@@ -1458,12 +2031,19 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Estimated Cost</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Estimated Cost
+                  </label>
                   <input
                     type="number"
                     step="any"
                     value={lineForm.estimated_cost}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, estimated_cost: e.target.value }))}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        estimated_cost: e.target.value,
+                      }))
+                    }
                     placeholder="e.g. 150.00"
                     className={`${inputCls} w-full`}
                     style={S.input}
@@ -1473,15 +2053,20 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
             )}
 
             {/* RESOURCE */}
-            {lineForm.line_type === "RESOURCE" && (
+            {lineForm.line_type === 'RESOURCE' && (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Labour / Equipment Resource <span className="text-red-500">*</span></label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Labour / Equipment Resource{' '}
+                    <span className="text-red-500">*</span>
+                  </label>
                   <SearchableSelect
                     ariaLabel="Resource"
                     value={lineForm.resource_id}
                     onChange={(val) => {
-                      const r = resources.find((res) => res.resource_id === val);
+                      const r = resources.find(
+                        (res) => res.resource_id === val,
+                      );
                       setLineForm((f: Row) => ({
                         ...f,
                         resource_id: val,
@@ -1490,7 +2075,7 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                     }}
                     options={resources.map((r) => ({
                       value: r.resource_id,
-                      label: `${r.resource_name} ${r.resource_type ? `(${r.resource_type})` : ""}`,
+                      label: `${r.resource_name} ${r.resource_type ? `(${r.resource_type})` : ''}`,
                     }))}
                     placeholder="— Select resource —"
                     searchPlaceholder="Search resources…"
@@ -1498,12 +2083,19 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Standard Qty (Hours / Units)</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Standard Qty (Hours / Units)
+                  </label>
                   <input
                     type="number"
                     step="any"
                     value={lineForm.standard_qty}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, standard_qty: e.target.value }))}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        standard_qty: e.target.value,
+                      }))
+                    }
                     placeholder="e.g. 2"
                     className={`${inputCls} w-full`}
                     style={S.input}
@@ -1511,12 +2103,19 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Estimated Cost</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Estimated Cost
+                  </label>
                   <input
                     type="number"
                     step="any"
                     value={lineForm.estimated_cost}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, estimated_cost: e.target.value }))}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        estimated_cost: e.target.value,
+                      }))
+                    }
                     placeholder="e.g. 50.00"
                     className={`${inputCls} w-full`}
                     style={S.input}
@@ -1526,16 +2125,24 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
             )}
 
             {/* TRANSFER */}
-            {lineForm.line_type === "TRANSFER" && (
+            {lineForm.line_type === 'TRANSFER' && (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Animal / Piglet Item <span className="text-red-500">*</span></label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Animal / Piglet Item <span className="text-red-500">*</span>
+                  </label>
                   <SearchableSelect
                     ariaLabel="Biological Asset Item"
                     value={lineForm.item_id}
-                    onChange={(val) => setLineForm((f: Row) => ({ ...f, item_id: val }))}
+                    onChange={(val) =>
+                      setLineForm((f: Row) => ({ ...f, item_id: val }))
+                    }
                     options={items
-                      .filter((it) => it.is_biological_asset || it.item_type === 'LIVING_ASSET')
+                      .filter(
+                        (it) =>
+                          it.is_biological_asset ||
+                          it.item_type === 'LIVING_ASSET',
+                      )
                       .map((it) => ({
                         value: it.item_id,
                         label: `${it.item_name} (${it.item_code})`,
@@ -1546,12 +2153,19 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
                 </div>
 
                 <div>
-                  <label className="mb-1 block font-semibold" style={S.sub}>Standard Head Count</label>
+                  <label className="mb-1 block font-semibold" style={S.sub}>
+                    Standard Head Count
+                  </label>
                   <input
                     type="number"
                     step="any"
                     value={lineForm.standard_qty}
-                    onChange={(e) => setLineForm((f: Row) => ({ ...f, standard_qty: e.target.value }))}
+                    onChange={(e) =>
+                      setLineForm((f: Row) => ({
+                        ...f,
+                        standard_qty: e.target.value,
+                      }))
+                    }
                     placeholder="e.g. 150"
                     className={`${inputCls} w-full`}
                     style={S.input}
@@ -1562,8 +2176,14 @@ export default function CreateSchedulerModal({ open, onClose, onCreated, company
           </div>
 
           <div className="mt-2 flex justify-end gap-2">
-            <Button size="sm" onClick={handleSaveLineForm} className="nf-btn-primary">
-              {editingLineIndex !== null ? "Update Activity" : "Add Activity to Schedule"}
+            <Button
+              size="sm"
+              onClick={handleSaveLineForm}
+              className="nf-btn-primary"
+            >
+              {editingLineIndex !== null
+                ? 'Update Activity'
+                : 'Add Activity to Schedule'}
             </Button>
           </div>
         </div>

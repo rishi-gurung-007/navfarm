@@ -1,4 +1,7 @@
-import { transactionCls, useFarmScope } from '../../../test-utils/transaction-cls';
+import {
+  transactionCls,
+  useFarmScope,
+} from '../../../test-utils/transaction-cls';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
@@ -38,7 +41,11 @@ describe('StockTransferService', () => {
   const mockDbSelect = jest.fn();
   const mockDbInsert = jest.fn();
   const mockDbUpdate = jest.fn();
-  const mockDb = { select: mockDbSelect, insert: mockDbInsert, update: mockDbUpdate };
+  const mockDb = {
+    select: mockDbSelect,
+    insert: mockDbInsert,
+    update: mockDbUpdate,
+  };
 
   let capturedWhere: unknown;
 
@@ -49,8 +56,12 @@ describe('StockTransferService', () => {
   // a collaborator whose call StockTransferService is responsible for
   // making, with the right arguments, before its own capacity check runs.
   const mockAssertCanReceive = jest.fn();
-  const mockWriteNegativeEntry = jest.fn().mockResolvedValue({ ledger_id: 'led-1', rate: '12.50', lot_no: 'LOT-1' });
-  const mockWritePositiveEntry = jest.fn().mockResolvedValue({ ledger_id: 'led-2' });
+  const mockWriteNegativeEntry = jest
+    .fn()
+    .mockResolvedValue({ ledger_id: 'led-1', rate: '12.50', lot_no: 'LOT-1' });
+  const mockWritePositiveEntry = jest
+    .fn()
+    .mockResolvedValue({ ledger_id: 'led-2' });
 
   /** Awaitable at any point, so .where(), .limit() and .offset() all resolve. */
   const chain = (result: unknown[]) => {
@@ -58,7 +69,10 @@ describe('StockTransferService', () => {
       from: () => self,
       innerJoin: () => self,
       leftJoin: () => self,
-      where: (cond: unknown) => { capturedWhere ??= cond; return self; },
+      where: (cond: unknown) => {
+        capturedWhere ??= cond;
+        return self;
+      },
       orderBy: () => self,
       limit: () => self,
       offset: () => self,
@@ -68,7 +82,8 @@ describe('StockTransferService', () => {
     return self;
   };
 
-  const renderedWhere = () => new MySqlDialect().sqlToQuery(capturedWhere as any).sql;
+  const renderedWhere = () =>
+    new MySqlDialect().sqlToQuery(capturedWhere as any).sql;
 
   // from/to must differ — create()'s own guard rejects an equal pair before
   // the farm check ever runs.
@@ -100,9 +115,17 @@ describe('StockTransferService', () => {
     mockResolveConversionFactor.mockReset().mockResolvedValue(1);
     // Accepts by default; a test that cares about a refusal overrides it.
     mockAssertCanReceive.mockReset().mockResolvedValue(undefined);
-    mockWriteNegativeEntry.mockReset().mockResolvedValue({ ledger_id: 'led-1', rate: '12.50', lot_no: 'LOT-1' });
-    mockWritePositiveEntry.mockReset().mockResolvedValue({ ledger_id: 'led-2' });
-    mockDbSelect.mockImplementation(() => ({ from: (table: unknown) => chain(rows.get(table) ?? []) }));
+    mockWriteNegativeEntry.mockReset().mockResolvedValue({
+      ledger_id: 'led-1',
+      rate: '12.50',
+      lot_no: 'LOT-1',
+    });
+    mockWritePositiveEntry
+      .mockReset()
+      .mockResolvedValue({ ledger_id: 'led-2' });
+    mockDbSelect.mockImplementation(() => ({
+      from: (table: unknown) => chain(rows.get(table) ?? []),
+    }));
     mockDbInsert.mockImplementation((table: unknown) => ({
       values: jest.fn(async (v: any) => {
         // Event rows written by the direct-transfer path must be readable
@@ -111,38 +134,67 @@ describe('StockTransferService', () => {
         // `qty` alias mirrors what the cumulative joins project (qty:
         // quantity). Other inserts are ignored.
         const bucket = rows.get(table);
-        if (bucket && v && typeof v === 'object' && ('shipment_id' in v || 'receipt_id' in v)) {
+        if (
+          bucket &&
+          v &&
+          typeof v === 'object' &&
+          ('shipment_id' in v || 'receipt_id' in v)
+        ) {
           bucket.push({ ...v, qty: v.quantity });
         }
       }),
     }));
     // MySqlRawQueryResult is an array ([ResultSetHeader, ...]); the DRAFT →
     // POSTED claim destructures it and reads affectedRows.
-    mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
+    mockDbUpdate.mockReturnValue({
+      set: jest.fn().mockReturnValue({
+        where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
+      }),
+    });
 
     cls = transactionCls(mockDb);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StockTransferService,
         { provide: ClsService, useValue: cls },
-        { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+        {
+          provide: AuditLogService,
+          useValue: { log: jest.fn().mockResolvedValue({}) },
+        },
         {
           provide: InventoryLedgerService,
           useValue: {
-            writeTransferEntries: jest.fn().mockResolvedValue({ shipment: {}, receipt: {} }),
+            writeTransferEntries: jest
+              .fn()
+              .mockResolvedValue({ shipment: {}, receipt: {} }),
             getStockBalance: mockGetStockBalance,
             writeNegativeEntry: mockWriteNegativeEntry,
             writePositiveEntry: mockWritePositiveEntry,
             transferShipmentRemainingValue: jest.fn().mockResolvedValue(0),
-            writeTransferShipment: jest.fn().mockResolvedValue({ ledger_id: 'led-sh' }),
-            writeTransferReceipt: jest.fn().mockResolvedValue({ ledger_id: 'led-rc' }),
+            writeTransferShipment: jest
+              .fn()
+              .mockResolvedValue({ ledger_id: 'led-sh' }),
+            writeTransferReceipt: jest
+              .fn()
+              .mockResolvedValue({ ledger_id: 'led-rc' }),
             transferShipmentRate: jest.fn().mockResolvedValue(2.5),
           },
         },
-        { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+        {
+          provide: GlPostingService,
+          useValue: {
+            postInventoryLedgerEntry: jest.fn().mockResolvedValue({}),
+          },
+        },
         { provide: NumberSeriesService, useValue: numberSeriesMock },
-        { provide: UomService, useValue: { resolveConversionFactor: mockResolveConversionFactor } },
-        { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
+        {
+          provide: UomService,
+          useValue: { resolveConversionFactor: mockResolveConversionFactor },
+        },
+        {
+          provide: SiloFeedService,
+          useValue: { assertCanReceive: mockAssertCanReceive },
+        },
       ],
     }).compile();
 
@@ -155,22 +207,66 @@ describe('StockTransferService', () => {
       from_warehouse_id: 'bin-1',
       to_warehouse_id: 'silo-1',
       posting_date: '2026-10-08',
-      lines: [{ item_id: 'feed-1', quantity: 5000, uom: 'KG', requisition_line_id: 'req-line-1' }],
+      lines: [
+        {
+          item_id: 'feed-1',
+          quantity: 5000,
+          uom: 'KG',
+          requisition_line_id: 'req-line-1',
+        },
+      ],
     };
     const validContext = {
-      requisition: { requisition_id: 'req-1', tenant_id: 'tenant-1', company_id: 'co-1', main_location_id: 'farm-1' },
-      source: { location_id: 'bin-1', tenant_id: 'tenant-1', company_id: 'co-1', location_type: 'BIN', parent_location_id: 'mill-1', is_active: true, status: 'ACTIVE', deleted_at: null },
-      mill: { location_id: 'mill-1', tenant_id: 'tenant-1', company_id: 'co-1', location_type: 'MILL', is_active: true, status: 'ACTIVE', deleted_at: null },
-      destination: { location_id: 'silo-1', tenant_id: 'tenant-1', company_id: 'co-1', location_type: 'SILO', parent_location_id: 'farm-1', farm_id: 'farm-1', is_active: true, status: 'ACTIVE', deleted_at: null },
+      requisition: {
+        requisition_id: 'req-1',
+        tenant_id: 'tenant-1',
+        company_id: 'co-1',
+        main_location_id: 'farm-1',
+      },
+      source: {
+        location_id: 'bin-1',
+        tenant_id: 'tenant-1',
+        company_id: 'co-1',
+        location_type: 'BIN',
+        parent_location_id: 'mill-1',
+        is_active: true,
+        status: 'ACTIVE',
+        deleted_at: null,
+      },
+      mill: {
+        location_id: 'mill-1',
+        tenant_id: 'tenant-1',
+        company_id: 'co-1',
+        location_type: 'MILL',
+        is_active: true,
+        status: 'ACTIVE',
+        deleted_at: null,
+      },
+      destination: {
+        location_id: 'silo-1',
+        tenant_id: 'tenant-1',
+        company_id: 'co-1',
+        location_type: 'SILO',
+        parent_location_id: 'farm-1',
+        farm_id: 'farm-1',
+        is_active: true,
+        status: 'ACTIVE',
+        deleted_at: null,
+      },
     };
 
     const enterPostingTransaction = () => {
       const get = cls.get.bind(cls);
-      cls.get = ((key?: string) => key === 'tenantPostingTransaction' ? true : get(key as any)) as typeof cls.get;
+      cls.get = ((key?: string) =>
+        key === 'tenantPostingTransaction'
+          ? true
+          : get(key as any)) as typeof cls.get;
     };
 
     it('is callable only while the owning feed release transaction is active', async () => {
-      await expect(service.createForFeedRelease(dto as any, 'tenant-1')).rejects.toThrow(
+      await expect(
+        service.createForFeedRelease(dto as any, 'tenant-1'),
+      ).rejects.toThrow(
         'Feed release transfers must be created inside the feed requisition transaction.',
       );
       expect(mockDbInsert).not.toHaveBeenCalled();
@@ -178,29 +274,54 @@ describe('StockTransferService', () => {
 
     it('requires every generated transfer line to retain its requisition line id', async () => {
       enterPostingTransaction();
-      await expect(service.createForFeedRelease({ ...dto, lines: [{ item_id: 'feed-1', quantity: 5, uom: 'KG' }] } as any, 'tenant-1'))
-        .rejects.toThrow('Every feed release transfer line must include requisition_line_id.');
+      await expect(
+        service.createForFeedRelease(
+          {
+            ...dto,
+            lines: [{ item_id: 'feed-1', quantity: 5, uom: 'KG' }],
+          } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow(
+        'Every feed release transfer line must include requisition_line_id.',
+      );
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
     it('creates a validated BIN-to-SILO transfer through the shared insert path', async () => {
       enterPostingTransaction();
-      jest.spyOn(service as any, 'loadFeedReleaseContext').mockResolvedValue(validContext);
-      const createRecord = jest.spyOn(service as any, 'createRecord').mockResolvedValue({ transfer_id: 'tr-1', transfer_no: 'TR-000001' });
+      jest
+        .spyOn(service as any, 'loadFeedReleaseContext')
+        .mockResolvedValue(validContext);
+      const createRecord = jest
+        .spyOn(service as any, 'createRecord')
+        .mockResolvedValue({ transfer_id: 'tr-1', transfer_no: 'TR-000001' });
 
-      await expect(service.createForFeedRelease(dto as any, 'tenant-1', { userId: 'u-1' })).resolves.toEqual({
-        transfer_id: 'tr-1', transfer_no: 'TR-000001',
+      await expect(
+        service.createForFeedRelease(dto as any, 'tenant-1', { userId: 'u-1' }),
+      ).resolves.toEqual({
+        transfer_id: 'tr-1',
+        transfer_no: 'TR-000001',
       });
-      expect(createRecord).toHaveBeenCalledWith(dto, 'tenant-1', { userId: 'u-1' });
+      expect(createRecord).toHaveBeenCalledWith(dto, 'tenant-1', {
+        userId: 'u-1',
+      });
     });
 
     it('allocates a fresh sequential transfer number for each release group', async () => {
-      jest.spyOn(service as any, 'generateTransferNo')
+      jest
+        .spyOn(service as any, 'generateTransferNo')
         .mockResolvedValueOnce('TR-000041')
         .mockResolvedValueOnce('TR-000042');
 
-      const first = await (service as any).createRecord(dto, 'tenant-1', { userId: 'u-1' });
-      const second = await (service as any).createRecord({ ...dto, from_warehouse_id: 'bin-2' }, 'tenant-1', { userId: 'u-1' });
+      const first = await (service as any).createRecord(dto, 'tenant-1', {
+        userId: 'u-1',
+      });
+      const second = await (service as any).createRecord(
+        { ...dto, from_warehouse_id: 'bin-2' },
+        'tenant-1',
+        { userId: 'u-1' },
+      );
 
       expect(first.transfer_no).toBe('TR-000041');
       expect(second.transfer_no).toBe('TR-000042');
@@ -208,17 +329,47 @@ describe('StockTransferService', () => {
     });
 
     it.each([
-      ['a source that is not a BIN', { source: { ...validContext.source, location_type: 'STORE' } }, 'must be an active BIN'],
-      ['a BIN without a MILL parent', { mill: null }, 'must have an active MILL parent'],
-      ['an inactive BIN', { source: { ...validContext.source, is_active: false } }, 'must be an active BIN'],
-      ['a source in another company', { source: { ...validContext.source, company_id: 'co-2' } }, 'must belong to company co-1'],
-      ['a destination on another farm', { destination: { ...validContext.destination, parent_location_id: 'farm-2', farm_id: 'farm-2' } }, 'must belong to requisition farm farm-1'],
+      [
+        'a source that is not a BIN',
+        { source: { ...validContext.source, location_type: 'STORE' } },
+        'must be an active BIN',
+      ],
+      [
+        'a BIN without a MILL parent',
+        { mill: null },
+        'must have an active MILL parent',
+      ],
+      [
+        'an inactive BIN',
+        { source: { ...validContext.source, is_active: false } },
+        'must be an active BIN',
+      ],
+      [
+        'a source in another company',
+        { source: { ...validContext.source, company_id: 'co-2' } },
+        'must belong to company co-1',
+      ],
+      [
+        'a destination on another farm',
+        {
+          destination: {
+            ...validContext.destination,
+            parent_location_id: 'farm-2',
+            farm_id: 'farm-2',
+          },
+        },
+        'must belong to requisition farm farm-1',
+      ],
     ])('refuses %s', async (_label, override, message) => {
       enterPostingTransaction();
-      jest.spyOn(service as any, 'loadFeedReleaseContext').mockResolvedValue({ ...validContext, ...override });
+      jest
+        .spyOn(service as any, 'loadFeedReleaseContext')
+        .mockResolvedValue({ ...validContext, ...override });
       const createRecord = jest.spyOn(service as any, 'createRecord');
 
-      await expect(service.createForFeedRelease(dto as any, 'tenant-1')).rejects.toThrow(message);
+      await expect(
+        service.createForFeedRelease(dto as any, 'tenant-1'),
+      ).rejects.toThrow(message);
       expect(createRecord).not.toHaveBeenCalled();
     });
 
@@ -228,8 +379,13 @@ describe('StockTransferService', () => {
         ...validContext,
         destination: { ...validContext.destination, location_type: 'STORE' },
       });
-      jest.spyOn(service as any, 'createRecord').mockResolvedValue({ transfer_id: 'tr-store', transfer_no: 'TR-STORE' });
-      await expect(service.createForFeedRelease(dto as any, 'tenant-1')).resolves.toEqual({ transfer_id: 'tr-store', transfer_no: 'TR-STORE' });
+      jest.spyOn(service as any, 'createRecord').mockResolvedValue({
+        transfer_id: 'tr-store',
+        transfer_no: 'TR-STORE',
+      });
+      await expect(
+        service.createForFeedRelease(dto as any, 'tenant-1'),
+      ).resolves.toEqual({ transfer_id: 'tr-store', transfer_no: 'TR-STORE' });
     });
   });
 
@@ -242,72 +398,148 @@ describe('StockTransferService', () => {
 
     beforeEach(async () => {
       committed = false;
-      (mockDb as any).transaction = async (work: (tx: unknown) => Promise<unknown>) => {
+      (mockDb as any).transaction = async (
+        work: (tx: unknown) => Promise<unknown>,
+      ) => {
         const result = await work(mockDb);
         committed = true;
         return result;
       };
       rows.set(schema.locationMaster, [
-        { location_id: 'wh-1', location_type: 'STORE', farm_id: 'farm-a', company_id: 'co-1' },
-        { location_id: 'wh-2', location_type: 'SILO', farm_id: 'farm-b', company_id: 'co-1' },
+        {
+          location_id: 'wh-1',
+          location_type: 'STORE',
+          farm_id: 'farm-a',
+          company_id: 'co-1',
+        },
+        {
+          location_id: 'wh-2',
+          location_type: 'SILO',
+          farm_id: 'farm-b',
+          company_id: 'co-1',
+        },
       ]);
       feedAlerts = new FeedAlertService(cls, {} as any, {} as any, {} as any);
       const module: TestingModule = await Test.createTestingModule({
         providers: [
           StockTransferService,
           { provide: ClsService, useValue: cls },
-          { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
-          { provide: InventoryLedgerService, useValue: { transferShipmentRemainingValue: jest.fn().mockResolvedValue(0), writeTransferShipment: jest.fn().mockResolvedValue({ ledger_id: 'led-sh' }), writeTransferReceipt: jest.fn().mockResolvedValue({ ledger_id: 'led-rc' }), transferShipmentRate: jest.fn().mockResolvedValue(2.5), getStockBalance: mockGetStockBalance } },
-          { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+          {
+            provide: AuditLogService,
+            useValue: { log: jest.fn().mockResolvedValue({}) },
+          },
+          {
+            provide: InventoryLedgerService,
+            useValue: {
+              transferShipmentRemainingValue: jest.fn().mockResolvedValue(0),
+              writeTransferShipment: jest
+                .fn()
+                .mockResolvedValue({ ledger_id: 'led-sh' }),
+              writeTransferReceipt: jest
+                .fn()
+                .mockResolvedValue({ ledger_id: 'led-rc' }),
+              transferShipmentRate: jest.fn().mockResolvedValue(2.5),
+              getStockBalance: mockGetStockBalance,
+            },
+          },
+          {
+            provide: GlPostingService,
+            useValue: {
+              postInventoryLedgerEntry: jest.fn().mockResolvedValue({}),
+            },
+          },
           { provide: NumberSeriesService, useValue: numberSeriesMock },
-          { provide: UomService, useValue: { resolveConversionFactor: mockResolveConversionFactor } },
-          { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
+          {
+            provide: UomService,
+            useValue: { resolveConversionFactor: mockResolveConversionFactor },
+          },
+          {
+            provide: SiloFeedService,
+            useValue: { assertCanReceive: mockAssertCanReceive },
+          },
           { provide: FeedAlertService, useValue: feedAlerts },
         ],
       }).compile();
       service = module.get<StockTransferService>(StockTransferService);
       const draft = {
-        transfer_id: 'tr-1', transfer_no: 'TR-1', company_id: 'co-1', status: 'DRAFT', posting_date: '2026-09-26',
-        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
-        lines: [{ line_id: 'ln-1', item_id: 'item-1', quantity: '100', uom: 'KG' }],
+        transfer_id: 'tr-1',
+        transfer_no: 'TR-1',
+        company_id: 'co-1',
+        status: 'DRAFT',
+        posting_date: '2026-09-26',
+        from_warehouse_id: 'wh-1',
+        to_warehouse_id: 'wh-2',
+        lines: [
+          { line_id: 'ln-1', item_id: 'item-1', quantity: '100', uom: 'KG' },
+        ],
       };
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(draft);
-      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
-      jest.spyOn(service as any, 'assertSiloDestination').mockResolvedValue(undefined);
-      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'POSTED' } as any);
-      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
+      jest
+        .spyOn(service as any, 'assertWarehouses')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(service as any, 'assertSiloDestination')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValue({ ...draft, status: 'POSTED' } as any);
+      mockDbUpdate.mockReturnValue({
+        set: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
+        }),
+      });
     });
 
-    it('re-checks each end\'s farm once, after the transaction has committed', async () => {
+    it("re-checks each end's farm once, after the transaction has committed", async () => {
       const seen: unknown[] = [];
-      const evaluate = jest.spyOn(feedAlerts, 'evaluateFarm').mockImplementation(async () => {
-        seen.push({ committed, inTx: cls.get('tenantPostingTransaction') });
-        return { raise: [], renotify: [], escalate: [], resolve: [] };
-      });
+      const evaluate = jest
+        .spyOn(feedAlerts, 'evaluateFarm')
+        .mockImplementation(async () => {
+          seen.push({ committed, inTx: cls.get('tenantPostingTransaction') });
+          return { raise: [], renotify: [], escalate: [], resolve: [] };
+        });
 
-      const result = await service.post('tr-1', 'tenant-1', { userId: 'user-1' });
+      const result = await service.post('tr-1', 'tenant-1', {
+        userId: 'user-1',
+      });
 
       expect(result.status).toBe('POSTED');
       expect(evaluate.mock.calls).toEqual([
         ['farm-a', 'co-1', 'tenant-1', { levelsOnly: true }],
         ['farm-b', 'co-1', 'tenant-1', { levelsOnly: true }],
       ]);
-      expect(seen).toEqual([{ committed: true, inTx: undefined }, { committed: true, inTx: undefined }]);
+      expect(seen).toEqual([
+        { committed: true, inTx: undefined },
+        { committed: true, inTx: undefined },
+      ]);
     });
 
     it('still posts when the re-check throws', async () => {
-      jest.spyOn(feedAlerts, 'evaluateFarm').mockRejectedValue(new Error('alert_rule is locked'));
-      const warn = jest.spyOn((feedAlerts as any).logger, 'warn').mockImplementation(() => undefined);
+      jest
+        .spyOn(feedAlerts, 'evaluateFarm')
+        .mockRejectedValue(new Error('alert_rule is locked'));
+      const warn = jest
+        .spyOn((feedAlerts as any).logger, 'warn')
+        .mockImplementation(() => undefined);
 
-      const result = await service.post('tr-1', 'tenant-1', { userId: 'user-1' });
+      const result = await service.post('tr-1', 'tenant-1', {
+        userId: 'user-1',
+      });
 
       expect(result.status).toBe('POSTED');
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('alert_rule is locked'));
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('alert_rule is locked'),
+      );
     });
   });
 
   describe('farm scope', () => {
-    const grasmere = { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
+    const grasmere = {
+      farmId: 'farm-g',
+      restricted: true,
+      companyId: 'co-1',
+      lobId: 'lob-pig',
+    };
 
     it('lists only transfers touching a location on the active farm', async () => {
       useFarmScope(cls, grasmere);
@@ -330,43 +562,110 @@ describe('StockTransferService', () => {
 
     it('refuses transferring from a source location on another farm', async () => {
       useFarmScope(cls, grasmere);
-      rows.set(schema.locationMaster, [{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]);
-      await expect(service.create({ ...validTransferDto, from_warehouse_id: 'store-k' } as any, 'tenant-1'))
-        .rejects.toThrow('Source location is not on your active farm.');
+      rows.set(schema.locationMaster, [
+        {
+          location_id: 'store-k',
+          parent: 'farm-k',
+          farm_id: 'farm-k',
+          company_id: 'co-1',
+          lob_id: 'lob-pig',
+        },
+      ]);
+      await expect(
+        service.create(
+          { ...validTransferDto, from_warehouse_id: 'store-k' } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow('Source location is not on your active farm.');
     });
 
     it('refuses a destination location outside the active company even for a farm transfer', async () => {
       useFarmScope(cls, grasmere);
       mockDbSelect
-        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-1', parent: 'farm-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig' }]) })
-        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-2', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-2', lob_id: 'lob-pig' }]) });
+        .mockReturnValueOnce({
+          from: () =>
+            chain([
+              {
+                location_id: 'wh-1',
+                parent: 'farm-g',
+                farm_id: 'farm-g',
+                company_id: 'co-1',
+                lob_id: 'lob-pig',
+              },
+            ]),
+        })
+        .mockReturnValueOnce({
+          from: () =>
+            chain([
+              {
+                location_id: 'wh-2',
+                parent: 'farm-k',
+                farm_id: 'farm-k',
+                company_id: 'co-2',
+                lob_id: 'lob-pig',
+              },
+            ]),
+        });
 
-      await expect(service.create(validTransferDto as any, 'tenant-1'))
-        .rejects.toThrow('Destination location is not on your active farm.');
+      await expect(
+        service.create(validTransferDto as any, 'tenant-1'),
+      ).rejects.toThrow('Destination location is not on your active farm.');
       expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
     it('revalidates a draft destination before posting', async () => {
       useFarmScope(cls, grasmere);
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
-        transfer_id: 'tr-1', company_id: 'co-1', status: 'DRAFT',
-        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
-        lines: [{ line_id: 'ln-1', item_id: 'item-1', quantity: '1', uom: 'KG' }],
+        transfer_id: 'tr-1',
+        company_id: 'co-1',
+        status: 'DRAFT',
+        from_warehouse_id: 'wh-1',
+        to_warehouse_id: 'wh-2',
+        lines: [
+          { line_id: 'ln-1', item_id: 'item-1', quantity: '1', uom: 'KG' },
+        ],
       } as any);
       mockDbSelect
-        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-1', parent: 'farm-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig' }]) })
-        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-2', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-2', lob_id: 'lob-pig' }]) });
+        .mockReturnValueOnce({
+          from: () =>
+            chain([
+              {
+                location_id: 'wh-1',
+                parent: 'farm-g',
+                farm_id: 'farm-g',
+                company_id: 'co-1',
+                lob_id: 'lob-pig',
+              },
+            ]),
+        })
+        .mockReturnValueOnce({
+          from: () =>
+            chain([
+              {
+                location_id: 'wh-2',
+                parent: 'farm-k',
+                farm_id: 'farm-k',
+                company_id: 'co-2',
+                lob_id: 'lob-pig',
+              },
+            ]),
+        });
 
-      await expect(service.post('tr-1', 'tenant-1'))
-        .rejects.toThrow('Destination location is not on your active farm.');
+      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(
+        'Destination location is not on your active farm.',
+      );
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('refuses updating a draft to a destination outside the active company', async () => {
       useFarmScope(cls, grasmere);
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
-        transfer_id: 'tr-1', company_id: 'co-1', status: 'DRAFT',
-        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+        transfer_id: 'tr-1',
+        company_id: 'co-1',
+        status: 'DRAFT',
+        from_warehouse_id: 'wh-1',
+        to_warehouse_id: 'wh-2',
+        lines: [],
       } as any);
       // M6 (fix round 1) moved assertNotShipped ahead of assertWarehouses, so
       // update()'s FIRST select is now the shipment-events read, not the
@@ -374,11 +673,38 @@ describe('StockTransferService', () => {
       // shipment"); the two real location overrides shift down by one.
       mockDbSelect
         .mockReturnValueOnce({ from: () => chain([]) })
-        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-1', parent: 'farm-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig' }]) })
-        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-other', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-2', lob_id: 'lob-pig' }]) });
+        .mockReturnValueOnce({
+          from: () =>
+            chain([
+              {
+                location_id: 'wh-1',
+                parent: 'farm-g',
+                farm_id: 'farm-g',
+                company_id: 'co-1',
+                lob_id: 'lob-pig',
+              },
+            ]),
+        })
+        .mockReturnValueOnce({
+          from: () =>
+            chain([
+              {
+                location_id: 'wh-other',
+                parent: 'farm-k',
+                farm_id: 'farm-k',
+                company_id: 'co-2',
+                lob_id: 'lob-pig',
+              },
+            ]),
+        });
 
-      await expect(service.update('tr-1', { to_warehouse_id: 'wh-other' } as any, 'tenant-1'))
-        .rejects.toThrow('Destination location is not on your active farm.');
+      await expect(
+        service.update(
+          'tr-1',
+          { to_warehouse_id: 'wh-other' } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow('Destination location is not on your active farm.');
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });
@@ -388,7 +714,12 @@ describe('StockTransferService', () => {
   // rewrite and post the source farm's draft. The mutation load must put the
   // farm predicate on from_warehouse_id and never on to_warehouse_id.
   describe('mutations authorize from the source side only', () => {
-    const grasmere = { farmId: 'farm-g', restricted: true, companyId: 'co-1', lobId: 'lob-pig' };
+    const grasmere = {
+      farmId: 'farm-g',
+      restricted: true,
+      companyId: 'co-1',
+      lobId: 'lob-pig',
+    };
     let forCalls: unknown[];
 
     beforeEach(() => {
@@ -398,7 +729,10 @@ describe('StockTransferService', () => {
       mockDbSelect.mockImplementation(() => ({
         from: (table: unknown) => {
           const c = chain(rows.get(table) ?? []);
-          c.for = (mode: unknown) => { forCalls.push(mode); return c; };
+          c.for = (mode: unknown) => {
+            forCalls.push(mode);
+            return c;
+          };
           return c;
         },
       }));
@@ -406,28 +740,36 @@ describe('StockTransferService', () => {
 
     const expectSourceSidePredicate = () => {
       const sqlText = renderedWhere();
-      expect(sqlText).toMatch(/from_warehouse_id` IN \(SELECT lf\.location_id FROM location_master lf WHERE lf\.location_id = \? OR lf\.farm_id = \?\)/);
+      expect(sqlText).toMatch(
+        /from_warehouse_id` IN \(SELECT lf\.location_id FROM location_master lf WHERE lf\.location_id = \? OR lf\.farm_id = \?\)/,
+      );
       expect(sqlText).not.toContain('to_warehouse_id');
       expect(forCalls).toContain('update');
     };
 
     it('post loads the transfer by its source location, locked', async () => {
       useFarmScope(cls, grasmere);
-      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow("Transfer Order with ID 'tr-1' not found.");
+      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(
+        "Transfer Order with ID 'tr-1' not found.",
+      );
       expectSourceSidePredicate();
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('update loads the transfer by its source location, locked', async () => {
       useFarmScope(cls, grasmere);
-      await expect(service.update('tr-1', { remarks: 'x' } as any, 'tenant-1')).rejects.toThrow("Transfer Order with ID 'tr-1' not found.");
+      await expect(
+        service.update('tr-1', { remarks: 'x' } as any, 'tenant-1'),
+      ).rejects.toThrow("Transfer Order with ID 'tr-1' not found.");
       expectSourceSidePredicate();
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('remove loads the transfer by its source location, locked', async () => {
       useFarmScope(cls, grasmere);
-      await expect(service.remove('tr-1', 'tenant-1')).rejects.toThrow("Transfer Order with ID 'tr-1' not found.");
+      await expect(service.remove('tr-1', 'tenant-1')).rejects.toThrow(
+        "Transfer Order with ID 'tr-1' not found.",
+      );
       expectSourceSidePredicate();
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
@@ -438,15 +780,31 @@ describe('StockTransferService', () => {
       // source with farmId: null and let a Grasmere user drain it.
       useFarmScope(cls, grasmere);
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
-        transfer_id: 'tr-1', company_id: 'co-1', status: 'DRAFT',
-        from_warehouse_id: 'store-k', to_warehouse_id: 'wh-1',
-        lines: [{ line_id: 'ln-1', item_id: 'item-1', quantity: '1', uom: 'KG' }],
+        transfer_id: 'tr-1',
+        company_id: 'co-1',
+        status: 'DRAFT',
+        from_warehouse_id: 'store-k',
+        to_warehouse_id: 'wh-1',
+        lines: [
+          { line_id: 'ln-1', item_id: 'item-1', quantity: '1', uom: 'KG' },
+        ],
       } as any);
       mockDbSelect.mockReturnValueOnce({
-        from: () => chain([{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]),
+        from: () =>
+          chain([
+            {
+              location_id: 'store-k',
+              parent: 'farm-k',
+              farm_id: 'farm-k',
+              company_id: 'co-1',
+              lob_id: 'lob-pig',
+            },
+          ]),
       });
 
-      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow('Source location is not on your active farm.');
+      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(
+        'Source location is not on your active farm.',
+      );
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
@@ -454,19 +812,37 @@ describe('StockTransferService', () => {
       // Only lines change in the body; the source must still be the editor's.
       useFarmScope(cls, grasmere);
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
-        transfer_id: 'tr-1', company_id: 'co-1', status: 'DRAFT',
-        from_warehouse_id: 'store-k', to_warehouse_id: 'wh-1', lines: [],
+        transfer_id: 'tr-1',
+        company_id: 'co-1',
+        status: 'DRAFT',
+        from_warehouse_id: 'store-k',
+        to_warehouse_id: 'wh-1',
+        lines: [],
       } as any);
       // M6 (fix round 1): assertNotShipped's select (no shipment) runs before
       // assertWarehouses's source-warehouse select.
       mockDbSelect
         .mockReturnValueOnce({ from: () => chain([]) })
         .mockReturnValueOnce({
-          from: () => chain([{ location_id: 'store-k', parent: 'farm-k', farm_id: 'farm-k', company_id: 'co-1', lob_id: 'lob-pig' }]),
+          from: () =>
+            chain([
+              {
+                location_id: 'store-k',
+                parent: 'farm-k',
+                farm_id: 'farm-k',
+                company_id: 'co-1',
+                lob_id: 'lob-pig',
+              },
+            ]),
         });
 
-      await expect(service.update('tr-1', { lines: [{ item_id: 'item-1', quantity: 999, uom: 'KG' }] } as any, 'tenant-1'))
-        .rejects.toThrow('Source location is not on your active farm.');
+      await expect(
+        service.update(
+          'tr-1',
+          { lines: [{ item_id: 'item-1', quantity: 999, uom: 'KG' }] } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow('Source location is not on your active farm.');
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });
@@ -479,18 +855,35 @@ describe('StockTransferService', () => {
    */
   describe('fix round 1, M6 — update() checks shipped stock before the warehouses', () => {
     it('reports "stock has already shipped", not a warehouse error, even when the new destination would also fail validation', async () => {
-      useFarmScope(cls, { farmId: null, companyId: 'co-1', restricted: false, lobId: null });
+      useFarmScope(cls, {
+        farmId: null,
+        companyId: 'co-1',
+        restricted: false,
+        lobId: null,
+      });
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
-        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'IN_TRANSIT',
-        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+        transfer_id: 'tr-1',
+        transfer_no: 'TR-000001',
+        company_id: 'co-1',
+        status: 'IN_TRANSIT',
+        from_warehouse_id: 'wh-1',
+        to_warehouse_id: 'wh-2',
+        lines: [],
       } as any);
       rows.set(schema.transferShipment, [{ shipment_no: 'SH-2026-0001' }]);
       // The destination the caller wants to move to does not exist — if
       // assertWarehouses ran first, THIS is the error that would surface.
       rows.set(schema.locationMaster, []);
 
-      await expect(service.update('tr-1', { to_warehouse_id: 'wh-bad' } as any, 'tenant-1'))
-        .rejects.toThrow('Stock Transfer TR-000001 cannot be edited — stock has already shipped on SH-2026-0001.');
+      await expect(
+        service.update(
+          'tr-1',
+          { to_warehouse_id: 'wh-bad' } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow(
+        'Stock Transfer TR-000001 cannot be edited — stock has already shipped on SH-2026-0001.',
+      );
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
   });
@@ -502,45 +895,107 @@ describe('StockTransferService', () => {
    * guards were added.
    */
   describe('fix round 1, M1 — the ordinary paths still work', () => {
-    const openScope = { farmId: null, companyId: 'co-1', restricted: false, lobId: null };
+    const openScope = {
+      farmId: null,
+      companyId: 'co-1',
+      restricted: false,
+      lobId: null,
+    };
 
     it('remove() still cancels a DRAFT with no events (CANCELLED written)', async () => {
       useFarmScope(cls, openScope);
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
-        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
-        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+        transfer_id: 'tr-1',
+        transfer_no: 'TR-000001',
+        company_id: 'co-1',
+        status: 'DRAFT',
+        from_warehouse_id: 'wh-1',
+        to_warehouse_id: 'wh-2',
+        lines: [],
       } as any);
       // No shipment: assertNotShipped passes silently (default empty rows.get(schema.transferShipment)).
-      const setSpy = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) });
+      const setSpy = jest.fn().mockReturnValue({
+        where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
+      });
       mockDbUpdate.mockReturnValue({ set: setSpy });
 
-      const result = await service.remove('tr-1', 'tenant-1', { userId: 'u-1' } as any);
+      const result = await service.remove('tr-1', 'tenant-1', {
+        userId: 'u-1',
+      } as any);
 
-      expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ status: 'CANCELLED' }));
-      expect(result).toEqual({ success: true, message: "Transfer Order 'TR-000001' has been cancelled." });
+      expect(setSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'CANCELLED' }),
+      );
+      expect(result).toEqual({
+        success: true,
+        message: "Transfer Order 'TR-000001' has been cancelled.",
+      });
     });
 
     it('update() still edits a DRAFT with no events', async () => {
       useFarmScope(cls, openScope);
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
-        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
-        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+        transfer_id: 'tr-1',
+        transfer_no: 'TR-000001',
+        company_id: 'co-1',
+        status: 'DRAFT',
+        from_warehouse_id: 'wh-1',
+        to_warehouse_id: 'wh-2',
+        lines: [],
       } as any);
       mockDbSelect
         .mockReturnValueOnce({ from: () => chain([]) }) // assertNotShipped: no shipment
-        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-1', parent: null, farm_id: null, company_id: 'co-1', lob_id: null }]) })
-        .mockReturnValueOnce({ from: () => chain([{ location_id: 'wh-2', parent: null, farm_id: null, company_id: 'co-1', lob_id: null }]) });
-      rows.set(schema.stockTransfer, [{
-        transfer_id: 'tr-1', transfer_no: 'TR-000001', tenant_id: 'tenant-1', status: 'DRAFT', deleted_at: null,
-        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
-      }]);
+        .mockReturnValueOnce({
+          from: () =>
+            chain([
+              {
+                location_id: 'wh-1',
+                parent: null,
+                farm_id: null,
+                company_id: 'co-1',
+                lob_id: null,
+              },
+            ]),
+        })
+        .mockReturnValueOnce({
+          from: () =>
+            chain([
+              {
+                location_id: 'wh-2',
+                parent: null,
+                farm_id: null,
+                company_id: 'co-1',
+                lob_id: null,
+              },
+            ]),
+        });
+      rows.set(schema.stockTransfer, [
+        {
+          transfer_id: 'tr-1',
+          transfer_no: 'TR-000001',
+          tenant_id: 'tenant-1',
+          status: 'DRAFT',
+          deleted_at: null,
+          from_warehouse_id: 'wh-1',
+          to_warehouse_id: 'wh-2',
+        },
+      ]);
       rows.set(schema.stockTransferLine, []);
-      const setSpy = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) });
+      const setSpy = jest.fn().mockReturnValue({
+        where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
+      });
       mockDbUpdate.mockReturnValue({ set: setSpy });
 
-      await service.update('tr-1', { remarks: 'moved to dock 2' } as any, 'tenant-1', { userId: 'u-1' } as any);
+      await service.update(
+        'tr-1',
+        { remarks: 'moved to dock 2' } as any,
+        'tenant-1',
+        { userId: 'u-1' } as any,
+      );
 
-      expect(setSpy).toHaveBeenCalledWith(expect.objectContaining({ remarks: 'moved to dock 2' }));
+      expect(setSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ remarks: 'moved to dock 2' }),
+      );
     });
   });
 
@@ -560,64 +1015,129 @@ describe('StockTransferService', () => {
    * transfer (no links anywhere) is unaffected.
    */
   describe('fix round 2, Important — update() refuses a line-replace that would misattribute or drop a requisition link', () => {
-    const openScope = { farmId: null, companyId: 'co-1', restricted: false, lobId: null };
-    const REFUSAL = "Stock Transfer TR-000001 came from a requisition release; every replacement line must supply its requisition_line_id.";
+    const openScope = {
+      farmId: null,
+      companyId: 'co-1',
+      restricted: false,
+      lobId: null,
+    };
+    const REFUSAL =
+      'Stock Transfer TR-000001 came from a requisition release; every replacement line must supply its requisition_line_id.';
 
     function primeMutation(existingLines: any[]) {
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
-        transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
-        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2', lines: [],
+        transfer_id: 'tr-1',
+        transfer_no: 'TR-000001',
+        company_id: 'co-1',
+        status: 'DRAFT',
+        from_warehouse_id: 'wh-1',
+        to_warehouse_id: 'wh-2',
+        lines: [],
       } as any);
-      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
+      jest
+        .spyOn(service as any, 'assertWarehouses')
+        .mockResolvedValue(undefined);
       rows.set(schema.transferShipment, []); // assertNotShipped: no shipment
-      rows.set(schema.stockTransfer, [{
-        transfer_id: 'tr-1', transfer_no: 'TR-000001', tenant_id: 'tenant-1', status: 'DRAFT', deleted_at: null,
-        from_warehouse_id: 'wh-1', to_warehouse_id: 'wh-2',
-      }]);
+      rows.set(schema.stockTransfer, [
+        {
+          transfer_id: 'tr-1',
+          transfer_no: 'TR-000001',
+          tenant_id: 'tenant-1',
+          status: 'DRAFT',
+          deleted_at: null,
+          from_warehouse_id: 'wh-1',
+          to_warehouse_id: 'wh-2',
+        },
+      ]);
       rows.set(schema.stockTransferLine, existingLines);
     }
 
     let insertedLines: any;
     beforeEach(() => {
       insertedLines = undefined;
-      (mockDb as any).delete = jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(undefined) });
+      (mockDb as any).delete = jest
+        .fn()
+        .mockReturnValue({ where: jest.fn().mockResolvedValue(undefined) });
       mockDbInsert.mockImplementation((table: unknown) => ({
-        values: jest.fn(async (v: any) => { if (table === schema.stockTransferLine) insertedLines = v; }),
+        values: jest.fn(async (v: any) => {
+          if (table === schema.stockTransferLine) insertedLines = v;
+        }),
       }));
     });
 
     // The two lines a Store release would have created, in order: A then B.
     const TWO_LINKED_LINES = [
-      { line_id: 'ln-A', transfer_id: 'tr-1', line_no: 1, item_id: 'item-A', quantity: '10.0000', uom: 'KG', requisition_line_id: 'rl-A' },
-      { line_id: 'ln-B', transfer_id: 'tr-1', line_no: 2, item_id: 'item-B', quantity: '5.0000', uom: 'KG', requisition_line_id: 'rl-B' },
+      {
+        line_id: 'ln-A',
+        transfer_id: 'tr-1',
+        line_no: 1,
+        item_id: 'item-A',
+        quantity: '10.0000',
+        uom: 'KG',
+        requisition_line_id: 'rl-A',
+      },
+      {
+        line_id: 'ln-B',
+        transfer_id: 'tr-1',
+        line_no: 2,
+        item_id: 'item-B',
+        quantity: '5.0000',
+        uom: 'KG',
+        requisition_line_id: 'rl-B',
+      },
     ];
     const ONE_LINKED_LINE = [
-      { line_id: 'ln-A', transfer_id: 'tr-1', line_no: 1, item_id: 'item-A', quantity: '10.0000', uom: 'KG', requisition_line_id: 'rl-A' },
+      {
+        line_id: 'ln-A',
+        transfer_id: 'tr-1',
+        line_no: 1,
+        item_id: 'item-A',
+        quantity: '10.0000',
+        uom: 'KG',
+        requisition_line_id: 'rl-A',
+      },
     ];
 
     // Case 1: Reordered [A,B] -> [B,A], neither line supplies its id.
     // Round 1 would have handed B the id that belongs to A and vice versa
     // (both wrong) — now refused.
-    it('refuses a reorder with no supplied ids (round 1 would have swapped A and B\'s links)', async () => {
+    it("refuses a reorder with no supplied ids (round 1 would have swapped A and B's links)", async () => {
       useFarmScope(cls, openScope);
       primeMutation(TWO_LINKED_LINES);
 
-      await expect(service.update('tr-1', {
-        lines: [{ item_id: 'item-B', quantity: 5, uom: 'KG' }, { item_id: 'item-A', quantity: 10, uom: 'KG' }],
-      } as any, 'tenant-1', { userId: 'u-1' } as any)).rejects.toThrow(REFUSAL);
+      await expect(
+        service.update(
+          'tr-1',
+          {
+            lines: [
+              { item_id: 'item-B', quantity: 5, uom: 'KG' },
+              { item_id: 'item-A', quantity: 10, uom: 'KG' },
+            ],
+          } as any,
+          'tenant-1',
+          { userId: 'u-1' } as any,
+        ),
+      ).rejects.toThrow(REFUSAL);
       expect(insertedLines).toBeUndefined();
     });
 
     // Case 2: Removed from the front — only B survives, with no supplied id.
     // Round 1 would have handed the survivor (B, now at position 1) A's old
     // link — a stranger's FK, not "no link".
-    it('refuses a removal from the front with no supplied id (round 1 would have handed the survivor a stranger\'s link)', async () => {
+    it("refuses a removal from the front with no supplied id (round 1 would have handed the survivor a stranger's link)", async () => {
       useFarmScope(cls, openScope);
       primeMutation(TWO_LINKED_LINES);
 
-      await expect(service.update('tr-1', {
-        lines: [{ item_id: 'item-B', quantity: 5, uom: 'KG' }],
-      } as any, 'tenant-1', { userId: 'u-1' } as any)).rejects.toThrow(REFUSAL);
+      await expect(
+        service.update(
+          'tr-1',
+          {
+            lines: [{ item_id: 'item-B', quantity: 5, uom: 'KG' }],
+          } as any,
+          'tenant-1',
+          { userId: 'u-1' } as any,
+        ),
+      ).rejects.toThrow(REFUSAL);
       expect(insertedLines).toBeUndefined();
     });
 
@@ -628,9 +1148,19 @@ describe('StockTransferService', () => {
       useFarmScope(cls, openScope);
       primeMutation(ONE_LINKED_LINE);
 
-      await expect(service.update('tr-1', {
-        lines: [{ item_id: 'item-C', quantity: 2, uom: 'KG' }, { item_id: 'item-A', quantity: 10, uom: 'KG' }],
-      } as any, 'tenant-1', { userId: 'u-1' } as any)).rejects.toThrow(REFUSAL);
+      await expect(
+        service.update(
+          'tr-1',
+          {
+            lines: [
+              { item_id: 'item-C', quantity: 2, uom: 'KG' },
+              { item_id: 'item-A', quantity: 10, uom: 'KG' },
+            ],
+          } as any,
+          'tenant-1',
+          { userId: 'u-1' } as any,
+        ),
+      ).rejects.toThrow(REFUSAL);
       expect(insertedLines).toBeUndefined();
     });
 
@@ -641,12 +1171,27 @@ describe('StockTransferService', () => {
       useFarmScope(cls, openScope);
       primeMutation(ONE_LINKED_LINE);
 
-      await service.update('tr-1', {
-        lines: [
-          { item_id: 'item-A', quantity: 10, uom: 'KG', requisition_line_id: 'rl-A' },
-          { item_id: 'item-C', quantity: 2, uom: 'KG', requisition_line_id: 'rl-C' },
-        ],
-      } as any, 'tenant-1', { userId: 'u-1' } as any);
+      await service.update(
+        'tr-1',
+        {
+          lines: [
+            {
+              item_id: 'item-A',
+              quantity: 10,
+              uom: 'KG',
+              requisition_line_id: 'rl-A',
+            },
+            {
+              item_id: 'item-C',
+              quantity: 2,
+              uom: 'KG',
+              requisition_line_id: 'rl-C',
+            },
+          ],
+        } as any,
+        'tenant-1',
+        { userId: 'u-1' } as any,
+      );
 
       expect(insertedLines).toHaveLength(2);
       expect(insertedLines[0]).toMatchObject({ requisition_line_id: 'rl-A' });
@@ -659,12 +1204,27 @@ describe('StockTransferService', () => {
       useFarmScope(cls, openScope);
       primeMutation(TWO_LINKED_LINES);
 
-      await service.update('tr-1', {
-        lines: [
-          { item_id: 'item-A', quantity: 10, uom: 'KG', requisition_line_id: 'rl-A' },
-          { item_id: 'item-B', quantity: 5, uom: 'KG', requisition_line_id: 'rl-B' },
-        ],
-      } as any, 'tenant-1', { userId: 'u-1' } as any);
+      await service.update(
+        'tr-1',
+        {
+          lines: [
+            {
+              item_id: 'item-A',
+              quantity: 10,
+              uom: 'KG',
+              requisition_line_id: 'rl-A',
+            },
+            {
+              item_id: 'item-B',
+              quantity: 5,
+              uom: 'KG',
+              requisition_line_id: 'rl-B',
+            },
+          ],
+        } as any,
+        'tenant-1',
+        { userId: 'u-1' } as any,
+      );
 
       expect(insertedLines).toHaveLength(2);
       expect(insertedLines[0]).toMatchObject({ requisition_line_id: 'rl-A' });
@@ -677,15 +1237,39 @@ describe('StockTransferService', () => {
     it('leaves an ordinary transfer with no requisition links unaffected — no id required, reorder included', async () => {
       useFarmScope(cls, openScope);
       primeMutation([
-        { line_id: 'ln-X', transfer_id: 'tr-1', line_no: 1, item_id: 'item-X', quantity: '1.0000', uom: 'KG', requisition_line_id: null },
-        { line_id: 'ln-Y', transfer_id: 'tr-1', line_no: 2, item_id: 'item-Y', quantity: '2.0000', uom: 'KG', requisition_line_id: null },
+        {
+          line_id: 'ln-X',
+          transfer_id: 'tr-1',
+          line_no: 1,
+          item_id: 'item-X',
+          quantity: '1.0000',
+          uom: 'KG',
+          requisition_line_id: null,
+        },
+        {
+          line_id: 'ln-Y',
+          transfer_id: 'tr-1',
+          line_no: 2,
+          item_id: 'item-Y',
+          quantity: '2.0000',
+          uom: 'KG',
+          requisition_line_id: null,
+        },
       ]);
 
       // Reordered, and neither line supplies an id — would be refused on a
       // release-linked transfer, but this one carries no links at all.
-      await service.update('tr-1', {
-        lines: [{ item_id: 'item-Y', quantity: 2, uom: 'KG' }, { item_id: 'item-X', quantity: 1, uom: 'KG' }],
-      } as any, 'tenant-1', { userId: 'u-1' } as any);
+      await service.update(
+        'tr-1',
+        {
+          lines: [
+            { item_id: 'item-Y', quantity: 2, uom: 'KG' },
+            { item_id: 'item-X', quantity: 1, uom: 'KG' },
+          ],
+        } as any,
+        'tenant-1',
+        { userId: 'u-1' } as any,
+      );
 
       expect(insertedLines).toHaveLength(2);
       expect(insertedLines[0].requisition_line_id).toBeFalsy();
@@ -702,44 +1286,82 @@ describe('StockTransferService', () => {
    */
   describe('silo destination guards', () => {
     const draft = (lines: unknown[]) => ({
-      transfer_id: 'tr-1', transfer_no: 'TR-000001', company_id: 'co-1', status: 'DRAFT',
-      from_warehouse_id: 'store-1', to_warehouse_id: 'silo-1', posting_date: '2026-09-24',
+      transfer_id: 'tr-1',
+      transfer_no: 'TR-000001',
+      company_id: 'co-1',
+      status: 'DRAFT',
+      from_warehouse_id: 'store-1',
+      to_warehouse_id: 'silo-1',
+      posting_date: '2026-09-24',
       lines,
     });
 
     /** A 5,000 KG silo as location_master holds it — silo_capacity_kg is canonical kilograms. */
     const siloRow = {
-      location_id: 'silo-1', location_code: 'GRA/SILO-01', location_name: 'Feed Silo 01',
-      location_type: 'SILO', silo_capacity_kg: '5000.00',
+      location_id: 'silo-1',
+      location_code: 'GRA/SILO-01',
+      location_name: 'Feed Silo 01',
+      location_type: 'SILO',
+      silo_capacity_kg: '5000.00',
     };
 
     beforeEach(() => {
       rows.set(schema.locationMaster, [siloRow]);
       // post() finishes on findOne(); the accepted cases need a row to read back.
-      rows.set(schema.stockTransfer, [{ transfer_id: 'tr-1', transfer_no: 'TR-000001' }]);
+      rows.set(schema.stockTransfer, [
+        { transfer_id: 'tr-1', transfer_no: 'TR-000001' },
+      ]);
       mockDbUpdate.mockReturnValue({
-        set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }),
+        set: jest.fn().mockReturnValue({
+          where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
+        }),
       });
     });
 
     it('refuses a transfer that would push the silo past its capacity', async () => {
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(
-        draft([{ line_id: 'ln-1', item_id: 'item-feed', quantity: '2000', uom: 'KG' }]) as any,
+        draft([
+          {
+            line_id: 'ln-1',
+            item_id: 'item-feed',
+            quantity: '2000',
+            uom: 'KG',
+          },
+        ]) as any,
       );
       mockGetStockBalance.mockResolvedValue([
-        { item_id: 'item-feed', item_code: 'FEED-GROWER', uom: 'KG', on_hand_qty: 4000 },
+        {
+          item_id: 'item-feed',
+          item_code: 'FEED-GROWER',
+          uom: 'KG',
+          on_hand_qty: 4000,
+        },
       ]);
 
-      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(/would overfill it/);
+      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(
+        /would overfill it/,
+      );
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('allows a transfer that exactly fills the silo', async () => {
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(
-        draft([{ line_id: 'ln-1', item_id: 'item-feed', quantity: '1000', uom: 'KG' }]) as any,
+        draft([
+          {
+            line_id: 'ln-1',
+            item_id: 'item-feed',
+            quantity: '1000',
+            uom: 'KG',
+          },
+        ]) as any,
       );
       mockGetStockBalance.mockResolvedValue([
-        { item_id: 'item-feed', item_code: 'FEED-GROWER', uom: 'KG', on_hand_qty: 4000 },
+        {
+          item_id: 'item-feed',
+          item_code: 'FEED-GROWER',
+          uom: 'KG',
+          on_hand_qty: 4000,
+        },
       ]);
 
       await expect(service.post('tr-1', 'tenant-1')).resolves.toBeDefined();
@@ -749,62 +1371,129 @@ describe('StockTransferService', () => {
     // Capacity is kilograms; a line in TON is 1000x what the raw number says.
     it('converts the line quantity to KG before comparing it with the capacity', async () => {
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(
-        draft([{ line_id: 'ln-1', item_id: 'item-feed', quantity: '6', uom: 'TON' }]) as any,
+        draft([
+          {
+            line_id: 'ln-1',
+            item_id: 'item-feed',
+            quantity: '6',
+            uom: 'TON',
+          },
+        ]) as any,
       );
       mockResolveConversionFactor.mockResolvedValue(1000);
 
-      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(/would overfill it/);
-      expect(mockResolveConversionFactor).toHaveBeenCalledWith('TON', 'KG', 'item-feed', 'co-1', 'tenant-1');
+      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(
+        /would overfill it/,
+      );
+      expect(mockResolveConversionFactor).toHaveBeenCalledWith(
+        'TON',
+        'KG',
+        'item-feed',
+        'co-1',
+        'tenant-1',
+      );
     });
 
     it('refuses rather than assuming KG when the line UOM has no conversion to KG', async () => {
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(
-        draft([{ line_id: 'ln-1', item_id: 'item-feed', quantity: '10', uom: 'BAG' }]) as any,
+        draft([
+          {
+            line_id: 'ln-1',
+            item_id: 'item-feed',
+            quantity: '10',
+            uom: 'BAG',
+          },
+        ]) as any,
       );
-      mockResolveConversionFactor.mockRejectedValue(new Error('No UOM conversion rule found'));
+      mockResolveConversionFactor.mockRejectedValue(
+        new Error('No UOM conversion rule found'),
+      );
 
-      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(/no conversion from 'BAG' to KG/);
+      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(
+        /no conversion from 'BAG' to KG/,
+      );
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('refuses a transfer of a different item into a silo that already holds one', async () => {
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(
-        draft([{ line_id: 'ln-1', item_id: 'item-starter', quantity: '10', uom: 'KG' }]) as any,
+        draft([
+          {
+            line_id: 'ln-1',
+            item_id: 'item-starter',
+            quantity: '10',
+            uom: 'KG',
+          },
+        ]) as any,
       );
-      mockAssertCanReceive.mockRejectedValue(new Error(
-        "Cannot post this Transfer Order — silo 'Feed Silo 01' already holds 'FEED-GROWER'. A silo holds one feed item at a time; empty it before moving a different item in.",
-      ));
+      mockAssertCanReceive.mockRejectedValue(
+        new Error(
+          "Cannot post this Transfer Order — silo 'Feed Silo 01' already holds 'FEED-GROWER'. A silo holds one feed item at a time; empty it before moving a different item in.",
+        ),
+      );
 
-      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(/holds one feed item at a time/);
+      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(
+        /holds one feed item at a time/,
+      );
       expect(mockDbUpdate).not.toHaveBeenCalled();
       // The item rules ran before the capacity balances were even fetched.
       expect(mockAssertCanReceive).toHaveBeenCalledWith({
-        siloId: 'silo-1', siloName: 'Feed Silo 01', companyId: 'co-1', tenantId: 'tenant-1',
-        itemIds: ['item-starter'], documentLabel: 'Transfer Order',
+        siloId: 'silo-1',
+        siloName: 'Feed Silo 01',
+        companyId: 'co-1',
+        tenantId: 'tenant-1',
+        itemIds: ['item-starter'],
+        documentLabel: 'Transfer Order',
       });
     });
 
     it('refuses a single transfer carrying two different items into one silo', async () => {
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(
         draft([
-          { line_id: 'ln-1', item_id: 'item-grower', quantity: '10', uom: 'KG' },
-          { line_id: 'ln-2', item_id: 'item-starter', quantity: '10', uom: 'KG' },
+          {
+            line_id: 'ln-1',
+            item_id: 'item-grower',
+            quantity: '10',
+            uom: 'KG',
+          },
+          {
+            line_id: 'ln-2',
+            item_id: 'item-starter',
+            quantity: '10',
+            uom: 'KG',
+          },
         ]) as any,
       );
-      mockAssertCanReceive.mockRejectedValue(new Error(
-        "Cannot post this Transfer Order — silo 'Feed Silo 01' holds one feed item at a time and this transfer carries 2 different items.",
-      ));
+      mockAssertCanReceive.mockRejectedValue(
+        new Error(
+          "Cannot post this Transfer Order — silo 'Feed Silo 01' holds one feed item at a time and this transfer carries 2 different items.",
+        ),
+      );
 
-      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(/holds one feed item at a time/);
+      await expect(service.post('tr-1', 'tenant-1')).rejects.toThrow(
+        /holds one feed item at a time/,
+      );
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     it('tops up a silo with more of the item it already holds', async () => {
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(
-        draft([{ line_id: 'ln-1', item_id: 'item-grower', quantity: '500', uom: 'KG' }]) as any,
+        draft([
+          {
+            line_id: 'ln-1',
+            item_id: 'item-grower',
+            quantity: '500',
+            uom: 'KG',
+          },
+        ]) as any,
       );
       mockGetStockBalance.mockResolvedValue([
-        { item_id: 'item-grower', item_code: 'FEED-GROWER', uom: 'KG', on_hand_qty: 100 },
+        {
+          item_id: 'item-grower',
+          item_code: 'FEED-GROWER',
+          uom: 'KG',
+          on_hand_qty: 100,
+        },
       ]);
 
       await expect(service.post('tr-1', 'tenant-1')).resolves.toBeDefined();
@@ -812,11 +1501,28 @@ describe('StockTransferService', () => {
     });
 
     it('leaves a STORE destination unguarded — neither rule is about stores', async () => {
-      rows.set(schema.locationMaster, [{ ...siloRow, location_id: 'store-2', location_type: 'STORE', silo_capacity_kg: null }]);
+      rows.set(schema.locationMaster, [
+        {
+          ...siloRow,
+          location_id: 'store-2',
+          location_type: 'STORE',
+          silo_capacity_kg: null,
+        },
+      ]);
       jest.spyOn(service as any, 'loadForMutation').mockResolvedValue({
         ...draft([
-          { line_id: 'ln-1', item_id: 'item-grower', quantity: '99999', uom: 'KG' },
-          { line_id: 'ln-2', item_id: 'item-starter', quantity: '99999', uom: 'KG' },
+          {
+            line_id: 'ln-1',
+            item_id: 'item-grower',
+            quantity: '99999',
+            uom: 'KG',
+          },
+          {
+            line_id: 'ln-2',
+            item_id: 'item-starter',
+            quantity: '99999',
+            uom: 'KG',
+          },
         ]),
         to_warehouse_id: 'store-2',
       } as any);
@@ -835,25 +1541,45 @@ describe('StockTransferService', () => {
       to_warehouse_id: 'wh-2',
       status: 'DRAFT',
       posting_date: '2026-10-03',
-      lines: [{ line_id: 'ln-1', line_no: 1, item_id: 'item-1', quantity: '50', uom: 'KG' }],
+      lines: [
+        {
+          line_id: 'ln-1',
+          line_no: 1,
+          item_id: 'item-1',
+          quantity: '50',
+          uom: 'KG',
+        },
+      ],
     });
 
     it('refuses shipment if available stock is less than requested quantity', async () => {
       const draft = getTransferDraft();
-      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(draft as any);
-      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
+      jest
+        .spyOn(service as any, 'loadForMutation')
+        .mockResolvedValue(draft as any);
+      jest
+        .spyOn(service as any, 'assertWarehouses')
+        .mockResolvedValue(undefined);
       mockGetStockBalance.mockResolvedValue([
         { item_id: 'item-1', uom: 'KG', on_hand_qty: 20 },
       ]);
 
-      await expect(service.ship('tr-1', 'tenant-1')).rejects.toThrow(/source location has 20 KG available, but 50 KG was requested/);
+      await expect(service.ship('tr-1', 'tenant-1')).rejects.toThrow(
+        /source location has 20 KG available, but 50 KG was requested/,
+      );
     });
 
     it('ships transfer successfully and transitions status to IN_TRANSIT', async () => {
       const draft = getTransferDraft();
-      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(draft as any);
-      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
-      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      jest
+        .spyOn(service as any, 'loadForMutation')
+        .mockResolvedValue(draft as any);
+      jest
+        .spyOn(service as any, 'assertWarehouses')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
       mockGetStockBalance.mockResolvedValue([
         { item_id: 'item-1', uom: 'KG', on_hand_qty: 100 },
       ]);
@@ -869,17 +1595,22 @@ describe('StockTransferService', () => {
 
     it('ships transfer with ShipStockTransferDto including partial quantities and logistics info', async () => {
       const draft = getTransferDraft();
-      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(draft as any);
-      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
-      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      jest
+        .spyOn(service as any, 'loadForMutation')
+        .mockResolvedValue(draft as any);
+      jest
+        .spyOn(service as any, 'assertWarehouses')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
       mockGetStockBalance.mockResolvedValue([
         { item_id: 'item-1', lot_no: 'LOT-99', uom: 'KG', on_hand_qty: 100 },
       ]);
-      mockDbUpdate.mockReturnValue({
-        set: jest.fn().mockReturnValue({
-          where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
-        }),
+      const set = jest.fn().mockReturnValue({
+        where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
       });
+      mockDbUpdate.mockReturnValue({ set });
 
       const result = await service.ship(
         'tr-1',
@@ -892,19 +1623,30 @@ describe('StockTransferService', () => {
         'tenant-1',
       );
       expect(result.status).toBe('IN_TRANSIT');
+      expect(set).toHaveBeenCalledWith(
+        expect.objectContaining({ vehicle_no: 'TRK-9901' }),
+      );
     });
 
     it('refuses to receive a transfer that is not in IN_TRANSIT status', async () => {
       const draft = getTransferDraft();
-      jest.spyOn(service as any, 'loadForReceive').mockResolvedValue({ ...draft, status: 'DRAFT' } as any);
+      jest
+        .spyOn(service as any, 'loadForReceive')
+        .mockResolvedValue({ ...draft, status: 'DRAFT' } as any);
 
-      await expect(service.receive('tr-1', {}, 'tenant-1')).rejects.toThrow(/is DRAFT, expected 'IN_TRANSIT'/);
+      await expect(service.receive('tr-1', {}, 'tenant-1')).rejects.toThrow(
+        /is DRAFT, expected 'IN_TRANSIT'/,
+      );
     });
 
     it('refuses receipt when received quantity exceeds shipped quantity', async () => {
       const draft = getTransferDraft();
-      jest.spyOn(service as any, 'loadForReceive').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
-      jest.spyOn(service as any, 'assertSiloDestination').mockResolvedValue(undefined);
+      jest
+        .spyOn(service as any, 'loadForReceive')
+        .mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      jest
+        .spyOn(service as any, 'assertSiloDestination')
+        .mockResolvedValue(undefined);
       mockDbUpdate.mockReturnValue({
         set: jest.fn().mockReturnValue({
           where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
@@ -912,30 +1654,52 @@ describe('StockTransferService', () => {
       });
 
       await expect(
-        service.receive('tr-1', { lines: [{ line_id: 'ln-1', received_quantity: 60 }] }, 'tenant-1'),
-      ).rejects.toThrow(/Received quantity \(60\) cannot exceed shipped quantity \(50\)/);
+        service.receive(
+          'tr-1',
+          { lines: [{ line_id: 'ln-1', received_quantity: 60 }] },
+          'tenant-1',
+        ),
+      ).rejects.toThrow(
+        /Received quantity \(60\) cannot exceed shipped quantity \(50\)/,
+      );
     });
 
     it('receives transfer successfully and transitions status to RECEIVED', async () => {
       const draft = getTransferDraft();
-      jest.spyOn(service as any, 'loadForReceive').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
-      jest.spyOn(service as any, 'assertSiloDestination').mockResolvedValue(undefined);
-      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'RECEIVED' } as any);
+      jest
+        .spyOn(service as any, 'loadForReceive')
+        .mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      jest
+        .spyOn(service as any, 'assertSiloDestination')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValue({ ...draft, status: 'RECEIVED' } as any);
       mockDbUpdate.mockReturnValue({
         set: jest.fn().mockReturnValue({
           where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
         }),
       });
 
-      const result = await service.receive('tr-1', { lines: [{ line_id: 'ln-1', received_quantity: 50 }] }, 'tenant-1');
+      const result = await service.receive(
+        'tr-1',
+        { lines: [{ line_id: 'ln-1', received_quantity: 50 }] },
+        'tenant-1',
+      );
       expect(result.status).toBe('RECEIVED');
     });
 
     it('receives transfer with DOA quantity, auto-adjusts transit mortality, and marks order as RECEIVED', async () => {
       const draft = getTransferDraft();
-      jest.spyOn(service as any, 'loadForReceive').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
-      jest.spyOn(service as any, 'assertSiloDestination').mockResolvedValue(undefined);
-      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'RECEIVED' } as any);
+      jest
+        .spyOn(service as any, 'loadForReceive')
+        .mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      jest
+        .spyOn(service as any, 'assertSiloDestination')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValue({ ...draft, status: 'RECEIVED' } as any);
       mockDbUpdate.mockReturnValue({
         set: jest.fn().mockReturnValue({
           where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),
@@ -968,34 +1732,69 @@ describe('StockTransferService', () => {
 
     it('posts one receipt for everything that arrived and writes the DOA off against that same receipt', async () => {
       const draft = getTransferDraft();
-      jest.spyOn(service as any, 'loadForReceive').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
-      jest.spyOn(service as any, 'assertSiloDestination').mockResolvedValue(undefined);
-      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'RECEIVED' } as any);
+      jest
+        .spyOn(service as any, 'loadForReceive')
+        .mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      jest
+        .spyOn(service as any, 'assertSiloDestination')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValue({ ...draft, status: 'RECEIVED' } as any);
       mockWritePositiveEntry.mockResolvedValue({ ledger_id: 'receipt-100' });
 
-      await service.receive('tr-1', { lines: [{ line_id: 'ln-1', received_quantity: 46, doa_quantity: 4 }] }, 'tenant-1');
+      await service.receive(
+        'tr-1',
+        {
+          lines: [{ line_id: 'ln-1', received_quantity: 46, doa_quantity: 4 }],
+        },
+        'tenant-1',
+      );
 
       // One 50-unit receipt (46 good + 4 DOA), not a 46 receipt plus a 4 "twin" receipt.
       expect(mockWritePositiveEntry).toHaveBeenCalledTimes(1);
       expect(mockWritePositiveEntry).toHaveBeenCalledWith(
-        expect.objectContaining({ quantity: 50, transactionType: 'TRANSFER_RECEIPT', externalReferenceNo: 'Incl. DOA:4' }),
+        expect.objectContaining({
+          quantity: 50,
+          transactionType: 'TRANSFER_RECEIPT',
+          externalReferenceNo: 'Incl. DOA:4',
+        }),
       );
       // The DOA is drawn from that receipt, not from the oldest receipt at the location.
       expect(mockWriteNegativeEntry).toHaveBeenCalledTimes(1);
       expect(mockWriteNegativeEntry).toHaveBeenCalledWith(
-        expect.objectContaining({ quantity: 4, transactionType: 'VARIANCE_NEGATIVE', sourceLedgerId: 'receipt-100' }),
+        expect.objectContaining({
+          quantity: 4,
+          transactionType: 'VARIANCE_NEGATIVE',
+          sourceLedgerId: 'receipt-100',
+        }),
       );
     });
 
     it('posts a plain receipt and no write-off when nothing is DOA', async () => {
       const draft = getTransferDraft();
-      jest.spyOn(service as any, 'loadForReceive').mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
-      jest.spyOn(service as any, 'assertSiloDestination').mockResolvedValue(undefined);
-      jest.spyOn(service, 'findOne').mockResolvedValue({ ...draft, status: 'RECEIVED' } as any);
+      jest
+        .spyOn(service as any, 'loadForReceive')
+        .mockResolvedValue({ ...draft, status: 'IN_TRANSIT' } as any);
+      jest
+        .spyOn(service as any, 'assertSiloDestination')
+        .mockResolvedValue(undefined);
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValue({ ...draft, status: 'RECEIVED' } as any);
 
-      await service.receive('tr-1', { lines: [{ line_id: 'ln-1', received_quantity: 50 }] }, 'tenant-1');
+      await service.receive(
+        'tr-1',
+        { lines: [{ line_id: 'ln-1', received_quantity: 50 }] },
+        'tenant-1',
+      );
 
-      expect(mockWritePositiveEntry).toHaveBeenCalledWith(expect.objectContaining({ quantity: 50, externalReferenceNo: undefined }));
+      expect(mockWritePositiveEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          quantity: 50,
+          externalReferenceNo: undefined,
+        }),
+      );
       expect(mockWriteNegativeEntry).not.toHaveBeenCalled();
     });
 
@@ -1013,8 +1812,12 @@ describe('StockTransferService', () => {
         ],
       };
 
-      jest.spyOn(service as any, 'loadForMutation').mockResolvedValue(order1000 as any);
-      jest.spyOn(service as any, 'assertWarehouses').mockResolvedValue(undefined);
+      jest
+        .spyOn(service as any, 'loadForMutation')
+        .mockResolvedValue(order1000 as any);
+      jest
+        .spyOn(service as any, 'assertWarehouses')
+        .mockResolvedValue(undefined);
       mockGetStockBalance.mockResolvedValue([
         { item_id: 'item-1', lot_no: 'LOT-1', uom: 'KG', on_hand_qty: 1200 },
       ]);
@@ -1036,7 +1839,10 @@ describe('StockTransferService', () => {
             quantity: -600,
           },
         ];
-        const enriched = (service as any).enrichLinesWithQuantities(order1000.lines, mockLedger);
+        const enriched = (service as any).enrichLinesWithQuantities(
+          order1000.lines,
+          mockLedger,
+        );
         return { ...order1000, status: 'IN_TRANSIT', lines: enriched } as any;
       });
 
@@ -1054,7 +1860,12 @@ describe('StockTransferService', () => {
 
     it('correctly isolates good received quantity and DOA quantity on receiver end', () => {
       const lines = [
-        { line_id: 'ln-feed', item_id: 'item-feed', quantity: '100', remarks: '' },
+        {
+          line_id: 'ln-feed',
+          item_id: 'item-feed',
+          quantity: '100',
+          remarks: '',
+        },
       ];
       const mockLedger = [
         {
@@ -1079,7 +1890,11 @@ describe('StockTransferService', () => {
         },
       ];
 
-      const enriched = (service as any).enrichLinesWithQuantities(lines, mockLedger, 'RECEIVED');
+      const enriched = (service as any).enrichLinesWithQuantities(
+        lines,
+        mockLedger,
+        'RECEIVED',
+      );
       expect(enriched[0].qty_shipped).toBe(75);
       expect(enriched[0].qty_received).toBe(70); // Good quantity received
       expect(enriched[0].qty_doa).toBe(5); // DOA in-transit loss
@@ -1089,13 +1904,35 @@ describe('StockTransferService', () => {
     });
 
     it('reads a gross receipt (good + DOA on one row) as good received plus DOA, not as everything received', () => {
-      const lines = [{ line_id: 'ln-feed', item_id: 'item-feed', quantity: '100', remarks: '' }];
+      const lines = [
+        {
+          line_id: 'ln-feed',
+          item_id: 'item-feed',
+          quantity: '100',
+          remarks: '',
+        },
+      ];
       const mockLedger = [
-        { document_line_id: 'ln-feed', item_id: 'item-feed', transaction_type: 'TRANSFER_SHIPMENT', quantity: -100 },
-        { document_line_id: 'ln-feed', item_id: 'item-feed', transaction_type: 'TRANSFER_RECEIPT', quantity: 100, external_reference_no: 'Incl. DOA:10' },
+        {
+          document_line_id: 'ln-feed',
+          item_id: 'item-feed',
+          transaction_type: 'TRANSFER_SHIPMENT',
+          quantity: -100,
+        },
+        {
+          document_line_id: 'ln-feed',
+          item_id: 'item-feed',
+          transaction_type: 'TRANSFER_RECEIPT',
+          quantity: 100,
+          external_reference_no: 'Incl. DOA:10',
+        },
       ];
 
-      const enriched = (service as any).enrichLinesWithQuantities(lines, mockLedger, 'RECEIVED');
+      const enriched = (service as any).enrichLinesWithQuantities(
+        lines,
+        mockLedger,
+        'RECEIVED',
+      );
       expect(enriched[0].qty_received).toBe(90);
       expect(enriched[0].qty_doa).toBe(10);
       expect(enriched[0].qty_in_transit).toBe(0); // 100 shipped - (90 good + 10 DOA)
@@ -1103,19 +1940,32 @@ describe('StockTransferService', () => {
 
     it('refuses to close order when stock is still in transit', async () => {
       const order = getTransferDraft();
-      jest.spyOn(service as any, 'loadForClose').mockResolvedValue(order as any);
+      jest
+        .spyOn(service as any, 'loadForClose')
+        .mockResolvedValue(order as any);
       jest.spyOn(service as any, 'getLedgerHistory').mockResolvedValue([
-        { document_line_id: 'ln-1', item_id: 'item-1', transaction_type: 'TRANSFER_SHIPMENT', quantity: -50 },
+        {
+          document_line_id: 'ln-1',
+          item_id: 'item-1',
+          transaction_type: 'TRANSFER_SHIPMENT',
+          quantity: -50,
+        },
       ]);
 
-      await expect(service.close('tr-1', 'tenant-1')).rejects.toThrow(/units are still In Transit/);
+      await expect(service.close('tr-1', 'tenant-1')).rejects.toThrow(
+        /units are still In Transit/,
+      );
     });
 
     it('successfully short-closes order when in-transit is zero and remaining balance exists', async () => {
       const order = getTransferDraft();
-      jest.spyOn(service as any, 'loadForClose').mockResolvedValue(order as any);
+      jest
+        .spyOn(service as any, 'loadForClose')
+        .mockResolvedValue(order as any);
       jest.spyOn(service as any, 'getLedgerHistory').mockResolvedValue([]);
-      jest.spyOn(service, 'findOne').mockResolvedValue({ ...order, status: 'RECEIVED' } as any);
+      jest
+        .spyOn(service, 'findOne')
+        .mockResolvedValue({ ...order, status: 'RECEIVED' } as any);
       mockDbUpdate.mockReturnValue({
         set: jest.fn().mockReturnValue({
           where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]),

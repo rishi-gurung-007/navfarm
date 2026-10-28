@@ -1,12 +1,26 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  ConflictException,
+} from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, or, isNull, desc, like, ne } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/mysql-core';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { QueryCurrencyDto, CreateExchangeRateDto, UpdateExchangeRateRowDto } from './dto/currency.dto';
-import { listFilterConditions, listOrderBy } from '../../../common/master-list-query';
+import {
+  QueryCurrencyDto,
+  CreateExchangeRateDto,
+  UpdateExchangeRateRowDto,
+} from './dto/currency.dto';
+import {
+  listFilterConditions,
+  listOrderBy,
+  runMasterList,
+} from '../../../common/master-list-query';
 
 export interface ExchangeRateWriteScope {
   companyId: string | null;
@@ -26,44 +40,75 @@ export class CurrencyService {
     return tenantDb;
   }
 
-  private async companyBaseCurrencyId(companyId?: string | null): Promise<string> {
-    if (!companyId) throw new BadRequestException('An active company is required when the source currency is omitted.');
+  private async companyBaseCurrencyId(
+    companyId?: string | null,
+  ): Promise<string> {
+    if (!companyId)
+      throw new BadRequestException(
+        'An active company is required when the source currency is omitted.',
+      );
     const [company] = await this.db
       .select({ base_currency_id: schema.companyMaster.base_currency_id })
       .from(schema.companyMaster)
       .where(eq(schema.companyMaster.company_id, companyId))
       .limit(1);
-    if (!company) throw new NotFoundException(`Company '${companyId}' not found.`);
+    if (!company)
+      throw new NotFoundException(`Company '${companyId}' not found.`);
     return company.base_currency_id;
   }
 
-  async currentRate(companyId: string, fromCurrencyId: string, toCurrencyId: string) {
+  async currentRate(
+    companyId: string,
+    fromCurrencyId: string,
+    toCurrencyId: string,
+  ) {
     if (fromCurrencyId === toCurrencyId) {
-      return { status: 'RESOLVED' as const, rateId: null, rate: 1, rateDate: null, createdAt: null, scope: 'IDENTITY' as const };
+      return {
+        status: 'RESOLVED' as const,
+        rateId: null,
+        rate: 1,
+        rateDate: null,
+        createdAt: null,
+        scope: 'IDENTITY' as const,
+      };
     }
-    const rows = await this.db.select({
-      rate_id: schema.exchangeRate.rate_id,
-      company_id: schema.exchangeRate.company_id,
-      rate: schema.exchangeRate.rate,
-      rate_date: schema.exchangeRate.rate_date,
-      created_at: schema.exchangeRate.created_at,
-    }).from(schema.exchangeRate).where(and(
-      eq(schema.exchangeRate.from_currency_id, fromCurrencyId),
-      eq(schema.exchangeRate.to_currency_id, toCurrencyId),
-      or(eq(schema.exchangeRate.company_id, companyId), isNull(schema.exchangeRate.company_id)),
-    ));
-    const scoped = rows.filter((row) => row.company_id === companyId);
-    const visible = scoped.length ? scoped : rows.filter((row) => row.company_id === null);
-    visible.sort((a, b) => String(b.rate_date).localeCompare(String(a.rate_date)) || String(b.created_at).localeCompare(String(a.created_at)));
+    const rows = await this.db
+      .select({
+        rate_id: schema.exchangeRate.rate_id,
+        company_id: schema.exchangeRate.company_id,
+        rate: schema.exchangeRate.rate,
+        rate_date: schema.exchangeRate.rate_date,
+        created_at: schema.exchangeRate.created_at,
+      })
+      .from(schema.exchangeRate)
+      .where(
+        and(
+          eq(schema.exchangeRate.from_currency_id, fromCurrencyId),
+          eq(schema.exchangeRate.to_currency_id, toCurrencyId),
+          eq(schema.exchangeRate.company_id, companyId), // A company reads only its own rows (Rishi, 20 Oct): no tenant template, no other company's.
+        ),
+      );
+    const visible = rows.filter((row) => row.company_id === companyId);
+    visible.sort(
+      (a, b) =>
+        String(b.rate_date).localeCompare(String(a.rate_date)) ||
+        String(b.created_at).localeCompare(String(a.created_at)),
+    );
     const selected = visible[0];
-    if (!selected) return { status: 'MISSING_RATE' as const, companyId, fromCurrencyId, toCurrencyId };
+    if (!selected)
+      return {
+        status: 'MISSING_RATE' as const,
+        companyId,
+        fromCurrencyId,
+        toCurrencyId,
+      };
     return {
       status: 'RESOLVED' as const,
       rateId: selected.rate_id,
       rate: Number(selected.rate),
       rateDate: selected.rate_date,
       createdAt: selected.created_at,
-      scope: selected.company_id === companyId ? 'COMPANY' as const : 'LEGACY' as const,
+      scope: 'COMPANY' as const,
     };
   }
 
@@ -76,7 +121,9 @@ export class CurrencyService {
    */
   async listCurrencies(query: QueryCurrencyDto = {}) {
     const conditions: any[] = [];
-    conditions.push(...listFilterConditions(schema.currencyMaster, query.filter));
+    conditions.push(
+      ...listFilterConditions(schema.currencyMaster, query.filter),
+    );
     if (query.isActive !== undefined) {
       conditions.push(eq(schema.currencyMaster.is_active, query.isActive));
     }
@@ -88,13 +135,13 @@ export class CurrencyService {
         ),
       );
     }
-    return this.db
-      .select()
-      .from(schema.currencyMaster)
-      .where(conditions.length ? and(...conditions) : undefined)
-      .orderBy(listOrderBy(schema.currencyMaster, query, schema.currencyMaster.iso_code))
-      .limit(query.limit || 50)
-      .offset(query.offset || 0);
+    return runMasterList(
+      this.db,
+      schema.currencyMaster,
+      conditions,
+      query,
+      schema.currencyMaster.iso_code,
+    );
   }
 
   /**
@@ -108,7 +155,7 @@ export class CurrencyService {
   async listExchangeRates(companyId?: string | null) {
     const to = alias(schema.currencyMaster, 'to_currency');
     const conditions = companyId
-      ? [or(eq(schema.exchangeRate.company_id, companyId), isNull(schema.exchangeRate.company_id))!]
+      ? [eq(schema.exchangeRate.company_id, companyId)]
       : [];
     return this.db
       .select({
@@ -123,28 +170,39 @@ export class CurrencyService {
         to_currency: to.iso_code,
       })
       .from(schema.exchangeRate)
-      .innerJoin(schema.currencyMaster, eq(schema.exchangeRate.from_currency_id, schema.currencyMaster.currency_id))
+      .innerJoin(
+        schema.currencyMaster,
+        eq(
+          schema.exchangeRate.from_currency_id,
+          schema.currencyMaster.currency_id,
+        ),
+      )
       .innerJoin(to, eq(schema.exchangeRate.to_currency_id, to.currency_id))
       .where(conditions.length ? and(...conditions) : undefined)
       .orderBy(desc(schema.exchangeRate.rate_date));
   }
 
-  async updateExchangeRate(fromCurrencyId: string, toCurrencyId: string, rate: number, source?: string, rateDate?: string, companyId?: string | null) {
+  async updateExchangeRate(
+    fromCurrencyId: string,
+    toCurrencyId: string,
+    rate: number,
+    source?: string,
+    rateDate?: string,
+    companyId?: string | null,
+  ) {
     const rateId = randomUUID();
-    await this.db
-      .insert(schema.exchangeRate)
-      .values({
-        rate_id: rateId,
-        company_id: companyId || null,
-        from_currency_id: fromCurrencyId,
-        to_currency_id: toCurrencyId,
-        rate: rate.toString(),
-        // A dated row, not an overwrite: restating a past period needs the rate
-        // as at that date, so each entry is kept rather than replacing the last.
-        rate_date: rateDate || new Date().toISOString().split('T')[0],
-        rate_source: source || 'MANUAL',
-      });
-    
+    await this.db.insert(schema.exchangeRate).values({
+      rate_id: rateId,
+      company_id: companyId || null,
+      from_currency_id: fromCurrencyId,
+      to_currency_id: toCurrencyId,
+      rate: rate.toString(),
+      // A dated row, not an overwrite: restating a past period needs the rate
+      // as at that date, so each entry is kept rather than replacing the last.
+      rate_date: rateDate || new Date().toISOString().split('T')[0],
+      rate_source: source || 'MANUAL',
+    });
+
     const [newRate] = await this.db
       .select()
       .from(schema.exchangeRate)
@@ -163,7 +221,8 @@ export class CurrencyService {
       .from(schema.currencyMaster)
       .where(eq(schema.currencyMaster.iso_code, iso_code))
       .limit(1);
-    if (clash) throw new ConflictException(`Currency '${iso_code}' already exists.`);
+    if (clash)
+      throw new ConflictException(`Currency '${iso_code}' already exists.`);
     await this.db.insert(schema.currencyMaster).values({
       ...data,
       iso_code,
@@ -184,18 +243,23 @@ export class CurrencyService {
       const [clash] = await this.db
         .select({ id: schema.currencyMaster.currency_id })
         .from(schema.currencyMaster)
-        .where(and(
-          eq(schema.currencyMaster.iso_code, updates.iso_code),
-          ne(schema.currencyMaster.currency_id, id),
-        ))
+        .where(
+          and(
+            eq(schema.currencyMaster.iso_code, updates.iso_code),
+            ne(schema.currencyMaster.currency_id, id),
+          ),
+        )
         .limit(1);
-      if (clash) throw new ConflictException(`Currency '${updates.iso_code}' already exists.`);
+      if (clash)
+        throw new ConflictException(
+          `Currency '${updates.iso_code}' already exists.`,
+        );
     }
     await this.db
       .update(schema.currencyMaster)
       .set(updates)
       .where(eq(schema.currencyMaster.currency_id, id));
-    
+
     const [updatedCurr] = await this.db
       .select()
       .from(schema.currencyMaster)
@@ -257,9 +321,12 @@ export class CurrencyService {
    */
   async createRate(dto: CreateExchangeRateDto, companyId?: string | null) {
     const rateId = randomUUID();
-    const from = dto.from_currency_id || (await this.companyBaseCurrencyId(companyId));
+    const from =
+      dto.from_currency_id || (await this.companyBaseCurrencyId(companyId));
     if (from === dto.to_currency_id) {
-      throw new ConflictException('A currency cannot have an exchange rate against itself.');
+      throw new ConflictException(
+        'A currency cannot have an exchange rate against itself.',
+      );
     }
     await this.db.insert(schema.exchangeRate).values({
       rate_id: rateId,
@@ -280,48 +347,72 @@ export class CurrencyService {
 
   private rateWriteCondition(id: string, scope: ExchangeRateWriteScope) {
     if (scope.allowLegacyWrite) {
-      if (scope.companyId !== null) throw new ForbiddenException('Legacy exchange-rate writes require tenant scope.');
-      return and(eq(schema.exchangeRate.rate_id, id), isNull(schema.exchangeRate.company_id));
+      if (scope.companyId !== null)
+        throw new ForbiddenException(
+          'Legacy exchange-rate writes require tenant scope.',
+        );
+      return and(
+        eq(schema.exchangeRate.rate_id, id),
+        isNull(schema.exchangeRate.company_id),
+      );
     }
-    if (!scope.companyId) throw new ForbiddenException('Select a company workspace to change a company exchange rate.');
-    return and(eq(schema.exchangeRate.rate_id, id), eq(schema.exchangeRate.company_id, scope.companyId));
+    if (!scope.companyId)
+      throw new ForbiddenException(
+        'Select a company workspace to change a company exchange rate.',
+      );
+    return and(
+      eq(schema.exchangeRate.rate_id, id),
+      eq(schema.exchangeRate.company_id, scope.companyId),
+    );
   }
 
-  private assertRateOwnedByScope(existing: { company_id: string | null }, scope: ExchangeRateWriteScope) {
+  private assertRateOwnedByScope(
+    existing: { company_id: string | null },
+    scope: ExchangeRateWriteScope,
+  ) {
     const expectedCompanyId = scope.allowLegacyWrite ? null : scope.companyId;
     if (existing.company_id !== expectedCompanyId) {
-      throw new ForbiddenException('Exchange rate is not writable in this workspace.');
+      throw new ForbiddenException(
+        'Exchange rate is not writable in this workspace.',
+      );
     }
   }
 
-  async updateRate(id: string, dto: UpdateExchangeRateRowDto, scope: ExchangeRateWriteScope) {
+  async updateRate(
+    id: string,
+    dto: UpdateExchangeRateRowDto,
+    scope: ExchangeRateWriteScope,
+  ) {
     const condition = this.rateWriteCondition(id, scope);
     const [existing] = await this.db
       .select()
       .from(schema.exchangeRate)
       .where(condition)
       .limit(1);
-    if (!existing) throw new NotFoundException(`Exchange rate '${id}' not found.`);
+    if (!existing)
+      throw new NotFoundException(`Exchange rate '${id}' not found.`);
     this.assertRateOwnedByScope(existing, scope);
 
     const updates: Record<string, unknown> = {};
-    if (dto.to_currency_id !== undefined) updates.to_currency_id = dto.to_currency_id;
-    if (dto.from_currency_id !== undefined) updates.from_currency_id = dto.from_currency_id;
+    if (dto.to_currency_id !== undefined)
+      updates.to_currency_id = dto.to_currency_id;
+    if (dto.from_currency_id !== undefined)
+      updates.from_currency_id = dto.from_currency_id;
     if (dto.rate !== undefined) updates.rate = String(dto.rate);
     if (dto.rate_date !== undefined) updates.rate_date = dto.rate_date;
     if (dto.rate_source !== undefined) updates.rate_source = dto.rate_source;
 
-    const from = (updates.from_currency_id as string) ?? existing.from_currency_id;
+    const from =
+      (updates.from_currency_id as string) ?? existing.from_currency_id;
     const to = (updates.to_currency_id as string) ?? existing.to_currency_id;
     if (from === to) {
-      throw new ConflictException('A currency cannot have an exchange rate against itself.');
+      throw new ConflictException(
+        'A currency cannot have an exchange rate against itself.',
+      );
     }
 
     if (Object.keys(updates).length) {
-      await this.db
-        .update(schema.exchangeRate)
-        .set(updates)
-        .where(condition);
+      await this.db.update(schema.exchangeRate).set(updates).where(condition);
     }
     const [updated] = await this.db
       .select()
@@ -342,7 +433,8 @@ export class CurrencyService {
       .from(schema.exchangeRate)
       .where(condition)
       .limit(1);
-    if (!existing) throw new NotFoundException(`Exchange rate '${id}' not found.`);
+    if (!existing)
+      throw new NotFoundException(`Exchange rate '${id}' not found.`);
     this.assertRateOwnedByScope(existing, scope);
     await this.db.delete(schema.exchangeRate).where(condition);
     return existing;
