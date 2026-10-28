@@ -119,7 +119,7 @@ const DEMO_OPERATIONS = {
     // records no shed or pen draws its consumption from the farm store (see
     // resolveConsumptionWarehouse in batch-daily-data.service.ts), and a store
     // holding only medicine left every farm-level batch in chapter 04 unable
-    // to post — applyFifo refused it, correctly, for stock that was never
+    // to post — allocateAndCostOutbound refused it, correctly, for stock that was never
     // there. Bagged feed genuinely sits in the store, so this is also what the
     // yard looks like.
     // Every ration a scheduler consumes, not just the default one. The demo's
@@ -153,7 +153,7 @@ const DEMO_OPERATIONS = {
 // consumption for batches across all of a farm's sheds, and each shed now draws
 // from its own attached silo (docs/decisions.md, 2026-09-24) — so a silo the
 // chapter skipped is a silo some shed's daily entry cannot draw from, and
-// applyFifo refuses it as short. Stocking two of 53 silos left 28 of them empty
+// allocateAndCostOutbound refuses it as short. Stocking two of 53 silos left 28 of them empty
 // and chapter 04 died on the first shed that owned one.
 
 function dateDaysAgo(days: number): string {
@@ -239,9 +239,10 @@ export const inventoryChapter: DemoChapter = {
     const db = cls.get<MySql2Database<typeof schema>>('tenantDb');
     if (!db) throw new Error('02-inventory: tenantDb is not set — run through the harness.');
 
-    // Two days back, except on the costing seed: its daily entries start with the batches, 62 days ago, and a receipt dated
-    // after a draw cannot supply it, so the opening stock is dated just before the window opens.
-    const postingDate = dateDaysAgo(ctx.volume === 'costing' ? dailyEntryDaysFor(ctx.volume) + 2 : 2);
+    // Dated just before chapter 04's daily-entry window opens (14 days back, 62 on the costing seed): a receipt dated after a draw
+    // cannot supply it, and chapter 04 counts the stock on hand without looking at its date, so a receipt dated two days ago
+    // left the first day's feed "short" although the silo held 7,800 kg.
+    const postingDate = dateDaysAgo(dailyEntryDaysFor(ctx.volume) + 2);
 
     for (const farm of ctx.demoFarms) {
       const tag = tagOf(farm);

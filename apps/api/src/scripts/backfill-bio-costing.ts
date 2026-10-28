@@ -21,7 +21,8 @@
  */
 import mysql, { RowDataPacket } from 'mysql2/promise';
 import { originOf, resolveProfile, costingStartDate, type ResolvableProfile } from '../modules/finance/bio-costing/bio-costing.rules';
-import { BOOK_VALUE_ENTRY_TYPES, summariseAnimalValue } from '../modules/inventory/bio-asset-ledger/animal-book-value.service';
+import { BOOK_VALUE_EVENTS, summariseAnimalValue } from '../modules/inventory/bio-asset-ledger/animal-book-value.service';
+import { bioEventOf, bioEventSql } from '../modules/inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 const TOL = 0.005;
 const money = (n: unknown) => Math.round(Number(n ?? 0) * 100) / 100;
@@ -41,7 +42,7 @@ async function run() {
   });
   try {
     await db.beginTransaction();
-    const types = BOOK_VALUE_ENTRY_TYPES.map((t) => `'${t}'`).join(',');
+    const bookValueRows = bioEventSql(BOOK_VALUE_EVENTS, 'l');
 
     // ---- 1. profile assignment -------------------------------------------------------------------------------------------
     const [profileRows] = await db.query<RowDataPacket[]>(`SELECT * FROM bio_costing_profile WHERE status IN ('ACTIVE','SUPERSEDED')`);
@@ -63,14 +64,14 @@ async function run() {
 
     // ---- 2. cache refresh ---------------------------------------------------------------------------------------------------
     const [ledger] = await db.query<RowDataPacket[]>(
-      `SELECT a.animal_id, a.animal_code, a.book_value, a.total_amortised, l.entry_type, SUM(l.cost_amount) total
-         FROM animal_register a JOIN bio_asset_ledger l ON l.animal_id = a.animal_id AND l.entry_type IN (${types})
-        GROUP BY a.animal_id, a.animal_code, a.book_value, a.total_amortised, l.entry_type`);
-    type CacheRow = { code: string; cache_bv: number; cache_am: number; rows: Array<{ entry_type: string; total: string }> };
+      `SELECT a.animal_id, a.animal_code, a.book_value, a.total_amortised, l.entry_type, l.transaction_type, l.document_type, SUM(l.cost_amount) total
+         FROM animal_register a JOIN bio_asset_ledger l ON l.animal_id = a.animal_id AND ${bookValueRows}
+        GROUP BY a.animal_id, a.animal_code, a.book_value, a.total_amortised, l.entry_type, l.transaction_type, l.document_type`);
+    type CacheRow = { code: string; cache_bv: number; cache_am: number; rows: Array<{ event: ReturnType<typeof bioEventOf>; total: string }> };
     const byAnimal = new Map<string, CacheRow>();
     for (const r of ledger) {
       const e: CacheRow = byAnimal.get(r.animal_id) ?? { code: r.animal_code, cache_bv: Number(r.book_value ?? 0), cache_am: Number(r.total_amortised ?? 0), rows: [] };
-      e.rows.push({ entry_type: r.entry_type, total: r.total });
+      e.rows.push({ event: bioEventOf(r as { entry_type: string; transaction_type: string; document_type: string | null }), total: r.total });
       byAnimal.set(r.animal_id, e);
     }
     const refreshed: Array<{ animal: string; cache_book_value: number; ledger_book_value: number; cache_amortised: number; ledger_amortised: number }> = [];
@@ -87,17 +88,17 @@ async function run() {
       `SELECT b.batch_no, ROUND(SUM(l.cost_amount),4) unallocated_capitalised_cost,
               (SELECT COUNT(*) FROM animal_register a WHERE a.current_batch_id = b.batch_id AND a.is_active = 1) live_head
          FROM bio_asset_ledger l JOIN batch_header b ON b.batch_id = l.batch_id
-        WHERE l.animal_id IS NULL AND l.entry_type IN ('CONSUMPTION','OVERHEAD','OVERHEAD_COST','GROWTH_ADJMT') AND b.animal_tracking = 'REGISTERED'
+        WHERE l.animal_id IS NULL AND ${bioEventSql(['CONSUMPTION', 'OVERHEAD_COST'], 'l')} AND b.animal_tracking = 'REGISTERED'
         GROUP BY b.batch_id, b.batch_no HAVING ABS(SUM(l.cost_amount)) > ${TOL}`);
     const [uncleared] = await db.query<RowDataPacket[]>(
       `SELECT a.animal_code, p.profile_code, ROUND(-SUM(l.cost_amount),4) amortised_not_cleared
          FROM animal_register a JOIN bio_costing_profile p ON p.profile_id = a.costing_profile_id
-         JOIN bio_asset_ledger l ON l.animal_id = a.animal_id AND l.entry_type = 'AMORTIZATION'
+         JOIN bio_asset_ledger l ON l.animal_id = a.animal_id AND ${bioEventSql('AMORTIZATION', 'l')}
         WHERE a.is_active = 0 AND a.disposal_type = 'DIED'
           AND NOT EXISTS (SELECT 1 FROM journal_header j WHERE j.source_document_type = 'BIO_ASSET_EXIT' AND j.source_document_no = a.animal_code AND j.status = 'POSTED')
         GROUP BY a.animal_code, p.profile_code HAVING ABS(SUM(l.cost_amount)) > ${TOL}`);
     const [noLedger] = await db.query<RowDataPacket[]>(
-      `SELECT animal_code FROM animal_register a WHERE NOT EXISTS (SELECT 1 FROM bio_asset_ledger l WHERE l.animal_id = a.animal_id AND l.entry_type IN (${types}))`);
+      `SELECT animal_code FROM animal_register a WHERE NOT EXISTS (SELECT 1 FROM bio_asset_ledger l WHERE l.animal_id = a.animal_id AND ${bookValueRows})`);
 
     console.log(JSON.stringify({
       database, mode: mode || 'READ-ONLY', as_of: today, profiles_in_force: profileRows.length,

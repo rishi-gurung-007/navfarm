@@ -50,7 +50,7 @@ describe('BatchDayReversalService', () => {
   const updates: Array<{ table: unknown; set: any }> = [];
   const inserts: Array<{ table: unknown; values: any }> = [];
   const deletes: unknown[] = [];
-  const ledger = { reverseEntry: jest.fn(), reversePositiveEntry: jest.fn() };
+  const ledger = { reverseIssue: jest.fn(), reverseReceipt: jest.fn() };
   const gl = { reverseInventoryJournal: jest.fn(), reverseJournal: jest.fn(), findBatchCostJournal: jest.fn() };
 
   // Each select takes the next queued result; every builder method returns the same awaitable.
@@ -72,8 +72,8 @@ describe('BatchDayReversalService', () => {
   beforeEach(async () => {
     queue.length = 0; updates.length = 0; inserts.length = 0; deletes.length = 0;
     jest.clearAllMocks();
-    ledger.reverseEntry.mockResolvedValue({ ledger_id: 'rev' });
-    ledger.reversePositiveEntry.mockResolvedValue({ ledger_id: 'rev' });
+    ledger.reverseIssue.mockResolvedValue({ ledger_id: 'rev' });
+    ledger.reverseReceipt.mockResolvedValue({ ledger_id: 'rev' });
     const moduleRef = await Test.createTestingModule({
       providers: [
         BatchDayReversalService,
@@ -96,7 +96,7 @@ describe('BatchDayReversalService', () => {
       [row({ entry_id: 'e1', animal_id: 'a1', posting_reference: 't1' }), row({ entry_id: 'e2', animal_id: 'a2', posting_reference: 't2' })],
       [{ animal_id: 'a1', animal_code: 'P-a1', is_active: true, batch_id: 'b1', stage_code: 'GESTATION' }, { animal_id: 'a2', animal_code: 'P-a2', is_active: true, batch_id: 'b1', stage_code: 'GESTATION' }],
       [{ transaction_id: 't1', ledger_id: 'L1' }, { transaction_id: 't2', ledger_id: 'L1' }],
-      [{ ledger_id: 'L1', transaction_type: 'BIO_CONSUMPTION_PREMATURE', amount: '-6', quantity: '-30', rate: '0.2', item_id: 'feed', document_line_id: 'G1', posting_date: '2026-10-01' }],
+      [{ ledger_id: 'L1', transaction_type: 'CONSUMPTION', gl_mapping_type: 'BIO_CONSUMPTION_PREMATURE', amount: '-6', quantity: '-30', rate: '0.2', item_id: 'feed', document_line_id: 'G1', posting_date: '2026-10-01' }],
       [{ nca_book_value: '10' }], // the herd's state
       [ // the rows the issue wrote, one per animal
         { entry_id: 'r1', animal_id: 'a1', bio_asset_item_id: 'feed', quantity: '10', cost_amount: '2.0000', cost_amount_each_unit: '0.2', posting_date: '2026-10-01' },
@@ -109,8 +109,8 @@ describe('BatchDayReversalService', () => {
 
     const mirrors = inserts.filter((i) => i.table === schema.bioAssetLedger).map((i) => i.values);
     expect(mirrors).toHaveLength(2);
-    expect(mirrors[0]).toMatchObject({ animal_id: 'a1', entry_type: 'CONSUMPTION', cost_amount: '-2', quantity: '-10', source_entry_id: 'r1' });
-    expect(mirrors[1]).toMatchObject({ animal_id: 'a2', entry_type: 'CONSUMPTION', cost_amount: '-4', quantity: '-20', source_entry_id: 'r2' });
+    expect(mirrors[0]).toMatchObject({ animal_id: 'a1', entry_type: 'OVERHEAD', transaction_type: 'CONSUMPTION', document_type: 'BATCH', cost_amount: '-2', quantity: '-10', source_entry_id: 'r1' });
+    expect(mirrors[1]).toMatchObject({ animal_id: 'a2', entry_type: 'OVERHEAD', transaction_type: 'CONSUMPTION', document_type: 'BATCH', cost_amount: '-4', quantity: '-20', source_entry_id: 'r2' });
     expect(updates.find((u) => u.table === schema.batchBioAssetState)!.set.nca_book_value).toBe('4'); // 10 - 6
     expect((service as any).animalBookValue.refreshCache).toHaveBeenCalledWith(['a1', 'a2']);
   });
@@ -122,14 +122,14 @@ describe('BatchDayReversalService', () => {
       [row({ entry_id: 'e1', animal_id: 'a1', posting_reference: 't1' })],
       [{ animal_id: 'a1', animal_code: 'P-a1', is_active: true, batch_id: 'b1', stage_code: 'GESTATION' }],
       [{ transaction_id: 't1', ledger_id: 'L1' }],
-      [{ ledger_id: 'L1', transaction_type: 'BIO_CONSUMPTION_PREMATURE', amount: '-6', quantity: '-30', rate: '0.2', item_id: 'feed', document_line_id: null, posting_date: '2026-10-01' }],
+      [{ ledger_id: 'L1', transaction_type: 'CONSUMPTION', gl_mapping_type: 'BIO_CONSUMPTION_PREMATURE', amount: '-6', quantity: '-30', rate: '0.2', item_id: 'feed', document_line_id: null, posting_date: '2026-10-01' }],
       [{ nca_book_value: '10' }],
       [{ transaction_id: 't1' }],
     );
     await service.unpostDay('b1', 's1', '2026-10-01', 'typo', 't', 'u1');
     const mirrors = inserts.filter((i) => i.table === schema.bioAssetLedger).map((i) => i.values);
     expect(mirrors).toHaveLength(1);
-    expect(mirrors[0]).toMatchObject({ entry_type: 'CONSUMPTION', cost_amount: '-6' });
+    expect(mirrors[0]).toMatchObject({ entry_type: 'OVERHEAD', transaction_type: 'CONSUMPTION', document_type: 'BATCH', cost_amount: '-6' });
     expect(mirrors[0].animal_id).toBeUndefined();
   });
 
@@ -146,8 +146,8 @@ describe('BatchDayReversalService', () => {
 
     const result = await service.unpostDay('b1', 's1', '2026-10-01', 'typo', 't', 'u1');
 
-    expect(ledger.reverseEntry).toHaveBeenCalledTimes(1);
-    expect(ledger.reverseEntry).toHaveBeenCalledWith('L1', 't', 'u1');
+    expect(ledger.reverseIssue).toHaveBeenCalledTimes(1);
+    expect(ledger.reverseIssue).toHaveBeenCalledWith('L1', 't', 'u1');
     expect(gl.reverseInventoryJournal).toHaveBeenCalledWith('L1', { ledger_id: 'rev' }, 'u1');
     expect(result).toMatchObject({ unposted: 2, kept: [], consumption_reversed: true });
     expect(updates.find((u) => u.table === schema.batchTransaction)!.set.reversed_at).toBeTruthy();
@@ -160,7 +160,7 @@ describe('BatchDayReversalService', () => {
       [row({ entry_id: 'e1', animal_id: 'a1', posting_reference: 't1' })],
       [{ animal_id: 'a1', animal_code: 'P-a1', is_active: true, batch_id: 'b1', stage_code: 'GESTATION' }], // where the animals are now: still at this stage
       [{ transaction_id: 't1', ledger_id: 'L1' }],
-      [{ ledger_id: 'L1', transaction_type: 'BIO_CONSUMPTION_PREMATURE', amount: '-120', quantity: '-4', item_id: 'i1', rate: '30', posting_date: '2026-10-01' }],
+      [{ ledger_id: 'L1', transaction_type: 'CONSUMPTION', gl_mapping_type: 'BIO_CONSUMPTION_PREMATURE', amount: '-120', quantity: '-4', item_id: 'i1', rate: '30', posting_date: '2026-10-01' }],
       [{ state_id: 's', nca_book_value: '1000' }], // bio state
       [{ transaction_id: 't1' }],
     );
@@ -168,7 +168,7 @@ describe('BatchDayReversalService', () => {
     await service.unpostDay('b1', 's1', '2026-10-01', 'typo', 't', 'u1');
 
     expect(updates.find((u) => u.table === schema.batchBioAssetState)!.set.nca_book_value).toBe('880');
-    expect(inserts.find((i) => i.table === schema.bioAssetLedger)!.values).toMatchObject({ entry_type: 'CONSUMPTION', cost_amount: '-120', stage: 'PREMATURE' });
+    expect(inserts.find((i) => i.table === schema.bioAssetLedger)!.values).toMatchObject({ entry_type: 'OVERHEAD', transaction_type: 'CONSUMPTION', document_type: 'BATCH', cost_amount: '-120', stage: 'PREMATURE' });
   });
 
   it('leaves a transfer and a recorded death posted, reverses nothing for them, and says why', async () => {
@@ -185,7 +185,7 @@ describe('BatchDayReversalService', () => {
 
     expect(result.unposted).toBe(0);
     expect(result.kept.map((k) => k.activity_name)).toEqual(['Move to growers', 'Daily Mortality Check']);
-    expect(ledger.reverseEntry).not.toHaveBeenCalled();
+    expect(ledger.reverseIssue).not.toHaveBeenCalled();
     expect(updates.find((u) => u.table === schema.batchDailyData)).toBeUndefined();
   });
 
@@ -199,7 +199,7 @@ describe('BatchDayReversalService', () => {
     const result = await service.unpostDay('b1', 's1', '2026-10-01', 'typo', 't', 'u1');
     expect(result.unposted).toBe(0);
     expect(result.kept[0]).toMatchObject({ activity_name: 'Piglet Output (Live Born)', reason: expect.stringContaining('farrowing or weaning') });
-    expect(ledger.reversePositiveEntry).not.toHaveBeenCalled();
+    expect(ledger.reverseReceipt).not.toHaveBeenCalled();
   });
 
   it('leaves a posting with no transaction behind it posted rather than guessing', async () => {
@@ -222,7 +222,7 @@ describe('BatchDayReversalService', () => {
 
     expect(result.unposted).toBe(0);
     expect(result.kept[0].reason).toContain('PIG-0022 has since left this stage (now at Dry Sow)');
-    expect(ledger.reverseEntry).not.toHaveBeenCalled();
+    expect(ledger.reverseIssue).not.toHaveBeenCalled();
   });
 
   it('takes a main output back out of stock and removes its output line', async () => {
@@ -240,7 +240,7 @@ describe('BatchDayReversalService', () => {
 
     const result = await service.unpostDay('b1', 's1', '2026-10-01', 'typo', 't', 'u1');
 
-    expect(ledger.reversePositiveEntry).toHaveBeenCalledWith('L9', 't', 'u1');
+    expect(ledger.reverseReceipt).toHaveBeenCalledWith('L9', 't', 'u1');
     expect(gl.reverseInventoryJournal).toHaveBeenCalledWith('L9', { ledger_id: 'rev' }, 'u1');
     expect(deletes).toContain(schema.batchOutputLine);
     expect(result.unposted).toBe(1);
@@ -256,7 +256,7 @@ describe('BatchDayReversalService', () => {
       [{ id: 'qr1' }],
     );
     await expect(service.unpostDay('b1', 's1', '2026-10-01', 'typo', 't', 'u1')).rejects.toThrow(BadRequestException);
-    expect(ledger.reversePositiveEntry).not.toHaveBeenCalled();
+    expect(ledger.reverseReceipt).not.toHaveBeenCalled();
   });
 
   it('mirrors an overhead’s journal, found by what it recorded, and refuses if it cannot be found', async () => {

@@ -22,7 +22,7 @@ describe('LitterCostService', () => {
     update: jest.fn(() => ({ set: jest.fn((v: any) => { sets.push(v); return { where: jest.fn().mockResolvedValue({}) }; }) })),
   };
   const refresh = jest.fn();
-  const gl = { postBatchCostEntry: jest.fn() };
+  const gl = { postBatchCostEntry: jest.fn(), animalAssetAccountId: jest.fn().mockResolvedValue(undefined) };
   const farrow: any = { farrow_id: 'f1', batch_id: 'b-sows', piglet_batch_id: 'b-lot', farrowing_date: '2026-10-05', piglet_lot_no: 'LOT-1' };
   const sow: any = { animal_id: 'sow-1', animal_code: 'SOW-1', item_id: 'item-sow' };
 
@@ -87,7 +87,13 @@ describe('LitterCostService', () => {
       expect(r).toMatchObject({ moved: 90, journal: 'JE-000150' });
       expect(Number(r.perPiglet)).toBeCloseTo(9, 6);
       expect(inserted[0].map((e: any) => [e.animal_id, Number(e.cost_amount), e.document_type])).toEqual([['sow-1', -90, 'LITTER_BIRTH_COST'], [null, 90, 'LITTER_BIRTH_COST']]);
-      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(expect.objectContaining({ transactionType: 'BIO_LITTER_BIRTH', amount: 90, postingDate: '2026-10-05' }));
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(expect.objectContaining({ transactionType: 'BIO_LITTER_BIRTH', amount: 90, postingDate: '2026-10-05', creditAccountId: undefined }));
+      // The credit is the account the sow's cost is carried in, when she has a profile.
+      gl.postBatchCostEntry.mockClear();
+      gl.animalAssetAccountId.mockResolvedValue('acct-1060');
+      await service.allocateAtBirth(born, sow, 10, 't');
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(expect.objectContaining({ transactionType: 'BIO_LITTER_BIRTH', creditAccountId: 'acct-1060' }));
+      gl.animalAssetAccountId.mockResolvedValue(undefined);
     });
 
     it('still moves the value, with no journal, when no GL mapping for it is set up', async () => {
@@ -103,6 +109,19 @@ describe('LitterCostService', () => {
       const r = await service.allocateAtBirth(born, sow, 10, 't');
       expect(r.moved).toBe(0);
       expect(gl.postBatchCostEntry).not.toHaveBeenCalled();
+    });
+
+    it('says so when the litter opens at nil, naming the window, and says nothing of the kind when value moves', async () => {
+      jest.spyOn(service, 'capitalisedLactationCost').mockResolvedValue({ own: 0, shared: 0 });
+      const nil = await service.allocateAtBirth(born, sow, 10, 't');
+      expect(nil.zeroCost).toBe(true);
+      expect(nil.note).toContain('The litter opens at 0.00');
+      expect(nil.note).toContain(`${sow.animal_code} had no feed, drug or overhead capitalised between`);
+
+      jest.spyOn(service, 'capitalisedLactationCost').mockResolvedValue({ own: 40, shared: 0 });
+      const priced = await service.allocateAtBirth(born, sow, 10, 't');
+      expect(priced.zeroCost).toBe(false);
+      expect(priced.note).not.toContain('opens at 0.00');
     });
 
     it('the weaning\'s cost per piglet counts the birth cost too, and the birth cost is not taken again as lactation cost', async () => {

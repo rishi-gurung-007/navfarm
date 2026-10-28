@@ -1865,14 +1865,15 @@ export class FeedForecastService {
     const facts: SiloFact[] = [];
     for (const silo of planning) {
       // Master Setup row 16: the last genuine receipt (purchase or transfer in), newest first, one row.
-      // Variances and reversals are not receipts, and neither is a receipt a REVERSAL row points back at.
+      // Variances and reversals are not receipts, and neither is a receipt a reversal row points back at.
       const [last = null] = await this.db
         .select({ item_id: Ledger.item_id, item_description: Ledger.item_description, posting_date: Ledger.posting_date })
         .from(Ledger)
         .where(and(
           eq(Ledger.tenant_id, tenantId), eq(Ledger.company_id, companyId), eq(Ledger.warehouse_id, silo.locationId),
           eq(Ledger.entry_type, 'POSITIVE'), inArray(Ledger.transaction_type, [...SILO_RECEIPT_TRANSACTION_TYPES]), gt(Ledger.quantity, '0'),
-          sql`NOT EXISTS (SELECT 1 FROM ${schema.inventoryLedger} AS feed_receipt_reversal WHERE feed_receipt_reversal.external_reference_no = ${Ledger.ledger_id} AND feed_receipt_reversal.transaction_type = 'REVERSAL')`,
+          isNull(Ledger.reversal_of_ledger_id),
+          sql`NOT EXISTS (SELECT 1 FROM ${schema.inventoryLedger} AS feed_receipt_reversal WHERE feed_receipt_reversal.reversal_of_ledger_id = ${Ledger.ledger_id})`,
         ))
         .orderBy(sql`${Ledger.posting_date} DESC`, sql`${Ledger.created_at} DESC`)
         .limit(1);
@@ -2428,6 +2429,8 @@ export class FeedForecastService {
           eq(schema.batchHeader.company_id, farm.companyId),
           eq(schema.batchHeader.farm_id, farm.id),
           eq(schema.batchHeader.status, 'ACTIVE'),
+          // A litter on its sow is fed through her; its lot has no feed to forecast and would only raise a gap.
+          eq(schema.batchHeader.is_litter_lot, false),
           isNull(schema.batchHeader.deleted_at),
           ...batchScopeConditions(scope),
         ),

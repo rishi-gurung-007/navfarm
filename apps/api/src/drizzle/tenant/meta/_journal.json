@@ -1506,6 +1506,34 @@
       "when": 1792000000083,
       "tag": "0215_gilt_selection",
       "breakpoints": true
+    },
+    {
+      "idx": 215,
+      "version": "5",
+      "when": 1792000000084,
+      "tag": "0216_inventory_ledger_reversal_of",
+      "breakpoints": true
+    },
+    {
+      "idx": 216,
+      "version": "5",
+      "when": 1792000000085,
+      "tag": "0217_inventory_ledger_gl_mapping_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 217,
+      "version": "5",
+      "when": 1792000000086,
+      "tag": "0218_bio_asset_ledger_transaction_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 218,
+      "version": "5",
+      "when": 1792000000087,
+      "tag": "0219_batch_litter_lot",
+      "breakpoints": true
     }
   ]
 }

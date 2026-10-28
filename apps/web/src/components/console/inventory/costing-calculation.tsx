@@ -33,6 +33,7 @@ export interface CostingExplanation {
       document_no: string | null;
       posting_date: string | null;
       transaction_type: string | null;
+      is_reversal?: boolean;
       quantity: number;
       rate: number;
       amount: number;
@@ -315,7 +316,7 @@ export function CostingCalculation({
                       </TableCell>
                       <TableCell className="py-2 px-3 font-mono" style={S.sub}>
                         {r.document_no || '—'}
-                        {r.transaction_type === 'REVERSAL' ? ' (reversal)' : ''}
+                        {r.is_reversal ? ' (reversal)' : ''}
                       </TableCell>
                       <TableCell
                         className="py-2 px-3 font-mono text-right"

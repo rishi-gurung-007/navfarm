@@ -15,6 +15,7 @@ import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { itemKindOf } from '../../../common/item-kinds';
+import { bioCodes, bioEventCondition } from '../bio-asset-ledger/bio-asset-ledger.types';
 
 /** The Number Series master's "Applies To" key for GRNs, and the code of the series made when a company has none. */
 const GOODS_RECEIPT_SERIES = 'GOODS_RECEIPT';
@@ -168,6 +169,10 @@ export class GoodsReceiptService {
     return { receipt_no: `GR-${String(Number(row?.maxSeq || 0) + 1).padStart(6, '0')}` };
   }
 
+  /**
+   * Creates a DRAFT Goods Receipt Note with a number from the receipt series. The warehouse must be active and on the user's farm.
+   * Stock and the journal are written only when the receipt is posted.
+   */
   async create(dto: CreateGoodsReceiptDto, tenantId: string, userPayload?: any) {
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
     await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Location');
@@ -244,6 +249,10 @@ export class GoodsReceiptService {
     }
   }
 
+  /**
+   * Inserts a draft's lines. A serial-tracked item needs a whole quantity and exactly that many serial numbers,
+   * which are taken from the item's number series when the line gives none.
+   */
   private async insertLines(
     receiptId: string,
     lines: CreateGoodsReceiptDto['lines'],
@@ -314,7 +323,7 @@ export class GoodsReceiptService {
             `Item '${item.item_code}' is serial-tracked — quantity must be a whole positive integer.`,
           );
         }
-        const qty = Math.round(quantityNum);
+        const serialCount = Math.round(quantityNum);
 
         let serials: string[] = [];
         if (line.serials && Array.isArray(line.serials) && line.serials.length > 0) {
@@ -327,9 +336,9 @@ export class GoodsReceiptService {
         }
 
         if (serials.length > 0) {
-          if (serials.length !== qty) {
+          if (serials.length !== serialCount) {
             throw new BadRequestException(
-              `Item '${item.item_code}' is serial-tracked: quantity is ${qty}, but ${serials.length} serial number(s) were provided.`,
+              `Item '${item.item_code}' is serial-tracked: quantity is ${serialCount}, but ${serials.length} serial number(s) were provided.`,
             );
           }
           const seen = new Set<string>();
@@ -347,14 +356,14 @@ export class GoodsReceiptService {
               `Item '${item.item_code}' is serial-tracked — Serial No.(s) are required or a Tracking No. Series must be assigned.`,
             );
           }
-          const gen = await this.numberSeriesService.generateNextNumbersById(
+          const generatedSerials = await this.numberSeriesService.generateNextNumbersById(
             item.tracking_series_id,
-            qty,
+            serialCount,
             tenantId,
             companyId,
             executor,
           );
-          serials = gen.numbers;
+          serials = generatedSerials.numbers;
         }
 
         rowsToInsert.push({
@@ -362,10 +371,10 @@ export class GoodsReceiptService {
           receipt_id: receiptId,
           line_no: currentLineNo++,
           item_id: line.item_id,
-          quantity: qty.toString(),
+          quantity: serialCount.toString(),
           uom: line.uom,
           rate: line.rate?.toString() || null,
-          amount: line.rate ? (qty * line.rate).toString() : null,
+          amount: line.rate ? (serialCount * line.rate).toString() : null,
           lot_no: line.lot_no || null,
           serial_no: serials.join(', '),
           expiry_date: line.expiry_date || null,
@@ -394,6 +403,9 @@ export class GoodsReceiptService {
     }
   }
 
+  /**
+   * One receipt with its lines, if its warehouse and company are inside the user's scope; NotFound otherwise.
+   */
   async findOne(id: string) {
     const scope = farmScope(this.cls);
     const conditions = [eq(schema.goodsReceipt.receipt_id, id), isNull(schema.goodsReceipt.deleted_at)];
@@ -418,6 +430,9 @@ export class GoodsReceiptService {
     return { ...receipt, lines };
   }
 
+  /**
+   * A page of receipts in the user's scope. With `animalItemId` it instead lists posted receipts that still have animals left to register.
+   */
   async findAll(query: QueryGoodsReceiptDto, tenantId: string) {
     const conditions: any[] = [eq(schema.goodsReceipt.tenant_id, tenantId), isNull(schema.goodsReceipt.deleted_at)];
 
@@ -444,34 +459,34 @@ export class GoodsReceiptService {
       // The Source GRN picker of animal registration (Rishi, 14 Oct): a posted GRN whose Bio Asset Ledger entries for
       // this item still have an animal remaining — each registration takes one — with the unit cost of the entry the
       // next animal is taken from (the GRN's first line of the item that still has one).
-      const B = schema.bioAssetLedger;
+      const bioLedger = schema.bioAssetLedger;
       const entries = await this.db
-        .select({ receipt: schema.goodsReceipt, remaining: B.remaining_quantity, quantity: B.quantity, rate: B.cost_amount_each_unit })
+        .select({ receipt: schema.goodsReceipt, remaining: bioLedger.remaining_quantity, quantity: bioLedger.quantity, rate: bioLedger.cost_amount_each_unit })
         .from(schema.goodsReceipt)
         .innerJoin(schema.goodsReceiptLine, and(
           eq(schema.goodsReceiptLine.receipt_id, schema.goodsReceipt.receipt_id),
           eq(schema.goodsReceiptLine.item_id, query.animalItemId),
         ))
-        .innerJoin(B, and(eq(B.document_line_id, schema.goodsReceiptLine.line_id), eq(B.entry_type, 'PURCHASE')))
+        .innerJoin(bioLedger, and(eq(bioLedger.document_line_id, schema.goodsReceiptLine.line_id), bioEventCondition(bioLedger, 'PURCHASE')))
         .where(and(...conditions, eq(schema.goodsReceipt.status, 'POSTED')))
         .orderBy(desc(schema.goodsReceipt.created_at), desc(schema.goodsReceipt.receipt_no), schema.goodsReceiptLine.line_no);
       const byReceipt = new Map<string, { receipt: typeof entries[number]['receipt']; left: number; received: number; unitCost: number | null }>();
-      for (const e of entries) {
-        const r = byReceipt.get(e.receipt.receipt_id) ?? { receipt: e.receipt, left: 0, received: 0, unitCost: null };
-        const left = Math.floor(Number(e.remaining ?? 0));
-        r.left += left;
-        r.received += Math.floor(Number(e.quantity ?? 0));
-        if (r.unitCost === null && left >= 1 && e.rate != null) r.unitCost = Number(e.rate);
-        byReceipt.set(e.receipt.receipt_id, r);
+      for (const ledgerEntry of entries) {
+        const receiptTotals = byReceipt.get(ledgerEntry.receipt.receipt_id) ?? { receipt: ledgerEntry.receipt, left: 0, received: 0, unitCost: null };
+        const left = Math.floor(Number(ledgerEntry.remaining ?? 0));
+        receiptTotals.left += left;
+        receiptTotals.received += Math.floor(Number(ledgerEntry.quantity ?? 0));
+        if (receiptTotals.unitCost === null && left >= 1 && ledgerEntry.rate != null) receiptTotals.unitCost = Number(ledgerEntry.rate);
+        byReceipt.set(ledgerEntry.receipt.receipt_id, receiptTotals);
       }
       return [...byReceipt.values()]
-        .filter((r) => r.left >= 1)
+        .filter((receiptTotals) => receiptTotals.left >= 1)
         .slice(offset, offset + limit)
-        .map((r) => ({
-          ...r.receipt,
-          animals_left: r.left,
-          animals_left_label: `${r.left} of ${r.received} left`,
-          unit_cost: r.unitCost,
+        .map((receiptTotals) => ({
+          ...receiptTotals.receipt,
+          animals_left: receiptTotals.left,
+          animals_left_label: `${receiptTotals.left} of ${receiptTotals.received} left`,
+          unit_cost: receiptTotals.unitCost,
         }));
     }
 
@@ -486,12 +501,18 @@ export class GoodsReceiptService {
       .offset(offset);
   }
 
+  /**
+   * Refuses a change to a receipt that is no longer DRAFT.
+   */
   private assertDraft(receipt: { status: string }) {
     if (receipt.status !== 'DRAFT') {
       throw new BadRequestException(`GRN cannot be modified — it is already ${receipt.status}.`);
     }
   }
 
+  /**
+   * Edits a DRAFT receipt's header, and replaces its lines with the full set the Edit panel sends.
+   */
   async update(id: string, dto: UpdateGoodsReceiptDto, tenantId: string, userPayload?: any) {
     const receipt = await this.findOne(id);
     this.assertDraft(receipt);
@@ -540,6 +561,9 @@ export class GoodsReceiptService {
     });
   }
 
+  /**
+   * Cancels (soft-deletes) a DRAFT receipt and records it in the audit log.
+   */
   async remove(id: string, tenantId: string, userPayload?: any) {
     const receipt = await this.findOne(id);
     this.assertDraft(receipt);
@@ -649,8 +673,7 @@ export class GoodsReceiptService {
             tenant_id: tenantId,
             company_id: receipt.company_id,
             bio_asset_item_id: line.item_id,
-            entry_type: 'PURCHASE',
-            document_type: 'GOODS_RECEIPT',
+            ...bioCodes.purchase(),
             document_no: receipt.receipt_no,
             document_line_id: line.line_id,
             posting_date: receipt.posting_date,
@@ -666,7 +689,36 @@ export class GoodsReceiptService {
             lob_id: bioItem.lob_id ?? null,
             created_by: userPayload?.userId || null,
           });
+          // The animals are an asset and are owed for: Dr Biological Assets / Cr Trade Payables for what the receipt says they cost. The animals registered from this
+          // receipt post nothing more (it is the receipt's). Where no BIO_ACQUISITION mapping is set up it posts no journal, as before.
+          const acquisitionCost = quantity * (rate ?? 0);
+          if (acquisitionCost >= 0.005 && (await this.glPostingService.hasMapping(tenantId, receipt.company_id, 'BIO_ACQUISITION', { nobId: bioItem.nob_id, lobId: bioItem.lob_id }))) {
+            await this.glPostingService.postBatchCostEntry({
+              tenantId, companyId: receipt.company_id, transactionType: 'BIO_ACQUISITION', amount: acquisitionCost, documentNo: receipt.receipt_no,
+              documentLineId: line.line_id, postingDate: receipt.posting_date, description: `Animals received — ${receipt.receipt_no}, ${quantity} head`,
+              nobId: bioItem.nob_id ?? undefined, lobId: bioItem.lob_id ?? undefined, sourceDocumentType: 'GOODS_RECEIPT', userId: userPayload?.userId,
+              // The class account the animals will be carried in, where the profiles that cover this item agree on one.
+              debitAccountId: await this.glPostingService.assetAccountForItem(tenantId, receipt.company_id, line.item_id),
+            });
+          }
         } else {
+          // A STANDARD-costed item goes into stock at its standard cost, and what was paid above or below it is the purchase price variance: it is
+          // posted beside the receipt's own journal (Dr Price Variance / Cr Payables when above). That needs the PRICE_VARIANCE and PURCHASE mappings;
+          // without them the item goes in at the price paid, as before.
+          let stockRate = line.rate ? Number(line.rate) : undefined;
+          let priceVariance = 0;
+          const [costing] = await this.db
+            .select({ valuation_method: schema.itemMaster.valuation_method, standard_cost: schema.itemMaster.standard_cost })
+            .from(schema.itemMaster)
+            .where(eq(schema.itemMaster.item_id, line.item_id))
+            .limit(1);
+          const standard = costing?.standard_cost != null ? Number(costing.standard_cost) : null;
+          if (costing?.valuation_method?.toUpperCase() === 'STANDARD' && standard != null && standard > 0 && stockRate !== undefined && Math.abs(stockRate - standard) > 1e-6
+            && (await this.glPostingService.hasMapping(tenantId, receipt.company_id, 'PRICE_VARIANCE'))
+            && (await this.glPostingService.hasMapping(tenantId, receipt.company_id, 'PURCHASE'))) {
+            priceVariance = (stockRate - standard) * Number(line.quantity);
+            stockRate = standard;
+          }
           const ledgerEntry = await this.ledgerService.writePositiveEntry({
             tenantId,
             companyId: receipt.company_id,
@@ -679,7 +731,7 @@ export class GoodsReceiptService {
             transactionType: 'PURCHASE',
             quantity: Number(line.quantity),
             uom: line.uom,
-            rate: line.rate ? Number(line.rate) : undefined,
+            rate: stockRate,
             lotNo: line.lot_no || undefined,
             serialNo: line.serial_no || undefined,
             expiryDate: line.expiry_date || undefined,
@@ -688,6 +740,7 @@ export class GoodsReceiptService {
           });
 
           await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
+          if (priceVariance !== 0) await this.glPostingService.postPurchasePriceVariance(ledgerEntry, priceVariance, userPayload?.userId);
         }
 
         if (trackedItem?.tracking_series_id) {

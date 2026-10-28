@@ -248,12 +248,11 @@ export function BatchPicker({
         placeholder={usable.length ? "Choose the batch" : `No animal-wise batch holds a ${noun}`}
         options={usable.map((b) => ({
           value: b.batch_id,
-          label: `${b.batch_no} · ${b.stage_name || b.current_stage_code || "no stage"} · ${countOf(b.batch_id)} ${noun}${countOf(b.batch_id) === 1 ? "" : "s"}`,
+          label: `${b.batch_no} · ${countOf(b.batch_id)} ${noun}${countOf(b.batch_id) === 1 ? "" : "s"}`,
           batch_no: b.batch_no,
-          stage: b.stage_name || b.current_stage_code || "no stage",
           head: `${countOf(b.batch_id)} ${noun}${countOf(b.batch_id) === 1 ? "" : "s"}`,
         }))}
-        columns={[{ key: "batch_no", label: "Batch" }, { key: "stage", label: "Stage" }, { key: "head", label: "Held" }]}
+        columns={[{ key: "batch_no", label: "Batch" }, { key: "head", label: "Held" }]}
         disabled={!usable.length}
       />
       {!usable.length && (

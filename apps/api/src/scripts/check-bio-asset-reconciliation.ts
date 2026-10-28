@@ -14,8 +14,9 @@
  *   pnpm nx run api:db-check-bio-asset-reconciliation -- --database=nf_x
  */
 import mysql, { RowDataPacket } from 'mysql2/promise';
+import { BOOK_VALUE_EVENTS } from '../modules/inventory/bio-asset-ledger/animal-book-value.service';
+import { bioEventSql } from '../modules/inventory/bio-asset-ledger/bio-asset-ledger.types';
 
-const TYPES = ['ACQUISITION', 'CONSUMPTION', 'OVERHEAD', 'OVERHEAD_COST', 'GROWTH_ADJMT', 'AMORTIZATION', 'FAIR_VALUE_ADJMT', 'MORTALITY', 'WRITEOFF', 'TRANSFORMATION', 'COST_ALLOCATION'];
 const money = (n: unknown) => Math.round(Number(n ?? 0) * 100) / 100;
 const TOL = 0.005;
 
@@ -28,13 +29,14 @@ async function run() {
   });
   try {
     await db.query('SET SESSION TRANSACTION READ ONLY');
-    const inList = TYPES.map((t) => `'${t}'`).join(',');
+    // The rows that make up a carrying value: the same events the application's own book value counts.
+    const bookRows = (alias: string) => bioEventSql(BOOK_VALUE_EVENTS, alias);
 
     const [animals] = await db.query<RowDataPacket[]>(
       `SELECT a.animal_code, a.status, a.is_active, a.book_value cache_bv, a.total_amortised cache_am,
-              COALESCE(SUM(l.cost_amount),0) ledger_bv, COALESCE(-SUM(CASE WHEN l.entry_type='AMORTIZATION' THEN l.cost_amount END),0) ledger_am,
+              COALESCE(SUM(l.cost_amount),0) ledger_bv, COALESCE(-SUM(CASE WHEN ${bioEventSql('AMORTIZATION', 'l')} THEN l.cost_amount END),0) ledger_am,
               COUNT(l.entry_id) n
-         FROM animal_register a LEFT JOIN bio_asset_ledger l ON l.animal_id=a.animal_id AND l.entry_type IN (${inList})
+         FROM animal_register a LEFT JOIN bio_asset_ledger l ON l.animal_id=a.animal_id AND ${bookRows('l')}
         GROUP BY a.animal_id ORDER BY a.animal_code`);
     const cacheDrift = animals.filter((a) => a.n > 0 && (Math.abs(a.cache_bv - a.ledger_bv) > TOL || Math.abs(a.cache_am - a.ledger_am) > TOL));
     const noRows = animals.filter((a) => a.n === 0);
@@ -42,11 +44,11 @@ async function run() {
 
     const [batches] = await db.query<RowDataPacket[]>(
       `SELECT b.batch_no, b.status, b.animal_tracking, s.nca_book_value nca,
-              (SELECT COALESCE(SUM(l.cost_amount),0) FROM bio_asset_ledger l WHERE l.batch_id=b.batch_id AND l.entry_type IN (${inList})) all_rows,
-              (SELECT COALESCE(SUM(l.cost_amount),0) FROM bio_asset_ledger l WHERE l.batch_id=b.batch_id AND l.entry_type IN ('TRANSFER_IN','TRANSFER_OUT')) transfers,
-              (SELECT COALESCE(SUM(l.cost_amount),0) FROM bio_asset_ledger l WHERE l.batch_id=b.batch_id AND l.entry_type IN (${inList}) AND l.entry_type<>'ACQUISITION') non_acq,
-              (SELECT COALESCE(SUM(q.cost_amount),0) FROM bio_asset_ledger q WHERE q.entry_type IN ('ACQUISITION','AMORTIZATION','FAIR_VALUE_ADJMT') AND q.animal_id IN
-                 (SELECT x.animal_id FROM bio_asset_ledger x WHERE x.batch_id=b.batch_id AND x.animal_id IS NOT NULL AND x.entry_type IN ('MORTALITY','WRITEOFF','TRANSFORMATION'))) exited_acq
+              (SELECT COALESCE(SUM(l.cost_amount),0) FROM bio_asset_ledger l WHERE l.batch_id=b.batch_id AND ${bookRows('l')}) all_rows,
+              (SELECT COALESCE(SUM(l.cost_amount),0) FROM bio_asset_ledger l WHERE l.batch_id=b.batch_id AND ${bioEventSql(['TRANSFER_IN', 'TRANSFER_OUT'], 'l')}) transfers,
+              (SELECT COALESCE(SUM(l.cost_amount),0) FROM bio_asset_ledger l WHERE l.batch_id=b.batch_id AND ${bookRows('l')} AND NOT ${bioEventSql('ACQUISITION', 'l')}) non_acq,
+              (SELECT COALESCE(SUM(q.cost_amount),0) FROM bio_asset_ledger q WHERE ${bioEventSql(['ACQUISITION', 'AMORTIZATION', 'FAIR_VALUE_ADJMT'], 'q')} AND q.animal_id IN
+                 (SELECT x.animal_id FROM bio_asset_ledger x WHERE x.batch_id=b.batch_id AND x.animal_id IS NOT NULL AND ${bioEventSql(['MORTALITY', 'TRANSFORMATION'], 'x')})) exited_acq
          FROM batch_header b JOIN batch_bio_asset_state s ON s.batch_id=b.batch_id WHERE b.costing_method='BIO_ASSET' ORDER BY b.batch_no`);
     const batchRows = batches.map((b) => {
       const expected = b.animal_tracking === 'REGISTERED' ? Number(b.non_acq) + Number(b.exited_acq) : Number(b.all_rows) + Number(b.transfers);

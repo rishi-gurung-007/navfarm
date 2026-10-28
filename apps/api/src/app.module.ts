@@ -197,6 +197,7 @@ import { SystemController } from './system/system.controller';
   controllers: [SystemController],
   providers: [],
 })
+
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(TenantMiddleware).forRoutes('*path');

@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, isNull, or } from 'drizzle-orm';
+import { eq, and, inArray, isNull, or } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { JournalService } from './journal.service';
@@ -88,6 +88,97 @@ export class GlPostingService {
     }
 
     return mapping;
+  }
+
+  /**
+   * The purchase price variance of a receipt of a STANDARD-costed item: the stock went in at the standard cost (Dr Inventory / Cr Payables at standard), so what was
+   * actually owed beyond it (or short of it) is posted here: Dr Price Variance / Cr Payables when the price paid was above standard (unfavourable), the opposite
+   * when it was below. The accounts are the PRICE_VARIANCE mapping's debit and the PURCHASE mapping's credit (the payables account the receipt itself credited).
+   * `variance` is (price paid - standard cost) x quantity. Returns null when there is nothing to post.
+   */
+  async postPurchasePriceVariance(ledgerEntry: typeof schema.inventoryLedger.$inferSelect, variance: number, userId?: string) {
+    if (Math.abs(variance) < 0.005) return null;
+    const context = { categoryId: ledgerEntry.category_id, nobId: ledgerEntry.nob_id, lobId: ledgerEntry.lob_id };
+    const priceVariance = await this.resolveMapping(ledgerEntry.tenant_id, ledgerEntry.company_id, 'PRICE_VARIANCE', context);
+    const purchase = await this.resolveMapping(ledgerEntry.tenant_id, ledgerEntry.company_id, 'PURCHASE', context);
+    const expenseAccountId = priceVariance.debit_gl_account_id!;
+    const payablesAccountId = purchase.credit_gl_account_id!;
+    const amount = Math.abs(variance);
+    const unfavourable = variance > 0;
+    const costCenterId = await this.resolveFarmCostCentre(ledgerEntry.location_id ?? ledgerEntry.warehouse_id);
+    const line = (glAccountId: string, debit: boolean) => ({
+      glAccountId, debitAmount: debit ? amount : 0, creditAmount: debit ? 0 : amount, nobId: ledgerEntry.nob_id || undefined, lobId: ledgerEntry.lob_id || undefined, costCenterId,
+    });
+    return this.journalService.createAndPostSystemJournal({
+      tenantId: ledgerEntry.tenant_id,
+      companyId: ledgerEntry.company_id,
+      postingDate: ledgerEntry.posting_date,
+      sourceDocumentType: 'PURCHASE_PRICE_VARIANCE',
+      sourceDocumentNo: ledgerEntry.document_no,
+      description: `Purchase price variance — ${ledgerEntry.item_code} (${ledgerEntry.document_no}): ${unfavourable ? 'paid above' : 'paid below'} standard`,
+      lines: [line(expenseAccountId, unfavourable), line(payablesAccountId, !unfavourable)],
+      userId,
+    });
+  }
+
+  /**
+   * The asset account an animal is carried in: the acquisition account of the costing profile she is frozen to. One account per class of animal, so her
+   * purchase, her capitalised feed, her litter's cost, her exit and the clearing of her amortisation all move the same account. Undefined where she has no
+   * profile (the mapping's own account is then used).
+   */
+  async animalAssetAccountIds(animalIds: string[]): Promise<Map<string, string>> {
+    const ids = [...new Set(animalIds.filter((x) => !!x))];
+    if (!ids.length) return new Map();
+    const rows = await this.db
+      .select({ animal_id: schema.animalRegister.animal_id, account: schema.bioCostingProfile.acquisition_gl_id })
+      .from(schema.animalRegister)
+      .innerJoin(schema.bioCostingProfile, eq(schema.bioCostingProfile.profile_id, schema.animalRegister.costing_profile_id))
+      .where(inArray(schema.animalRegister.animal_id, ids));
+    return new Map(rows.filter((r) => !!r.account).map((r) => [r.animal_id, r.account as string]));
+  }
+
+  async animalAssetAccountId(animalId: string): Promise<string | undefined> {
+    return (await this.animalAssetAccountIds([animalId])).get(animalId);
+  }
+
+  /**
+   * The asset account animals of this item are carried in, for the moments before an animal exists to ask (a receipt of animals, a registration): the
+   * acquisition account the active profiles that cover the item agree on. Where they disagree, or none covers it, undefined: the mapping's account is used.
+   */
+  async assetAccountForItem(tenantId: string, companyId: string, itemId: string): Promise<string | undefined> {
+    const rows = await this.db
+      .select({ account: schema.bioCostingProfile.acquisition_gl_id })
+      .from(schema.bioCostingProfile)
+      .where(and(
+        eq(schema.bioCostingProfile.tenant_id, tenantId),
+        eq(schema.bioCostingProfile.company_id, companyId),
+        eq(schema.bioCostingProfile.status, 'ACTIVE'),
+        or(eq(schema.bioCostingProfile.item_id, itemId), isNull(schema.bioCostingProfile.item_id)),
+      ));
+    const accounts = [...new Set(rows.map((r) => r.account).filter((a): a is string => !!a))];
+    return accounts.length === 1 ? accounts[0] : undefined;
+  }
+
+  /** The account one side of a mapping names, or undefined where there is no mapping: for a posting that needs another stage's account (a pre-mature herd's asset). */
+  async mappedAccount(tenantId: string, companyId: string, transactionType: string, side: 'debit' | 'credit', context: { nobId?: string | null; lobId?: string | null } = {}): Promise<string | undefined> {
+    try {
+      const mapping = await this.resolveMapping(tenantId, companyId, transactionType, context);
+      return (side === 'debit' ? mapping.debit_gl_account_id : mapping.credit_gl_account_id) ?? undefined;
+    } catch (error) {
+      if (error instanceof BadRequestException && /No GL mapping/.test(error.message)) return undefined;
+      throw error;
+    }
+  }
+
+  /** Whether a mapping exists for the type (and, optionally, the business dimensions): the callers that opt in to a journal by having a mapping ask first. */
+  async hasMapping(tenantId: string, companyId: string, transactionType: string, context: { nobId?: string | null; lobId?: string | null } = {}): Promise<boolean> {
+    try {
+      await this.resolveMapping(tenantId, companyId, transactionType, context);
+      return true;
+    } catch (error) {
+      if (error instanceof BadRequestException && /No GL mapping/.test(error.message)) return false;
+      throw error;
+    }
   }
 
   /** Use the original journal accounts and values, even if mappings changed. */
@@ -183,7 +274,15 @@ export class GlPostingService {
     return undefined;
   }
 
-  async postInventoryLedgerEntry(ledgerEntry: typeof schema.inventoryLedger.$inferSelect, userId?: string) {
+  /**
+   * `overrides.debitSplit` puts the debit on other accounts than the mapping's, a part to each (an issue of feed shared between animals of different
+   * classes); an entry with a null account takes the mapping's. `overrides.debitAccountId` moves the whole debit; `overrides.creditAccountId` the credit.
+   */
+  async postInventoryLedgerEntry(
+    ledgerEntry: typeof schema.inventoryLedger.$inferSelect,
+    userId?: string,
+    overrides: { debitAccountId?: string; creditAccountId?: string; debitSplit?: Array<{ accountId: string | null; amount: number }> } = {},
+  ) {
     const [item] = ledgerEntry.item_id
       ? await this.db
           .select({ valuation_method: schema.itemMaster.valuation_method })
@@ -195,7 +294,7 @@ export class GlPostingService {
     const mapping = await this.resolveMapping(
       ledgerEntry.tenant_id,
       ledgerEntry.company_id,
-      ledgerEntry.transaction_type,
+      ledgerEntry.gl_mapping_type ?? ledgerEntry.transaction_type,
       {
         categoryId: ledgerEntry.category_id,
         nobId: ledgerEntry.nob_id,
@@ -208,6 +307,22 @@ export class GlPostingService {
     const amount = Math.abs(Number(ledgerEntry.amount ?? 0));
     const costCenterId = await this.resolveFarmCostCentre(ledgerEntry.location_id ?? ledgerEntry.warehouse_id);
 
+    // The debit: the mapping's account, another account, or a part on each. The parts are rescaled to the entry's amount, the rounding on the last.
+    const debitAccount = overrides.debitAccountId ?? mapping.debit_gl_account_id!;
+    let debits: Array<{ accountId: string; amount: number }> = [{ accountId: debitAccount, amount }];
+    const split = (overrides.debitSplit ?? []).filter((p) => p.amount > 0);
+    const splitTotal = split.reduce((n, p) => n + p.amount, 0);
+    if (split.length && splitTotal > 0) {
+      const byAccount = new Map<string, number>();
+      for (const part of split) {
+        const accountId = part.accountId ?? debitAccount;
+        byAccount.set(accountId, (byAccount.get(accountId) ?? 0) + (part.amount * amount) / splitTotal);
+      }
+      debits = [...byAccount.entries()].map(([accountId, value]) => ({ accountId, amount: Math.round(value * 1e4) / 1e4 }));
+      const drift = Math.round((amount - debits.reduce((n, d) => n + d.amount, 0)) * 1e4) / 1e4;
+      debits[debits.length - 1].amount = Math.round((debits[debits.length - 1].amount + drift) * 1e4) / 1e4;
+    }
+
     return this.journalService.createAndPostSystemJournal({
       tenantId: ledgerEntry.tenant_id,
       companyId: ledgerEntry.company_id,
@@ -217,16 +332,16 @@ export class GlPostingService {
       sourceLedgerId: ledgerEntry.ledger_id,
       description: `${ledgerEntry.transaction_type} — ${ledgerEntry.item_code} (${ledgerEntry.document_no})`,
       lines: [
-        {
-          glAccountId: mapping.debit_gl_account_id!,
-          debitAmount: amount,
+        ...debits.map((d) => ({
+          glAccountId: d.accountId,
+          debitAmount: d.amount,
           creditAmount: 0,
           nobId: ledgerEntry.nob_id || undefined,
           lobId: ledgerEntry.lob_id || undefined,
           costCenterId,
-        },
+        })),
         {
-          glAccountId: mapping.credit_gl_account_id!,
+          glAccountId: overrides.creditAccountId ?? mapping.credit_gl_account_id!,
           debitAmount: 0,
           creditAmount: amount,
           nobId: ledgerEntry.nob_id || undefined,
@@ -256,6 +371,11 @@ export class GlPostingService {
     nobId?: string;
     lobId?: string;
     stageId?: string;   // Production stage dimension for more-specific GL mapping resolution
+    /** What the journal is recorded against (the goods receipt, the animal's registration); a batch cost by default. */
+    sourceDocumentType?: string;
+    /** The animal's own asset account, in place of the mapping's, where the posting is of an animal (see `animalAssetAccountId`). Applied before `reverseDirection`. */
+    debitAccountId?: string;
+    creditAccountId?: string;
     userId?: string;
     // Swaps the mapping's debit/credit accounts — used for favorable variances,
     // where the normal "Dr Variance / Cr Inventory-WIP" posting reverses.
@@ -267,14 +387,16 @@ export class GlPostingService {
       stageId: params.stageId,
     });
     const amount = Math.abs(params.amount);
-    const debitAccountId = params.reverseDirection ? mapping.credit_gl_account_id! : mapping.debit_gl_account_id!;
-    const creditAccountId = params.reverseDirection ? mapping.debit_gl_account_id! : mapping.credit_gl_account_id!;
+    const baseDebit = params.debitAccountId ?? mapping.debit_gl_account_id!;
+    const baseCredit = params.creditAccountId ?? mapping.credit_gl_account_id!;
+    const debitAccountId = params.reverseDirection ? baseCredit : baseDebit;
+    const creditAccountId = params.reverseDirection ? baseDebit : baseCredit;
 
     return this.journalService.createAndPostSystemJournal({
       tenantId: params.tenantId,
       companyId: params.companyId,
       postingDate: params.postingDate,
-      sourceDocumentType: 'BATCH',
+      sourceDocumentType: params.sourceDocumentType ?? 'BATCH',
       sourceDocumentNo: params.documentNo,
       description: params.description || `${params.transactionType} — ${params.documentNo}`,
       lines: [

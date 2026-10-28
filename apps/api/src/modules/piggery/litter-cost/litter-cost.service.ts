@@ -6,6 +6,7 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { bioCodes, bioEventCondition, bioEventsCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 const LACTATION_DOC = 'LITTER_COST';
 const BIRTH_DOC = 'LITTER_BIRTH_COST';
@@ -50,7 +51,7 @@ export class LitterCostService {
         and(
           eq(L.tenant_id, tenantId),
           eq(L.batch_id, batchId),
-          inArray(L.entry_type, ['CONSUMPTION', 'OVERHEAD', 'OVERHEAD_COST']),
+          bioEventsCondition(L, ['CONSUMPTION', 'OVERHEAD_COST']),
           sql`${L.posting_date} BETWEEN ${from} AND ${to}`,
           sql`(${L.animal_id} = ${sow.animal_id} OR ${L.animal_id} IS NULL)`,
         ),
@@ -73,7 +74,7 @@ export class LitterCostService {
     const [row] = await this.db
       .select({ total: sql<string>`COALESCE(SUM(${L.cost_amount}), 0)` })
       .from(L)
-      .where(and(eq(L.tenant_id, tenantId), eq(L.batch_id, lotBatchId), eq(L.entry_type, 'COST_ALLOCATION'), eq(L.document_type, kind === 'BIRTH' ? BIRTH_DOC : LACTATION_DOC), sql`${L.cost_amount} > 0`));
+      .where(and(eq(L.tenant_id, tenantId), eq(L.batch_id, lotBatchId), bioEventCondition(L, 'COST_ALLOCATION'), eq(L.document_type, kind === 'BIRTH' ? BIRTH_DOC : LACTATION_DOC), sql`${L.cost_amount} > 0`));
     return Number(row?.total ?? 0) || 0;
   }
 
@@ -119,7 +120,7 @@ export class LitterCostService {
     liveBorn: number,
     tenantId: string,
     userPayload?: { userId?: string },
-  ): Promise<{ note: string; perPiglet: string | null; moved: number; journal: string | null }> {
+  ): Promise<{ note: string; perPiglet: string | null; moved: number; journal: string | null; zeroCost: boolean }> {
     const farrowingDate = String(farrow.farrowing_date).slice(0, 10);
     const [mating] = farrow.breeding_id
       ? await this.db.select({ d: schema.breedingRecord.mating_date }).from(schema.breedingRecord).where(eq(schema.breedingRecord.breeding_id, farrow.breeding_id)).limit(1)
@@ -134,6 +135,8 @@ export class LitterCostService {
           tenantId, companyId: farrow.company_id ?? sow.company_id, transactionType: 'BIO_LITTER_BIRTH', amount: moved.moved, documentNo: lot?.batch_no ?? String(farrow.piglet_lot_no ?? ''),
           documentLineId: farrow.farrow_id, postingDate: farrowingDate, description: `Litter ${farrow.piglet_lot_no ?? ''} born to ${sow.animal_code}: cost per piglet ${moved.perPiglet ? Number(moved.perPiglet).toFixed(4) : ''}`,
           nobId: lot?.nob_id ?? undefined, lobId: lot?.lob_id ?? undefined, userId: userPayload?.userId,
+          // Out of the account the sow's cost is carried in.
+          creditAccountId: await this.glPosting.animalAssetAccountId(sow.animal_id),
         });
         journal = posted?.journal_no ?? posted?.journal_id ?? 'posted';
       } catch (error) {
@@ -141,7 +144,12 @@ export class LitterCostService {
         if (!(error instanceof BadRequestException) || !/No GL mapping/.test(error.message)) throw error;
       }
     }
-    return { ...moved, journal };
+    // Nothing to hand on is a fact worth stating: the litter, and the gilts taken from it, carry no cost until the lactation cost moves at the weaning.
+    const zeroCost = !(moved.moved >= 0.005);
+    const note = zeroCost
+      ? ` The litter opens at 0.00: ${sow.animal_code} had no feed, drug or overhead capitalised between ${from} and ${addDays(farrowingDate, -1)} (feed from her costing start is expensed, and a sow with no feed entered before the farrowing has none), so piglets and gilts carry no cost until the lactation cost moves at the weaning.`
+      : `${moved.note} Basis: the sow's capitalised feed, drug, overhead and semen from ${from} to ${addDays(farrowingDate, -1)} (the window awaits Finance's confirmation).`;
+    return { ...moved, note, journal, zeroCost };
   }
 
   private async move(
@@ -175,7 +183,7 @@ export class LitterCostService {
     const [lotEntry] = await this.db
       .select({ item_id: schema.bioAssetLedger.bio_asset_item_id })
       .from(schema.bioAssetLedger)
-      .where(and(eq(schema.bioAssetLedger.batch_id, farrow.piglet_batch_id), eq(schema.bioAssetLedger.entry_type, 'ACQUISITION')))
+      .where(and(eq(schema.bioAssetLedger.batch_id, farrow.piglet_batch_id), bioEventCondition(schema.bioAssetLedger, 'ACQUISITION')))
       .limit(1);
     if (!lot || !sowBatch || !lotEntry) return none;
 
@@ -196,8 +204,8 @@ export class LitterCostService {
       company_id: batch.company_id,
       bio_asset_item_id: itemId,
       animal_id: animalId,
-      entry_type: 'COST_ALLOCATION',
-      document_type: kind === 'BIRTH' ? BIRTH_DOC : LACTATION_DOC,
+      // The sow's side hands cost over (negative); the litter's side takes it.
+      ...bioCodes.costAllocation({ gives: amount < 0, lactation: kind !== 'BIRTH' }),
       document_no: lot.batch_no,
       batch_id: batch.batch_id,
       batch_no: batch.batch_no,

@@ -23,8 +23,8 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import {
-  formatBcDocumentType,
-  formatBcEntryType,
+  formatDocumentType,
+  formatTransactionType,
 } from './inventory-ledger-detail';
 
 type Row = Record<string, any>;
@@ -340,7 +340,7 @@ export default function ItemLedgerHistoryCard({
                                 {layer.document_no}
                               </span>
                               <span className="text-[10px]" style={S.muted}>
-                                {formatBcDocumentType(layer.document_type)}
+                                {formatDocumentType(layer.document_type)}
                               </span>
                             </div>
                           </TableCell>
@@ -558,12 +558,12 @@ export default function ItemLedgerHistoryCard({
                               <span className="text-[10px]" style={S.muted}>
                                 {out.batch_no
                                   ? `Batch: ${out.batch_no}`
-                                  : formatBcDocumentType(out.document_type)}
+                                  : formatDocumentType(out.document_type)}
                               </span>
                             </div>
                           </TableCell>
                           <TableCell className="py-2.5 px-3" style={S.sub}>
-                            {formatBcEntryType(out.transaction_type)}
+                            {formatTransactionType(out.transaction_type)}
                           </TableCell>
                           <TableCell
                             className="py-2.5 px-3 font-mono"

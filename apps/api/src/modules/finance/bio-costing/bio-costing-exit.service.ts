@@ -5,6 +5,7 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { assertPostingPeriodOpen } from '../../../common/period-close';
 import { JournalService } from '../journal/journal.service';
+import { bioEventCondition, bioEventsCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
 export const EXIT_JOURNAL_TYPE = 'BIO_ASSET_EXIT';
@@ -22,8 +23,9 @@ export type ClearResult =
  * Without it the credit the runs built up stays in the account for an animal that is gone. The entry leaves the net asset as it was
  * (the contra and the gross fall together); the loss on the acquisition cost itself waits for the registration posting (D8).
  *
- * A sale, cull or slaughter is a different entry (BBP S.NO.8: amortisation reversed to the transfer date, or cleared against cost of
- * sales, depending on the route) and is not built: the animal's sale posts no journal at all today.
+ * A sale, cull or slaughter clears the same accumulated amortisation the same way (`clearOnExit`), and the animal's own exit then posts its
+ * proceeds and its gain or loss (AnimalService.dispose). BBP S.NO.8 also allows the amortisation to be reversed to the transfer date, or cleared
+ * against cost of sales, depending on the route; that choice is Finance's and is not built, so every exit clears it against the asset.
  */
 @Injectable()
 export class BioCostingExitService {
@@ -36,6 +38,12 @@ export class BioCostingExitService {
   }
 
   async clearOnDeath(animalId: string, deathDate: string, tenantId: string, userId?: string): Promise<ClearResult> {
+    return this.clearOnExit(animalId, deathDate, tenantId, userId, 'death');
+  }
+
+  /** Clears what an animal has been amortised to the day she leaves, however she leaves (a death, a sale, a cull, a slaughter). Once only. */
+  async clearOnExit(animalId: string, exitDate: string, tenantId: string, userId?: string, how = 'exit'): Promise<ClearResult> {
+    const deathDate = exitDate;
     const [animal] = await this.db.select().from(schema.animalRegister)
       .where(and(eq(schema.animalRegister.animal_id, animalId), eq(schema.animalRegister.tenant_id, tenantId))).limit(1);
     if (!animal?.costing_profile_id) return { cleared: 0, reason: 'NO_PROFILE' };
@@ -49,7 +57,7 @@ export class BioCostingExitService {
     if (done) return { cleared: 0, reason: 'ALREADY_CLEARED' };
 
     const [sum] = await this.db.select({ total: sql<string>`COALESCE(SUM(${schema.bioAssetLedger.cost_amount}), 0)` }).from(schema.bioAssetLedger).where(and(
-      eq(schema.bioAssetLedger.animal_id, animalId), eq(schema.bioAssetLedger.entry_type, 'AMORTIZATION'), lte(schema.bioAssetLedger.posting_date, deathDate)));
+      eq(schema.bioAssetLedger.animal_id, animalId), bioEventCondition(schema.bioAssetLedger, 'AMORTIZATION'), lte(schema.bioAssetLedger.posting_date, deathDate)));
     const amortised = r4(-Number(sum?.total ?? 0)); // the ledger holds charges as negatives
     if (amortised < 0.005) return { cleared: 0, reason: 'NOTHING_AMORTISED' };
     if (!profile.accum_amort_gl_id || !profile.acquisition_gl_id) {
@@ -59,7 +67,7 @@ export class BioCostingExitService {
 
     const journal = await this.journals.createAndPostSystemJournal({
       tenantId, companyId: animal.company_id, postingDate: deathDate, sourceDocumentType: EXIT_JOURNAL_TYPE, sourceDocumentNo: animal.animal_code,
-      description: `Accumulated amortization cleared on death - ${animal.animal_code} (${profile.profile_code})`, userId,
+      description: `Accumulated amortization cleared on ${how} - ${animal.animal_code} (${profile.profile_code})`, userId,
       lines: [
         { glAccountId: profile.accum_amort_gl_id, debitAmount: amortised, creditAmount: 0, nobId: animal.nob_id, lobId: animal.lob_id, description: `Clear accumulated amortization ${animal.animal_code}` },
         { glAccountId: profile.acquisition_gl_id, debitAmount: 0, creditAmount: amortised, nobId: animal.nob_id, lobId: animal.lob_id, description: `Clear accumulated amortization ${animal.animal_code}` },

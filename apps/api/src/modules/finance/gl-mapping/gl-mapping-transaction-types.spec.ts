@@ -15,6 +15,7 @@ const POSTED_TRANSACTION_TYPES = [
   'BIO_ACQUISITION', 'BIO_CONSUMPTION_PREMATURE', 'BIO_CONSUMPTION_MATURE', 'BIO_OUTPUT',
   'BIO_MORTALITY_PREMATURE', 'BIO_MORTALITY_MATURE', 'BIO_OVERHEAD_PREMATURE', 'BIO_OVERHEAD_MATURE',
   'BIO_TRANSFORMATION', 'BIO_AMORTIZATION', 'BIO_FAIR_VALUE', 'BIO_FAIR_VALUE_PREMATURE', 'BIO_HARVEST', 'BIO_DISPOSAL_SOLD',
+  'BIO_SALE_PROCEEDS', 'BIO_SEMEN_USE', 'BIO_SEMEN_EXPENSE', 'BIO_SEMEN_PRODUCTION',
 ];
 
 /**
@@ -32,6 +33,13 @@ describe('GL mapping transaction types', () => {
     expect(seeded.has('BIO_LITTER_BIRTH')).toBe(false);
     expect(readFileSync(join(__dirname, 'dto/gl-mapping.dto.ts'), 'utf8')).toContain("'BIO_LITTER_BIRTH'");
     expect(readFileSync(join(__dirname, '../../../../../web/src/modules/master-data/configs.ts'), 'utf8')).toContain('value: "BIO_LITTER_BIRTH"');
+  });
+
+  it('offers the opt-in gilt acquisition type in the API enum and on the screen without seeding it (account 1055 is not in the starter chart)', () => {
+    const seeded = new Set(STARTER_GL_MAPPINGS.map((m) => m.transaction_type));
+    expect(seeded.has('BIO_GILT_ACQUISITION')).toBe(false);
+    expect(readFileSync(join(__dirname, 'dto/gl-mapping.dto.ts'), 'utf8')).toContain("'BIO_GILT_ACQUISITION'");
+    expect(readFileSync(join(__dirname, '../../../../../web/src/modules/master-data/configs.ts'), 'utf8')).toContain('value: "BIO_GILT_ACQUISITION"');
   });
 
   it('offers every posted type in the API enum', () => {

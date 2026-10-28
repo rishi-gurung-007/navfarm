@@ -507,7 +507,7 @@ export default function AnimalDetailPanel({ row, onClose }: { row: Row; onClose:
           ["Dam", fmt(lineage.dam_code)], ["Sire", fmt(lineage.sire_code)],
           // source_receipt_id, not source_grn_id: the column is named after
           // this codebase's goods_receipt table rather than the spec's "GRN".
-          ["Source receipt", fmt(row.source_receipt_id)], ["Born from batch", fmt(row.source_batch_id)],
+          ["Source receipt", fmt(breeding?.source_labels?.receipt_no)], ["Born from batch", fmt(breeding?.source_labels?.batch_label)],
           ["Acquisition cost", fmtAmount(row.acquisition_cost)],
         ],
       });

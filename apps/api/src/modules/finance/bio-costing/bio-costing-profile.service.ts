@@ -9,13 +9,14 @@ import { isDuplicateEntry } from '../../../common/filters/http-exception.filter'
 import { assertCompanyInScope, farmScope } from '../../../common/farm-scope';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import {
-  changedLockedFields, costingStartDate, originOf, resolveProfile, scopeKey, validateActivation, validateTerms,
+  changedLockedFields, costingStartDate, originOf, policyNotes, resolveProfile, scopeKey, validateActivation, validateTerms,
   type MethodFlags, type ProfileTerms,
 } from './bio-costing.rules';
 import type {
   AssignBioCostingDto, CreateBioCostingProfileDto, CreateBioCostingRateDto, NewBioCostingProfileVersionDto,
   QueryBioCostingProfileDto, ResolveBioCostingProfileDto, UpdateBioCostingProfileDto,
 } from './bio-costing-profile.dto';
+import { bioEventCondition, bioEventsCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 type Profile = typeof schema.bioCostingProfile.$inferSelect;
 const GL_COLUMNS = ['acquisition_gl_id', 'accum_amort_gl_id', 'amort_expense_gl_id', 'fv_gain_loss_gl_id', 'writeoff_gl_id'] as const;
@@ -92,9 +93,10 @@ export class BioCostingProfileService {
 
   async findAll(query: QueryBioCostingProfileDto, tenantId: string, companyId?: string) {
     const co = query.companyId ?? companyId;
-    return this.db.select().from(schema.bioCostingProfile)
+    const rows = await this.db.select().from(schema.bioCostingProfile)
       .where(and(eq(schema.bioCostingProfile.tenant_id, tenantId), ...(co ? [eq(schema.bioCostingProfile.company_id, co)] : []), ...(query.status ? [eq(schema.bioCostingProfile.status, query.status)] : [])))
       .orderBy(schema.bioCostingProfile.profile_code);
+    return rows.map((p) => ({ ...p, policy_notes: policyNotes(p) }));
   }
 
   async findOne(id: string, tenantId: string) {
@@ -102,7 +104,7 @@ export class BioCostingProfileService {
     const rates = await this.db.select().from(schema.bioCostingProfileRate)
       .where(eq(schema.bioCostingProfileRate.profile_id, id)).orderBy(desc(schema.bioCostingProfileRate.effective_from));
     const animals = await this.countAnimals(id);
-    return { ...profile, rates, in_use: { animals, locked: animals > 0 } };
+    return { ...profile, rates, policy_notes: policyNotes(profile), in_use: { animals, locked: animals > 0 } };
   }
 
   async create(dto: CreateBioCostingProfileDto, tenantId: string, companyId: string, userId?: string) {
@@ -308,7 +310,7 @@ export class BioCostingProfileService {
     if (!profile) return null;
     const [run] = await this.db.select({ n: sql<number>`COUNT(*)` }).from(schema.bioCostingRunLine).where(eq(schema.bioCostingRunLine.animal_id, animalId));
     const [ledger] = await this.db.select({ n: sql<number>`COUNT(*)` }).from(schema.bioAssetLedger).where(and(
-      eq(schema.bioAssetLedger.animal_id, animalId), inArray(schema.bioAssetLedger.entry_type, ['CONSUMPTION', 'OVERHEAD', 'OVERHEAD_COST', 'GROWTH_ADJMT', 'AMORTIZATION', 'FAIR_VALUE_ADJMT'])));
+      eq(schema.bioAssetLedger.animal_id, animalId), bioEventsCondition(schema.bioAssetLedger, ['CONSUMPTION', 'OVERHEAD_COST', 'AMORTIZATION', 'FAIR_VALUE_ADJMT'])));
     const [tx] = await this.db.select({ n: sql<number>`COUNT(*)` }).from(schema.batchTransaction).where(and(
       eq(schema.batchTransaction.animal_id, animalId), inArray(schema.batchTransaction.transaction_type, ['CONSUMPTION', 'OVERHEAD'])));
     if (Number(run?.n ?? 0) + Number(ledger?.n ?? 0) + Number(tx?.n ?? 0) > 0) {

@@ -84,7 +84,7 @@ describe('BioCostingRunService — the controls that refuse before anything is w
     queue.push([{ ...profile, status: 'DRAFT' }]);
     await expect(service.calculate({ profile_id: 'p1', period_key: '2026-09' } as any, 't')).rejects.toThrow(/DRAFT/);
     queue.push([{ ...profile, tracking: 'BATCH' }]);
-    await expect(service.calculate({ profile_id: 'p1', period_key: '2026-09' } as any, 't')).rejects.toThrow(/Batch-tracked/);
+    await expect(service.calculate({ profile_id: 'p1', period_key: '2026-09' } as any, 't')).rejects.toThrow(/batch-tracked.*individually tracked animals only/);
   });
 
   it('refuses a period inside a closed reporting period (V5)', async () => {

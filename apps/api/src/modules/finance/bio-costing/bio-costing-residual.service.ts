@@ -9,6 +9,7 @@ import { animalScopeConditions, assertCompanyInScope, farmScope } from '../../..
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { resolveResidual, settingResidual, validateResidualSetting, type ProfileTerms, type ResidualSetting } from './bio-costing.rules';
 import type { CreateResidualSettingDto, SetAnimalResidualDto } from './bio-costing-residual.dto';
+import { bioEventCondition, bioEventsCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -78,7 +79,7 @@ export class BioCostingResidualService {
     // The latest month's amortisation she has actually been charged (a reversed month nets to nothing and is passed over).
     const L = schema.bioAssetLedger;
     const [latest] = await this.db.select({ date: L.posting_date, total: sql<string>`SUM(${L.cost_amount})` }).from(L)
-      .where(and(eq(L.animal_id, animalId), eq(L.entry_type, 'AMORTIZATION')))
+      .where(and(eq(L.animal_id, animalId), bioEventCondition(L, 'AMORTIZATION')))
       .groupBy(L.posting_date).having(sql`SUM(${L.cost_amount}) < 0`).orderBy(desc(L.posting_date)).limit(1);
     return {
       animal_id: animalId, residual: resolved.value, source: resolved.source, own_residual: animal.residual_value, costing_profile_id: animal.costing_profile_id,

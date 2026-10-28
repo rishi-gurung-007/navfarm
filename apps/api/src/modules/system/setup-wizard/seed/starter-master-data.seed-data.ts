@@ -33,6 +33,7 @@ export const STARTER_GL_ACCOUNTS: StarterGlAccount[] = [
   { account_code: '4010', account_name: 'Disposal Gain / Loss', account_type: 'INCOME' },
   { account_code: '4020', account_name: 'Fair Value Gain / Loss', account_type: 'INCOME' },
   { account_code: '4030', account_name: 'Inventory Adjustment Gain', account_type: 'INCOME' },
+  { account_code: '4040', account_name: 'Boar Cost Recovered (Semen Produced)', account_type: 'INCOME' },
   // Expenses
   { account_code: '5010', account_name: 'Mortality Loss', account_type: 'EXPENSE' },
   { account_code: '5020', account_name: 'Overhead Expense', account_type: 'EXPENSE' },
@@ -99,6 +100,12 @@ export const STARTER_GL_MAPPINGS: StarterGlMapping[] = [
   { transaction_type: 'BIO_DISPOSAL_SOLD', debit_account_code: '1060', credit_account_code: '4010' },
   // A sale's proceeds: owed by the customer, out of the herd's carrying value (the gain/loss line above nets it to book value).
   { transaction_type: 'BIO_SALE_PROCEEDS', debit_account_code: '1200', credit_account_code: '1060' },
+  // Semen used by an AI mating: out of the semen stock (Finished Goods), into the sow's pre-mature asset, which hands it on to her litter at the farrowing.
+  { transaction_type: 'BIO_SEMEN_USE', debit_account_code: '1050', credit_account_code: '1030' },
+  // Semen collected: stock at the cost of producing it, against the recovery of the boar's cost (his costs are expensed or sit in his own asset, never in WIP).
+  { transaction_type: 'BIO_SEMEN_PRODUCTION', debit_account_code: '1030', credit_account_code: '4040' },
+  // The same, once her costing has begun: expensed, as her feed is.
+  { transaction_type: 'BIO_SEMEN_EXPENSE', debit_account_code: '5080', credit_account_code: '1030' },
 ];
 
 export const STARTER_WAREHOUSE = {

@@ -80,7 +80,7 @@ export default function GiltSelectionDialog({
     setBatch(null); setLitter(null);
     const when = today();
     setSelectionDate(when);
-    api.get("/batch?status=ACTIVE&limit=100").then((r) => setAnimalBatches((unwrap<Row[]>(r) || []).filter((b) => b.tracking_mode === "ANIMAL_WISE"))).catch(() => setAnimalBatches([]));
+    api.get("/batch?status=ACTIVE&limit=500").then((r) => setAnimalBatches((unwrap<Row[]>(r) || []).filter((b) => b.tracking_mode === "ANIMAL_WISE"))).catch(() => setAnimalBatches([]));
     if (draftId) {
       setLoading(true);
       api.get(`/piggery/gilt-selection/${draftId}`)
@@ -295,6 +295,11 @@ export default function GiltSelectionDialog({
                   ))}
                 </div>
                 <p className="text-[11px]" style={S.sub}>{t("gsDlgCostNote")}</p>
+                {Number(litter.cost_per_pig ?? 0) === 0 && (
+                  <p className="text-[11px] font-semibold" style={{ color: "var(--warning, #b45309)" }}>
+                    This litter carries no cost yet: the sow had no capitalised feed, drug or overhead between mating and farrowing. Gilts selected now take an acquisition cost of 0.00; the lactation cost is added at the weaning.
+                  </p>
+                )}
               </div>
 
               <div className="grid gap-3 sm:grid-cols-[10rem_9rem_1fr]">

@@ -2,10 +2,10 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsInt, Min, IsNumber, IsDateString, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
-const ENTRY_TYPES = [
-  'ACQUISITION', 'CONSUMPTION', 'WRITEOFF', 'OVERHEAD', 'OVERHEAD_COST',
-  'GROWTH_ADJMT', 'MORTALITY', 'DEAD_PLANT', 'AMORTIZATION', 'FAIR_VALUE_ADJMT', 'TRANSFORMATION',
-] as const;
+import { BIO_ENTRY_TYPES, BIO_TRANSACTION_TYPES } from '../bio-asset-ledger.types';
+
+const ENTRY_TYPES = BIO_ENTRY_TYPES;
+const TRANSACTION_TYPES = BIO_TRANSACTION_TYPES;
 const COSTING_METHODS = ['COST_ACCUMULATION', 'AMORTIZED_COST', 'FAIR_VALUE'] as const;
 const TRACKING_TYPES = ['SERIAL', 'LOT'] as const;
 
@@ -20,11 +20,17 @@ export class CreateBioAssetLedgerDto {
   @IsNotEmpty()
   bio_asset_item_id: string;
 
-  @ApiProperty({ description: 'Type of value-change event', enum: ENTRY_TYPES })
+  @ApiProperty({ description: 'Entry type: the kind of row it is', enum: ENTRY_TYPES })
   @IsString()
   @IsNotEmpty()
   @IsIn(ENTRY_TYPES)
   entry_type: string;
+
+  @ApiProperty({ description: 'Transaction type: why the asset or its value moved. Must go with the entry type (a PURCHASE is POSITIVE, a SALES is NEGATIVE ...)', enum: TRANSACTION_TYPES })
+  @IsString()
+  @IsNotEmpty()
+  @IsIn(TRANSACTION_TYPES)
+  transaction_type: string;
 
   @ApiProperty({ description: 'Source document reference', required: false })
   @IsString()
@@ -105,6 +111,11 @@ export class QueryBioAssetLedgerDto {
   @IsString()
   entryType?: string;
 
+  @ApiProperty({ description: 'Filter by transaction type', required: false, enum: TRANSACTION_TYPES })
+  @IsOptional()
+  @IsIn(TRANSACTION_TYPES)
+  transactionType?: string;
+
   @ApiProperty({ description: 'Results per page', default: 50, required: false })
   @IsOptional()
   @Type(() => Number)
@@ -140,15 +151,15 @@ export class QueryBioAssetLedgerEntriesDto {
   @IsUUID()
   warehouseId?: string;
 
-  @ApiProperty({ description: 'POSITIVE (a registration) or NEGATIVE (a death)', required: false, enum: ['POSITIVE', 'NEGATIVE'] })
+  @ApiProperty({ description: 'Entry type', required: false, enum: ENTRY_TYPES })
   @IsOptional()
-  @IsIn(['POSITIVE', 'NEGATIVE'])
-  entryType?: 'POSITIVE' | 'NEGATIVE';
+  @IsIn(ENTRY_TYPES)
+  entryType?: (typeof ENTRY_TYPES)[number];
 
-  @ApiProperty({ description: 'PURCHASE (a GRN), ANIMAL_REGISTRATION, BATCH_RECEIPT (a lot or batch input), BATCH_TRANSFER or MORTALITY', required: false, enum: ['PURCHASE', 'ANIMAL_REGISTRATION', 'BATCH_RECEIPT', 'BATCH_TRANSFER', 'LITTER_COST', 'MORTALITY'] })
+  @ApiProperty({ description: 'Transaction type', required: false, enum: TRANSACTION_TYPES })
   @IsOptional()
-  @IsIn(['PURCHASE', 'ANIMAL_REGISTRATION', 'BATCH_RECEIPT', 'BATCH_TRANSFER', 'LITTER_COST', 'MORTALITY'])
-  transactionType?: 'PURCHASE' | 'ANIMAL_REGISTRATION' | 'BATCH_RECEIPT' | 'BATCH_TRANSFER' | 'LITTER_COST' | 'MORTALITY';
+  @IsIn(TRANSACTION_TYPES)
+  transactionType?: (typeof TRANSACTION_TYPES)[number];
 
   @ApiProperty({ description: 'Search document no., item, animal, batch or source GRN', required: false })
   @IsOptional()

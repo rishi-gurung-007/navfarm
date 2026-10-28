@@ -94,6 +94,10 @@ export class StockTransferService {
     return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, executor);
   }
 
+  /**
+   * Creates a DRAFT Transfer Order. The source and destination must differ, the source must be on the user's active farm, and the
+   * company inside their scope. Nothing moves in stock until a shipment is posted.
+   */
   async create(dto: CreateStockTransferDto, tenantId: string, userPayload?: any) {
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
     return withTenantTransaction(this.cls, async () => {
@@ -160,6 +164,9 @@ export class StockTransferService {
     return this.createRecord(dto, tenantId, userPayload);
   }
 
+  /**
+   * For a feed release, reads the requisition lines the transfer lines come from, so each transfer can be tied to its requisition, farm and main location.
+   */
   private async loadFeedReleaseContext(dto: CreateStockTransferDto, tenantId: string) {
     const lineIds = dto.lines.map((line) => line.requisition_line_id!);
     const requisitions = await this.db
@@ -198,6 +205,9 @@ export class StockTransferService {
     return { requisition: requisitions[0], source, mill, destination };
   }
 
+  /**
+   * Inserts the transfer header as DRAFT with a number from the company's series, then its lines.
+   */
   private async createRecord(dto: CreateStockTransferDto, tenantId: string, userPayload?: { userId?: string }) {
     const transferId = randomUUID();
     const transferNo = await this.generateTransferNo(tenantId, dto.company_id, this.db);
@@ -227,6 +237,9 @@ export class StockTransferService {
     return { transfer_id: transferId, transfer_no: transferNo };
   }
 
+  /**
+   * Inserts a draft's lines. Biological assets are refused (they are not held in stock). Ship date, receipt date, unit cost and amount are folded into the line remarks.
+   */
   private async insertLines(transferId: string, lines: CreateStockTransferDto['lines']) {
     await assertNoBiologicalAssets(this.db, lines.map((l) => l.item_id), 'stock transfer');
     await this.db.insert(schema.stockTransferLine).values(
@@ -507,6 +520,9 @@ export class StockTransferService {
   }
 
 
+  /**
+   * Every Inventory Ledger row posted under this transfer's number, used to work out what has shipped and been received. Empty if the read fails.
+   */
   private async getLedgerHistory(transferNo: string, companyId: string, tenantId: string) {
     try {
       const rows = await this.db
@@ -551,6 +567,10 @@ export class StockTransferService {
     }
   }
 
+  /**
+   * Adds shipped, received and DOA (dead on arrival) quantities to each line from the ledger rows posted for it.
+   * A receipt's `external_reference_no` carries its DOA quantity, in one of three shapes (twin row, gross marker, `DOA:n` marker).
+   */
   private enrichLinesWithQuantities(lines: any[], ledgerEntries: any[], fallbackStatus?: string) {
     return lines.map((line) => {
       const lineShipments = ledgerEntries.filter(
@@ -572,16 +592,16 @@ export class StockTransferService {
       let twinDoa = 0;
       let markerDoa = 0;
       let grossDoa = 0;
-      for (const e of lineReceipts) {
-        const qty = Number(e.quantity || 0);
-        const parsed = parseReceiptDoa(e.external_reference_no);
+      for (const receiptEntry of lineReceipts) {
+        const receiptQty = Number(receiptEntry.quantity || 0);
+        const parsed = parseReceiptDoa(receiptEntry.external_reference_no);
         if (parsed.kind === 'twin') {
-          twinDoa += qty;
+          twinDoa += receiptQty;
         } else if (parsed.kind === 'gross') {
-          qty_received += Math.max(0, qty - parsed.doa);
+          qty_received += Math.max(0, receiptQty - parsed.doa);
           grossDoa += parsed.doa;
         } else {
-          qty_received += qty;
+          qty_received += receiptQty;
           if (parsed.kind === 'marker') markerDoa += parsed.doa;
         }
       }
@@ -638,6 +658,9 @@ export class StockTransferService {
     });
   }
 
+  /**
+   * One transfer with its lines and quantities, if it is inside the user's farm, company and line-of-business scope; NotFound otherwise.
+   */
   async findOne(id: string) {
     const scope = farmScope(this.cls);
     const conditions = [
@@ -699,8 +722,8 @@ export class StockTransferService {
    * A hand-made transfer has no requisition line and gets EMPTY_SOURCE_LINK.
    */
   private async sourceLinks(transferIds: string[], tenantId: string): Promise<Map<string, SourceLink>> {
-    const out = new Map<string, SourceLink>();
-    if (!transferIds.length) return out;
+    const linksByTransferId = new Map<string, SourceLink>();
+    if (!transferIds.length) return linksByTransferId;
     const rows = await this.db
       .select({
         transfer_id: schema.stockTransferLine.transfer_id,
@@ -733,7 +756,7 @@ export class StockTransferService {
       ))
       .where(and(inArray(schema.stockTransferLine.transfer_id, transferIds), eq(schema.stockTransfer.tenant_id, tenantId)));
     for (const r of rows) {
-      const link = out.get(r.transfer_id) ?? {
+      const link = linksByTransferId.get(r.transfer_id) ?? {
         source_requisition_id: r.requisition_id,
         source_requisition_no: r.req_no,
         source_requisition_kind: r.doc_type === 'FEED' ? 'FEED' : 'COMMON',
@@ -748,11 +771,14 @@ export class StockTransferService {
         link.source_loading_sheet_id ??= r.loading_sheet_id;
         link.source_loading_sheet_no ??= r.loading_sheet_no;
       }
-      out.set(r.transfer_id, link);
+      linksByTransferId.set(r.transfer_id, link);
     }
-    return out;
+    return linksByTransferId;
   }
 
+  /**
+   * A page of transfers in the user's scope. `direction` limits it to transfers leaving (OUTBOUND) or arriving at (INBOUND) the user's farm.
+   */
   async findAll(query: QueryStockTransferDto, tenantId: string) {
     const conditions: any[] = [eq(schema.stockTransfer.tenant_id, tenantId), isNull(schema.stockTransfer.deleted_at)];
 
@@ -808,10 +834,16 @@ export class StockTransferService {
     return rows.map((r: any) => ({ ...r, ...(links.get(r.transfer_id) ?? EMPTY_SOURCE_LINK) }));
   }
 
+  /**
+   * Transfers that are in transit to the user's farm and waiting to be received.
+   */
   async getPendingReceipts(query: QueryStockTransferDto, tenantId: string) {
     return this.findAll({ ...query, status: 'IN_TRANSIT', direction: 'INBOUND' }, tenantId);
   }
 
+  /**
+   * The receipts already posted against transfers, read from the ledger, each split into good and DOA quantity.
+   */
   async getReceiptHistory(query: QueryStockTransferDto, tenantId: string) {
     const scope = farmScope(this.cls);
     const conditions: any[] = [
@@ -928,7 +960,7 @@ export class StockTransferService {
 
     return filteredReceipts.map((r) => {
       const parentTransfer = transferMap.get(r.transfer_no);
-      const it = itemMap.get(r.item_id!);
+      const itemRow = itemMap.get(r.item_id!);
       const authorName = (r.created_by && userMap.get(r.created_by)) || r.created_by || 'System';
 
       const { good: good_qty, doa: doa_qty } = receiptSplit(Number(r.quantity || 0), r.external_reference_no);
@@ -947,8 +979,8 @@ export class StockTransferService {
         warehouse_id: r.warehouse_id,
         transfer_status: parentTransfer?.transfer_status || 'RECEIVED',
         item_id: r.item_id,
-        item_code: it?.item_code || r.item_code || r.item_id,
-        item_name: it?.item_name || r.item_name || '—',
+        item_code: itemRow?.item_code || r.item_code || r.item_id,
+        item_name: itemRow?.item_name || r.item_name || '—',
         quantity: good_qty,
         doa_quantity: doa_qty,
         uom: r.uom,
@@ -961,6 +993,9 @@ export class StockTransferService {
     });
   }
 
+  /**
+   * Refuses a change to a transfer that is no longer DRAFT.
+   */
   private assertDraft(transfer: { status: string }) {
     if (transfer.status !== 'DRAFT') {
       throw new BadRequestException(`Transfer Order cannot be modified — it is already ${transfer.status}.`);
@@ -1030,18 +1065,18 @@ export class StockTransferService {
       shipped: shipped.get(l.line_id) ?? 0,
       received: received.get(l.line_id) ?? 0,
     })));
-    const set: Record<string, unknown> = {
+    const statusUpdate: Record<string, unknown> = {
       status,
       updated_by: userPayload?.userId || null,
       updated_at: toMysqlTimestamp(),
     };
     if (status === 'POSTED') {
-      set.posted_at = toMysqlTimestamp();
-      set.posted_by = userPayload?.userId || null;
+      statusUpdate.posted_at = toMysqlTimestamp();
+      statusUpdate.posted_by = userPayload?.userId || null;
     }
     const [claim] = await this.db
       .update(schema.stockTransfer)
-      .set(set as any)
+      .set(statusUpdate as any)
       .where(and(eq(schema.stockTransfer.transfer_id, id), inArray(schema.stockTransfer.status, [...OPEN_TRANSFER_STATUSES])));
     if (claim.affectedRows === 0) {
       throw new BadRequestException('Stock Transfer cannot take this event — it was already posted or cancelled by another request.');
@@ -1049,6 +1084,9 @@ export class StockTransferService {
     return status;
   }
 
+  /**
+   * Edits a DRAFT transfer's header; when lines are sent, they replace the existing ones. Refused once anything has shipped or the transfer has left DRAFT.
+   */
   async update(id: string, dto: UpdateStockTransferDto, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId);
@@ -1120,6 +1158,9 @@ export class StockTransferService {
     });
   }
 
+  /**
+   * Cancels (soft-deletes) a DRAFT transfer that has not shipped, and records it in the audit log.
+   */
   async remove(id: string, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId);
@@ -1182,6 +1223,9 @@ export class StockTransferService {
     }
   }
 
+  /**
+   * Posts a draft in one step: a direct transfer, meaning one shipment covering every line plus its matching receipt, in one transaction.
+   */
   async post(id: string, tenantId: string, userPayload?: any) {
     // Compatibility wrapper (Task 10): the atomic one-step posting is now a
     // direct transfer — one shipment covering every line plus its matching
@@ -1599,9 +1643,9 @@ export class StockTransferService {
         eq(schema.transferShipment.tenant_id, tenantId),
         isNull(schema.transferShipment.deleted_at),
       ));
-    const map = new Map<string, number>();
-    for (const r of rows) map.set(r.line_id, (map.get(r.line_id) ?? 0) + Number(r.qty));
-    return map;
+    const shippedByLine = new Map<string, number>();
+    for (const r of rows) shippedByLine.set(r.line_id, (shippedByLine.get(r.line_id) ?? 0) + Number(r.qty));
+    return shippedByLine;
   }
 
   /**
@@ -1623,15 +1667,15 @@ export class StockTransferService {
         eq(schema.transferReceipt.tenant_id, tenantId),
         isNull(schema.transferReceipt.deleted_at),
       ));
-    const map = new Map<string, { qty: number; receiptNos: string[] }>();
+    const receivedByShipmentLine = new Map<string, { qty: number; receiptNos: string[] }>();
     for (const r of rows) {
       if (!r.shipment_line_id) continue;
-      const entry = map.get(r.shipment_line_id) ?? { qty: 0, receiptNos: [] };
+      const entry = receivedByShipmentLine.get(r.shipment_line_id) ?? { qty: 0, receiptNos: [] };
       entry.qty += Number(r.qty);
       if (r.receipt_no) entry.receiptNos.push(r.receipt_no);
-      map.set(r.shipment_line_id, entry);
+      receivedByShipmentLine.set(r.shipment_line_id, entry);
     }
-    return map;
+    return receivedByShipmentLine;
   }
 
   /**
@@ -1660,9 +1704,9 @@ export class StockTransferService {
         eq(schema.transferReceipt.tenant_id, tenantId),
         isNull(schema.transferReceipt.deleted_at),
       ));
-    const map = new Map<string, number>();
-    for (const r of rows) map.set(r.line_id, (map.get(r.line_id) ?? 0) + Number(r.qty));
-    return map;
+    const receivedByLine = new Map<string, number>();
+    for (const r of rows) receivedByLine.set(r.line_id, (receivedByLine.get(r.line_id) ?? 0) + Number(r.qty));
+    return receivedByLine;
   }
 
   /**
@@ -2067,7 +2111,7 @@ export class StockTransferService {
             documentLineId: item.line.line_id,
             postingDate: receiptPostingDate,
             transactionType: 'VARIANCE_NEGATIVE',
-            entryType: 'ADJUSTMENT',
+            entryType: 'NEGATIVE',
             quantity: item.doaQty,
             uom: item.line.uom,
             lotNo: item.lotNo,

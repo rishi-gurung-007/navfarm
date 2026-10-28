@@ -3,6 +3,7 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { FinancialReportsService } from './financial-reports.service';
 import { ClsService } from 'nestjs-cls';
 import { FARM_SCOPE_KEY, FarmScope } from '../../../common/farm-scope';
+import { bioCodesOfEvent } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 describe('FinancialReportsService', () => {
   let service: FinancialReportsService;
@@ -40,11 +41,11 @@ describe('FinancialReportsService', () => {
         from: jest.fn().mockReturnValue({
           where: jest.fn().mockReturnValue({
             orderBy: jest.fn().mockResolvedValue([
-              { entry_id: 'p-1', entry_type: 'PURCHASE', document_type: 'GOODS_RECEIPT', posting_date: '2026-01-05', cost_amount: '1700.0000', quantity: '2.0000', remaining_quantity: '0.0000', batch_id: null, animal_id: null },
-              { entry_id: 'a-1', entry_type: 'ACQUISITION', posting_date: '2026-01-05', cost_amount: '850.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-1' },
-              { entry_id: 'a-2', entry_type: 'ACQUISITION', posting_date: '2026-01-05', cost_amount: '850.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-2' },
-              { entry_id: 'p-2', entry_type: 'PURCHASE', document_type: 'GOODS_RECEIPT', posting_date: '2026-01-06', cost_amount: '1200.0000', quantity: '2.0000', remaining_quantity: '1.0000', batch_id: null, animal_id: null },
-              { entry_id: 'a-3', entry_type: 'ACQUISITION', posting_date: '2026-01-06', cost_amount: '600.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-3' },
+              { entry_id: 'p-1', ...bioCodesOfEvent('PURCHASE'), document_type: 'GOODS_RECEIPT', posting_date: '2026-01-05', cost_amount: '1700.0000', quantity: '2.0000', remaining_quantity: '0.0000', batch_id: null, animal_id: null },
+              { entry_id: 'a-1', ...bioCodesOfEvent('ACQUISITION'), posting_date: '2026-01-05', cost_amount: '850.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-1' },
+              { entry_id: 'a-2', ...bioCodesOfEvent('ACQUISITION'), posting_date: '2026-01-05', cost_amount: '850.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-2' },
+              { entry_id: 'p-2', ...bioCodesOfEvent('PURCHASE'), document_type: 'GOODS_RECEIPT', posting_date: '2026-01-06', cost_amount: '1200.0000', quantity: '2.0000', remaining_quantity: '1.0000', batch_id: null, animal_id: null },
+              { entry_id: 'a-3', ...bioCodesOfEvent('ACQUISITION'), posting_date: '2026-01-06', cost_amount: '600.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-3' },
             ]),
           }),
         }),
@@ -67,7 +68,7 @@ describe('FinancialReportsService', () => {
               // Prior period entry (Opening)
               {
                 entry_id: 'e-1',
-                entry_type: 'ACQUISITION',
+                ...bioCodesOfEvent('ACQUISITION'),
                 posting_date: '2025-12-01',
                 cost_amount: '10000.0000',
                 quantity: '10.0000',
@@ -77,7 +78,7 @@ describe('FinancialReportsService', () => {
               // Current period entries (Movements)
               {
                 entry_id: 'e-2',
-                entry_type: 'CONSUMPTION',
+                ...bioCodesOfEvent('CONSUMPTION'),
                 posting_date: '2026-02-15',
                 cost_amount: '2500.0000',
                 quantity: '10.0000',
@@ -86,7 +87,7 @@ describe('FinancialReportsService', () => {
               },
               {
                 entry_id: 'e-3',
-                entry_type: 'AMORTIZATION',
+                ...bioCodesOfEvent('AMORTIZATION'),
                 posting_date: '2026-03-31',
                 cost_amount: '-500.0000',
                 quantity: '10.0000',
@@ -95,7 +96,7 @@ describe('FinancialReportsService', () => {
               },
               {
                 entry_id: 'e-4',
-                entry_type: 'TRANSFORMATION',
+                ...bioCodesOfEvent('TRANSFORMATION'),
                 posting_date: '2026-05-20',
                 cost_amount: '-3000.0000',
                 quantity: '-3.0000',
@@ -104,7 +105,7 @@ describe('FinancialReportsService', () => {
               },
               {
                 entry_id: 'e-5',
-                entry_type: 'ACQUISITION',
+                ...bioCodesOfEvent('ACQUISITION'),
                 posting_date: '2026-04-01',
                 cost_amount: '3500.0000',
                 quantity: '1.0000',
@@ -154,6 +155,107 @@ describe('FinancialReportsService', () => {
       expect(res.glReconciliation.isReconciled).toBe(true);
       expect(res.assetTypeBreakdown.batchCarryingValue).toBe(9000);
       expect(res.assetTypeBreakdown.animalCarryingValue).toBe(3500);
+    });
+
+
+    it('counts the accumulated amortisation account in the GL it reconciles to, since the ledger\'s carrying value is net of the amortisation', async () => {
+      // 1. Mock bio_asset_ledger query
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            orderBy: jest.fn().mockResolvedValue([
+              // Prior period entry (Opening)
+              {
+                entry_id: 'e-1',
+                ...bioCodesOfEvent('ACQUISITION'),
+                posting_date: '2025-12-01',
+                cost_amount: '10000.0000',
+                quantity: '10.0000',
+                batch_id: 'batch-1',
+                animal_id: null,
+              },
+              // Current period entries (Movements)
+              {
+                entry_id: 'e-2',
+                ...bioCodesOfEvent('CONSUMPTION'),
+                posting_date: '2026-02-15',
+                cost_amount: '2500.0000',
+                quantity: '10.0000',
+                batch_id: 'batch-1',
+                animal_id: null,
+              },
+              {
+                entry_id: 'e-3',
+                ...bioCodesOfEvent('AMORTIZATION'),
+                posting_date: '2026-03-31',
+                cost_amount: '-500.0000',
+                quantity: '10.0000',
+                batch_id: 'batch-1',
+                animal_id: null,
+              },
+              {
+                entry_id: 'e-4',
+                ...bioCodesOfEvent('TRANSFORMATION'),
+                posting_date: '2026-05-20',
+                cost_amount: '-3000.0000',
+                quantity: '-3.0000',
+                batch_id: 'batch-1',
+                animal_id: null,
+              },
+              {
+                entry_id: 'e-5',
+                ...bioCodesOfEvent('ACQUISITION'),
+                posting_date: '2026-04-01',
+                cost_amount: '3500.0000',
+                quantity: '1.0000',
+                batch_id: null,
+                animal_id: 'animal-1',
+              },
+            ]),
+          }),
+        }),
+      });
+
+      // 2. Mock GL journal account balances
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          innerJoin: jest.fn().mockReturnValue({
+            innerJoin: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                groupBy: jest.fn().mockResolvedValue([
+                  {
+                    gl_account_id: 'gl-1050',
+                    account_code: '1050',
+                    account_name: 'Biological Assets - Pre-mature',
+                    account_type: 'ASSET',
+                    parent_account_id: null,
+                    total_debit: '13000.0000',
+                    total_credit: '0.0000',
+                  },
+                  {
+                    gl_account_id: 'gl-1065',
+                    account_code: '1065',
+                    account_name: 'Accumulated Amortisation - Bio Assets',
+                    account_type: 'ASSET',
+                    parent_account_id: null,
+                    total_debit: '0.0000',
+                    total_credit: '500.0000',
+                  },
+                ]),
+              }),
+            }),
+          }),
+        }),
+      });
+
+      mockDbSelect.mockReturnValueOnce(breakdownRows());
+
+      const res = await service.getBiologicalAssetRollForward('tenant-1', 'comp-1', '2026-01-01', '2026-12-31');
+
+      expect(res.closingCarryingValue).toBe(12500);
+      expect(res.glReconciliation.glAccounts.map((a: any) => a.account_code).sort()).toEqual(['1050', '1065']);
+      expect(res.glReconciliation.totalGlBalance).toBe(12500); // 13000 - 500
+      expect(res.glReconciliation.isReconciled).toBe(true);
     });
 
     it('excludes another LOB on the selected farm and marks GL reconciliation unavailable', async () => {
@@ -256,7 +358,7 @@ describe('FinancialReportsService', () => {
 
     describe('by costing profile, and the tie-out of the run journals to the GL (Phase 6)', () => {
       const run = (o: Record<string, unknown>) => ({
-        entry_type: 'AMORTIZATION', posting_date: '2026-09-30', amount: '-82.1447', run_id: 'r1', animal_id: 'a1', profile_code: 'IMP-F',
+        ...bioCodesOfEvent('AMORTIZATION'), posting_date: '2026-09-30', amount: '-82.1447', run_id: 'r1', animal_id: 'a1', profile_code: 'IMP-F',
         expense_gl: 'gl-exp', accum_gl: 'gl-acc', fv_gl: null, died: 0, ...o,
       });
       const line = (o: Record<string, unknown>) => ({ account_id: 'gl-exp', code: '5100', name: 'Amortization Expense', source: 'BIO_COSTING_RUN', posting_date: '2026-09-30', debit: '0', credit: '0', ...o });
@@ -273,7 +375,7 @@ describe('FinancialReportsService', () => {
 
       it('splits the roll-forward by profile, with its amortisation, and ties the run journals to the GL: expense, and accumulated amortisation', async () => {
         const res: any = await call(
-          [run({ entry_type: 'ACQUISITION', posting_date: '2024-02-07', amount: '392.8', run_id: null }), run({})],
+          [run({ ...bioCodesOfEvent('ACQUISITION'), posting_date: '2024-02-07', amount: '392.8', run_id: null }), run({})],
           [
             line({ debit: '82.1447' }),
             line({ account_id: 'gl-acc', code: '2150', name: 'Accumulated amortisation', credit: '82.1447' }),

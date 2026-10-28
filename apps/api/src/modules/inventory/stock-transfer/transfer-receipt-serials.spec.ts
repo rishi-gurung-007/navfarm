@@ -6,7 +6,7 @@
  * shipment of SN00001 and SN00002 was received at GRA100/SHED-001 as one
  * POSITIVE row, quantity 2, serial_no "SN00001,SN00002". A serial is one
  * physical unit (the Goods Receipt writes one row per serial), and every
- * consumer matches a serial exactly: applyFifo narrows by serial_no = 'SN00001'
+ * consumer matches a serial exactly: allocateAndCostOutbound narrows by serial_no = 'SN00001'
  * and finds nothing, and GET /inventory-ledger/available-serials offered a
  * single "serial" named "SN00001,SN00002". Units received through a transfer
  * could not be issued, adjusted or transferred on one by one.

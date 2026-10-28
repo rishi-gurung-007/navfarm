@@ -24,6 +24,7 @@
     "db:seed": "pnpm nx run api:db-reset-seed",
     "seed": "pnpm nx run api:db-reset-seed",
     "seed:lean": "pnpm nx run api:db-reset-seed-lean",
+    "seed:ledger-check": "pnpm nx run api:db-reset-seed-ledger-check",
     "seed:costing": "pnpm nx run api:db-reset-seed-costing",
     "seed:costing-test": "pnpm nx run api:db-reset-seed-costing-test",
     "seed:full": "pnpm nx run api:db-reset-seed-full",

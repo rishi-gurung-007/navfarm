@@ -1,19 +1,19 @@
 import { rollForwardByProfile, tieOutRow, type LedgerFact } from './bio-costing-report.rules';
 
-const f = (o: Partial<LedgerFact> & { entry_type: string; amount: number }): LedgerFact => ({ profile_code: 'IMP-F', has_animal: true, posting_date: '2026-09-30', ...o });
+const f = (o: Partial<LedgerFact> & { event: LedgerFact['event']; amount: number }): LedgerFact => ({ profile_code: 'IMP-F', has_animal: true, posting_date: '2026-09-30', ...o });
 
 describe('rollForwardByProfile', () => {
   const rows: LedgerFact[] = [
-    f({ entry_type: 'ACQUISITION', amount: 392.8, posting_date: '2024-02-07' }),            // opening
-    f({ entry_type: 'CONSUMPTION', amount: 18.75, posting_date: '2026-09-10' }),
-    f({ entry_type: 'AMORTIZATION', amount: -52.8655 }),
-    f({ entry_type: 'ACQUISITION', amount: 300, profile_code: 'LOC-F', posting_date: '2025-10-15' }),
-    f({ entry_type: 'FAIR_VALUE_ADJMT', amount: -9, profile_code: 'LOC-F' }),
-    f({ entry_type: 'MORTALITY', amount: -300, profile_code: 'LOC-F', posting_date: '2026-10-05' }), // after dateTo: not counted
-    f({ entry_type: 'ACQUISITION', amount: 657124, profile_code: null, posting_date: '2025-06-13' }),
-    f({ entry_type: 'CONSUMPTION', amount: 5, profile_code: null, has_animal: false, posting_date: '2026-09-12' }),
-    f({ entry_type: 'PURCHASE', amount: 9999 }),                                              // a GRN row: moves no carrying value
-    f({ entry_type: 'TRANSFER_IN', amount: 50 }),
+    f({ event: 'ACQUISITION', amount: 392.8, posting_date: '2024-02-07' }),            // opening
+    f({ event: 'CONSUMPTION', amount: 18.75, posting_date: '2026-09-10' }),
+    f({ event: 'AMORTIZATION', amount: -52.8655 }),
+    f({ event: 'ACQUISITION', amount: 300, profile_code: 'LOC-F', posting_date: '2025-10-15' }),
+    f({ event: 'FAIR_VALUE_ADJMT', amount: -9, profile_code: 'LOC-F' }),
+    f({ event: 'MORTALITY', amount: -300, profile_code: 'LOC-F', posting_date: '2026-10-05' }), // after dateTo: not counted
+    f({ event: 'ACQUISITION', amount: 657124, profile_code: null, posting_date: '2025-06-13' }),
+    f({ event: 'CONSUMPTION', amount: 5, profile_code: null, has_animal: false, posting_date: '2026-09-12' }),
+    f({ event: 'PURCHASE', amount: 9999 }),                                              // a GRN row: moves no carrying value
+    f({ event: 'TRANSFER_IN', amount: 50 }),
   ];
   const out = rollForwardByProfile(rows, '2026-09-01', '2026-09-30');
   const by = (key: string) => out.find((x) => x.key === key)!;

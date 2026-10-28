@@ -26,6 +26,7 @@ import * as schema from '../../../core/database/schema';
 import type { DemoChapter, DemoContext } from '../chapter';
 import { createItemLookup } from '../batch-helpers';
 import { tagOf } from '../farms';
+import { bioEventCondition } from '../../../modules/inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 const OUTPUT_ITEM = 'Dressed Pork Carcass (Wholesale Cut)';
 /** Share of the herd slaughtered, and the carcass weight each head yields. */
@@ -63,7 +64,7 @@ export const bioAssetExitChapter: DemoChapter = {
       const [already] = await db
         .select({ entry_id: schema.bioAssetLedger.entry_id })
         .from(schema.bioAssetLedger)
-        .where(and(eq(schema.bioAssetLedger.batch_id, batch.batch_id), eq(schema.bioAssetLedger.entry_type, 'TRANSFORMATION')))
+        .where(and(eq(schema.bioAssetLedger.batch_id, batch.batch_id), bioEventCondition(schema.bioAssetLedger, 'TRANSFORMATION')))
         .limit(1);
       if (already) {
         ctx.log(`${tag} ${batch.batch_no}: already has a disposal — skipped`);

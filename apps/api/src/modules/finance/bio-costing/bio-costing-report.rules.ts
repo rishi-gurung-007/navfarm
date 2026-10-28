@@ -2,11 +2,12 @@
  * The bio-asset roll-forward split by costing profile, and the tie of each profile's movements to the GL accounts it posts to
  * (bio-asset costing, Phase 6). Pure: the report service loads the rows and these functions add them up.
  */
-import { BOOK_VALUE_ENTRY_TYPES } from '../../inventory/bio-asset-ledger/animal-book-value.service';
+import { BOOK_VALUE_EVENTS } from '../../inventory/bio-asset-ledger/animal-book-value.service';
+import type { BioEvent } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
-const CAPITALISED = new Set(['CONSUMPTION', 'OVERHEAD', 'OVERHEAD_COST', 'GROWTH_ADJMT']);
+const CAPITALISED = new Set<BioEvent>(['CONSUMPTION', 'OVERHEAD_COST']);
 // COST_ALLOCATION: a sow's lactation cost handed to her litter (negative on her, positive on the lot's batch-level row), so the total is unchanged.
-const EXITS = new Set(['MORTALITY', 'WRITEOFF', 'TRANSFORMATION', 'COST_ALLOCATION']);
+const EXITS = new Set<BioEvent>(['MORTALITY', 'TRANSFORMATION', 'COST_ALLOCATION']);
 const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
 
 export interface LedgerFact {
@@ -14,7 +15,8 @@ export interface LedgerFact {
   profile_code: string | null;
   /** False for a batch-level row (no animal on it). */
   has_animal: boolean;
-  entry_type: string;
+  /** What the row records (bioEventOf), not its entry type, which several events share. */
+  event: BioEvent | null;
   posting_date: string;
   amount: number;
 }
@@ -38,22 +40,22 @@ const blank = (key: string, label: ProfileRollForward['label'], profile_code: st
 
 /**
  * One row per profile, plus "animals with no profile" and "batch-level rows" (cost the ledger holds against a batch, not an animal).
- * Only the entry types that make up a carrying value count; a transfer or a GRN purchase row moves nothing. Movements are as the
+ * Only the events that make up a carrying value count; a transfer or a GRN purchase row moves nothing. Movements are as the
  * ledger stores them: amortisation negative, a fair-value loss negative, an exit negative.
  */
 export function rollForwardByProfile(rows: LedgerFact[], dateFrom: string, dateTo: string): ProfileRollForward[] {
   const byKey = new Map<string, ProfileRollForward>();
   for (const r of rows) {
-    if (!(BOOK_VALUE_ENTRY_TYPES as readonly string[]).includes(r.entry_type)) continue;
+    if (!r.event || !BOOK_VALUE_EVENTS.includes(r.event)) continue;
     if (r.posting_date > dateTo) continue;
     const key = !r.has_animal ? 'BATCH_LEVEL' : r.profile_code ? `P:${r.profile_code}` : 'NO_PROFILE';
     const row = byKey.get(key) ?? blank(key, !r.has_animal ? 'BATCH_LEVEL' : r.profile_code ? 'PROFILE' : 'NO_PROFILE', r.profile_code);
     if (r.posting_date < dateFrom) row.opening += r.amount;
-    else if (r.entry_type === 'ACQUISITION') row.acquisitions += r.amount;
-    else if (CAPITALISED.has(r.entry_type)) row.capitalised += r.amount;
-    else if (r.entry_type === 'AMORTIZATION') row.amortisation += r.amount;
-    else if (r.entry_type === 'FAIR_VALUE_ADJMT') row.fairValue += r.amount;
-    else if (EXITS.has(r.entry_type)) row.exits += r.amount;
+    else if (r.event === 'ACQUISITION') row.acquisitions += r.amount;
+    else if (CAPITALISED.has(r.event)) row.capitalised += r.amount;
+    else if (r.event === 'AMORTIZATION') row.amortisation += r.amount;
+    else if (r.event === 'FAIR_VALUE_ADJMT') row.fairValue += r.amount;
+    else if (EXITS.has(r.event)) row.exits += r.amount;
     byKey.set(key, row);
   }
   const out = [...byKey.values()].map((x) => {

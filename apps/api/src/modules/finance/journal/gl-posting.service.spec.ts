@@ -81,6 +81,16 @@ describe('GlPostingService', () => {
     );
   });
 
+  it('posts under gl_mapping_type when a row names one, and under its transaction type otherwise', async () => {
+    const resolve = jest.spyOn(service as any, 'resolveMapping').mockResolvedValue({ debit_gl_account_id: 'gl-dr', credit_gl_account_id: 'gl-cr' });
+    mockDbSelect.mockReturnValue(itemLookup({ valuation_method: null }));
+
+    await service.postInventoryLedgerEntry({ ...baseLedgerEntry, transaction_type: 'CONSUMPTION', gl_mapping_type: 'BIO_CONSUMPTION_PREMATURE' } as any);
+    await service.postInventoryLedgerEntry({ ...baseLedgerEntry, transaction_type: 'CONSUMPTION', gl_mapping_type: null } as any);
+
+    expect(resolve.mock.calls.map((c) => c[2])).toEqual(['BIO_CONSUMPTION_PREMATURE', 'CONSUMPTION']);
+  });
+
   it('throws when no mapping matches at all', async () => {
     mockDbSelect
       .mockReturnValueOnce(itemLookup({ valuation_method: null }))
@@ -124,6 +134,51 @@ describe('GlPostingService', () => {
 
 
   // Each farm has its own cost centre (decisions, 11 Oct).
+  describe('an animal\'s own asset account', () => {
+    const mapping = (over: object = {}) => mappingLookup([{ item_category_id: null, nob_id: null, lob_id: null, valuation_method: null, debit_gl_account_id: 'gl-1050', credit_gl_account_id: 'gl-1010', ...over }]);
+    const lines = () => (mockJournalService.createAndPostSystemJournal.mock.calls[0][0] as any).lines as Array<{ glAccountId: string; debitAmount: number; creditAmount: number }>;
+
+    it('puts the whole debit of an inventory entry on the account named, and leaves the credit with the mapping', async () => {
+      mockDbSelect.mockReturnValueOnce(itemLookup({ valuation_method: null })).mockReturnValueOnce(mapping());
+      await service.postInventoryLedgerEntry(baseLedgerEntry as any, 'u1', { debitAccountId: 'gl-1060' });
+      expect(lines().map((l) => [l.glAccountId, l.debitAmount, l.creditAmount])).toEqual([['gl-1060', 100, 0], ['gl-1010', 0, 100]]);
+    });
+
+    it('splits the debit of an entry between accounts in proportion to the parts, rescaled to the entry (the rounding on the last), the mapping taking a part with no account', async () => {
+      mockDbSelect.mockReturnValueOnce(itemLookup({ valuation_method: null })).mockReturnValueOnce(mapping());
+      // 3 parts of a 100.00 entry: 1 kg to class A, 1 kg to class A, 1 kg to an animal with no profile
+      await service.postInventoryLedgerEntry(baseLedgerEntry as any, 'u1', { debitSplit: [{ accountId: 'gl-1060', amount: 1 }, { accountId: 'gl-1060', amount: 1 }, { accountId: null, amount: 1 }] });
+      const l = lines();
+      expect(l.filter((x) => x.debitAmount > 0).map((x) => [x.glAccountId, x.debitAmount])).toEqual([['gl-1060', 66.6667], ['gl-1050', 33.3333]]);
+      expect(l.reduce((n, x) => n + x.debitAmount, 0)).toBeCloseTo(100, 4);
+      expect(l.reduce((n, x) => n + x.creditAmount, 0)).toBeCloseTo(100, 4);
+    });
+
+    it('swaps the overridden accounts as the mapping\'s are for an unfavourable posting (the asset side stays the asset side)', async () => {
+      mockDbSelect.mockReturnValue(mapping({ debit_gl_account_id: 'gl-1060', credit_gl_account_id: 'gl-4010' }));
+      await service.postBatchCostEntry({ tenantId: 't', companyId: 'c', transactionType: 'BIO_DISPOSAL_SOLD', amount: 50, documentNo: 'A', postingDate: '2026-06-01', debitAccountId: 'gl-1065x', reverseDirection: true });
+      expect(lines().map((l) => [l.glAccountId, l.debitAmount, l.creditAmount])).toEqual([['gl-4010', 50, 0], ['gl-1065x', 0, 50]]);
+    });
+
+    it('carries an animal in the acquisition account of her profile, and none for an animal with no profile', async () => {
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ animal_id: 'a-1', account: 'gl-1060' }, { animal_id: 'a-2', account: null }]) }) }) });
+      const accounts = await service.animalAssetAccountIds(['a-1', 'a-2', 'a-3']);
+      expect(accounts.get('a-1')).toBe('gl-1060');
+      expect(accounts.has('a-2')).toBe(false);
+      expect(accounts.has('a-3')).toBe(false);
+    });
+
+    it('names an account for an item only where the active profiles that cover it agree on one', async () => {
+      const profiles = (accounts: Array<string | null>) => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(accounts.map((account) => ({ account }))) }) });
+      mockDbSelect.mockReturnValueOnce(profiles(['gl-1060', 'gl-1060', 'gl-1060']));
+      await expect(service.assetAccountForItem('t', 'c', 'item-1')).resolves.toBe('gl-1060');
+      mockDbSelect.mockReturnValueOnce(profiles(['gl-1060', 'gl-1065']));
+      await expect(service.assetAccountForItem('t', 'c', 'item-1')).resolves.toBeUndefined();
+      mockDbSelect.mockReturnValueOnce(profiles([]));
+      await expect(service.assetAccountForItem('t', 'c', 'item-1')).resolves.toBeUndefined();
+    });
+  });
+
   describe('farm cost centre on inventory journals', () => {
     const locLookup = (row: any) => ({
       from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(row ? [row] : []) }) }),

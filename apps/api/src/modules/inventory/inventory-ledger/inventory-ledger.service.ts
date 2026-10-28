@@ -15,6 +15,7 @@ import { costingMethodOf, explainCosting, type ExplainBookReceipt } from './cost
 import { farmScope, locationOnFarm, locationReferenceScopeConditions, restrictedScopeConditions } from '../../../common/farm-scope';
 import { mysqlTimestampFromEpoch } from '../../../common/mysql-utc-instant';
 import { assertPostingPeriodOpen } from '../../../common/period-close';
+import { assertInventoryMovement, INFORMATIONAL_ENTRY_TYPES } from './inventory-ledger.types';
 
 interface WritePositiveEntryParams {
   tenantId: string;
@@ -27,6 +28,8 @@ interface WritePositiveEntryParams {
   externalReferenceNo?: string;
   transactionType: string;
   entryType?: string;
+  /** The G/L Mapping transaction type to post under when it is not the transaction type (a bio-asset batch's output or harvest). */
+  glMappingType?: string;
   quantity: number;
   uom: string;
   rate?: number;
@@ -57,6 +60,8 @@ interface WriteNegativeEntryParams {
   externalReferenceNo?: string;
   transactionType: string;
   entryType?: string;
+  /** The G/L Mapping transaction type to post under when it is not the transaction type (a bio-asset batch's feed: premature capitalises, mature expenses). */
+  glMappingType?: string;
   quantity: number; // positive number — the amount being consumed/shipped/written off
   uom: string;
   lotNo?: string;
@@ -115,9 +120,6 @@ const roundMoney = (value: number) => Number(value.toFixed(4));
  * log every document type (GRN, Transfer Order, Stock
  * Adjustment) writes to. Ledger rows are never updated, only inserted.
  */
-/** Ledger rows that record a day's observation or overhead and move no stock (audit H4). */
-const INFORMATIONAL_ENTRY_TYPES = ['DESCRIPTIVE', 'OVERHEAD'];
-
 @Injectable()
 export class InventoryLedgerService {
   constructor(
@@ -158,16 +160,16 @@ export class InventoryLedgerService {
    * The positive reversal is not a new FIFO layer: the old layers regain stock.
    * external_reference_no links the reversal to the original ledger UUID.
    */
-  async reverseEntry(ledgerId: string, tenantId: string, userId?: string) {
+  async reverseIssue(ledgerId: string, tenantId: string, userId?: string) {
     return withTenantTransaction(this.cls, async () => {
       const [original] = await this.db.select().from(schema.inventoryLedger)
         .where(and(eq(schema.inventoryLedger.ledger_id, ledgerId), eq(schema.inventoryLedger.tenant_id, tenantId)))
         .for('update');
-      if (!original || original.entry_type !== 'NEGATIVE') throw new BadRequestException('Only an existing issue can be reversed here.');
+      if (!original || original.entry_type !== 'NEGATIVE' || original.reversal_of_ledger_id) throw new BadRequestException('Only an existing issue can be reversed here.');
       // r32: the reversal posts a new entry dated like the issue, so a closed Reporting Period refuses it too.
       await assertPostingPeriodOpen(this.db, { tenantId, companyId: original.company_id, postingDate: original.posting_date });
       const [reversed] = await this.db.select().from(schema.inventoryLedger)
-        .where(and(eq(schema.inventoryLedger.external_reference_no, ledgerId), eq(schema.inventoryLedger.transaction_type, 'REVERSAL'))).limit(1);
+        .where(eq(schema.inventoryLedger.reversal_of_ledger_id, ledgerId)).limit(1);
       if (reversed) throw new BadRequestException('This issue has already been reversed.');
       const applications = await this.db.select().from(schema.inventoryApplication)
         .where(eq(schema.inventoryApplication.outbound_ledger_id, ledgerId));
@@ -175,7 +177,7 @@ export class InventoryLedgerService {
       if (Math.abs(appliedQty + Number(original.quantity)) > 0.0001) throw new BadRequestException('The issue has incomplete FIFO applications; review before reversing.');
       const reversalId = randomUUID();
       // No explicit created_at here — every other ledger write (writePositiveEntry,
-      // writeNegativeEntry, applyFifo) leaves it to inventory_ledger.created_at's
+      // writeNegativeEntry, allocateAndCostOutbound) leaves it to inventory_ledger.created_at's
       // own DEFAULT (local server time). This insert used to compute
       // `new Date().toISOString()...`, which is UTC, so a same-day reversal could
       // sort *before* the entry it reverses once the server's local offset was
@@ -191,9 +193,9 @@ export class InventoryLedgerService {
       // entry_no is dropped for the same reason: the reversal is a new entry and the trigger numbers it.
       const { created_at: _originalCreatedAt, entry_no: _originalEntryNo, ...originalForReversal } = original;
       await this.db.insert(schema.inventoryLedger).values({
-        ...originalForReversal, ledger_id: reversalId, entry_type: 'POSITIVE', transaction_type: 'REVERSAL',
+        ...originalForReversal, ledger_id: reversalId, entry_type: 'POSITIVE',
         quantity: (-Number(original.quantity)).toString(), amount: (-Number(original.amount)).toString(),
-        remaining_quantity: '0', external_reference_no: ledgerId,
+        remaining_quantity: '0', external_reference_no: ledgerId, reversal_of_ledger_id: ledgerId,
         created_by: userId || null,
       });
       for (const application of applications) {
@@ -231,7 +233,7 @@ export class InventoryLedgerService {
           })),
         );
       }
-      return this.loadOne(reversalId);
+      return this.loadLedgerEntry(reversalId);
     });
   }
 
@@ -242,16 +244,16 @@ export class InventoryLedgerService {
    * refuses once any of the stock has been used or moved: that stock is no longer ours to take back, and the
    * correction is then a stock adjustment, not a reversal. external_reference_no links it to the original.
    */
-  async reversePositiveEntry(ledgerId: string, tenantId: string, userId?: string) {
+  async reverseReceipt(ledgerId: string, tenantId: string, userId?: string) {
     return withTenantTransaction(this.cls, async () => {
       const [original] = await this.db.select().from(schema.inventoryLedger)
         .where(and(eq(schema.inventoryLedger.ledger_id, ledgerId), eq(schema.inventoryLedger.tenant_id, tenantId)))
         .for('update');
-      if (!original || original.entry_type !== 'POSITIVE' || original.transaction_type === 'REVERSAL') {
+      if (!original || original.entry_type !== 'POSITIVE' || original.reversal_of_ledger_id) {
         throw new BadRequestException('Only an existing inbound entry can be reversed here.');
       }
       const [reversed] = await this.db.select().from(schema.inventoryLedger)
-        .where(and(eq(schema.inventoryLedger.external_reference_no, ledgerId), eq(schema.inventoryLedger.transaction_type, 'REVERSAL'))).limit(1);
+        .where(eq(schema.inventoryLedger.reversal_of_ledger_id, ledgerId)).limit(1);
       if (reversed) throw new BadRequestException('This entry has already been reversed.');
       if (Math.abs(Number(original.remaining_quantity ?? 0) - Number(original.quantity)) > 0.0001) {
         throw new BadRequestException(
@@ -261,14 +263,14 @@ export class InventoryLedgerService {
       const reversalId = randomUUID();
       const { created_at: _createdAt, entry_no: _entryNo, ...originalForReversal } = original;
       await this.db.insert(schema.inventoryLedger).values({
-        ...originalForReversal, ledger_id: reversalId, entry_type: 'NEGATIVE', transaction_type: 'REVERSAL',
+        ...originalForReversal, ledger_id: reversalId, entry_type: 'NEGATIVE',
         quantity: (-Number(original.quantity)).toString(), amount: (-Number(original.amount)).toString(),
-        remaining_quantity: null, external_reference_no: ledgerId, created_by: userId || null,
+        remaining_quantity: null, external_reference_no: ledgerId, reversal_of_ledger_id: ledgerId, created_by: userId || null,
       });
       await this.db.update(schema.inventoryLedger)
         .set({ remaining_quantity: '0' })
         .where(eq(schema.inventoryLedger.ledger_id, ledgerId));
-      return this.loadOne(reversalId);
+      return this.loadLedgerEntry(reversalId);
     });
   }
 
@@ -289,7 +291,15 @@ export class InventoryLedgerService {
     }
   }
 
+  /**
+   * Writes one inbound row (a receipt, an output, a positive variance, or a transfer's receiving leg). It becomes a
+   * cost layer: `remaining_quantity` starts at the full quantity and later issues draw it down. The cost is not worked
+   * out here — the caller supplies the rate (a GRN's price, a shipment's carried cost, a batch output's valuation) or
+   * an overriding amount. Refused for a closed reporting period, an unknown item, a missing lot or serial on a
+   * tracked item, or a transaction type that does not go with the entry type. The G/L journal is posted separately.
+   */
   async writePositiveEntry(params: WritePositiveEntryParams) {
+    assertInventoryMovement(params.transactionType, params.entryType || 'POSITIVE');
     // r32: a closed Reporting Period blocks every posting dated in it (one shared guard).
     await assertPostingPeriodOpen(this.db, { tenantId: params.tenantId, companyId: params.companyId, postingDate: params.postingDate });
     const [item] = await this.db
@@ -320,6 +330,7 @@ export class InventoryLedgerService {
       external_reference_no: params.externalReferenceNo || null,
       entry_type: params.entryType || 'POSITIVE',
       transaction_type: params.transactionType,
+      gl_mapping_type: params.glMappingType || null,
       quantity: params.quantity.toString(),
       remaining_quantity: params.quantity.toString(),
       uom: params.uom,
@@ -338,7 +349,7 @@ export class InventoryLedgerService {
       created_by: params.userId || null,
     });
 
-    return this.loadOne(ledgerId);
+    return this.loadLedgerEntry(ledgerId);
   }
 
   /**
@@ -358,7 +369,7 @@ export class InventoryLedgerService {
    * concurrent consumptions queue instead of both reading the same remaining quantity. Returns the entry's
    * total cost and the location the stock actually came from.
    */
-  async applyFifo(
+  async allocateAndCostOutbound(
     params: {
       tenantId: string;
       companyId: string;
@@ -390,7 +401,7 @@ export class InventoryLedgerService {
       throw new BadRequestException(`Consumption quantity must be positive (got ${params.quantity}).`);
     }
     const serials = parseSerials(params.serialNo);
-    const lots = params.lots ?? (params.lotNo ? [{ lotNo: params.lotNo, quantity: params.quantity }] : []);
+    const lotsToIssue = params.lots ?? (params.lotNo ? [{ lotNo: params.lotNo, quantity: params.quantity }] : []);
     if (params.lots && Math.abs(params.lots.reduce((n, l) => n + l.quantity, 0) - params.quantity) > 0.0001) {
       throw new BadRequestException(`The lots add up to ${params.lots.reduce((n, l) => n + l.quantity, 0)} but the quantity is ${params.quantity}; they must match.`);
     }
@@ -438,10 +449,10 @@ export class InventoryLedgerService {
 
     // Lots: what each holds, now that the layers are locked and no other posting can move it.
     let lotExpiry: Map<string, string | null> | undefined;
-    if (lots.length > 0) {
-      const held = await lotBalances(executor, { tenantId: params.tenantId, companyId: params.companyId, itemId: params.itemId, warehouseId, lotNos: lots.map((l) => l.lotNo), excludeLedgerId: params.outboundLedgerId });
+    if (lotsToIssue.length > 0) {
+      const held = await lotBalances(executor, { tenantId: params.tenantId, companyId: params.companyId, itemId: params.itemId, warehouseId, lotNos: lotsToIssue.map((l) => l.lotNo), excludeLedgerId: params.outboundLedgerId });
       lotExpiry = new Map(held.map((h) => [h.lot_no, h.expiry_date]));
-      for (const lot of lots) {
+      for (const lot of lotsToIssue) {
         const have = held.find((h) => h.lot_no === lot.lotNo)?.quantity ?? 0;
         if (have + 0.0001 < lot.quantity) {
           throw new BadRequestException(await this.shortageMessage({ ...params, quantity: lot.quantity, lotNo: lot.lotNo, warehouseId }, Math.max(0, have), lot.quantity - Math.max(0, have), executor));
@@ -518,16 +529,16 @@ export class InventoryLedgerService {
    */
   private async bookBalance(
     executor: MySql2Database<typeof schema>,
-    p: { tenantId: string; companyId: string; itemId: string; warehouseId?: string; excludeLedgerId?: string },
+    filter: { tenantId: string; companyId: string; itemId: string; warehouseId?: string; excludeLedgerId?: string },
   ): Promise<{ quantity: number; value: number }> {
     const conditions = [
-      eq(schema.inventoryLedger.tenant_id, p.tenantId),
-      eq(schema.inventoryLedger.company_id, p.companyId),
-      eq(schema.inventoryLedger.item_id, p.itemId),
+      eq(schema.inventoryLedger.tenant_id, filter.tenantId),
+      eq(schema.inventoryLedger.company_id, filter.companyId),
+      eq(schema.inventoryLedger.item_id, filter.itemId),
       inArray(schema.inventoryLedger.entry_type, ['POSITIVE', 'NEGATIVE', 'TRANSFER']),
     ];
-    if (p.warehouseId) conditions.push(eq(schema.inventoryLedger.warehouse_id, p.warehouseId));
-    if (p.excludeLedgerId) conditions.push(ne(schema.inventoryLedger.ledger_id, p.excludeLedgerId));
+    if (filter.warehouseId) conditions.push(eq(schema.inventoryLedger.warehouse_id, filter.warehouseId));
+    if (filter.excludeLedgerId) conditions.push(ne(schema.inventoryLedger.ledger_id, filter.excludeLedgerId));
     const [row] = await executor
       .select({
         quantity: sql<string>`COALESCE(SUM(${schema.inventoryLedger.quantity}), 0)`,
@@ -548,15 +559,15 @@ export class InventoryLedgerService {
     serials: string[],
     executor: MySql2Database<typeof schema>,
   ): Promise<string | undefined> {
-    const inStock = await serialsInStock(executor, { tenantId: params.tenantId, companyId: params.companyId, itemId: params.itemId, excludeLedgerId: params.outboundLedgerId });
-    const where = new Map(inStock.map((x) => [x.serial_no, x.warehouse_id]));
-    const missing = serials.filter((sn) => !where.has(sn));
+    const serialsOnHand = await serialsInStock(executor, { tenantId: params.tenantId, companyId: params.companyId, itemId: params.itemId, excludeLedgerId: params.outboundLedgerId });
+    const warehouseBySerial = new Map(serialsOnHand.map((x) => [x.serial_no, x.warehouse_id]));
+    const missing = serials.filter((sn) => !warehouseBySerial.has(sn));
     if (missing.length) {
       throw new BadRequestException(`Serial number(s) ${missing.join(', ')} cannot be issued: not in stock — never received, or already consumed.`);
     }
-    const places = new Set(serials.map((sn) => where.get(sn) ?? null));
-    if (params.warehouseId && places.size === 1 && places.has(params.warehouseId)) return params.warehouseId;
-    if (places.size === 1) return [...places][0] ?? params.warehouseId;
+    const holdingLocations = new Set(serials.map((sn) => warehouseBySerial.get(sn) ?? null));
+    if (params.warehouseId && holdingLocations.size === 1 && holdingLocations.has(params.warehouseId)) return params.warehouseId;
+    if (holdingLocations.size === 1) return [...holdingLocations][0] ?? params.warehouseId;
     throw new BadRequestException(`The serial numbers picked are held at different locations — pick serials from one location.`);
   }
 
@@ -571,29 +582,29 @@ export class InventoryLedgerService {
     short: number,
     executor: MySql2Database<typeof schema>,
   ): Promise<string> {
-    let item = `item '${params.itemId}'`;
-    let where = '';
+    let itemLabel = `item '${params.itemId}'`;
+    let locationNote = '';
     try {
       const [row] = await executor
         .select({ code: schema.itemMaster.item_code, name: schema.itemMaster.item_name })
         .from(schema.itemMaster)
         .where(eq(schema.itemMaster.item_id, params.itemId))
         .limit(1);
-      if (row) item = `${row.code} — ${row.name}`;
+      if (row) itemLabel = `${row.code} — ${row.name}`;
       if (params.warehouseId) {
         const [wh] = await executor
           .select({ code: schema.locationMaster.location_code })
           .from(schema.locationMaster)
           .where(eq(schema.locationMaster.location_id, params.warehouseId))
           .limit(1);
-        if (wh) where = ` at ${wh.code}`;
+        if (wh) locationNote = ` at ${wh.code}`;
       }
     } catch {
       // keep the ids
     }
-    const lot = params.lotNo ? ` (lot ${params.lotNo})` : '';
+    const lotNote = params.lotNo ? ` (lot ${params.lotNo})` : '';
     // Stock received under a later posting date is not usable yet - say so, or the shortage looks like a bug.
-    let later = 0;
+    let receivedLaterQty = 0;
     if (params.applicationDate && params.tenantId && params.companyId) {
       try {
         const conditions = [
@@ -605,17 +616,17 @@ export class InventoryLedgerService {
         ];
         if (params.warehouseId) conditions.push(eq(schema.inventoryLedger.warehouse_id, params.warehouseId));
         const [row] = await executor
-          .select({ later: sql<string>`COALESCE(SUM(${schema.inventoryLedger.remaining_quantity}), 0)` })
+          .select({ receivedLaterQty: sql<string>`COALESCE(SUM(${schema.inventoryLedger.remaining_quantity}), 0)` })
           .from(schema.inventoryLedger)
           .where(and(...conditions));
-        const n = Number(row?.later);
-        later = Number.isFinite(n) ? n : 0;
+        const laterQty = Number(row?.receivedLaterQty);
+        receivedLaterQty = Number.isFinite(laterQty) ? laterQty : 0;
       } catch {
         // best effort
       }
     }
-    const dated = later > 0.00005 ? ` ${roundMoney(later)} more is received but dated after ${params.applicationDate}, so it cannot be used yet.` : '';
-    return `Insufficient stock of ${item}${lot}${where}: ${roundMoney(available)} available, ${params.quantity} needed — short by ${roundMoney(short)}.${dated} Receive more stock or lower the quantity.`;
+    const notUsableYetNote = receivedLaterQty > 0.00005 ? ` ${roundMoney(receivedLaterQty)} more is received but dated after ${params.applicationDate}, so it cannot be used yet.` : '';
+    return `Insufficient stock of ${itemLabel}${lotNote}${locationNote}: ${roundMoney(available)} available, ${params.quantity} needed — short by ${roundMoney(short)}.${notUsableYetNote} Receive more stock or lower the quantity.`;
   }
 
   /**
@@ -645,7 +656,14 @@ export class InventoryLedgerService {
   }
 
 
+  /**
+   * Writes one outbound row (a consumption, a shipment, a negative variance, a sale) and costs it in the same
+   * transaction: the row is inserted first, then `allocateAndCostOutbound` draws the stock layers, records what each
+   * draw cost, and the row's rate and amount are filled in from that. Quantity is given as a positive number and
+   * stored negative. Same refusals as `writePositiveEntry`, plus insufficient stock. The G/L journal is posted separately.
+   */
   async writeNegativeEntry(params: WriteNegativeEntryParams) {
+    assertInventoryMovement(params.transactionType, params.entryType || 'NEGATIVE');
     if (params.quantity <= 0) {
       throw new BadRequestException(`Outbound quantity must be positive (got ${params.quantity}).`);
     }
@@ -668,7 +686,7 @@ export class InventoryLedgerService {
     const ledgerId = randomUUID();
 
     await this.db.transaction(async (tx) => {
-      // Insert first so applyFifo has an outbound_ledger_id to attach applications to.
+      // Insert first so allocateAndCostOutbound has an outbound_ledger_id to attach applications to.
       await tx.insert(schema.inventoryLedger).values({
         ledger_id: ledgerId,
         tenant_id: params.tenantId,
@@ -683,6 +701,7 @@ export class InventoryLedgerService {
         external_reference_no: params.externalReferenceNo || null,
         entry_type: params.entryType || 'NEGATIVE',
         transaction_type: params.transactionType,
+        gl_mapping_type: params.glMappingType || null,
         quantity: (-Math.abs(params.quantity)).toString(),
         lot_no: params.lotNo || null,
         serial_no: params.serialNo || null,
@@ -697,7 +716,7 @@ export class InventoryLedgerService {
         created_by: params.userId || null,
       });
 
-      const { totalCost, averageRate, appliedWarehouseId, lotExpiry } = await this.applyFifo(
+      const { totalCost, averageRate, appliedWarehouseId, lotExpiry } = await this.allocateAndCostOutbound(
         {
           tenantId: params.tenantId,
           companyId: params.companyId,
@@ -743,7 +762,7 @@ export class InventoryLedgerService {
         .where(eq(schema.inventoryLedger.ledger_id, ledgerId));
     });
 
-    return this.loadOne(ledgerId);
+    return this.loadLedgerEntry(ledgerId);
   }
 
   /**
@@ -860,7 +879,7 @@ export class InventoryLedgerService {
   }
 
   /** Internal post-write read-back. The writer already authorized its source document; HTTP farm scope belongs only on public reads. */
-  private async loadOne(ledgerId: string) {
+  private async loadLedgerEntry(ledgerId: string) {
     const [entry] = await this.db
       .select()
       .from(schema.inventoryLedger)
@@ -869,6 +888,7 @@ export class InventoryLedgerService {
     return entry;
   }
 
+  /** One ledger row by id, or undefined — only if it is inside the user's farm scope. */
   async findOne(ledgerId: string) {
     const [entry] = await this.db
       .select()
@@ -878,6 +898,11 @@ export class InventoryLedgerService {
     return entry;
   }
 
+  /**
+   * One ledger row with what its detail screen shows: the warehouse, the cost applications linking it to the
+   * receipts or issues it is matched with, and — for an issue — the costing explanation, or — for a receipt —
+   * the lot movements that took stock from it. Null when the row is not found or is outside the user's farm scope.
+   */
   async findOneWithDetails(ledgerId: string, tenantId?: string) {
     const conditions: any[] = [eq(schema.inventoryLedger.ledger_id, ledgerId), ...this.farmConditions()];
     if (tenantId) conditions.push(eq(schema.inventoryLedger.tenant_id, tenantId));
@@ -994,7 +1019,7 @@ export class InventoryLedgerService {
       warehouse,
       lots,
       costing: !isInbound && applications.length > 0 ? await this.costingExplanation(entry, applications) : null,
-      lot_issues: isInbound ? await this.lotIssues(entry) : [],
+      lot_issues: isInbound ? await this.lotMovements(entry) : [],
       animals: animals.filter((a) => a.animal_id),
       applications,
     };
@@ -1023,14 +1048,14 @@ export class InventoryLedgerService {
         lt(schema.inventoryLedger.entry_no, entry.entry_no!),
       ];
       if (entry.warehouse_id) before.push(eq(schema.inventoryLedger.warehouse_id, entry.warehouse_id));
-      const q = schema.inventoryLedger.quantity;
-      const a = schema.inventoryLedger.amount;
+      const quantityColumn = schema.inventoryLedger.quantity;
+      const amountColumn = schema.inventoryLedger.amount;
       const [sums] = await this.db
         .select({
-          receiptsQuantity: sql<string>`COALESCE(SUM(CASE WHEN ${q} > 0 THEN ${q} ELSE 0 END), 0)`,
-          receiptsValue: sql<string>`COALESCE(SUM(CASE WHEN ${q} > 0 THEN ${a} ELSE 0 END), 0)`,
-          issuedQuantity: sql<string>`COALESCE(SUM(CASE WHEN ${q} < 0 THEN -${q} ELSE 0 END), 0)`,
-          issuedValue: sql<string>`COALESCE(SUM(CASE WHEN ${q} < 0 THEN -${a} ELSE 0 END), 0)`,
+          receiptsQuantity: sql<string>`COALESCE(SUM(CASE WHEN ${quantityColumn} > 0 THEN ${quantityColumn} ELSE 0 END), 0)`,
+          receiptsValue: sql<string>`COALESCE(SUM(CASE WHEN ${quantityColumn} > 0 THEN ${amountColumn} ELSE 0 END), 0)`,
+          issuedQuantity: sql<string>`COALESCE(SUM(CASE WHEN ${quantityColumn} < 0 THEN -${quantityColumn} ELSE 0 END), 0)`,
+          issuedValue: sql<string>`COALESCE(SUM(CASE WHEN ${quantityColumn} < 0 THEN -${amountColumn} ELSE 0 END), 0)`,
         })
         .from(schema.inventoryLedger)
         .where(and(...before));
@@ -1040,12 +1065,13 @@ export class InventoryLedgerService {
           document_no: schema.inventoryLedger.document_no,
           posting_date: schema.inventoryLedger.posting_date,
           transaction_type: schema.inventoryLedger.transaction_type,
+          reversal_of_ledger_id: schema.inventoryLedger.reversal_of_ledger_id,
           quantity: schema.inventoryLedger.quantity,
           rate: schema.inventoryLedger.rate,
           amount: schema.inventoryLedger.amount,
         })
         .from(schema.inventoryLedger)
-        .where(and(...before, sql`${q} > 0`))
+        .where(and(...before, sql`${quantityColumn} > 0`))
         .orderBy(asc(schema.inventoryLedger.entry_no))
         .limit(50);
       const receipts: ExplainBookReceipt[] = receiptRows.map((r) => ({
@@ -1053,6 +1079,7 @@ export class InventoryLedgerService {
         document_no: r.document_no,
         posting_date: r.posting_date ? String(r.posting_date).slice(0, 10) : null,
         transaction_type: r.transaction_type,
+        is_reversal: r.reversal_of_ledger_id != null,
         quantity: Number(r.quantity),
         rate: Number(r.rate ?? 0),
         amount: Number(r.amount ?? 0),
@@ -1089,7 +1116,7 @@ export class InventoryLedgerService {
    * put it back into) that lot or those serials. This is the physical trail; `applications` is the cost trail
    * (which receipt layer each issue was priced from) and the two need not agree.
    */
-  private async lotIssues(entry: typeof schema.inventoryLedger.$inferSelect) {
+  private async lotMovements(entry: typeof schema.inventoryLedger.$inferSelect) {
     if (!entry.lot_no && !entry.serial_no) return [];
     const mine = new Set(parseSerials(entry.serial_no));
     const scope = [
@@ -1112,7 +1139,7 @@ export class InventoryLedgerService {
       .select({ ...columns, quantity: schema.inventoryLedger.quantity, lot_no: schema.inventoryLedger.lot_no, serial_no: schema.inventoryLedger.serial_no })
       .from(schema.inventoryLedger)
       .leftJoin(schema.locationMaster, eq(schema.inventoryLedger.warehouse_id, schema.locationMaster.location_id))
-      .where(and(...scope, or(lt(schema.inventoryLedger.quantity, '0'), eq(schema.inventoryLedger.transaction_type, 'REVERSAL'))!, entry.lot_no ? eq(schema.inventoryLedger.lot_no, entry.lot_no) : isNotNull(schema.inventoryLedger.serial_no)));
+      .where(and(...scope, or(lt(schema.inventoryLedger.quantity, '0'), isNotNull(schema.inventoryLedger.reversal_of_ledger_id))!, entry.lot_no ? eq(schema.inventoryLedger.lot_no, entry.lot_no) : isNotNull(schema.inventoryLedger.serial_no)));
     const onLines = await this.db
       .select({ ...columns, quantity: schema.inventoryLedgerLine.quantity, lot_no: schema.inventoryLedgerLine.lot_no, serial_no: schema.inventoryLedgerLine.serial_no })
       .from(schema.inventoryLedgerLine)
@@ -1270,6 +1297,7 @@ export class InventoryLedgerService {
     };
   }
 
+  /** One page of the Inventory Ledger list, newest first, with the same filters the export uses. */
   async findAll(query: QueryInventoryLedgerDto, tenantId: string) {
     const conditions = this.listConditions(query, tenantId);
     const limit = query.limit || 50;
@@ -1350,6 +1378,7 @@ export class InventoryLedgerService {
     return { rows: (truncated ? rows.slice(0, LEDGER_EXPORT_MAX_ROWS) : rows) as LedgerExportRow[], truncated };
   }
 
+  /** Newest first: by posting date when asked, otherwise by entry number (the order rows were written). */
   private listOrder(query: QueryInventoryLedgerDto) {
     return query.sortBy === 'posting_date'
       ? [desc(schema.inventoryLedger.posting_date), desc(schema.inventoryLedger.entry_no)]
@@ -1366,25 +1395,7 @@ export class InventoryLedgerService {
     if (query.locationId) conditions.push(eq(schema.inventoryLedger.location_id, query.locationId));
     if (query.warehouseId) conditions.push(eq(schema.inventoryLedger.warehouse_id, query.warehouseId));
     if (query.entryType) conditions.push(eq(schema.inventoryLedger.entry_type, query.entryType));
-    if (query.transactionType) {
-      if (query.transactionType === 'CONSUMPTION') {
-        conditions.push(
-          or(
-            eq(schema.inventoryLedger.transaction_type, 'CONSUMPTION'),
-            like(schema.inventoryLedger.transaction_type, '%CONSUMPTION%'),
-          ),
-        );
-      } else if (query.transactionType === 'OUTPUT') {
-        conditions.push(
-          or(
-            eq(schema.inventoryLedger.transaction_type, 'OUTPUT'),
-            like(schema.inventoryLedger.transaction_type, '%OUTPUT%'),
-          ),
-        );
-      } else {
-        conditions.push(eq(schema.inventoryLedger.transaction_type, query.transactionType));
-      }
-    }
+    if (query.transactionType) conditions.push(eq(schema.inventoryLedger.transaction_type, query.transactionType));
     if (query.documentType) conditions.push(eq(schema.inventoryLedger.document_type, query.documentType));
     if (query.documentNo) {
       conditions.push(
@@ -1404,23 +1415,30 @@ export class InventoryLedgerService {
    * Current on-hand quantity per item/warehouse — the FIFO-layer view: each
    * POSITIVE ledger entry (receipt/output/transfer-in) is a layer, and
    * remaining_quantity already tracks what hasn't been consumed off it yet
-   * (see writeNegativeEntry's applyFifo). Summing remaining_quantity across
+   * (see writeNegativeEntry's allocateAndCostOutbound). Summing remaining_quantity across
    * an item's layers is exactly its current stock; no separate running
    * balance is maintained anywhere else, so this is computed on read.
    */
   async getStockBalance(query: QueryStockBalanceDto, tenantId: string) {
-    const conditions: any[] = [
+    // The tenant, the company and the user's farm scope apply to both reads below.
+    const tenantCompanyConditions: any[] = [
       eq(schema.inventoryLedger.tenant_id, tenantId),
       eq(schema.inventoryLedger.company_id, query.companyId),
+    ];
+    const farmScopeConditions = this.farmConditions();
+    // On-hand stock is the open receipt layers: inbound rows that still have a remaining quantity.
+    const openLayerConditions: any[] = [
       inArray(schema.inventoryLedger.entry_type, ['POSITIVE', 'TRANSFER']),
       isNotNull(schema.inventoryLedger.remaining_quantity),
-      ...this.farmConditions(),
     ];
-    if (query.warehouseId) conditions.push(eq(schema.inventoryLedger.warehouse_id, query.warehouseId));
-    if (query.itemId) conditions.push(eq(schema.inventoryLedger.item_id, query.itemId));
-    if (query.nobId) conditions.push(eq(schema.itemMaster.nob_id, query.nobId));
-    if (query.lobId) conditions.push(eq(schema.itemMaster.lob_id, query.lobId));
-    if (query.asOfDate) conditions.push(lte(schema.inventoryLedger.posting_date, query.asOfDate));
+    // The screen's own filters, also shared by both reads.
+    const filterConditions: any[] = [];
+    if (query.warehouseId) filterConditions.push(eq(schema.inventoryLedger.warehouse_id, query.warehouseId));
+    if (query.itemId) filterConditions.push(eq(schema.inventoryLedger.item_id, query.itemId));
+    if (query.nobId) filterConditions.push(eq(schema.itemMaster.nob_id, query.nobId));
+    if (query.lobId) filterConditions.push(eq(schema.itemMaster.lob_id, query.lobId));
+    if (query.asOfDate) filterConditions.push(lte(schema.inventoryLedger.posting_date, query.asOfDate));
+    const conditions: any[] = [...tenantCompanyConditions, ...openLayerConditions, ...farmScopeConditions, ...filterConditions];
 
     const rows = await this.db
       .select({
@@ -1456,9 +1474,14 @@ export class InventoryLedgerService {
 
     // Average-costed items are worth their book value (Σ signed amounts), not their receipts' prices:
     // issues are priced at the running average, so what is left is no longer receipt-by-receipt.
-    const bookConditions: any[] = conditions.filter((c) => c !== conditions[2] && c !== conditions[3]);
-    bookConditions.push(inArray(schema.inventoryLedger.entry_type, ['POSITIVE', 'NEGATIVE', 'TRANSFER']));
-    bookConditions.push(inArray(schema.itemMaster.valuation_method, ['AVG', 'AVERAGE']));
+    // Same scope and filters, but every stock movement counts (not only the open layers), and only average-costed items.
+    const bookConditions: any[] = [
+      ...tenantCompanyConditions,
+      ...farmScopeConditions,
+      ...filterConditions,
+      inArray(schema.inventoryLedger.entry_type, ['POSITIVE', 'NEGATIVE', 'TRANSFER']),
+      inArray(schema.itemMaster.valuation_method, ['AVG', 'AVERAGE']),
+    ];
     const bookRows = await this.db
       .select({
         item_id: schema.inventoryLedger.item_id,
@@ -1608,6 +1631,10 @@ export class InventoryLedgerService {
       });
   }
 
+  /**
+   * The lots of an item that hold stock, for the lot picker on an issue. Usable lots come first — earliest expiry,
+   * then oldest receipt — with the first one suggested, and expired lots last.
+   */
   async getAvailableLots(query: QueryAvailableLotsDto, tenantId: string) {
     const itemId = query.itemId || query.item_id;
     if (!itemId) {
@@ -1658,6 +1685,10 @@ export class InventoryLedgerService {
     return lots.map((l, i) => ({ ...l, suggested: i === suggestedIndex }));
   }
 
+  /**
+   * The serial numbers of an item that are in stock, for the serial picker on an issue. Each carries its expiry —
+   * worked out from the item's shelf life when the receipt gave none — and its receipt date.
+   */
   async getAvailableSerials(query: QueryAvailableSerialsDto, tenantId: string) {
     const itemId = query.itemId || query.item_id;
     if (!itemId) {

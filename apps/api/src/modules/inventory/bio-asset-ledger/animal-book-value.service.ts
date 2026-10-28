@@ -3,6 +3,7 @@ import { MySql2Database } from 'drizzle-orm/mysql2';
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
+import { bioEventOf, bioEventsCondition, type BioEvent } from './bio-asset-ledger.types';
 
 /**
  * An animal's cost and book value, read from her own rows in the bio-asset ledger (animal_id on the row), not
@@ -11,17 +12,17 @@ import * as schema from '../../../core/database/schema';
  *
  *   book value = acquisition + capitalised cost - accumulated amortisation +/- fair value - what has left
  *
- * A TRANSFER_IN/OUT row moves an animal between batches without changing what she is worth, and a PURCHASE row is
+ * A batch transfer row moves an animal between batches without changing what she is worth, and a PURCHASE row is
  * the GRN's receipt of animals (no animal yet), so neither counts. Everything else the ledger holds for an animal does.
+ * Rows are told apart by the event they record (bioEventOf), not by their entry type, which several events share.
  */
-export const BOOK_VALUE_ENTRY_TYPES = [
-  'ACQUISITION', 'CONSUMPTION', 'OVERHEAD', 'OVERHEAD_COST', 'GROWTH_ADJMT',
-  'AMORTIZATION', 'FAIR_VALUE_ADJMT', 'MORTALITY', 'WRITEOFF', 'TRANSFORMATION', 'COST_ALLOCATION',
-] as const;
+export const BOOK_VALUE_EVENTS: readonly BioEvent[] = [
+  'ACQUISITION', 'CONSUMPTION', 'OVERHEAD_COST', 'AMORTIZATION', 'FAIR_VALUE_ADJMT', 'MORTALITY', 'TRANSFORMATION', 'COST_ALLOCATION',
+];
 
-const CAPITALISED = new Set(['CONSUMPTION', 'OVERHEAD', 'OVERHEAD_COST', 'GROWTH_ADJMT']);
+const CAPITALISED = new Set<BioEvent>(['CONSUMPTION', 'OVERHEAD_COST']);
 // COST_ALLOCATION is the sow's lactation cost handed to her litter at weaning: it leaves her, and the litter's lot (a batch-level row) takes it.
-const EXITS = new Set(['MORTALITY', 'WRITEOFF', 'TRANSFORMATION', 'COST_ALLOCATION']);
+const EXITS = new Set<BioEvent>(['MORTALITY', 'TRANSFORMATION', 'COST_ALLOCATION']);
 
 export interface AnimalValue {
   acquisition: number;
@@ -39,19 +40,19 @@ export interface AnimalValue {
 
 const round4 = (n: number) => Math.round(n * 1e4) / 1e4;
 
-/** Pure: the sums of one animal's ledger rows, by entry type, as the value components. */
-export function summariseAnimalValue(rows: Array<{ entry_type: string; total: number | string | null }>): AnimalValue {
+/** Pure: the sums of one animal's ledger rows, by event, as the value components. */
+export function summariseAnimalValue(rows: Array<{ event: BioEvent | null; total: number | string | null }>): AnimalValue {
   const v: AnimalValue = { acquisition: 0, capitalised: 0, amortised: 0, fairValue: 0, exits: 0, bookValue: 0, hasRows: false };
   for (const r of rows) {
-    if (!(BOOK_VALUE_ENTRY_TYPES as readonly string[]).includes(r.entry_type)) continue;
+    if (!r.event || !BOOK_VALUE_EVENTS.includes(r.event)) continue;
     const amount = Number(r.total ?? 0);
     v.hasRows = true;
     v.bookValue += amount;
-    if (r.entry_type === 'ACQUISITION') v.acquisition += amount;
-    else if (CAPITALISED.has(r.entry_type)) v.capitalised += amount;
-    else if (r.entry_type === 'AMORTIZATION') v.amortised -= amount;
-    else if (r.entry_type === 'FAIR_VALUE_ADJMT') v.fairValue += amount;
-    else if (EXITS.has(r.entry_type)) v.exits += amount;
+    if (r.event === 'ACQUISITION') v.acquisition += amount;
+    else if (CAPITALISED.has(r.event)) v.capitalised += amount;
+    else if (r.event === 'AMORTIZATION') v.amortised -= amount;
+    else if (r.event === 'FAIR_VALUE_ADJMT') v.fairValue += amount;
+    else if (EXITS.has(r.event)) v.exits += amount;
   }
   return {
     acquisition: round4(v.acquisition), capitalised: round4(v.capitalised), amortised: round4(v.amortised),
@@ -77,14 +78,14 @@ export class AnimalBookValueService {
     if (!ids.length) return out;
     const L = schema.bioAssetLedger;
     const rows = await this.db
-      .select({ animal_id: L.animal_id, entry_type: L.entry_type, total: sql<string>`COALESCE(SUM(${L.cost_amount}), 0)` })
+      .select({ animal_id: L.animal_id, entry_type: L.entry_type, transaction_type: L.transaction_type, document_type: L.document_type, total: sql<string>`COALESCE(SUM(${L.cost_amount}), 0)` })
       .from(L)
-      .where(and(inArray(L.animal_id, ids), inArray(L.entry_type, [...BOOK_VALUE_ENTRY_TYPES]), ...(asOf ? [lte(L.posting_date, asOf)] : [])))
-      .groupBy(L.animal_id, L.entry_type);
-    const byAnimal = new Map<string, Array<{ entry_type: string; total: string }>>();
+      .where(and(inArray(L.animal_id, ids), bioEventsCondition(L, BOOK_VALUE_EVENTS), ...(asOf ? [lte(L.posting_date, asOf)] : [])))
+      .groupBy(L.animal_id, L.entry_type, L.transaction_type, L.document_type);
+    const byAnimal = new Map<string, Array<{ event: BioEvent | null; total: string }>>();
     for (const r of rows) {
       if (!r.animal_id) continue;
-      byAnimal.set(r.animal_id, [...(byAnimal.get(r.animal_id) ?? []), { entry_type: r.entry_type, total: r.total }]);
+      byAnimal.set(r.animal_id, [...(byAnimal.get(r.animal_id) ?? []), { event: bioEventOf(r), total: r.total }]);
     }
     for (const [id, list] of byAnimal) out.set(id, summariseAnimalValue(list));
     return out;

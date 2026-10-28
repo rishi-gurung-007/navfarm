@@ -281,6 +281,19 @@ export class UpdateWeaningDto {
   @IsString()
   move_to_stage_code?: string;
 
+  /**
+   * Create a new weaner batch for the weaned piglets instead of naming an existing one: it copies the lot's item, company, line of business,
+   * farm and shed, starts in this stage, and receives the weaned head. Not together with move_to_batch_id or move_to_stage_code.
+   */
+  @IsOptional()
+  @IsString()
+  new_batch_stage_code?: string;
+
+  /** The pen the new weaner batch is placed in; one of the piglet lot's own shed's pens. Only with new_batch_stage_code. */
+  @IsOptional()
+  @IsUUID()
+  new_batch_pen_id?: string;
+
   /** Reason Master row (category MORTALITY) for the piglets lost before weaning. */
   @IsOptional()
   @IsUUID()

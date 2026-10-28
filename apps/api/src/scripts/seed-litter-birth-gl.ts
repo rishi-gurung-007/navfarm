@@ -54,11 +54,18 @@ async function run() {
   }
 
   const mappings = (await call('GET', '/gl-mapping?limit=500')).json.data as any[];
-  if (mappings.some((m) => m.transaction_type === 'BIO_LITTER_BIRTH')) { console.log('GL mapping BIO_LITTER_BIRTH: exists, left alone'); return; }
-  if (!APPLY) { console.log('GL mapping BIO_LITTER_BIRTH (debit 1055, credit 1050): would be created. Run again with --apply.'); return; }
-  const made = await call('POST', '/gl-mapping', { transaction_type: 'BIO_LITTER_BIRTH', debit_gl_account_id: inventory.gl_account_id, credit_gl_account_id: wip.gl_account_id });
-  if (made.status >= 300) throw new Error(`Could not create the mapping: ${made.status} ${JSON.stringify(made.json?.error ?? made.json)}`);
-  console.log('GL mapping BIO_LITTER_BIRTH: created (Dr 1055 / Cr 1050)');
+  // The birth takes the sow's cost into 1055; a gilt registered from the litter takes it back out into her own asset (1050).
+  const wanted = [
+    { type: 'BIO_LITTER_BIRTH', debit: inventory?.gl_account_id, credit: wip.gl_account_id, said: 'Dr 1055 / Cr 1050' },
+    { type: 'BIO_GILT_ACQUISITION', debit: wip.gl_account_id, credit: inventory?.gl_account_id, said: 'Dr 1050 / Cr 1055' },
+  ];
+  for (const m of wanted) {
+    if (mappings.some((x) => x.transaction_type === m.type)) { console.log(`GL mapping ${m.type}: exists, left alone`); continue; }
+    if (!APPLY) { console.log(`GL mapping ${m.type} (${m.said}): would be created. Run again with --apply.`); continue; }
+    const made = await call('POST', '/gl-mapping', { transaction_type: m.type, debit_gl_account_id: m.debit, credit_gl_account_id: m.credit });
+    if (made.status >= 300) throw new Error(`Could not create the ${m.type} mapping: ${made.status} ${JSON.stringify(made.json?.error ?? made.json)}`);
+    console.log(`GL mapping ${m.type}: created (${m.said})`);
+  }
 }
 
 run().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });

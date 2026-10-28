@@ -1,5 +1,5 @@
 import {
-  changedLockedFields, costingStartDate, originOf, pickResidualSetting, residualFor, resolveProfile, resolveResidual, scopeKey, settingResidual, validateActivation, validateResidualSetting, validateTerms,
+  changedLockedFields, costingStartDate, originOf, pickResidualSetting, policyNotes, residualFor, resolveProfile, resolveResidual, scopeKey, settingResidual, validateActivation, validateResidualSetting, validateTerms,
   type ResidualSetting, type ResolvableProfile,
 } from './bio-costing.rules';
 
@@ -168,5 +168,21 @@ describe('the company residual setting', () => {
     expect(resolveResidual({ animalOverride: null, settings, profile, gender: 'F', onDate: '2026-09-30' })).toEqual({ value: 307.5, source: 'COMPANY' });
     expect(resolveResidual({ animalOverride: null, settings, profile, gender: 'M', onDate: '2026-09-30' })).toEqual({ value: 0, source: 'COMPANY' });
     expect(resolveResidual({ animalOverride: null, settings: [], profile, gender: 'F', onDate: '2026-09-30' })).toEqual({ value: 200, source: 'PROFILE' });
+  });
+});
+
+describe('policyNotes', () => {
+  it('says nothing of an individually tracked profile, imported or local', () => {
+    expect(policyNotes({ origin: 'LOCAL', costing_method: 'AMORTIZATION', tracking: 'INDIVIDUAL' })).toEqual([]);
+    expect(policyNotes({ origin: 'IMPORTED', costing_method: 'AMORTIZATION', tracking: 'INDIVIDUAL' })).toEqual([]);
+    expect(policyNotes({ origin: 'LOCAL', costing_method: 'FAIR_VALUE', tracking: 'INDIVIDUAL' })).toEqual([]);
+  });
+
+  it('says that a batch-tracked profile is not run yet', () => {
+    expect(policyNotes({ origin: 'IMPORTED', costing_method: 'AMORTIZATION', tracking: 'BATCH' })).toEqual([expect.stringContaining('not run yet')]);
+  });
+
+  it('gives the batch note for a local amortised batch profile too', () => {
+    expect(policyNotes({ origin: 'LOCAL', costing_method: 'AMORTIZATION', tracking: 'BATCH' })).toEqual([expect.stringContaining('not run yet')]);
   });
 });

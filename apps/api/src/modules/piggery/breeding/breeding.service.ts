@@ -26,6 +26,7 @@ import {
   MatingType,
   MatingDefaultsQueryDto,
 } from './dto/breeding.dto';
+import { bioEventCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 /** The stage a sow goes to when her litter is weaned (Stage Master seed code). */
 const DRY_SOW_STAGE = 'DRY_SOW';
@@ -465,7 +466,7 @@ export class BreedingService {
 
     // An AI service that names a semen lot uses doses from it: refused if the lot has too few, and a lot held as stock
     // has them issued from that stock.
-    if (lot) await this.semenLots.issueDoses(lot, Number(newRecord.semen_dose_qty), breedingId, dto.mating_date, tenantId, userPayload);
+    if (lot) await this.semenLots.issueDoses(lot, Number(newRecord.semen_dose_qty), breedingId, dto.mating_date, tenantId, userPayload, { sow, batchId });
 
     if (conceptionResult === ConceptionResult.CONFIRMED) {
       await this.db
@@ -786,10 +787,11 @@ export class BreedingService {
     return {
       ...newRecord,
       piglet_batch_no: pigletLot?.batch_no ?? null,
+      cost_warning: birthCost?.zeroCost ? birthCost.note.trim() : null,
       message:
         `Farrowing recorded: ${live} live piglets born (litter ${parityNumber}). Sow status set to LACTATING; parity is now ${parityNumber}.` +
         (pigletLot
-          ? ` ${netLitter} piglets held as lot ${pigletLot.lot_no} in batch ${pigletLot.batch_no}.${birthNote}`
+          ? ` ${netLitter} piglets stay with ${sow.animal_code} as litter ${pigletLot.lot_no}; no batch is made until the weaning.${birthNote}`
           : ' No piglet lot was created — choose the piglet item to hold them as a lot.'),
     };
   }
@@ -849,8 +851,11 @@ export class BreedingService {
     // Only the first weaning of a litter moves them, so posting it again cannot move the same piglets twice.
     let pigletNote = '';
     let costPerPiglet: string | null = null;
-    if (dto.move_to_batch_id && dto.move_to_stage_code) {
-      throw new BadRequestException('Send the weaned piglets to a batch or on to a stage, not both.');
+    if ([dto.move_to_batch_id, dto.move_to_stage_code, dto.new_batch_stage_code].filter(Boolean).length > 1) {
+      throw new BadRequestException('Send the weaned piglets to an existing batch, on to a stage, or to a new batch — choose one.');
+    }
+    if (dto.new_batch_pen_id && !dto.new_batch_stage_code) {
+      throw new BadRequestException('A pen for the new weaner batch needs its stage as well.');
     }
     // The gilts are checked before anything is written (BBP: under 15 teats is a hard block, whatever the TSI).
     const fewTeats = dto.gilts?.find((g) => g.no_of_teats < MIN_GILT_TEATS);
@@ -914,6 +919,36 @@ export class BreedingService {
           userPayload,
         );
         pigletNote += ` ${toMove} moved to the destination batch.`;
+      } else if (dto.new_batch_stage_code && toMove > 0) {
+        // A new weaner batch for the weaned head: opened empty, then the same head-count transfer an existing batch would get.
+        const weaner = await this.pigletLots.createWeanerBatch(
+          {
+            lot_batch_id: farrow.piglet_batch_id,
+            stage_code: dto.new_batch_stage_code,
+            pen_id: dto.new_batch_pen_id,
+            start_date: dto.weaning_date,
+            remarks: `Weaners of ${sow.animal_code}, lot ${farrow.piglet_lot_no ?? ''}, weaned ${dto.weaning_date}`,
+          },
+          tenantId,
+          userPayload,
+        );
+        await this.batchTransfers.create(
+          {
+            company_id: farrow.company_id ?? sow.company_id,
+            to_batch_id: weaner.batch_id,
+            transfer_date: dto.weaning_date,
+            transfer_type: 'PARTIAL',
+            quantity: toMove,
+            reason: 'WEANING',
+            remarks: `Weaned from ${sow.animal_code}, lot ${farrow.piglet_lot_no ?? ''}`,
+          } as any,
+          tenantId,
+          farrow.piglet_batch_id,
+          userPayload,
+        );
+        pigletNote += ` ${toMove} moved to the new weaner batch ${weaner.batch_no}.`;
+      } else if (dto.new_batch_stage_code && toMove <= 0) {
+        pigletNote += ' No weaned piglets were left to move after the gilts, so no weaner batch was created.';
       } else if (dto.move_to_stage_code && toMove > 0) {
         await this.batchService.transferStage(
           farrow.piglet_batch_id,
@@ -923,7 +958,7 @@ export class BreedingService {
         );
         pigletNote += ` The piglet lot moved on to ${dto.move_to_stage_code}.`;
       }
-    } else if (dto.move_to_batch_id || dto.move_to_stage_code) {
+    } else if (dto.move_to_batch_id || dto.move_to_stage_code || dto.new_batch_stage_code) {
       throw new BadRequestException(
         farrow.piglet_batch_id
           ? 'This litter was already weaned, so its piglets have already been dealt with.'
@@ -1390,6 +1425,7 @@ export class BreedingService {
             collectionDate: dto.collection_date,
             doses: dto.doses_collected,
             itemId: dto.output_item_id,
+            unitCost: unitCostPerDose,
             quality: { volume_ml: dto.volume_ml ?? null, motility_pct: dto.motility_pct ?? null, concentration_m_per_ml: dto.concentration_m_per_ml ?? null },
           },
           tenantId,
@@ -1553,7 +1589,7 @@ export class BreedingService {
       .where(
         and(
           eq(schema.bioAssetLedger.tenant_id, tenantId),
-          eq(schema.bioAssetLedger.entry_type, 'AMORTIZATION'),
+          bioEventCondition(schema.bioAssetLedger, 'AMORTIZATION'),
           sql`${schema.bioAssetLedger.posting_date} BETWEEN ${from} AND ${to}`,
           sql`(${schema.bioAssetLedger.animal_id} = ${boar.animal_id} OR (${schema.bioAssetLedger.batch_id} = ${batchId} AND ${schema.bioAssetLedger.animal_id} IS NULL))`,
         ),

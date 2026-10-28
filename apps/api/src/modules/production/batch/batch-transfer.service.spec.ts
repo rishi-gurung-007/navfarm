@@ -251,9 +251,9 @@ describe('BatchTransferService', () => {
       expect(shiftQty).toHaveBeenCalledWith('b-a', -40);
       expect(shiftQty).toHaveBeenCalledWith('b-b', 40);
       const legs = inserted.find((v) => Array.isArray(v));
-      expect(legs.map((l: any) => [l.entry_type, l.quantity, l.cost_amount])).toEqual([
-        ['TRANSFER_OUT', '-40.0000', '-10000.0000'],
-        ['TRANSFER_IN', '40.0000', '10000.0000'],
+      expect(legs.map((l: any) => [l.entry_type, l.transaction_type, l.quantity, l.cost_amount])).toEqual([
+        ['TRANSFER', 'TRANSFER_SHIPMENT', '-40.0000', '-10000.0000'],
+        ['TRANSFER', 'TRANSFER_RECEIPT', '40.0000', '10000.0000'],
       ]);
       expect(legs.every((l: any) => l.animal_id === undefined)).toBe(true);
       expect(recount).toHaveBeenCalledWith('b-a');

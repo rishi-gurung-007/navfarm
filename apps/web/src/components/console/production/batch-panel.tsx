@@ -50,6 +50,8 @@ import { formatAmount, formatQuantity, formatRate, toInputNumber } from '@/lib/u
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { LotSerialPicker } from '@/components/ui/lot-serial-picker';
 import { useSystemSchedulerPrompt } from '@/components/console/production/system-scheduler-prompt';
+import { BIO_DOCUMENT_LABEL } from '../inventory/bio-asset-ledger-detail';
+import { formatTransactionType } from '../inventory/inventory-ledger-detail';
 
 const PAGE_SIZE = 25;
 
@@ -3377,7 +3379,7 @@ export default function BatchPanel() {
                                   {e.posting_date}
                                 </TableCell>
                                 <TableCell className="px-3 py-2" style={S.sub}>
-                                  {e.entry_type}
+                                  {BIO_DOCUMENT_LABEL[e.document_type] ?? e.document_type} · {formatTransactionType(e.transaction_type)}
                                 </TableCell>
                                 <TableCell
                                   className="px-3 py-2"

@@ -22,7 +22,8 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Field } from "@/components/ui/field";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
-import BioAssetLedgerDetail, { BIO_DOCUMENT_LABEL, BIO_TRANSACTION_LABEL } from "./bio-asset-ledger-detail";
+import BioAssetLedgerDetail, { BIO_DOCUMENT_LABEL } from "./bio-asset-ledger-detail";
+import { formatEntryType, formatTransactionType } from "./inventory-ledger-detail";
 
 const PAGE_SIZE = 25;
 
@@ -38,8 +39,6 @@ const S = {
 };
 
 const inputCls = "nf-input-sm";
-
-const TRANSACTION_LABEL = BIO_TRANSACTION_LABEL;
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
@@ -263,6 +262,9 @@ export default function BioAssetLedgerPanel() {
                 { value: "", label: "All Entry Types" },
                 { value: "POSITIVE", label: "Positive (+)" },
                 { value: "NEGATIVE", label: "Negative (-)" },
+                { value: "TRANSFER", label: "Transfer" },
+                { value: "OVERHEAD", label: "Overhead" },
+                { value: "DESCRIPTIVE", label: "Descriptive" },
               ]}
               columnHeaders={false}
               triggerClassName="nf-input-sm min-w-[9rem] h-9"
@@ -281,11 +283,15 @@ export default function BioAssetLedgerPanel() {
               options={[
                 { value: "", label: t("ilpAllTransactionTypes") },
                 { value: "PURCHASE", label: "Purchase" },
-                { value: "ANIMAL_REGISTRATION", label: "Animal Registration" },
-                { value: "BATCH_RECEIPT", label: "Batch / Lot Receipt" },
-                { value: "BATCH_TRANSFER", label: "Batch Transfer" },
-                { value: "LITTER_COST", label: "Litter Cost Allocation" },
-                { value: "MORTALITY", label: "Mortality" },
+                { value: "CONSUMPTION", label: "Consumption" },
+                { value: "OUTPUT", label: "Output" },
+                { value: "TRANSFER_SHIPMENT", label: "Transfer_Shipment" },
+                { value: "TRANSFER_RECEIPT", label: "Transfer_Receipt" },
+                { value: "SALES", label: "Sales" },
+                { value: "VARIANCE_POSITIVE", label: "Variance_Positive" },
+                { value: "VARIANCE_NEGATIVE", label: "Variance_Negative" },
+                { value: "OVERHEAD", label: "Overhead" },
+                { value: "DESCRIPTIVE", label: "Descriptive" },
               ]}
               columnHeaders={false}
               triggerClassName="nf-input-sm min-w-[11rem] h-9"
@@ -340,7 +346,7 @@ export default function BioAssetLedgerPanel() {
 
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm min-w-[1250px]">
+          <table className="w-full border-collapse text-left text-sm min-w-[1320px]">
             <TableHeader>
               <tr className="border-b border-(--row-border)">
                 <TableHead className="whitespace-nowrap w-20">Entry No.</TableHead>
@@ -353,6 +359,7 @@ export default function BioAssetLedgerPanel() {
                 <TableHead className="whitespace-nowrap min-w-[110px]">Entry Type</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-28">{t("ilpQty")}</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-28">{t("ilpRemaining")}</TableHead>
+                <TableHead className="whitespace-nowrap text-center w-16">UOM</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-24">{t("ilpRate")}</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-28">{t("ilpAmount")}</TableHead>
                 <TableHead className="whitespace-nowrap w-28">Animal</TableHead>
@@ -363,14 +370,14 @@ export default function BioAssetLedgerPanel() {
             <TableBody>
               {loading ? (
                 <tr>
-                  <TableCell colSpan={15} className="py-12 text-center" style={S.sub}>
+                  <TableCell colSpan={16} className="py-12 text-center" style={S.sub}>
                     <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} />
                     Loading Assets Ledger entries…
                   </TableCell>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <TableCell colSpan={15} className="py-12 text-center" style={S.sub}>
+                  <TableCell colSpan={16} className="py-12 text-center" style={S.sub}>
                     <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} />
                     {hasActiveFilters ? "No Assets Ledger entries match the selected filters." : "No animal has been registered yet."}
                   </TableCell>
@@ -398,24 +405,23 @@ export default function BioAssetLedgerPanel() {
                         <span className="truncate max-w-[170px] block font-mono text-xs" title={row.warehouse_name || ""}>{row.warehouse_code || "—"}</span>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
-                        <Badge variant="neutral" className="text-[11px] font-semibold">{TRANSACTION_LABEL[row.transaction_type] ?? row.transaction_type}</Badge>
+                        <Badge variant="neutral" className="text-[11px] font-semibold">{formatTransactionType(row.transaction_type)}</Badge>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
-                        <StatusBadge status={isPos ? "POSITIVE" : "NEGATIVE"} label={isPos ? "Positive (+)" : "Negative (-)"} />
+                        <StatusBadge status={row.entry_type} label={formatEntryType(row.entry_type, qty)} />
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono font-semibold" style={{ color: isPos ? "var(--success)" : "var(--danger)" }}>
                         {isPos ? `+${qtyText(qty)}` : qtyText(qty)}
-                        <span className="ml-1 text-[10px] font-normal text-[var(--text-muted)]">{row.uom}</span>
                       </TableCell>
                       {/* Remaining: a GRN's animals not registered yet. */}
                       <TableCell className="whitespace-nowrap text-right font-mono text-xs" style={S.sub}>
-                        {row.transaction_type === "PURCHASE" ? (
+                        {row.document_type === "GOODS_RECEIPT" ? (
                           <span className={Number(row.remaining_quantity) === 0 ? "text-[var(--text-muted)] line-through" : ""}>
                             {qtyText(Number(row.remaining_quantity ?? 0))}
-                            <span className="ml-0.5 text-[10px] text-[var(--text-muted)]">{row.uom}</span>
                           </span>
                         ) : <span style={S.muted}>—</span>}
                       </TableCell>
+                      <TableCell className="whitespace-nowrap text-center font-mono text-xs uppercase" style={S.sub}>{row.uom || "—"}</TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono text-xs" style={S.sub}>{formatMoney(Number(row.rate || 0))}</TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono text-xs font-semibold" style={S.primary}>{formatMoney(Number(row.amount || 0))}</TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs" style={row.animal_code ? S.primary : S.muted}>{row.animal_code || "—"}</TableCell>

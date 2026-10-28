@@ -10,6 +10,7 @@ import { InventoryLedgerService } from '../../inventory/inventory-ledger/invento
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { classifyPostedRow, ReversibleKind } from './batch-day-reversal';
+import { bioCodes, bioEventCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -50,6 +51,11 @@ export class BatchDayReversalService {
     return tenantDb;
   }
 
+  /**
+   * Un-posts a stage's data-entry day: reverses each posted entry's stock movement, journal and batch transaction and returns the entries
+   * to unposted. Entries that cannot be reversed — an animal that has since left the stage, a farrowing, weaning or semen
+   * collection (which have their own records), or an output already used — stay posted and are reported with the reason.
+   */
   async unpostDay(
     batchId: string,
     stageId: string,
@@ -122,15 +128,15 @@ export class BatchDayReversalService {
                 .from(schema.animalRegister)
                 .leftJoin(schema.stageMaster, eq(schema.stageMaster.stage_id, schema.animalRegister.current_stage_id))
                 .where(inArray(schema.animalRegister.animal_id, animalIds))
-            ).map((a) => [a.animal_id, a])
+            ).map((animal) => [animal.animal_id, animal])
           : [],
       );
       const hasLeft = (animalId: string | null) => {
         if (!animalId) return null;
-        const a = whereNow.get(animalId);
-        if (!a) return null;
-        const stillHere = a.is_active && a.batch_id === batchId && (!stage?.stage_code || a.stage_code === stage.stage_code);
-        return stillHere ? null : a;
+        const animal = whereNow.get(animalId);
+        if (!animal) return null;
+        const stillHere = animal.is_active && animal.batch_id === batchId && (!stage?.stage_code || animal.stage_code === stage.stage_code);
+        return stillHere ? null : animal;
       };
 
       const kept: UnpostResult['kept'] = [];
@@ -160,45 +166,45 @@ export class BatchDayReversalService {
 
       // The batch transactions these entries made. A posting with no transaction behind it (posted before the daily
       // row recorded one) has nothing to reverse from; it stays posted.
-      const refs = reversible.map((r) => r.posting_reference).filter((x): x is string => !!x);
-      const txs = refs.length
-        ? await this.db.select().from(schema.batchTransaction).where(and(inArray(schema.batchTransaction.transaction_id, refs), isNull(schema.batchTransaction.reversed_at)))
+      const transactionIds = reversible.map((r) => r.posting_reference).filter((x): x is string => !!x);
+      const batchTransactions = transactionIds.length
+        ? await this.db.select().from(schema.batchTransaction).where(and(inArray(schema.batchTransaction.transaction_id, transactionIds), isNull(schema.batchTransaction.reversed_at)))
         : [];
-      const txById = new Map(txs.map((t) => [t.transaction_id, t]));
+      const batchTransactionById = new Map(batchTransactions.map((t) => [t.transaction_id, t]));
       const toUnpost = reversible.filter((r) => {
         if (r.kind === 'OBSERVATION') return true;
-        const tx = r.posting_reference ? txById.get(r.posting_reference) : undefined;
-        if (!tx) {
+        const batchTransaction = r.posting_reference ? batchTransactionById.get(r.posting_reference) : undefined;
+        if (!batchTransaction) {
           kept.push({ activity_name: r.activity_name, animal_id: r.animal_id, reason: 'it was posted before its transaction was recorded, so there is nothing to reverse from' });
           return false;
         }
         return true;
       });
 
-      const reversedTxIds = new Set<string>();
+      const reversedTransactionIds = new Set<string>();
 
       // CONSUMPTION — one ledger entry covers every animal that took the activity, so it is reversed once.
-      const consumptionTxs = toUnpost.filter((r) => r.kind === 'CONSUMPTION').map((r) => txById.get(r.posting_reference!)!);
-      const ledgerIds = [...new Set(consumptionTxs.map((t) => t.ledger_id).filter((x): x is string => !!x))];
-      for (const ledgerId of ledgerIds) await this.reverseIssue(batch, ledgerId, tenantId, userId);
+      const consumptionTransactions = toUnpost.filter((r) => r.kind === 'CONSUMPTION').map((r) => batchTransactionById.get(r.posting_reference!)!);
+      const ledgerIds = [...new Set(consumptionTransactions.map((t) => t.ledger_id).filter((x): x is string => !!x))];
+      for (const ledgerId of ledgerIds) await this.reverseBatchIssue(batch, ledgerId, tenantId, userId);
       if (ledgerIds.length) {
         const group = await this.db.select({ transaction_id: schema.batchTransaction.transaction_id }).from(schema.batchTransaction)
           .where(and(inArray(schema.batchTransaction.ledger_id, ledgerIds), isNull(schema.batchTransaction.reversed_at)));
-        group.forEach((g) => reversedTxIds.add(g.transaction_id));
+        group.forEach((g) => reversedTransactionIds.add(g.transaction_id));
       }
 
       // OUTPUT — a main output nothing has used yet leaves stock again.
       for (const r of toUnpost.filter((x) => x.kind === 'OUTPUT')) {
-        const tx = txById.get(r.posting_reference!)!;
-        await this.reverseOutput(tx, tenantId, userId);
-        reversedTxIds.add(tx.transaction_id);
+        const batchTransaction = batchTransactionById.get(r.posting_reference!)!;
+        await this.reverseOutput(batchTransaction, tenantId, userId);
+        reversedTransactionIds.add(batchTransaction.transaction_id);
       }
 
       // COST — the journal the overhead posted is found by what it recorded and reversed on its own accounts.
       for (const r of toUnpost.filter((x) => x.kind === 'COST')) {
-        const tx = txById.get(r.posting_reference!)!;
-        await this.reverseCost(batch, tx, r.activity_name, tenantId, userId);
-        reversedTxIds.add(tx.transaction_id);
+        const batchTransaction = batchTransactionById.get(r.posting_reference!)!;
+        await this.reverseCost(batch, batchTransaction, r.activity_name, tenantId, userId);
+        reversedTransactionIds.add(batchTransaction.transaction_id);
       }
 
       // OBSERVATION — the informational ledger rows a value left behind are negated.
@@ -207,11 +213,11 @@ export class BatchDayReversalService {
       }
 
       const now = toMysqlTimestamp();
-      if (reversedTxIds.size) {
+      if (reversedTransactionIds.size) {
         await this.db.update(schema.batchTransaction)
           .set({ reversed_at: now, reversed_by: userId ?? null })
-          .where(inArray(schema.batchTransaction.transaction_id, [...reversedTxIds]));
-        for (const id of reversedTxIds) {
+          .where(inArray(schema.batchTransaction.transaction_id, [...reversedTransactionIds]));
+        for (const id of reversedTransactionIds) {
           await this.auditService.log({
             tenantId, companyId: batch.company_id, userId, action: 'REVERSE', entityName: 'batch_transaction', entityId: id,
             oldValues: { reversed_at: null }, newValues: { reversed_at: now, reason },
@@ -230,17 +236,17 @@ export class BatchDayReversalService {
   }
 
   /** An issue is reversed at its own cost with the layers it drew restored; its journal is mirrored; a premature bio-asset batch's capitalised cost comes back out. */
-  private async reverseIssue(batch: typeof schema.batchHeader.$inferSelect, ledgerId: string, tenantId: string, userId?: string) {
+  private async reverseBatchIssue(batch: typeof schema.batchHeader.$inferSelect, ledgerId: string, tenantId: string, userId?: string) {
     const [original] = await this.db.select().from(schema.inventoryLedger).where(eq(schema.inventoryLedger.ledger_id, ledgerId)).limit(1);
-    const reversal = await this.ledgerService.reverseEntry(ledgerId, tenantId, userId);
+    const reversal = await this.ledgerService.reverseIssue(ledgerId, tenantId, userId);
     await this.glPostingService.reverseInventoryJournal(ledgerId, reversal, userId);
 
-    if (original?.transaction_type === 'BIO_CONSUMPTION_PREMATURE') {
-      const capitalised = Math.abs(Number(original.amount));
+    if (original?.gl_mapping_type === 'BIO_CONSUMPTION_PREMATURE') {
+      const capitalisedAmount = Math.abs(Number(original.amount));
       const [state] = await this.db.select().from(schema.batchBioAssetState).where(eq(schema.batchBioAssetState.batch_id, batch.batch_id)).limit(1);
       if (state) {
         await this.db.update(schema.batchBioAssetState)
-          .set({ nca_book_value: Math.max(0, Number(state.nca_book_value) - capitalised).toString(), updated_at: toMysqlTimestamp() })
+          .set({ nca_book_value: Math.max(0, Number(state.nca_book_value) - capitalisedAmount).toString(), updated_at: toMysqlTimestamp() })
           .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id));
       }
       // The capitalised cost went onto the ledger one row per share, each with its animal, and tied to this issue by
@@ -249,7 +255,7 @@ export class BatchDayReversalService {
       const originals = original.document_line_id
         ? await this.db.select().from(schema.bioAssetLedger).where(and(
             eq(schema.bioAssetLedger.document_line_id, original.document_line_id),
-            eq(schema.bioAssetLedger.entry_type, 'CONSUMPTION'),
+            bioEventCondition(schema.bioAssetLedger, 'CONSUMPTION'),
             eq(schema.bioAssetLedger.batch_id, batch.batch_id),
           ))
         : [];
@@ -257,7 +263,7 @@ export class BatchDayReversalService {
         for (const o of originals) {
           await this.db.insert(schema.bioAssetLedger).values({
             entry_id: randomUUID(), tenant_id: tenantId, company_id: batch.company_id,
-            bio_asset_item_id: o.bio_asset_item_id, animal_id: o.animal_id, entry_type: 'CONSUMPTION', document_no: batch.batch_no,
+            bio_asset_item_id: o.bio_asset_item_id, animal_id: o.animal_id, ...bioCodes.feed(), document_no: batch.batch_no,
             source_entry_id: o.entry_id, batch_id: batch.batch_id, batch_no: batch.batch_no, posting_date: o.posting_date, stage: 'PREMATURE',
             quantity: (-Math.abs(Number(o.quantity))).toString(), cost_amount: (-Math.abs(Number(o.cost_amount))).toString(),
             cost_amount_each_unit: o.cost_amount_each_unit, costing_method: 'COST_ACCUMULATION',
@@ -269,9 +275,9 @@ export class BatchDayReversalService {
       } else {
         await this.db.insert(schema.bioAssetLedger).values({
           entry_id: randomUUID(), tenant_id: tenantId, company_id: batch.company_id,
-          bio_asset_item_id: original.item_id ?? '', entry_type: 'CONSUMPTION', document_no: batch.batch_no,
+          bio_asset_item_id: original.item_id ?? '', ...bioCodes.feed(), document_no: batch.batch_no,
           batch_id: batch.batch_id, batch_no: batch.batch_no, posting_date: original.posting_date, stage: 'PREMATURE',
-          quantity: (-Math.abs(Number(original.quantity))).toString(), cost_amount: (-capitalised).toString(),
+          quantity: (-Math.abs(Number(original.quantity))).toString(), cost_amount: (-capitalisedAmount).toString(),
           cost_amount_each_unit: original.rate, costing_method: 'COST_ACCUMULATION',
           nob_id: batch.nob_id, lob_id: batch.lob_id, created_by: userId || null,
         });
@@ -279,44 +285,51 @@ export class BatchDayReversalService {
     }
   }
 
-  private async reverseOutput(tx: typeof schema.batchTransaction.$inferSelect, tenantId: string, userId?: string) {
-    if (!tx.ledger_id) throw new BadRequestException('An output with no stock entry behind it cannot be reversed.');
+  /**
+   * Takes a main output back out of stock. Refused when a QR pack or a QC result is tied to it, or when its stock has been used;
+   * otherwise its stock entry, journal and output line are reversed.
+   */
+  private async reverseOutput(batchTransaction: typeof schema.batchTransaction.$inferSelect, tenantId: string, userId?: string) {
+    if (!batchTransaction.ledger_id) throw new BadRequestException('An output with no stock entry behind it cannot be reversed.');
 
     // A pack or a QC result attached to this output ties it to something already issued; that is not undone silently.
-    const [pack] = await this.db.select({ id: schema.qrCodeMaster.qr_id }).from(schema.qrCodeMaster).where(eq(schema.qrCodeMaster.output_line_id, tx.transaction_id)).limit(1);
+    const [pack] = await this.db.select({ id: schema.qrCodeMaster.qr_id }).from(schema.qrCodeMaster).where(eq(schema.qrCodeMaster.output_line_id, batchTransaction.transaction_id)).limit(1);
     if (pack) throw new BadRequestException('A QR pack has been generated from this output, so it cannot be taken back. Void the pack first.');
-    const [qc] = await this.db.select({ id: schema.qcBatchDetail.qc_id }).from(schema.qcBatchDetail).where(eq(schema.qcBatchDetail.output_line_id, tx.transaction_id)).limit(1);
+    const [qc] = await this.db.select({ id: schema.qcBatchDetail.qc_id }).from(schema.qcBatchDetail).where(eq(schema.qcBatchDetail.output_line_id, batchTransaction.transaction_id)).limit(1);
     if (qc) throw new BadRequestException('A QC result is recorded against this output, so it cannot be taken back.');
 
-    const reversal = await this.ledgerService.reversePositiveEntry(tx.ledger_id, tenantId, userId);
+    const reversal = await this.ledgerService.reverseReceipt(batchTransaction.ledger_id, tenantId, userId);
     // An output posted at no value made no journal; there is then nothing to mirror.
     const [journal] = await this.db.select({ id: schema.journalHeader.journal_id }).from(schema.journalHeader)
-      .where(and(eq(schema.journalHeader.source_ledger_id, tx.ledger_id), eq(schema.journalHeader.status, 'POSTED'))).limit(1);
-    if (journal) await this.glPostingService.reverseInventoryJournal(tx.ledger_id, reversal, userId);
-    await this.db.delete(schema.batchOutputLine).where(eq(schema.batchOutputLine.line_id, tx.transaction_id));
+      .where(and(eq(schema.journalHeader.source_ledger_id, batchTransaction.ledger_id), eq(schema.journalHeader.status, 'POSTED'))).limit(1);
+    if (journal) await this.glPostingService.reverseInventoryJournal(batchTransaction.ledger_id, reversal, userId);
+    await this.db.delete(schema.batchOutputLine).where(eq(schema.batchOutputLine.line_id, batchTransaction.transaction_id));
   }
 
+  /**
+   * Reverses the journal an overhead entry posted, found by what it recorded, and negates the ledger rows it left.
+   */
   private async reverseCost(
     batch: typeof schema.batchHeader.$inferSelect,
-    tx: typeof schema.batchTransaction.$inferSelect,
+    batchTransaction: typeof schema.batchTransaction.$inferSelect,
     activityName: string,
     tenantId: string,
     userId?: string,
   ) {
-    const amount = Math.abs(Number(tx.amount ?? 0));
+    const amount = Math.abs(Number(batchTransaction.amount ?? 0));
     if (amount >= 0.005) {
       // The description addTransaction gave the journal: the entry's remarks, else the stock phrase.
-      const description = tx.remarks || `Overhead — ${batch.batch_no}`;
+      const description = batchTransaction.remarks || `Overhead — ${batch.batch_no}`;
       const journal = await this.glPostingService.findBatchCostJournal({
-        tenantId, companyId: batch.company_id, documentNo: batch.batch_no, postingDate: String(tx.transaction_date).slice(0, 10), amount, description,
+        tenantId, companyId: batch.company_id, documentNo: batch.batch_no, postingDate: String(batchTransaction.transaction_date).slice(0, 10), amount, description,
       });
       if (!journal) {
-        throw new BadRequestException(`The journal for '${activityName}' on ${String(tx.transaction_date).slice(0, 10)} could not be found, so it cannot be reversed. Nothing has been changed.`);
+        throw new BadRequestException(`The journal for '${activityName}' on ${String(batchTransaction.transaction_date).slice(0, 10)} could not be found, so it cannot be reversed. Nothing has been changed.`);
       }
-      await this.glPostingService.reverseJournal(journal.journal_id, String(tx.transaction_date).slice(0, 10), description, userId);
+      await this.glPostingService.reverseJournal(journal.journal_id, String(batchTransaction.transaction_date).slice(0, 10), description, userId);
     }
     await this.negateRows(
-      and(eq(schema.inventoryLedger.document_line_id, tx.transaction_id), eq(schema.inventoryLedger.entry_type, 'OVERHEAD'), eq(schema.inventoryLedger.tenant_id, tenantId)),
+      and(eq(schema.inventoryLedger.document_line_id, batchTransaction.transaction_id), eq(schema.inventoryLedger.entry_type, 'OVERHEAD'), eq(schema.inventoryLedger.tenant_id, tenantId)),
       tenantId, userId,
     );
   }
@@ -335,15 +348,15 @@ export class BatchDayReversalService {
   private async negateRows(where: ReturnType<typeof and>, tenantId: string, userId?: string) {
     const originals = await this.db.select().from(schema.inventoryLedger).where(where);
     for (const original of originals) {
-      if (original.transaction_type === 'REVERSAL') continue;
+      if (original.reversal_of_ledger_id) continue;
       const [done] = await this.db.select({ id: schema.inventoryLedger.ledger_id }).from(schema.inventoryLedger)
-        .where(and(eq(schema.inventoryLedger.external_reference_no, original.ledger_id), eq(schema.inventoryLedger.transaction_type, 'REVERSAL'), eq(schema.inventoryLedger.tenant_id, tenantId))).limit(1);
+        .where(and(eq(schema.inventoryLedger.reversal_of_ledger_id, original.ledger_id), eq(schema.inventoryLedger.tenant_id, tenantId))).limit(1);
       if (done) continue;
       const { created_at: _c, entry_no: _e, ...rest } = original;
       await this.db.insert(schema.inventoryLedger).values({
-        ...rest, ledger_id: randomUUID(), transaction_type: 'REVERSAL',
+        ...rest, ledger_id: randomUUID(),
         quantity: (-Number(original.quantity)).toString(), amount: (-Number(original.amount)).toString(),
-        external_reference_no: original.ledger_id, created_by: userId || null,
+        external_reference_no: original.ledger_id, reversal_of_ledger_id: original.ledger_id, created_by: userId || null,
       });
     }
   }

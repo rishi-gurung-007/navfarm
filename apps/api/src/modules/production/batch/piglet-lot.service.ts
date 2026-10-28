@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull, or } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
@@ -104,8 +104,80 @@ export class PigletLotService {
       } as CreateBatchDto,
       tenantId,
       userPayload,
+      { litterLot: true },
+    );
+    await this.batchService.activate(created.batch_id, tenantId, userPayload, { bornOnFarm: true });
+    return { batch_id: created.batch_id, batch_no: created.batch_no, lot_no: lotNo };
+  }
+
+  /**
+   * The weaner batch a weaning creates for the piglets it moves on. It copies the lot's item, company, line of business, breed, farm,
+   * shed and operational area; the stage and pen come from the weaning form. It is created and activated EMPTY — the weaned head
+   * arrive by the ordinary head-count transfer straight after, which moves their value with them — so nothing is counted twice.
+   * A pen has to be one of the lot's own shed's pens, so the batch's shed and pen agree.
+   */
+  async createWeanerBatch(
+    params: { lot_batch_id: string; stage_code: string; pen_id?: string | null; start_date: string; remarks?: string },
+    tenantId: string,
+    userPayload?: UserContext,
+  ): Promise<{ batch_id: string; batch_no: string }> {
+    return withTenantTransaction(this.cls, () => this.createWeanerBatchRecord(params, tenantId, userPayload));
+  }
+
+  private async createWeanerBatchRecord(
+    params: { lot_batch_id: string; stage_code: string; pen_id?: string | null; start_date: string; remarks?: string },
+    tenantId: string,
+    userPayload?: UserContext,
+  ): Promise<{ batch_id: string; batch_no: string }> {
+    const lot = await this.batchService.findOne(params.lot_batch_id);
+    const lotLine = lot.input_lines?.[0];
+    if (!lotLine) throw new BadRequestException(`${lot.batch_no} has no input line, so there is no piglet item to copy to the new batch.`);
+
+    // The company's own stage row, else the tenant template — never another company's.
+    const candidates = await this.db
+      .select({ stage_id: schema.stageMaster.stage_id, company_id: schema.stageMaster.company_id })
+      .from(schema.stageMaster)
+      .where(and(
+        eq(schema.stageMaster.lob_id, lot.lob_id),
+        eq(schema.stageMaster.stage_code, params.stage_code.toUpperCase()),
+        eq(schema.stageMaster.is_active, true),
+        isNull(schema.stageMaster.deleted_at),
+        or(eq(schema.stageMaster.company_id, lot.company_id), isNull(schema.stageMaster.company_id)),
+      ))
+      .limit(5);
+    const stage = candidates.find((c) => c.company_id === lot.company_id) ?? candidates.find((c) => (c.company_id ?? null) === null);
+    if (!stage) throw new BadRequestException(`'${params.stage_code}' is not a stage of the line of business the piglet lot runs in.`);
+
+    if (params.pen_id) {
+      const [pen] = await this.db.select().from(schema.locationMaster).where(eq(schema.locationMaster.location_id, params.pen_id)).limit(1);
+      if (!pen || pen.location_type !== 'PEN') throw new BadRequestException('Choose a pen for the new weaner batch.');
+      const inLotShed = !lot.shed_id || pen.parent_location_id === lot.shed_id || pen.shed_id === lot.shed_id;
+      if (!inLotShed) throw new BadRequestException(`That pen is not in ${lot.batch_no}'s shed. The new batch keeps the lot's shed, so choose one of its pens.`);
+    }
+
+    const uom = lotLine.uom || 'HEAD';
+    const created = await this.batchService.create(
+      {
+        company_id: lot.company_id,
+        lob_id: lot.lob_id,
+        costing_method: 'BIO_ASSET',
+        tracking_mode: 'BATCH_WISE',
+        breed_id: lot.breed_id || undefined,
+        stage_id: stage.stage_id,
+        shed_id: lot.shed_id || undefined,
+        location_id: params.pen_id || undefined,
+        operational_area_id: lot.operational_area_id || undefined,
+        start_date: params.start_date,
+        uom,
+        opening_quantity: 0,
+        input_lines: [{ item_id: lotLine.item_id, quantity: 0, uom, rate: 0 }],
+        remarks: params.remarks,
+      } as CreateBatchDto,
+      tenantId,
+      userPayload,
+      { opensEmpty: true },
     );
     await this.batchService.activate(created.batch_id, tenantId, userPayload);
-    return { batch_id: created.batch_id, batch_no: created.batch_no, lot_no: lotNo };
+    return { batch_id: created.batch_id, batch_no: created.batch_no };
   }
 }

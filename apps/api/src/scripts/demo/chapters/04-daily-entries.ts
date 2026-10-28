@@ -13,7 +13,7 @@
  *
  * Before any entry posts, every warehouse the window's feed draws come out
  * of is topped up (final review, C1). Batches stand in sheds, so each feed
- * entry draws from the silo attached to its shed and applyFifo confines the
+ * entry draws from the silo attached to its shed and allocateAndCostOutbound confines the
  * draw to that one warehouse; chapter 02 stocked each silo with a flat
  * 2,000 kg before any batch existed, and a 120-sow gestation batch eats
  * ~300 kg a day — the rebuild died on day seven with "Insufficient stock".
@@ -231,7 +231,7 @@ export const dailyEntriesChapter: DemoChapter = {
       return lot?.lot_no ?? null;
     }
 
-    /** What applyFifo can draw on: remaining quantity of POSITIVE layers of the item in the warehouse. */
+    /** What allocateAndCostOutbound can draw on: remaining quantity of POSITIVE layers of the item in the warehouse. */
     async function onHandKg(warehouseId: string, itemId: string): Promise<number> {
       const [row] = await db
         .select({ total: sql<string | null>`SUM(${schema.inventoryLedger.remaining_quantity})` })

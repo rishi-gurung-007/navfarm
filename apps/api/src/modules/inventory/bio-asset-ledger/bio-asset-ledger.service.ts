@@ -6,6 +6,7 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateBioAssetLedgerDto, QueryBioAssetLedgerDto, QueryBioAssetLedgerEntriesDto } from './dto/bio-asset-ledger.dto';
 import { LEDGER_EXPORT_MAX_ROWS } from '../inventory-ledger/inventory-ledger-export';
+import { assertBioMovement, BIO_DOCUMENT_TYPES, bioEventsCondition } from './bio-asset-ledger.types';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import {
   animalOnFarm,
@@ -16,14 +17,6 @@ import {
   locationOnFarm,
   restrictedScopeConditions,
 } from '../../../common/farm-scope';
-
-/** What a ledger row is called on the Bio Asset Ledger page. */
-function transactionTypeOf(entryType: string, animalId: string | null): string {
-  if (entryType === 'MORTALITY' || entryType === 'PURCHASE') return entryType;
-  if (entryType === 'TRANSFER_IN' || entryType === 'TRANSFER_OUT') return 'BATCH_TRANSFER';
-  if (entryType === 'COST_ALLOCATION') return 'LITTER_COST';
-  return animalId ? 'ANIMAL_REGISTRATION' : 'BATCH_RECEIPT';
-}
 
 /**
  * The Bio-Asset Ledger (living/biological assets: acquisition, mortality, transfer,
@@ -53,6 +46,7 @@ export class BioAssetLedgerService {
     if (scope.restricted || scope.farmId) {
       throw new ForbiddenException('Farm-scoped biological-asset changes must be recorded through a batch or animal workflow.');
     }
+    assertBioMovement(dto.transaction_type, dto.entry_type);
     const entryId = randomUUID();
 
     const costAmount = dto.cost_amount ?? null;
@@ -65,6 +59,9 @@ export class BioAssetLedgerService {
       company_id: dto.company_id,
       bio_asset_item_id: dto.bio_asset_item_id,
       entry_type: dto.entry_type,
+      transaction_type: dto.transaction_type,
+      // Not one of the events the app writes itself, so it is told apart from them by its document type.
+      document_type: BIO_DOCUMENT_TYPES.MANUAL_ENTRY,
       document_no: dto.document_no || null,
       posting_date: dto.posting_date,
       asset_tracking_type: dto.asset_tracking_type || null,
@@ -131,6 +128,7 @@ export class BioAssetLedgerService {
     if (query.companyId) conditions.push(eq(schema.bioAssetLedger.company_id, query.companyId));
     if (query.bioAssetItemId) conditions.push(eq(schema.bioAssetLedger.bio_asset_item_id, query.bioAssetItemId));
     if (query.entryType) conditions.push(eq(schema.bioAssetLedger.entry_type, query.entryType));
+    if (query.transactionType) conditions.push(eq(schema.bioAssetLedger.transaction_type, query.transactionType));
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
@@ -156,20 +154,15 @@ export class BioAssetLedgerService {
     const conditions: SQL[] = [
       eq(B.tenant_id, tenantId),
       ...this.scopeConditions(),
-      or(eq(B.entry_type, 'PURCHASE'), eq(B.entry_type, 'ACQUISITION'), eq(B.entry_type, 'MORTALITY'), eq(B.entry_type, 'TRANSFER_IN'), eq(B.entry_type, 'TRANSFER_OUT'), eq(B.entry_type, 'COST_ALLOCATION'))!,
+      // The events the page shows; feed, overhead, amortisation and the other costs stay off it.
+      bioEventsCondition(B, ['PURCHASE', 'ACQUISITION', 'MORTALITY', 'TRANSFER_IN', 'TRANSFER_OUT', 'COST_ALLOCATION']),
     ];
     if (entryId) conditions.push(eq(B.entry_id, entryId));
     if (query.companyId) conditions.push(eq(B.company_id, query.companyId));
     if (query.itemId) conditions.push(eq(B.bio_asset_item_id, query.itemId));
     if (query.warehouseId) conditions.push(eq(B.warehouse_id, query.warehouseId));
-    if (query.entryType === 'POSITIVE') conditions.push(gt(B.quantity, '0'));
-    if (query.entryType === 'NEGATIVE') conditions.push(lt(B.quantity, '0'));
-    if (query.transactionType === 'PURCHASE') conditions.push(eq(B.entry_type, 'PURCHASE'));
-    if (query.transactionType === 'ANIMAL_REGISTRATION') conditions.push(and(eq(B.entry_type, 'ACQUISITION'), isNotNull(B.animal_id))!);
-    if (query.transactionType === 'BATCH_RECEIPT') conditions.push(and(eq(B.entry_type, 'ACQUISITION'), isNull(B.animal_id))!);
-    if (query.transactionType === 'LITTER_COST') conditions.push(eq(B.entry_type, 'COST_ALLOCATION'));
-    if (query.transactionType === 'BATCH_TRANSFER') conditions.push(or(eq(B.entry_type, 'TRANSFER_IN'), eq(B.entry_type, 'TRANSFER_OUT'))!);
-    if (query.transactionType === 'MORTALITY') conditions.push(eq(B.entry_type, 'MORTALITY'));
+    if (query.entryType) conditions.push(eq(B.entry_type, query.entryType));
+    if (query.transactionType) conditions.push(eq(B.transaction_type, query.transactionType));
     if (query.dateFrom) conditions.push(gte(B.posting_date, query.dateFrom));
     if (query.dateTo) conditions.push(lte(B.posting_date, query.dateTo));
     if (query.documentNo?.trim()) {
@@ -190,6 +183,7 @@ export class BioAssetLedgerService {
         document_type: B.document_type,
         document_no: B.document_no,
         entry_type: B.entry_type,
+        transaction_type: B.transaction_type,
         item_id: B.bio_asset_item_id,
         item_code: schema.itemMaster.item_code,
         item_description: schema.itemMaster.item_name,
@@ -230,8 +224,6 @@ export class BioAssetLedgerService {
       ...r,
       source_entry_no: r.source_entry_id ? sources.get(r.source_entry_id)?.entry_no ?? null : null,
       source_grn_no: r.source_entry_id ? sources.get(r.source_entry_id)?.document_no ?? null : null,
-      transaction_type: transactionTypeOf(r.entry_type, r.animal_id),
-      document_type: r.document_type ?? (r.entry_type === 'MORTALITY' ? 'MORTALITY' : transactionTypeOf(r.entry_type, r.animal_id)),
     }));
   }
 
@@ -244,7 +236,7 @@ export class BioAssetLedgerService {
     if (!entry) throw new NotFoundException('Bio Asset Ledger entry not found.');
     const B = schema.bioAssetLedger;
     const loc = schema.locationMaster;
-    const applications = entry.entry_type === 'PURCHASE'
+    const applications = entry.document_type === BIO_DOCUMENT_TYPES.GOODS_RECEIPT
       ? await this.db
         .select({
           entry_id: B.entry_id,

@@ -117,6 +117,10 @@ export class BatchDailyDataService {
     return tenantDb;
   }
 
+  /**
+   * Posts one data-entry line for a day: checks it against the batch, stage and animal, then writes the batch transaction,
+   * stock movement and ledger rows it implies. `opts` lets a caller posting a whole day one line at a time defer the silo-level re-check to the end.
+   */
   async postEntry(
     batchId: string,
     dto: CreateBatchDailyDataDto,
@@ -433,7 +437,7 @@ export class BatchDailyDataService {
         // resolve, so it is left exactly as it was.
         let sourceWarehouseId: string | undefined;
         if (line.line_type === 'CONSUMPTION') {
-          // Serial numbers are issued from wherever they are: applyFifo finds the location that holds them
+          // Serial numbers are issued from wherever they are: allocateAndCostOutbound finds the location that holds them
           // and overrides this one, so the location resolved here is only the default.
           if (!sourceWarehouseId) {
             sourceWarehouseId = await this.resolveConsumptionWarehouse(
@@ -770,7 +774,7 @@ export class BatchDailyDataService {
           if (!resourceId) {
             // Fallback 1: check if activity_master has default_resource_id
             try {
-              const [act] = await this.db
+              const [activityRow] = await this.db
                 .select({ default_resource_id: schema.activityMaster.default_resource_id })
                 .from(schema.activityMaster)
                 .where(
@@ -780,8 +784,8 @@ export class BatchDailyDataService {
                   ),
                 )
                 .limit(1);
-              if (act?.default_resource_id) {
-                resourceId = act.default_resource_id;
+              if (activityRow?.default_resource_id) {
+                resourceId = activityRow.default_resource_id;
               }
             } catch {
               // ignore
@@ -991,7 +995,7 @@ export class BatchDailyDataService {
   private async assertPoolBoarsFree(lineId: string, entryDate: string, primaryId: string, poolIds: string[]) {
     const others = [...new Set(poolIds)].filter((id) => id !== primaryId);
     if (!others.length) return;
-    const own = await this.db
+    const animalsWithOwnCollection = await this.db
       .select({ animal_id: schema.batchDailyData.animal_id, code: schema.animalRegister.animal_code })
       .from(schema.batchDailyData)
       .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.batchDailyData.animal_id))
@@ -1003,9 +1007,9 @@ export class BatchDailyDataService {
           isNotNull(schema.batchDailyData.entered_value),
         ),
       );
-    if (own.length) {
+    if (animalsWithOwnCollection.length) {
       throw new ConflictException(
-        `${own.map((o) => o.code).join(', ')} already ${own.length === 1 ? 'has' : 'have'} a collection of their own on this line for ${entryDate}. Clear it, or leave ${own.length === 1 ? 'him' : 'them'} out of the pool, so the doses are not counted twice.`,
+        `${animalsWithOwnCollection.map((animal) => animal.code).join(', ')} already ${animalsWithOwnCollection.length === 1 ? 'has' : 'have'} a collection of their own on this line for ${entryDate}. Clear it, or leave ${animalsWithOwnCollection.length === 1 ? 'him' : 'them'} out of the pool, so the doses are not counted twice.`,
       );
     }
   }
@@ -1681,7 +1685,7 @@ export class BatchDailyDataService {
 
     const entries: MortalityEntry[] = [];
     for (const [i, c] of chosen.entries()) {
-      let who: string;
+      let deadAnimalLabel: string;
       let animal: (typeof alive)[number] | undefined;
       if (registered) {
         animal = c.animal_id ? aliveById.get(c.animal_id) : undefined;
@@ -1694,14 +1698,14 @@ export class BatchDailyDataService {
           throw new BadRequestException(`Animal '${animal.animal_code}' is chosen more than once.`);
         }
         seen.add(animal.animal_id);
-        who = `animal '${animal.animal_code}'`;
+        deadAnimalLabel = `animal '${animal.animal_code}'`;
       } else {
         if (c.animal_id) {
           throw new BadRequestException('This batch has no registered animals alive at this stage, so no animal can be named.');
         }
-        who = `dead animal ${i + 1}`;
+        deadAnimalLabel = `dead animal ${i + 1}`;
       }
-      entries.push(this.mortalityEntry(c, who, reasonById, animal?.animal_id ?? null, animal?.notes ?? null));
+      entries.push(this.mortalityEntry(c, deadAnimalLabel, reasonById, animal?.animal_id ?? null, animal?.notes ?? null));
     }
     return { supplied: supplied || entries.length > 0, entries };
   }
@@ -1773,6 +1777,9 @@ export class BatchDailyDataService {
       );
   }
 
+  /**
+   * The active Reason Master rows for the reasons chosen on a mortality entry, keyed by reason id.
+   */
   private async mortalityReasons(chosen: Array<{ reason_id?: string | null }>, tenantId: string, companyId: string) {
     const reasonIds = [...new Set(chosen.map((c) => c.reason_id).filter((id): id is string => !!id))];
     const reasons = reasonIds.length
@@ -1794,19 +1801,19 @@ export class BatchDailyDataService {
   /** One death checked for its weight and reason (a mortality reason by id, or typed text - exactly one). */
   private mortalityEntry(
     c: { dead_weight_kg: number; reason_id?: string | null; reason_text?: string | null },
-    who: string,
+    deadAnimalLabel: string,
     reasonById: Map<string, typeof schema.reasonMaster.$inferSelect>,
     animalId: string | null,
     notes: string | null,
   ): MortalityEntry {
     const weight = Number(c.dead_weight_kg);
     if (!Number.isFinite(weight) || weight <= 0) {
-      throw new BadRequestException(`Enter the dead weight (kg, more than 0) for ${who}.`);
+      throw new BadRequestException(`Enter the dead weight (kg, more than 0) for ${deadAnimalLabel}.`);
     }
     const text = c.reason_text?.trim() || null;
     if ((c.reason_id ? 1 : 0) + (text ? 1 : 0) !== 1) {
       throw new BadRequestException(
-        `Give ${who} a reason from the Reason Master, or type one - not both, not neither.`,
+        `Give ${deadAnimalLabel} a reason from the Reason Master, or type one - not both, not neither.`,
       );
     }
     let label: string;
@@ -1950,6 +1957,9 @@ export class BatchDailyDataService {
     };
   }
 
+  /**
+   * The data-entry rows a batch has for one date (404/403 through the batch scope check).
+   */
   async findForDate(batchId: string, entryDate: string, tenantId: string) {
     await this.batchService.findOne(batchId);
     return this.db

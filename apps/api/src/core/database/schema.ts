@@ -2527,6 +2527,8 @@ export const batchHeader = mysqlTable('batch_header', {
   // batch creation/list/data-entry flow picked up from arun_new; kept
   // alongside animal_tracking above rather than reconciled into it.
   tracking_mode: varchar('tracking_mode', { length: 20 }).default('BATCH_WISE').notNull(),
+  /** A piglet lot made at farrowing: holds the litter's head and cost until the weaning. Not a production batch, so lists and pickers leave it out. */
+  is_litter_lot: boolean('is_litter_lot').default(false).notNull(),
   batch_id: varchar('batch_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
@@ -3897,6 +3899,13 @@ export const inventoryLedger = mysqlTable('inventory_ledger', {
   document_line_id: varchar('document_line_id', { length: 36 }),
   posting_date: date('posting_date', { mode: 'string' }).notNull(),
   external_reference_no: varchar('external_reference_no', { length: 50 }),
+  // 0216: set on the offsetting row a reversal writes — the ledger_id it reverses. A reversal keeps the transaction type of
+  // the entry it offsets (there is no REVERSAL transaction type); this column is what marks it.
+  reversal_of_ledger_id: varchar('reversal_of_ledger_id', { length: 36 }),
+  // 0217: the G/L Mapping transaction type this row posts under when it is not transaction_type — a bio-asset batch's feed is a
+  // CONSUMPTION here and posts as BIO_CONSUMPTION_PREMATURE (capitalised) or BIO_CONSUMPTION_MATURE (expensed); its output posts as
+  // BIO_OUTPUT and a harvest as BIO_HARVEST. Null for every other row.
+  gl_mapping_type: varchar('gl_mapping_type', { length: 30 }),
   entry_type: varchar('entry_type', { length: 20 }).notNull(), // POSITIVE, NEGATIVE, TRANSFER, OVERHEAD, DESCRIPTIVE
   transaction_type: varchar('transaction_type', { length: 30 }).notNull(), // PURCHASE, CONSUMPTION, OUTPUT, TRANSFER_SHIPMENT, TRANSFER_RECEIPT, SALES, VARIANCE_POSITIVE, VARIANCE_NEGATIVE
   quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(), // signed
@@ -3918,6 +3927,7 @@ export const inventoryLedger = mysqlTable('inventory_ledger', {
   created_by: varchar('created_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
 }, (table) => ({
+  reversalOfIndex: index('idx_inventory_ledger_reversal_of').on(table.reversal_of_ledger_id),
   countCutoffIndex: index('idx_inventory_ledger_count_cutoff').on(
     table.tenant_id,
     table.company_id,
@@ -3997,7 +4007,11 @@ export const bioAssetLedger = mysqlTable('bio_asset_ledger', {
   tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
   company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
   bio_asset_item_id: varchar('bio_asset_item_id', { length: 36 }).notNull().references(() => itemMaster.item_id, { onDelete: 'restrict' }),
-  entry_type: varchar('entry_type', { length: 30 }).notNull(), // ACQUISITION, CONSUMPTION, WRITEOFF, OVERHEAD, OVERHEAD_COST, GROWTH_ADJMT, MORTALITY, DEAD_PLANT, AMORTIZATION, FAIR_VALUE_ADJMT, TRANSFORMATION
+  // 0218: the same two lists as the Inventory Ledger. entry_type is POSITIVE, NEGATIVE, TRANSFER, OVERHEAD or DESCRIPTIVE; transaction_type is
+  // PURCHASE, CONSUMPTION, OUTPUT, TRANSFER_SHIPMENT, TRANSFER_RECEIPT, SALES, VARIANCE_POSITIVE, VARIANCE_NEGATIVE (or OVERHEAD / DESCRIPTIVE).
+  // Which event a row is — an amortisation, a death, a sale — is read from document_type (see bio-asset-ledger.types.ts); it is never empty.
+  entry_type: varchar('entry_type', { length: 30 }).notNull(),
+  transaction_type: varchar('transaction_type', { length: 30 }).notNull(),
   document_no: varchar('document_no', { length: 50 }),
   posting_date: date('posting_date', { mode: 'string' }).notNull(),
   asset_tracking_type: varchar('asset_tracking_type', { length: 10 }), // SERIAL, LOT

@@ -242,6 +242,18 @@ export function resolveResidual(i: { animalOverride?: string | number | null; se
   return { value: residualFor(i.profile, i.gender), source: 'PROFILE' };
 }
 
+/**
+ * What a profile's terms leave open, said in words beside the profile so nobody has to find it in the code: the places the behaviour is a decision
+ * of Finance's that has not been made. Information only; it blocks nothing.
+ */
+export function policyNotes(t: Pick<ProfileTerms, 'origin' | 'costing_method' | 'tracking'>): string[] {
+  const notes: string[] = [];
+  if (t.tracking === 'BATCH') {
+    notes.push('Batch-tracked profiles (weaners, growers) are not run yet: a run costs individually tracked animals only, and the rule for amortising a batch\'s head count has not been given.');
+  }
+  return notes;
+}
+
 /** The locked fields a change would alter, comparing the stored profile to the requested values. */
 export function changedLockedFields(stored: Record<string, unknown>, change: Record<string, unknown>): string[] {
   const same = (a: unknown, b: unknown) => {

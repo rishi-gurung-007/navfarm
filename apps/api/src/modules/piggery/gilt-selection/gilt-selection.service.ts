@@ -12,6 +12,7 @@ import { LitterCostService } from '../litter-cost/litter-cost.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { CreateGiltSelectionDto, CreateGiltsDto } from './dto/gilt-selection.dto';
 import { bufferProblem, nextSelectionNo, weekOfYear, MIN_GILT_TEATS } from './gilt-selection.rules';
+import { bioEventCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 export interface Litter {
   farrow_id: string;
@@ -190,7 +191,7 @@ export class GiltSelectionService {
         ? await this.db
             .select({ item_id: schema.bioAssetLedger.bio_asset_item_id })
             .from(schema.bioAssetLedger)
-            .where(and(eq(schema.bioAssetLedger.batch_id, f.piglet_batch_id), eq(schema.bioAssetLedger.entry_type, 'ACQUISITION')))
+            .where(and(eq(schema.bioAssetLedger.batch_id, f.piglet_batch_id), bioEventCondition(schema.bioAssetLedger, 'ACQUISITION')))
             .limit(1)
         : [];
       const [taken] = await this.db

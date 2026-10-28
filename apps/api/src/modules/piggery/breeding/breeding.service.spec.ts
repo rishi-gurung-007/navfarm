@@ -15,6 +15,7 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { BreedingService } from './breeding.service';
 import * as schema from '../../../core/database/schema';
 import { MatingType, PregCheckMethod, ConceptionResult } from './dto/breeding.dto';
+import { bioEventOf } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 /**
  * The `recordMating`/`recordPregnancyCheck`/`recordFarrowing`/
@@ -51,7 +52,7 @@ describe('BreedingService', () => {
 
   let capturedWhere: unknown;
 
-  const pigletLots = { createLot: jest.fn() };
+  const pigletLots = { createLot: jest.fn(), createWeanerBatch: jest.fn() };
   const batchService = { recordMortality: jest.fn(), transferStage: jest.fn() };
   const batchTransfers = { create: jest.fn() };
   const semenLots = { postCollection: jest.fn(), issueDoses: jest.fn() };
@@ -440,7 +441,9 @@ describe('BreedingService', () => {
         undefined,
       );
       expect(result).toMatchObject({ piglet_batch_id: 'b-pig', piglet_lot_no: 'LOT-00009', piglet_batch_no: 'BATCH-000010' });
-      expect(result.message).toContain('12 piglets held as lot LOT-00009 in batch BATCH-000010');
+      expect(result.message).toContain('12 piglets stay with');
+      expect(result.message).toContain('as litter LOT-00009; no batch is made until the weaning');
+      expect(result.message).not.toContain('in batch');
     });
 
     describe('the week 4 alert (BBP: Gilt Week 4 Selection Due)', () => {
@@ -521,6 +524,64 @@ describe('BreedingService', () => {
       expect(result.message).toContain('10 moved to the destination batch');
     });
 
+    describe('a new weaner batch at weaning', () => {
+      beforeEach(() => {
+        pigletLots.createWeanerBatch.mockReset().mockResolvedValue({ batch_id: 'b-new', batch_no: 'BATCH-000050' });
+      });
+
+      it('creates the batch from the lot with the stage and pen of the form, then moves the weaned head into it', async () => {
+        litter();
+        const result: any = await wean({ new_batch_stage_code: 'WEANER', new_batch_pen_id: 'pen-7' });
+
+        expect(pigletLots.createWeanerBatch).toHaveBeenCalledWith(
+          expect.objectContaining({ lot_batch_id: 'b-pig', stage_code: 'WEANER', pen_id: 'pen-7', start_date: '2026-11-06' }),
+          'tenant-1',
+          undefined,
+        );
+        expect(batchTransfers.create).toHaveBeenCalledWith(
+          expect.objectContaining({ to_batch_id: 'b-new', quantity: 10, transfer_type: 'PARTIAL', reason: 'WEANING' }),
+          'tenant-1',
+          'b-pig',
+          undefined,
+        );
+        expect(result.message).toContain('10 moved to the new weaner batch BATCH-000050');
+        // the batch exists before the transfer that fills it
+        expect(pigletLots.createWeanerBatch.mock.invocationCallOrder[0]).toBeLessThan(batchTransfers.create.mock.invocationCallOrder[0]);
+      });
+
+      it('works without a pen, and moves only what is left after the losses and the gilts', async () => {
+        giltSelection.selectAtWeaning.mockReset().mockResolvedValue({ selection_no: 'GS-1', created: [{ animal_code: 'PIG-1' }, { animal_code: 'PIG-2' }] });
+        litter({ farrowing_date: '2026-10-09' });
+        await wean({ new_batch_stage_code: 'WEANER', gilts: [{ rfid_tag: 'G1', no_of_teats: 16 }, { rfid_tag: 'G2', no_of_teats: 15 }] });
+        expect(pigletLots.createWeanerBatch).toHaveBeenCalledWith(expect.objectContaining({ pen_id: undefined }), 'tenant-1', undefined);
+        expect(batchTransfers.create).toHaveBeenCalledWith(expect.objectContaining({ quantity: 8, to_batch_id: 'b-new' }), 'tenant-1', 'b-pig', undefined);
+      });
+
+      it('creates no empty batch when every weaned piglet became a gilt', async () => {
+        giltSelection.selectAtWeaning.mockReset().mockResolvedValue({ selection_no: 'GS-1', created: [{ animal_code: 'PIG-1' }, { animal_code: 'PIG-2' }] });
+        litter({ farrowing_date: '2026-10-09' });
+        const result: any = await wean({ piglets_weaned: 2, new_batch_stage_code: 'WEANER', gilts: [{ rfid_tag: 'G1', no_of_teats: 16 }, { rfid_tag: 'G2', no_of_teats: 15 }] });
+        expect(pigletLots.createWeanerBatch).not.toHaveBeenCalled();
+        expect(batchTransfers.create).not.toHaveBeenCalled();
+        expect(result.message).toContain('no weaner batch was created');
+      });
+
+      it('refuses a new batch together with an existing batch or a stage, and a pen with no stage — before anything is written', async () => {
+        litter();
+        await expect(wean({ new_batch_stage_code: 'WEANER', move_to_batch_id: 'b' })).rejects.toThrow('choose one');
+        await expect(wean({ new_batch_stage_code: 'WEANER', move_to_stage_code: 'NURSERY' })).rejects.toThrow('choose one');
+        await expect(wean({ new_batch_pen_id: 'pen-7' })).rejects.toThrow('needs its stage');
+        expect(pigletLots.createWeanerBatch).not.toHaveBeenCalled();
+        expect(batchService.recordMortality).not.toHaveBeenCalled();
+      });
+
+      it('does not make a second batch when a weaning is posted again', async () => {
+        litter({ piglets_weaned: 10 });
+        await expect(wean({ new_batch_stage_code: 'WEANER' })).rejects.toThrow('already weaned');
+        expect(pigletLots.createWeanerBatch).not.toHaveBeenCalled();
+      });
+    });
+
     describe('fostering', () => {
       const foster = (over: object = {}, dto: object = {}) => {
         litter({ company_id: 'co-1', farrowing_date: '2026-10-01', fostered_out: 0, foster_received: 0, ...over });
@@ -564,7 +625,7 @@ describe('BreedingService', () => {
         jest.spyOn((service as any).litterCost, 'capitalisedLactationCost').mockResolvedValue(held);
       };
       const allocation = () =>
-        mockDbInsert.mock.results.flatMap((r) => (r.value.values as jest.Mock).mock.calls.map(([v]) => v)).find((v) => Array.isArray(v) && v[0]?.entry_type === 'COST_ALLOCATION');
+        mockDbInsert.mock.results.flatMap((r) => (r.value.values as jest.Mock).mock.calls.map(([v]) => v)).find((v) => Array.isArray(v) && bioEventOf(v[0]) === 'COST_ALLOCATION');
 
       it('writes the sow\'s own part against HER ledger, her batch\'s share against the batch, and the whole to the lot', async () => {
         setup({ own: 60, shared: 15 });
@@ -677,7 +738,7 @@ describe('BreedingService', () => {
     it('refuses more weaned than the lot holds, a batch and a stage together, and a move for a litter with no lot', async () => {
       litter();
       await expect(wean({ piglets_weaned: 13 })).rejects.toThrow('holds 12 piglets; 13 cannot have been weaned');
-      await expect(wean({ move_to_batch_id: 'b', move_to_stage_code: 'WEANER' })).rejects.toThrow('a batch or on to a stage, not both');
+      await expect(wean({ move_to_batch_id: 'b', move_to_stage_code: 'WEANER' })).rejects.toThrow('choose one');
       litter({ piglet_batch_id: null });
       await expect(wean({ move_to_batch_id: 'b-weaner' })).rejects.toThrow('has no piglet lot to move');
       expect(batchTransfers.create).not.toHaveBeenCalled();
@@ -730,7 +791,7 @@ describe('BreedingService', () => {
       rows.set(schema.semenBatch, [lot]);
 
       await service.recordMating({ sow_animal_id: 'sow-1', boar_animal_id: 'boar-1', semen_lot_id: 'sb-1', mating_type: 'AI', mating_date: '2026-10-09', semen_dose_qty: 2 } as any, 'tenant-1');
-      expect(semenLots.issueDoses).toHaveBeenCalledWith(lot, 2, expect.any(String), '2026-10-09', 'tenant-1', undefined);
+      expect(semenLots.issueDoses).toHaveBeenCalledWith(lot, 2, expect.any(String), '2026-10-09', 'tenant-1', undefined, { sow: expect.objectContaining({ animal_id: expect.any(String) }), batchId: expect.anything() });
 
       semenLots.issueDoses.mockRejectedValueOnce(new BadRequestException('The semen lot LOT-1 has 1 dose left; 2 cannot be used.'));
       await expect(

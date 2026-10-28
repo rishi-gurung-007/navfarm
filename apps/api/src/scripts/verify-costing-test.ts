@@ -7,10 +7,15 @@
  *   env: DATABASE_HOST, DATABASE_PORT, DATABASE_USERNAME, DATABASE_PASSWORD, DEMO_TENANT_DATABASE (default nf_devco)
  */
 import * as mysql from 'mysql2/promise';
+import { BOOK_VALUE_EVENTS } from '../modules/inventory/bio-asset-ledger/animal-book-value.service';
+import { bioEventOf, bioEventSql } from '../modules/inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 const TOL = 0.0006;
-const book = ['ACQUISITION', 'CONSUMPTION', 'OVERHEAD', 'OVERHEAD_COST', 'GROWTH_ADJMT', 'AMORTIZATION', 'FAIR_VALUE_ADJMT', 'MORTALITY', 'WRITEOFF', 'TRANSFORMATION', 'COST_ALLOCATION'];
-const CAP = ['CONSUMPTION', 'OVERHEAD', 'OVERHEAD_COST', 'GROWTH_ADJMT'];
+/** `--shared-tenant`: the costing test sits beside the lean demo herd (pnpm seed:ledger-check), so "nothing else in the register" is not asked. */
+const sharedTenant = process.argv.includes('--shared-tenant');
+// What the ledger rows record (the event), not their entry type, which several events share.
+const book: string[] = [...BOOK_VALUE_EVENTS];
+const CAP = ['CONSUMPTION', 'OVERHEAD_COST'];
 const d = (v: unknown) => String(v).slice(0, 10);
 const num = (v: unknown) => Number(v ?? 0);
 const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
@@ -35,21 +40,22 @@ async function main() {
   const core = herd.filter((a) => /^CT-[AB]-/.test(a.tag));
   const gilts = herd.filter((a) => /^CT-GILT-/.test(a.tag));
   const everyone = await q('select count(*) n from animal_register');
-  check('S1', 'the herd is 4 sows and 4 boars (plus the gilts born from them), nothing else', core.filter((a) => a.kind === 'SOW').length === 4 && core.filter((a) => a.kind === 'BOAR').length === 4 && Number(everyone[0].n) === core.length + gilts.length,
+  check('S1', 'the herd is 4 sows and 4 boars (plus the gilts born from them), nothing else', core.filter((a) => a.kind === 'SOW').length === 4 && core.filter((a) => a.kind === 'BOAR').length === 4 && (sharedTenant || Number(everyone[0].n) === core.length + gilts.length),
     `${core.length} sows/boars, ${gilts.length} gilts, ${everyone[0].n} animals in the register`);
   const batches = await q(`select remarks, tracking_mode, status from batch_header where remarks like 'CT-%' order by remarks`);
   const bA = core.filter((a) => a.batch === 'CT-BATCH-A'); const bB = core.filter((a) => a.batch === 'CT-BATCH-B');
   check('S2', 'two animal-wise batches of 2 sows + 2 boars each', bA.length === 4 && bB.length === 4 && bA.filter((a) => a.kind === 'SOW').length === 2 && bB.filter((a) => a.kind === 'SOW').length === 2
     && batches.filter((b) => /CT-BATCH-[AB]/.test(b.remarks)).every((b) => b.tracking_mode === 'ANIMAL_WISE' && b.status === 'ACTIVE'), batches.map((b) => `${b.remarks}:${b.tracking_mode}`).join(' '));
 
-  const ledger = await q(`select l.animal_id, l.entry_type, l.document_type, l.posting_date, l.cost_amount amt, l.run_id, l.source_entry_id from bio_asset_ledger l where l.animal_id is not null`);
+  const ledger = (await q(`select l.animal_id, l.entry_type, l.transaction_type, l.document_type, l.posting_date, l.cost_amount amt, l.run_id, l.source_entry_id from bio_asset_ledger l where l.animal_id is not null`))
+    .map((l) => ({ ...l, event: bioEventOf(l) }));
   const ledgerOf = (id: string) => ledger.filter((l) => l.animal_id === id);
-  const sumTo = (id: string, asOf?: string, types = book) => ledgerOf(id).filter((l) => types.includes(l.entry_type) && (!asOf || d(l.posting_date) <= asOf)).reduce((n, l) => n + num(l.amt), 0);
+  const sumTo = (id: string, asOf?: string, types = book) => ledgerOf(id).filter((l) => types.includes(l.event) && (!asOf || d(l.posting_date) <= asOf)).reduce((n, l) => n + num(l.amt), 0);
 
   // ---- purchase and profile -------------------------------------------------------------------------------------------
   const price = (a: any) => (a.batch === 'CT-BATCH-A' ? (a.kind === 'SOW' ? 850 : 1200) : a.kind === 'SOW' ? 700 : 900);
   for (const a of core) {
-    const acq = ledgerOf(a.animal_id).filter((l) => l.entry_type === 'ACQUISITION');
+    const acq = ledgerOf(a.animal_id).filter((l) => l.event === 'ACQUISITION');
     check(`P1 ${a.tag}`, `one ACQUISITION row at the GRN price ${price(a)}`, acq.length === 1 && near(num(acq[0].amt), price(a)), acq.map((l) => l.amt).join(','));
     const want = a.batch === 'CT-BATCH-A' ? (a.kind === 'SOW' ? 'IMP-F' : 'IMP-M') : a.kind === 'SOW' ? 'LOC-F' : 'LOC-M';
     check(`P2 ${a.tag}`, `costing profile ${want} from origin and sex`, a.profile_code === want, String(a.profile_code));
@@ -60,7 +66,7 @@ async function main() {
 
   // ---- capitalise before the start, expense from it ----------------------------------------------------------------------
   for (const a of core) {
-    const capRows = ledgerOf(a.animal_id).filter((l) => CAP.includes(l.entry_type));
+    const capRows = ledgerOf(a.animal_id).filter((l) => CAP.includes(l.event));
     const late = capRows.filter((l) => d(l.posting_date) >= d(a.start));
     check(`C1 ${a.tag}`, 'nothing is capitalised on or after her costing start', late.length === 0, `${late.length} rows`);
     const txs = await q(`select transaction_type t, transaction_date dt, amount from batch_transaction where animal_id = ? and transaction_type in ('CONSUMPTION','OVERHEAD')`, [a.animal_id]);
@@ -70,7 +76,7 @@ async function main() {
     if (d(a.start) === d(a.entry_date)) check(`C3 ${a.tag}`, 'started on arrival: nothing capitalised at all', capRows.length === 0, `${capRows.length} rows`);
   }
   // the group feed: on a Monday before CT-A-SOW-1's start the four animals ate in one issue; only she was capitalised
-  const split = await q(`select a.rfid_tag tag, count(l.entry_id) n from batch_transaction t join animal_register a on a.animal_id = t.animal_id left join bio_asset_ledger l on l.animal_id = t.animal_id and l.posting_date = t.transaction_date and l.entry_type = 'CONSUMPTION'
+  const split = await q(`select a.rfid_tag tag, count(l.entry_id) n from batch_transaction t join animal_register a on a.animal_id = t.animal_id left join bio_asset_ledger l on l.animal_id = t.animal_id and l.posting_date = t.transaction_date and ${bioEventSql('CONSUMPTION', 'l')}
     where t.transaction_date = '2026-04-27' and t.transaction_type = 'CONSUMPTION' and a.rfid_tag like 'CT-A-%' group by a.rfid_tag`);
   check('C4', 'one issue for a mixed group is split: 4 animals ate on 27 Apr, only CT-A-SOW-1 (before her start) is capitalised', split.length === 4 && split.filter((s) => Number(s.n) > 0).map((s) => s.tag).join() === 'CT-A-SOW-1', split.map((s) => `${s.tag}:${s.n}`).join(' '));
   const glNet = async (code: string) => num((await q(`select coalesce(sum(jl.debit_amount - jl.credit_amount),0) x from journal_line jl join gl_account_master g on g.gl_account_id = jl.gl_account_id where g.account_code = ?`, [code]))[0].x);
@@ -107,7 +113,7 @@ async function main() {
   for (const [id, ls] of byAnimal) {
     ls.sort((x, y) => d(x.period_end).localeCompare(d(y.period_end)));
     for (let i = 1; i < ls.length; i++) {
-      const between = ledgerOf(id).filter((l) => book.includes(l.entry_type) && d(l.posting_date) > d(ls[i - 1].period_end) && d(l.posting_date) < d(ls[i].period_end)).reduce((n, l) => n + num(l.amt), 0);
+      const between = ledgerOf(id).filter((l) => book.includes(l.event) && d(l.posting_date) > d(ls[i - 1].period_end) && d(l.posting_date) < d(ls[i].period_end)).reduce((n, l) => n + num(l.amt), 0);
       if (!near(num(ls[i].book_value_before), num(ls[i - 1].book_value_after) + between, 0.003)) gaps++;
     }
   }
@@ -145,7 +151,7 @@ async function main() {
 
   // ---- death ----------------------------------------------------------------------------------------------------------
   const dead = herd.find((a) => a.tag === 'CT-A-SOW-2')!;
-  const exit = ledgerOf(dead.animal_id).filter((l) => l.entry_type === 'MORTALITY');
+  const exit = ledgerOf(dead.animal_id).filter((l) => l.event === 'MORTALITY');
   check('X1', 'CT-A-SOW-2 died on 14 Jul: one MORTALITY write-off and the animal is inactive', exit.length === 1 && d(exit[0].posting_date) === '2026-07-14' && !dead.is_active, `${exit.length} rows, active=${dead.is_active}`);
   check('X2', 'her book value after the death is nil (the ledger sums to zero)', near(sumTo(dead.animal_id), 0, 0.002), sumTo(dead.animal_id).toFixed(4));
   const amortised = -sumTo(dead.animal_id, '2026-07-14', ['AMORTIZATION']);
@@ -170,6 +176,22 @@ async function main() {
     check(`M7 ${l.tag}`, 'the drug part is above zero (the medicines were costed, not only recorded)', num(l.drug_cost_period) > 0, String(l.drug_cost_period));
     check(`M4 ${l.tag}`, 'the lot\'s amortisation part is above zero (the runs were posted before the collection)', num(l.amortisation_period) > 0, String(l.amortisation_period));
     check(`M5 ${l.tag}`, '2 doses were used for the AI mating', near(num(l.doses_used_internal), 2), String(l.doses_used_internal));
+    // The semen is stock at its cost, and a mating's doses are charged to the sow.
+    const stockIn = (await q(`select coalesce(sum(amount), 0) a from inventory_ledger where lot_no = ? and transaction_type = 'OUTPUT' and document_type = 'BREEDING'`, [l.lot_no]))[0];
+    check(`M8 ${l.tag}`, 'the doses entered stock at the lot\'s cost per dose (stock value = doses x cost per dose)', near(num(stockIn.a), num(l.doses_collected) * num(l.unit_cost_per_dose), 0.01),
+      `stock ${num(stockIn.a).toFixed(4)} vs ${(num(l.doses_collected) * num(l.unit_cost_per_dose)).toFixed(4)}`);
+    for (const m of await q(`select b.breeding_id, b.sow_animal_id, b.semen_dose_qty, b.mating_date, a.costing_start_date from breeding_record b join animal_register a on a.animal_id = b.sow_animal_id where b.semen_lot_id = ?`, [l.semen_batch_id])) {
+      const issue = (await q(`select ledger_id, abs(amount) a, batch_no batch from inventory_ledger where document_line_id = ? and transaction_type = 'CONSUMPTION' and document_type = 'BREEDING'`, [m.breeding_id]))[0];
+      const charged = (await q(`select coalesce(sum(cost_amount), 0) a, max(batch_no) batch, count(*) n from bio_asset_ledger where document_type = 'BREEDING_SEMEN' and document_line_id = ? and animal_id = ?`, [m.breeding_id, m.sow_animal_id]))[0];
+      const consumed = (await q(`select coalesce(sum(abs(amount)), 0) a, count(*) n from batch_transaction where ledger_id = ? and animal_id = ? and transaction_type = 'CONSUMPTION'`, [issue?.ledger_id ?? '', m.sow_animal_id]))[0];
+      const expected = num(m.semen_dose_qty) * num(l.unit_cost_per_dose);
+      // The rule her feed follows: capitalised into her (a ledger row) while her costing has not begun on the mating date, expensed (no ledger row) from the day it has.
+      const begun = !!m.costing_start_date && d(m.costing_start_date) <= d(m.mating_date);
+      check(`M9 ${l.tag}`, `the semen the mating used was issued at the lot's cost under the sow's batch, listed as her consumption, and ${begun ? 'expensed (her costing had begun: no ledger row, as with her feed)' : 'capitalised into her (one ledger row of the same cost)'}`,
+        !!issue && near(num(issue.a), expected, 0.01) && !!issue.batch && Number(consumed.n) === 1 && near(num(consumed.a), expected, 0.01)
+          && (begun ? Number(charged.n) === 0 : Number(charged.n) === 1 && near(num(charged.a), expected, 0.01) && charged.batch === issue.batch),
+        `issue ${num(issue?.a).toFixed(4)} (${issue?.batch ?? 'no batch'}), consumption ${num(consumed.a).toFixed(4)} x${consumed.n}, ledger ${num(charged.a).toFixed(4)} x${charged.n}, expected ${expected.toFixed(4)}`);
+    }
   }
 
   // ---- litters --------------------------------------------------------------------------------------------------------
@@ -180,7 +202,7 @@ async function main() {
   const A1 = herd.find((a) => a.tag === 'CT-A-SOW-1')!;
   const fA = farrows.find((f) => f.tag === 'CT-A-SOW-1');
   if (fA) {
-    const window = ledgerOf(A1.animal_id).filter((l) => CAP.includes(l.entry_type) && d(l.posting_date) >= d(fA.mating_date) && d(l.posting_date) < d(fA.farrowing_date)).reduce((n, l) => n + num(l.amt), 0);
+    const window = ledgerOf(A1.animal_id).filter((l) => CAP.includes(l.event) && d(l.posting_date) >= d(fA.mating_date) && d(l.posting_date) < d(fA.farrowing_date)).reduce((n, l) => n + num(l.amt), 0);
     const alloc = ledgerOf(A1.animal_id).filter((l) => l.document_type === 'LITTER_BIRTH_COST').reduce((n, l) => n + num(l.amt), 0);
     check('L2', 'the birth cost taken from the sow = her capitalised cost from the mating to the day before the farrowing (feed after her start was expensed: not in it)', near(-alloc, window, 0.002) && window > 0, `taken ${(-alloc).toFixed(4)}, capitalised in the window ${window.toFixed(4)}`);
     const lot = (await q(`select batch_id from batch_header where remarks = 'CT-A-SOW-1-LITTER'`))[0];
@@ -197,7 +219,7 @@ async function main() {
   const gs = await q(`select s.selection_no, s.status, count(g.gilt_id) n from gilt_selection s join gilt_selection_line l on l.selection_id = s.selection_id left join gilt_selection_gilt g on g.line_id = l.line_id group by s.selection_id, s.selection_no, s.status`);
   check('G1', 'one gilt selection for the weaned litter: POSTED with 5 gilts; the attempted selection on the other litter was cancelled', gs.filter((s) => s.status === 'POSTED').length === 1 && Number(gs.find((s) => s.status === 'POSTED')?.n) === 5 && gs.filter((s) => s.status === 'DRAFT').length === 0, gs.map((s) => `${s.selection_no}:${s.status}:${s.n}`).join(' '));
   const sowOne = herd.find((a) => a.tag === 'CT-A-SOW-1')!;
-  const birthWindow = fA ? ledgerOf(sowOne.animal_id).filter((l) => CAP.includes(l.entry_type) && d(l.posting_date) >= d(fA.mating_date) && d(l.posting_date) < d(fA.farrowing_date)).reduce((n, l) => n + num(l.amt), 0) : 0;
+  const birthWindow = fA ? ledgerOf(sowOne.animal_id).filter((l) => CAP.includes(l.event) && d(l.posting_date) >= d(fA.mating_date) && d(l.posting_date) < d(fA.farrowing_date)).reduce((n, l) => n + num(l.amt), 0) : 0;
   for (const g of gilts) {
     const sowA = herd.find((a) => a.tag === 'CT-A-SOW-1')!;
     const parents = (await q('select sire_animal_id, dam_animal_id, no_of_teats, entry_type, acquisition_cost from animal_register where animal_id = ?', [g.animal_id]))[0];
@@ -237,7 +259,7 @@ async function main() {
   check('I9', 'every reversed run is mirrored to nil in the ledger, and its month was posted again', rev.length >= 2 && revBad === 0, `${rev.length} reversed runs, ${revBad} not nil`);
   const accum = await q(`select coalesce(sum(jl.credit_amount - jl.debit_amount),0) x from journal_line jl join gl_account_master g on g.gl_account_id = jl.gl_account_id where g.account_code = '1065'`);
   const expense = await q(`select coalesce(sum(jl.debit_amount - jl.credit_amount),0) x from journal_line jl join gl_account_master g on g.gl_account_id = jl.gl_account_id where g.account_code = '5100'`);
-  const amortAll = -ledger.filter((l) => l.entry_type === 'AMORTIZATION').reduce((n, l) => n + num(l.amt), 0);
+  const amortAll = -ledger.filter((l) => l.event === 'AMORTIZATION').reduce((n, l) => n + num(l.amt), 0);
   const clearedOnDeath = num(clearing[0]?.total_debit);
   check('I10', 'amortisation expense 5100 = all amortisation in the ledger (net of reversals)', near(num(expense[0].x), amortAll, 0.003), `5100 ${num(expense[0].x).toFixed(4)}, ledger ${amortAll.toFixed(4)}`);
   check('I11', 'accumulated amortisation 1065 = that less what the death cleared', near(num(accum[0].x), amortAll - clearedOnDeath, 0.003), `1065 ${num(accum[0].x).toFixed(4)}, expected ${(amortAll - clearedOnDeath).toFixed(4)}`);

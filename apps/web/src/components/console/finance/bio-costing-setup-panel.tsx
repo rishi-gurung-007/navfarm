@@ -174,7 +174,13 @@ export default function BioCostingSetupPanel() {
                   <TableRow key={p.profile_id}>
                     <TableCell className="whitespace-nowrap font-semibold" style={S.primary}>{p.profile_code}</TableCell>
                     <TableCell style={S.primary}>{p.name}</TableCell>
-                    <TableCell className="whitespace-nowrap" style={S.sub}>{scopeText(p)}</TableCell>
+                    <TableCell style={S.sub}>
+                      <span className="whitespace-nowrap">{scopeText(p)}</span>
+                      {/* What the terms leave open for Finance (local amortisation, batch-tracked profiles), said beside the profile. */}
+                      {(p.policy_notes ?? []).map((note: string) => (
+                        <p key={note} className="mt-1 max-w-xs text-[11px] font-normal leading-snug" style={{ color: "var(--warning, #b45309)" }}>{note}</p>
+                      ))}
+                    </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>{p.costing_method === "AMORTIZATION" ? t("bcrAmortisation") : t("bcrFairValue")}</TableCell>
                     <TableCell className="whitespace-nowrap text-right" style={S.primary}>{p.start_age_weeks}</TableCell>
                     <TableCell className="whitespace-nowrap text-right" style={S.primary}>{p.useful_life_months ?? ""}</TableCell>

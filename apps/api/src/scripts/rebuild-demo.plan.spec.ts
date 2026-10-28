@@ -134,6 +134,30 @@ describe('rebuild-demo master chain (four-farm plan Task 3)', () => {
     expect(list).not.toContain('verify-demo-flow.ts');
   });
 
+  it('the ledger-check preset is the lean flow, then the costing test and the ledger-type postings, then three read-backs', () => {
+    const plan = buildPlan({ chaptersOnly: false, skipReset: false, preset: 'ledger-check' });
+    const list = scripts(plan);
+    expect(list).toContain('seed-nine-farm-demo.ts');
+    expect(list).not.toContain('seed-four-farm-feed-demo.ts');
+    const chapterSteps = plan.filter((s) => s.script === 'demo-chapters.ts');
+    expect(chapterSteps).toHaveLength(3);
+    expect(chapterSteps[0].args).toEqual(expect.arrayContaining(['--lean']));
+    expect(chapterSteps[0].args.some((a) => a.startsWith('--chapter='))).toBe(false);
+    expect(chapterSteps[1].args).toEqual(expect.arrayContaining(['--costing-test', '--lean', '--volume=costing']));
+    expect(chapterSteps[2].args).toEqual(expect.arrayContaining(['--chapter=17-ledger-types', '--lean']));
+    // the two on-demand chapters run after the lean flow they add to, and everything is read back last
+    expect(plan.indexOf(chapterSteps[0])).toBeLessThan(plan.indexOf(chapterSteps[1]));
+    expect(plan.indexOf(chapterSteps[1])).toBeLessThan(plan.indexOf(chapterSteps[2]));
+    expect(list.slice(-4)).toEqual(['demo-chapters.ts', 'verify-costing-test.ts', 'demo-chapters.ts', 'verify-ledger-types.ts']);
+    expect(plan.indexOf(plan.find((s) => s.script === 'verify-demo-flow.ts')!)).toBeLessThan(plan.indexOf(chapterSteps[1]));
+    expect(plan.find((s) => s.script === 'verify-costing-test.ts')!.args).toEqual(['--shared-tenant']);
+  });
+
+  it('the ledger-check preset re-posts all three chapters with --chapters-only, and the other presets still post one', () => {
+    expect(buildPlan({ chaptersOnly: true, skipReset: false, preset: 'ledger-check' })).toHaveLength(3);
+    expect(buildPlan({ chaptersOnly: true, skipReset: false, preset: 'lean' })).toHaveLength(1);
+  });
+
   it('the small preset seeds no batches; other runs still do', () => {
     const small = buildPlan({ chaptersOnly: false, skipReset: false, volume: 'light', preset: 'small' }).pop()!;
     expect(small.args).toContain('--no-batches');

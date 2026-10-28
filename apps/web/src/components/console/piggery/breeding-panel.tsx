@@ -85,7 +85,11 @@ const S = {
 };
 
 // breeding_record.conception_result (15 Sep correction 6).
-const CONCEPTION_RESULTS = ["CONFIRMED", "REPEAT", "FAILED", "PENDING"] as const;
+// The semen collection form's Quality (volume, motility, concentration) and Period Running Costs steps are hidden for now.
+// Left empty, the lot's cost per dose is still worked out from what was posted for the boar, and the quality stays blank.
+const SHOW_SEMEN_QUALITY_AND_COSTS = false;
+
+const CONCEPTION_RESULTS =["CONFIRMED", "REPEAT", "FAILED", "PENDING"] as const;
 
 export function BreedingPanel() {
   const { formatMoney } = useCompanyCurrency();
@@ -111,10 +115,13 @@ export function BreedingPanel() {
   const [semenBatches, setSemenBatches] = useState<Row[]>([]);
   const [animals, setAnimals] = useState<Row[]>([]);
   const [batches, setBatches] = useState<Row[]>([]);
+  const [litterLots, setLitterLots] = useState<Row[]>([]);
   // The piglet item is picked where the farrowing is recorded (any bio-asset item the farm uses for piglets), and the
   // weaned piglets are sent on to a batch or a stage: nothing about either is fixed.
   const [pigletItems, setPigletItems] = useState<Row[]>([]);
   const [stages, setStages] = useState<Row[]>([]);
+  // Locations, for the pens a new weaner batch can be placed in.
+  const [locations, setLocations] = useState<Row[]>([]);
   // Any item the farm uses for semen: nothing is fixed.
   const [semenItems, setSemenItems] = useState<Row[]>([]);
 
@@ -188,6 +195,8 @@ export function BreedingPanel() {
     cost_per_piglet: "",
     move_to_batch_id: "",
     move_to_stage_code: "",
+    new_batch_stage_code: "",
+    new_batch_pen_id: "",
     loss_reason_id: "",
     notes: "",
   });
@@ -199,6 +208,18 @@ export function BreedingPanel() {
   const [giltColour, setGiltColour] = useState("");
   const giltErrors = bufferErrors(giltRows);
   const weanedN = Math.floor(Number(weanForm.piglets_weaned) || 0);
+  // A new weaner batch is built from the piglet lot, so its stage is one of the lot's line of business and its pen one of the lot's shed.
+  const lotBatch = litterLots.find((b) => b.batch_id === selectedFarrow?.piglet_batch_id) ?? batches.find((b) => b.batch_id === selectedFarrow?.piglet_batch_id);
+  const newBatchStageOptions = (() => {
+    const seen = new Set<string>();
+    return stages
+      .filter((st) => (!lotBatch?.lob_id || st.lob_id === lotBatch.lob_id) && st.is_active !== false)
+      .filter((st) => (seen.has(String(st.stage_code)) ? false : (seen.add(String(st.stage_code)), true)))
+      .map((st) => ({ value: String(st.stage_code), label: String(st.stage_name) }));
+  })();
+  const newBatchPenOptions = locations
+    .filter((l) => l.location_type === "PEN" && (!lotBatch?.shed_id || l.parent_location_id === lotBatch.shed_id || l.shed_id === lotBatch.shed_id))
+    .map((l) => ({ value: String(l.location_id), label: String(l.location_name || l.location_code) }));
   const giltsTooMany = giltRows.length > weanedN;
 
   // The litter's parents and the lot's value per head, for the gilt cards in the weaning form.
@@ -259,16 +280,20 @@ export function BreedingPanel() {
         api.get("/animal").catch(() => []),
         // The API bounds this to the active farm; the service write checks
         // again that the batch is on the sow's own farm.
-        api.get("/batch?limit=100").catch(() => []),
+        api.get("/batch?limit=500&includeLitterLots=true").catch(() => []),
       ]);
       setMatings(unwrap<Row[]>(mRes) || []);
       setFarrowings(unwrap<Row[]>(fRes) || []);
       setSemenBatches(unwrap<Row[]>(sRes) || []);
       api.get("/piggery/gilt-selection").then((r) => setGiltSelections(unwrap<Row[]>(r) || [])).catch(() => setGiltSelections([]));
       setAnimals(unwrap<Row[]>(aRes) || []);
-      setBatches((unwrap<Row[]>(bRes) || []).filter((b) => b.status !== "CLOSED" && b.status !== "CANCELLED"));
+      // A litter on its sow is not a batch to file a mating under or move piglets to: it is kept apart, for its shed and line of business only.
+      const allBatches = (unwrap<Row[]>(bRes) || []).filter((b) => b.status !== "CLOSED" && b.status !== "CANCELLED");
+      setBatches(allBatches.filter((b) => !b.is_litter_lot));
+      setLitterLots(allBatches.filter((b) => b.is_litter_lot));
       api.get("/item?itemType=LIVING_ASSET&isActive=true&isBlocked=false&limit=100").then((r) => setPigletItems((unwrap<Row[]>(r) || []).filter((i) => i.is_biological_asset && !i.is_blocked && i.is_active !== false))).catch(() => setPigletItems([]));
       api.get("/stage?limit=100").then((r) => setStages(unwrap<Row[]>(r) || [])).catch(() => setStages([]));
+      api.get("/location?limit=500").then((r) => setLocations(unwrap<Row[]>(r) || [])).catch(() => setLocations([]));
       api.get("/item?isActive=true&isBlocked=false&limit=200").then((r) => setSemenItems((unwrap<Row[]>(r) || []).filter((i) => !i.is_blocked && i.is_active !== false))).catch(() => setSemenItems([]));
     } catch (e: any) {
       setError(e.message || t("brpErrorLoadFailed"));
@@ -452,6 +477,8 @@ export function BreedingPanel() {
           cost_per_piglet: weanForm.cost_per_piglet ? Number(weanForm.cost_per_piglet) : undefined,
           move_to_batch_id: weanForm.move_to_batch_id || undefined,
           move_to_stage_code: weanForm.move_to_stage_code || undefined,
+          new_batch_stage_code: weanForm.new_batch_stage_code || undefined,
+          new_batch_pen_id: weanForm.new_batch_stage_code ? weanForm.new_batch_pen_id || undefined : undefined,
           loss_reason_id: weanForm.loss_reason_id || undefined,
           notes: weanForm.notes || undefined,
           ...(giltRows.length
@@ -1638,10 +1665,10 @@ export function BreedingPanel() {
               {selectedFarrow.piglet_batch_id && (
                 <div className="rounded-[var(--radius-md)] border p-3 space-y-2" style={S.surface}>
                   <p className="text-xs font-semibold" style={S.primary}>
-                    Piglet lot {selectedFarrow.piglet_lot_no}
+                    Litter {selectedFarrow.piglet_lot_no} — with {selectedFarrow.sow_code} until weaning
                   </p>
                   <p className="text-[11px]" style={S.sub}>
-                    Piglets of the lot not weaned are recorded as lost before weaning. Send the weaned piglets to a batch, or on to a stage, or leave them where they are and transfer them later.
+                    Piglets of the lot not weaned are recorded as lost before weaning. Send the weaned piglets to an existing batch, create a new weaner batch for them, move the lot on to a stage, or leave them where they are and transfer them later.
                   </p>
                   <Field label="Reason for piglets lost before weaning" htmlFor="wean-loss-reason" issues={[]} name="loss_reason_id">
                     <ReasonSelect
@@ -1662,7 +1689,7 @@ export function BreedingPanel() {
                       <SearchableSelect
                         id="wean-batch"
                         value={weanForm.move_to_batch_id}
-                        onChange={(val) => setWeanForm({ ...weanForm, move_to_batch_id: String(val), move_to_stage_code: "" })}
+                        onChange={(val) => setWeanForm({ ...weanForm, move_to_batch_id: String(val), move_to_stage_code: "", new_batch_stage_code: "", new_batch_pen_id: "" })}
                         placeholder="Stay in the lot’s batch"
                         options={batches
                           .filter((b) => b.tracking_mode === "BATCH_WISE" && b.costing_method === "BIO_ASSET" && b.batch_id !== selectedFarrow.piglet_batch_id)
@@ -1678,7 +1705,7 @@ export function BreedingPanel() {
                       <SearchableSelect
                         id="wean-stage"
                         value={weanForm.move_to_stage_code}
-                        onChange={(val) => setWeanForm({ ...weanForm, move_to_stage_code: String(val), move_to_batch_id: "" })}
+                        onChange={(val) => setWeanForm({ ...weanForm, move_to_stage_code: String(val), move_to_batch_id: "", new_batch_stage_code: "", new_batch_pen_id: "" })}
                         placeholder="No stage change"
                         options={stages.map((st) => ({
                           value: st.stage_code,
@@ -1687,6 +1714,33 @@ export function BreedingPanel() {
                         columnHeaders={false}
                       />
                     </div>
+                  </div>
+                  {/* A new weaner batch: it copies the lot's item, company, line of business, farm and shed; the stage and pen come from here. */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="wean-new-batch-stage">Or create a new weaner batch in stage</label>
+                      <SearchableSelect
+                        id="wean-new-batch-stage"
+                        value={weanForm.new_batch_stage_code}
+                        onChange={(val) => setWeanForm({ ...weanForm, new_batch_stage_code: String(val), new_batch_pen_id: "", move_to_batch_id: "", move_to_stage_code: "" })}
+                        placeholder="No new batch"
+                        options={newBatchStageOptions}
+                        columnHeaders={false}
+                      />
+                    </div>
+                    {weanForm.new_batch_stage_code && (
+                      <div>
+                        <label className="block text-xs font-semibold mb-1" style={S.sub} htmlFor="wean-new-batch-pen">Pen (in the lot’s shed)</label>
+                        <SearchableSelect
+                          id="wean-new-batch-pen"
+                          value={weanForm.new_batch_pen_id}
+                          onChange={(val) => setWeanForm({ ...weanForm, new_batch_pen_id: String(val) })}
+                          placeholder="No pen yet"
+                          options={newBatchPenOptions}
+                          columnHeaders={false}
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1877,6 +1931,7 @@ export function BreedingPanel() {
             </Field>
           </Step>
 
+          {SHOW_SEMEN_QUALITY_AND_COSTS && (<>
           <Step n={4} title="Quality" hint="Read at collection; kept on the lot and printed on its QR. Optional.">
             <div className="grid grid-cols-3 gap-3">
               <Field label="Volume (ml)" issues={semenIssues} name="volume_ml">
@@ -1912,6 +1967,7 @@ export function BreedingPanel() {
               ))}
             </div>
           </Step>
+          </>)}
         </EntryModal>
       )}
 

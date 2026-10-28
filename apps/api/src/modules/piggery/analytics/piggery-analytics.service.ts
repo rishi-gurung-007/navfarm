@@ -248,11 +248,13 @@ export class PiggeryAnalyticsService {
         opening_quantity: schema.batchHeader.opening_quantity,
         total_cost: schema.batchHeader.total_cost,
         farm_id: schema.batchHeader.farm_id,
+        is_litter_lot: schema.batchHeader.is_litter_lot,
       })
       .from(schema.batchHeader)
       .where(and(...batchConditions));
 
-    const activeBatchesCount = batches.length;
+    // A litter on its sow holds head but is not a batch: its piglets count in the headcount, not in the number of batches.
+    const activeBatchesCount = batches.filter((b) => !b.is_litter_lot).length;
     const totalBatchHeadcount = batches.reduce((sum, b) => sum + (Number(b.closing_quantity) || Number(b.opening_quantity) || 0), 0);
 
     // Compute live WIP valuation from batch_transaction (accumulated consumption & overhead)

@@ -16,7 +16,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { SCHEDULER_SOURCES } from '../../scheduler-header/dto/scheduler-header.dto';
 import type { SchedulerSource } from '../../scheduler-header/dto/scheduler-header.dto';
 
@@ -792,6 +792,24 @@ export class QueryBatchDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @ApiProperty({
+    description: 'Include the piglet lots farrowings make (a litter on its sow, not a production batch). Left out unless asked for, as a picker of batches should not offer them.',
+    required: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  includeLitterLots?: boolean;
+
+  @ApiProperty({
+    description: 'Only the piglet lots that are active and still hold piglets, each with the batch of its sow (`sow_batch_no`), `sow_code` and `piglets_label` (the piglets held). For picking the litter a born-on-farm animal came from.',
+    required: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  litterLotsOnly?: boolean;
 
   @ApiProperty({
     description: 'Results per page',

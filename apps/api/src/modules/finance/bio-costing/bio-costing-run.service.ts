@@ -18,6 +18,7 @@ import {
 import { REQUIRED_GL, resolveResidual, type ProfileTerms } from './bio-costing.rules';
 import { BioCostingResidualService } from './bio-costing-residual.service';
 import type { CalculateBatchBioCostingRunDto, CalculateBioCostingRunDto, QueryBioCostingRunDto } from './bio-costing-run.dto';
+import { bioCodes, bioEventCondition, reverseBioCodes } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 type Profile = typeof schema.bioCostingProfile.$inferSelect;
 type Run = typeof schema.bioCostingRun.$inferSelect;
@@ -109,7 +110,7 @@ export class BioCostingRunService {
 
   private async assertRunnable(profile: Profile, period: Period, tenantId: string, ignoreRunId?: string, batchId: string | null = null) {
     if (!['ACTIVE', 'SUPERSEDED'].includes(profile.status)) throw new BadRequestException(`Profile ${profile.profile_code} is ${profile.status}; only an active (or superseded, for the animals it still costs) profile can be run.`);
-    if (profile.tracking !== 'INDIVIDUAL') throw new BadRequestException('Batch-tracked profiles (weaners, growers) are not run yet; this run handles individually tracked animals.');
+    if (profile.tracking !== 'INDIVIDUAL') throw new BadRequestException(`Profile ${profile.profile_code} is batch-tracked (weaners, growers), and a run costs individually tracked animals only. The rule for amortising a batch's head count has not been given, so a batch is not run here; its cost stays on the batch until its head leave.`);
     await assertPostingPeriodOpen(this.db, { tenantId, companyId: profile.company_id, postingDate: period.end });
     // Book values are carried period to period, so a period cannot be run behind a later one that is already posted.
     const [later] = await this.db.select({ no: schema.bioCostingRun.run_no, key: schema.bioCostingRun.period_key }).from(schema.bioCostingRun).where(and(
@@ -137,7 +138,7 @@ export class BioCostingRunService {
     const exitIds = rows.map((r) => r.a.animal_id);
     const exits = exitIds.length
       ? await this.db.select({ animal_id: schema.bioAssetLedger.animal_id, date: sql<string>`MIN(${schema.bioAssetLedger.posting_date})` }).from(schema.bioAssetLedger)
-          .where(and(inArray(schema.bioAssetLedger.animal_id, exitIds), inArray(schema.bioAssetLedger.entry_type, ['MORTALITY', 'WRITEOFF']), gt(schema.bioAssetLedger.posting_date, period.end)))
+          .where(and(inArray(schema.bioAssetLedger.animal_id, exitIds), bioEventCondition(schema.bioAssetLedger, 'MORTALITY'), gt(schema.bioAssetLedger.posting_date, period.end)))
           .groupBy(schema.bioAssetLedger.animal_id)
       : [];
     const exitDateOf = new Map(exits.map((e) => [e.animal_id as string, String(e.date).slice(0, 10)]));
@@ -317,7 +318,7 @@ export class BioCostingRunService {
         const entryId = randomUUID();
         await this.db.insert(schema.bioAssetLedger).values({
           entry_id: entryId, tenant_id: tenantId, company_id: run.company_id, bio_asset_item_id: l.animal.item_id, animal_id: row.animal_id, run_id: run.run_id,
-          entry_type: isAmort ? 'AMORTIZATION' : 'FAIR_VALUE_ADJMT', document_type: 'BIO_COSTING_RUN', document_no: run.run_no,
+          ...(isAmort ? bioCodes.amortisation({ source: 'RUN' }) : bioCodes.fairValue({ source: 'RUN', gain: amount >= 0 })), document_no: run.run_no,
           posting_date: run.period_end, stage: l.animal.stage_id, status: 'ACTIVE', uom: 'HEAD', quantity: '1.0000',
           cost_amount: amount.toString(), cost_amount_each_unit: amount.toString(), costing_method: isAmort ? 'AMORTIZED_COST' : 'FAIR_VALUE',
           nob_id: l.animal.nob_id, lob_id: l.animal.lob_id, created_by: userId ?? null,
@@ -408,7 +409,7 @@ export class BioCostingRunService {
     if (chargedIds.length) {
       const [left] = await this.db.select({ code: schema.animalRegister.animal_code, date: schema.bioAssetLedger.posting_date }).from(schema.bioAssetLedger)
         .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.bioAssetLedger.animal_id))
-        .where(and(inArray(schema.bioAssetLedger.animal_id, chargedIds), inArray(schema.bioAssetLedger.entry_type, ['MORTALITY', 'WRITEOFF']), gt(schema.bioAssetLedger.posting_date, run.period_end)))
+        .where(and(inArray(schema.bioAssetLedger.animal_id, chargedIds), bioEventCondition(schema.bioAssetLedger, 'MORTALITY'), gt(schema.bioAssetLedger.posting_date, run.period_end)))
         .limit(1);
       if (left) throw new BadRequestException(`${left.code} left the herd on ${String(left.date).slice(0, 10)}, after this period, and the exit was valued with this run's charge in it, so run ${run.run_no} cannot be reversed.`);
     }
@@ -419,7 +420,7 @@ export class BioCostingRunService {
       for (const o of originals) {
         await this.db.insert(schema.bioAssetLedger).values({
           entry_id: randomUUID(), tenant_id: tenantId, company_id: o.company_id, bio_asset_item_id: o.bio_asset_item_id, animal_id: o.animal_id, run_id: run.run_id,
-          source_entry_id: o.entry_id, entry_type: o.entry_type, document_type: 'BIO_COSTING_RUN', document_no: run.run_no, posting_date: o.posting_date, stage: o.stage,
+          source_entry_id: o.entry_id, ...reverseBioCodes(o), document_no: run.run_no, posting_date: o.posting_date, stage: o.stage,
           status: 'ACTIVE', uom: o.uom, quantity: o.quantity, cost_amount: (-Number(o.cost_amount)).toString(), cost_amount_each_unit: (-Number(o.cost_amount_each_unit)).toString(),
           costing_method: o.costing_method, nob_id: o.nob_id, lob_id: o.lob_id, created_by: userId ?? null,
         });

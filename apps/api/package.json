@@ -667,6 +667,14 @@
           "cwd": "apps/api"
         }
       },
+      "db-verify-ledger-types": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/verify-ledger-types.ts"
+        }
+      },
       "db-demo-chapters": {
         "executor": "nx:run-commands",
         "cache": false,
@@ -752,6 +760,14 @@
         "cache": false,
         "options": {
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/rebuild-demo.ts --apply --preset=lean",
+          "cwd": "apps/api"
+        }
+      },
+      "db-reset-seed-ledger-check": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/rebuild-demo.ts --apply --preset=ledger-check",
           "cwd": "apps/api"
         }
       },

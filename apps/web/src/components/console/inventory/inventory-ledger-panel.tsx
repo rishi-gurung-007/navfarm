@@ -25,7 +25,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Field } from "@/components/ui/field";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useCompanyCurrency } from "@/hooks/useCompanyCurrency";
-import InventoryLedgerDetail, { formatBcEntryType, formatBcDocumentType, isInboundEntry } from "./inventory-ledger-detail";
+import InventoryLedgerDetail, { formatTransactionType, formatDocumentType, isInboundEntry } from "./inventory-ledger-detail";
 
 const PAGE_SIZE = 25;
 
@@ -337,8 +337,6 @@ export default function InventoryLedgerPanel() {
                 { value: "VARIANCE_NEGATIVE", label: "Variance_Negative" },
                 { value: "OVERHEAD", label: "Overhead" },
                 { value: "DESCRIPTIVE", label: "Descriptive" },
-                { value: "BIO_HARVEST", label: "Harvest (bio-asset slaughter)" },
-                { value: "REVERSAL", label: "Reversal" },
               ]}
               columnHeaders={false}
               triggerClassName="nf-input-sm min-w-[11rem] h-9"
@@ -394,7 +392,7 @@ export default function InventoryLedgerPanel() {
       {/* Main Inventory Ledger Entries Table */}
       <div className="overflow-hidden rounded-[var(--radius-md)] border" style={S.surface}>
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm min-w-[1250px]">
+          <table className="w-full border-collapse text-left text-sm min-w-[1320px]">
             <TableHeader>
               <tr className="border-b border-(--row-border)">
                 <TableHead className="whitespace-nowrap w-20">Entry No.</TableHead>
@@ -408,6 +406,7 @@ export default function InventoryLedgerPanel() {
                 <TableHead className="whitespace-nowrap min-w-[110px]">Entry Type</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-28">{t("ilpQty")}</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-28">{t("ilpRemaining")}</TableHead>
+                <TableHead className="whitespace-nowrap text-center w-16">UOM</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-24">{t("ilpRate")}</TableHead>
                 <TableHead className="whitespace-nowrap text-right w-28">{t("ilpAmount")}</TableHead>
                 <TableHead className="whitespace-nowrap text-center min-w-[100px]">Item Tracking</TableHead>
@@ -418,14 +417,14 @@ export default function InventoryLedgerPanel() {
             <TableBody>
               {loading ? (
                 <tr>
-                  <TableCell colSpan={15} className="py-12 text-center" style={S.sub}>
+                  <TableCell colSpan={16} className="py-12 text-center" style={S.sub}>
                     <Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={S.accent} /> 
                     {t("ilpLoading")}
                   </TableCell>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <TableCell colSpan={15} className="py-12 text-center" style={S.sub}>
+                  <TableCell colSpan={16} className="py-12 text-center" style={S.sub}>
                     <Inbox className="mx-auto mb-2 h-6 w-6" style={S.muted} /> 
                     {hasActiveFilters ? "No inventory ledger entries match the selected filters." : t("ilpNoLedgerEntries")}
                   </TableCell>
@@ -463,7 +462,7 @@ export default function InventoryLedgerPanel() {
                             {row.document_no}
                           </span>
                           <span className="text-[10px]" style={S.muted}>
-                            {formatBcDocumentType(row.document_type)}
+                            {formatDocumentType(row.document_type)}
                             {row.external_reference_no ? ` • Ext: ${row.external_reference_no}` : ""}
                           </span>
                         </div>
@@ -482,7 +481,7 @@ export default function InventoryLedgerPanel() {
                       {/* Entry Type (Business Central format) */}
                       <TableCell className="whitespace-nowrap">
                         <Badge variant="neutral" className="text-[11px] font-semibold" title={row.transaction_type}>
-                          {formatBcEntryType(row.transaction_type)}
+                          {formatTransactionType(row.transaction_type)}
                         </Badge>
                       </TableCell>
 
@@ -520,7 +519,6 @@ export default function InventoryLedgerPanel() {
                         {isPos
                           ? `+${qty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
                           : qty.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
-                        <span className="ml-1 text-[10px] font-normal text-[var(--text-muted)]">{row.uom}</span>
                       </TableCell>
 
                       {/* Remaining Quantity */}
@@ -529,12 +527,16 @@ export default function InventoryLedgerPanel() {
                           rem !== null ? (
                             <span className={rem === 0 ? "text-[var(--text-muted)] line-through" : ""}>
                               {rem.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
-                              <span className="ml-0.5 text-[10px] text-[var(--text-muted)]">{row.uom}</span>
                             </span>
                           ) : "—"
                         ) : (
                           <span style={S.muted}>—</span>
                         )}
+                      </TableCell>
+
+                      {/* UOM: its own column, so the quantities read as plain numbers. */}
+                      <TableCell className="whitespace-nowrap text-center font-mono text-xs uppercase" style={S.sub}>
+                        {row.uom || "—"}
                       </TableCell>
 
                       {/* Unit Cost */}

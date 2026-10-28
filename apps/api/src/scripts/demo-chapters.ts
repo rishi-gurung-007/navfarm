@@ -48,6 +48,7 @@ import { bioCostingAssignChapter, bioCostingProfilesChapter, costingPricesChapte
 import { costingWalkthroughChapter } from './demo/chapters/14-costing-walkthrough';
 import { fullFlowChapter } from './demo/chapters/15-full-flow';
 import { costingTestChapter } from './demo/chapters/16-costing-test';
+import { ledgerTypesChapter } from './demo/chapters/17-ledger-types';
 import { batchTransfersChapter } from './demo/chapters/10-batch-transfers';
 import { stockTransfersChapter } from './demo/chapters/11-stock-transfers';
 import { mortalityChapter } from './demo/chapters/12-mortality';
@@ -58,12 +59,12 @@ import type { DemoChapter, DemoContext } from './demo/chapter';
 const BATCH_CHAPTERS = new Set(['04-daily-entries', '05-breeding', '06-approvals', '08-bio-asset-exit', '10-batch-transfers', '12-mortality']);
 
 /** Chapters that touch no batch and are safe to run again on a tenant that already has its own batches. */
-const RESUME_SAFE_CHAPTERS = new Set(['09-costing-scenarios', '14-costing-walkthrough', '15-full-flow', '16-costing-test']);
+const RESUME_SAFE_CHAPTERS = new Set(['09-costing-scenarios', '14-costing-walkthrough', '15-full-flow', '16-costing-test', '17-ledger-types']);
 
 /** Chapters that run only when named with --chapter=, never as part of a rebuild or a full run. */
-const ON_DEMAND_CHAPTERS = new Set(['14-costing-walkthrough', '15-full-flow', '16-costing-test']);
+const ON_DEMAND_CHAPTERS = new Set(['14-costing-walkthrough', '15-full-flow', '16-costing-test', '17-ledger-types']);
 
-const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, costingPricesChapter, inventoryChapter, bioCostingProfilesChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter, feedPlanningChapter, bioAssetExitChapter, batchTransfersChapter, stockTransfersChapter, mortalityChapter, costingScenariosChapter, bioCostingAssignChapter, costingWalkthroughChapter, fullFlowChapter, costingTestChapter];
+const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, costingPricesChapter, inventoryChapter, bioCostingProfilesChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter, feedPlanningChapter, bioAssetExitChapter, batchTransfersChapter, stockTransfersChapter, mortalityChapter, costingScenariosChapter, bioCostingAssignChapter, costingWalkthroughChapter, fullFlowChapter, costingTestChapter, ledgerTypesChapter];
 
 /** `--costing-test`: no demo herd, only what the costing test needs - the identity, stores and items, the costing prices and profiles, then chapter 16. */
 const COSTING_TEST_CHAPTERS = new Set(['identity', '01-stores-and-items', '01b-costing-prices', '02b-bio-costing-profiles', '16-costing-test']);

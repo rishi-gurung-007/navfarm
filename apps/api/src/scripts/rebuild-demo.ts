@@ -156,6 +156,18 @@ const FULL_FARM_STEP: Step = { label: 'Nine-farm demo masters (farms, sheds/pens
 const COSTING_TEST_VERIFY_STEP: Step = { label: 'Check the costing test: every case read back from MySQL against its own arithmetic', script: 'verify-costing-test.ts', args: [] };
 const VERIFY_STEP: Step = { label: 'Reconcile batches, inventory, transfers and outputs against each other', script: 'verify-demo-flow.ts', args: [] };
 
+/**
+ * The ledger-check preset (`pnpm seed:ledger-check`): the whole lean flow, then the costing test (4 sows and 4 boars lived day by day, the
+ * costing profiles assigned), then one posting of every Entry Type / Transaction Type pair, and three read-backs from MySQL. It is what to
+ * seed when the Inventory Ledger, the Bio Asset Ledger and the costing are to be checked by hand: docs/MANUAL-CHECK-LEDGERS-AND-COSTING.md.
+ * Chapters 16 and 17 are on-demand chapters that add to a tenant that already has batches, so they run as steps of their own after the
+ * lean chapters; `--costing-test` brings the costing prices and the costing profiles chapter 16 assigns to its animals (the lean chapters make none). The costing runs themselves are left for the person checking to calculate and post.
+ */
+const COSTING_TEST_CHAPTER_STEP: Step = { label: 'Costing test: 4 sows and 4 boars in 2 batches, lived day by day (chapter 16)', script: 'demo-chapters.ts', args: ['--apply', '--force-on-existing', '--costing-test', '--lean', '--volume=costing'] };
+const LEDGER_TYPES_CHAPTER_STEP: Step = { label: 'One posting of every Entry Type / Transaction Type pair (chapter 17)', script: 'demo-chapters.ts', args: ['--apply', '--force-on-existing', '--chapter=17-ledger-types', '--lean'] };
+const COSTING_TEST_SHARED_VERIFY_STEP: Step = { label: 'Check the costing test against the ledgers (beside the lean demo herd)', script: 'verify-costing-test.ts', args: ['--shared-tenant'] };
+const LEDGER_TYPES_VERIFY_STEP: Step = { label: 'Check every Entry Type / Transaction Type pair in both ledgers, read back from MySQL', script: 'verify-ledger-types.ts', args: [] };
+
 export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; volume?: string; preset?: string }): Step[] {
   if (opts.preset === 'porta') {
     if (opts.chaptersOnly) return [];
@@ -182,7 +194,7 @@ export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; vol
   const extra = [
     ...(opts.volume ? [`--volume=${opts.volume}`] : []),
     ...(opts.preset === 'small' ? ['--no-batches'] : []),
-    ...(opts.preset === 'lean' ? ['--lean'] : []),
+    ...(opts.preset === 'lean' || opts.preset === 'ledger-check' ? ['--lean'] : []),
     // The costing preset is the lean layout with the costing volume: batches started 62 days ago and an imported lot, with no daily entry posted (--no-daily-entries): the person testing enters the days. --volume comes last so it wins over --lean's.
     ...(opts.preset === 'costing' ? ['--lean', '--volume=costing', '--no-daily-entries'] : []),
     // The costing-test preset posts no demo herd at all: the masters, the costing profiles and then ONE chapter (16-costing-test) that buys and lives 4 sows and 4 boars in 2 batches.
@@ -191,15 +203,19 @@ export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; vol
   const chapters: Step = extra.length ? { ...CHAPTERS_STEP, args: [...CHAPTERS_STEP.args, ...extra] } : CHAPTERS_STEP;
   // --chapters-only means exactly that: skip the reset and every master step,
   // and only re-post the chapters onto whatever masters already exist.
-  if (opts.chaptersOnly) return [chapters];
+  if (opts.chaptersOnly) return opts.preset === 'ledger-check' ? [chapters, COSTING_TEST_CHAPTER_STEP, LEDGER_TYPES_CHAPTER_STEP] : [chapters];
   const steps: Step[] = [];
   if (!opts.skipReset) steps.push(RESET_STEP);
-  const farmStep = opts.preset === 'small' || opts.preset === 'lean' || opts.preset === 'costing' || opts.preset === 'costing-test' ? SMALL_FARM_STEP : opts.preset === 'full' ? FULL_FARM_STEP : null;
+  const farmStep = opts.preset === 'small' || opts.preset === 'lean' || opts.preset === 'costing' || opts.preset === 'costing-test' || opts.preset === 'ledger-check' ? SMALL_FARM_STEP : opts.preset === 'full' ? FULL_FARM_STEP : null;
   const masters = farmStep
     ? MASTER_STEPS.map((step) => (step.script === FOUR_FARM_STEP_SCRIPT ? farmStep : step))
     : MASTER_STEPS;
   steps.push(...masters, chapters);
+  // Each part is read back before the next adds to it: chapter 16's gilt batch has no scheduler line, which the lean flow's head-count check is right to flag, and chapter 17 books
+  // feed and amortisation to the same GL accounts the costing test reconciles to the cent.
+  if (opts.preset === 'ledger-check') steps.push(VERIFY_STEP, COSTING_TEST_CHAPTER_STEP, COSTING_TEST_SHARED_VERIFY_STEP, LEDGER_TYPES_CHAPTER_STEP);
   if (opts.preset === 'full' || opts.preset === 'lean' || opts.preset === 'costing') steps.push(VERIFY_STEP);
+  if (opts.preset === 'ledger-check') steps.push(LEDGER_TYPES_VERIFY_STEP);
   if (opts.preset === 'costing-test') steps.push(COSTING_TEST_VERIFY_STEP);
   return steps;
 }
@@ -287,7 +303,7 @@ async function main() {
   const { apply, chaptersOnly, skipReset } = args;
   // The preset implies its volume unless one was given, and scopes every child step to its farms.
   const volume = args.volume ?? (args.preset === 'small' ? SMALL_PRESET.volume : undefined);
-  if (args.preset === 'small' || args.preset === 'lean' || args.preset === 'costing' || args.preset === 'costing-test') process.env.DEMO_FARMS = SMALL_PRESET.farms;
+  if (args.preset === 'small' || args.preset === 'lean' || args.preset === 'costing' || args.preset === 'costing-test' || args.preset === 'ledger-check') process.env.DEMO_FARMS = SMALL_PRESET.farms;
   if (args.preset === 'porta') process.env.SEED_SOURCE_FARM = PORTA_PRESET.farm;
   const plan = buildPlan({ chaptersOnly, skipReset, volume, preset: args.preset });
 

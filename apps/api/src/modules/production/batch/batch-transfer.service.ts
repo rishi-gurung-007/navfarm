@@ -31,6 +31,7 @@ import { farmScope } from '../../../common/farm-scope';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { assertStageFitsAnimal } from '../stage/stage-gender';
+import { bioCodes } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 // Local time, not UTC. MySQL's own DEFAULT (now()) on created_at is local, so
 // formatting through toISOString() (as some older services here do) stamps
@@ -531,7 +532,7 @@ export class BatchTransferService {
     if (sourceItem) {
       rows.push({
         entry_id: randomUUID(), tenant_id: tenantId, company_id: transfer.company_id, bio_asset_item_id: sourceItem,
-        entry_type: 'TRANSFER_OUT', document_no: transfer.transfer_no, posting_date: transfer.transfer_date, lot_no: lotNo,
+        ...bioCodes.batchTransfer({ out: true }), document_no: transfer.transfer_no, posting_date: transfer.transfer_date, lot_no: lotNo,
         batch_no: source.batch_no, batch_id: source.batch_id, stage: source.current_stage_code || null,
         quantity: (-quantity).toFixed(4), cost_amount: (-value).toFixed(4),
         cost_amount_each_unit: (quantity > 0 ? -value / quantity : 0).toFixed(4),
@@ -541,7 +542,7 @@ export class BatchTransferService {
     if (destItem) {
       rows.push({
         entry_id: randomUUID(), tenant_id: tenantId, company_id: transfer.company_id, bio_asset_item_id: destItem,
-        entry_type: 'TRANSFER_IN', document_no: transfer.transfer_no, posting_date: transfer.transfer_date, lot_no: lotNo,
+        ...bioCodes.batchTransfer({ out: false }), document_no: transfer.transfer_no, posting_date: transfer.transfer_date, lot_no: lotNo,
         batch_no: destination.batch_no, batch_id: destination.batch_id, stage: destination.current_stage_code || null,
         quantity: quantity.toFixed(4), cost_amount: value.toFixed(4),
         cost_amount_each_unit: (quantity > 0 ? value / quantity : 0).toFixed(4),
@@ -986,7 +987,7 @@ export class BatchTransferService {
         tenant_id: tenantId,
         company_id: transfer.company_id,
         bio_asset_item_id: itemFor(l.animal_id)!,
-        entry_type: 'TRANSFER_OUT',
+        ...bioCodes.batchTransfer({ out: true }),
         document_no: transfer.transfer_no,
         posting_date: transfer.transfer_date,
         batch_no: source?.batch_no || null,
@@ -1005,7 +1006,7 @@ export class BatchTransferService {
         tenant_id: tenantId,
         company_id: transfer.company_id,
         bio_asset_item_id: itemFor(l.animal_id)!,
-        entry_type: 'TRANSFER_IN',
+        ...bioCodes.batchTransfer({ out: false }),
         document_no: transfer.transfer_no,
         posting_date: transfer.transfer_date,
         batch_no: destination?.batch_no || null,

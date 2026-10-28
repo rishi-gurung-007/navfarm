@@ -58,7 +58,7 @@ function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 }
 
-export const BC_ENTRY_TYPES: Record<string, string> = {
+export const TRANSACTION_TYPE_LABELS: Record<string, string> = {
   PURCHASE: 'Purchase',
   CONSUMPTION: 'Consumption',
   OUTPUT: 'Output',
@@ -68,22 +68,16 @@ export const BC_ENTRY_TYPES: Record<string, string> = {
   VARIANCE_POSITIVE: 'Variance_Positive',
   VARIANCE_NEGATIVE: 'Variance_Negative',
   BATCH_CONSUMPTION: 'Consumption',
-  // A bio-asset batch's feed is a consumption too; the pre-mature/mature split only decides the GL accounts.
-  BIO_CONSUMPTION_PREMATURE: 'Consumption',
-  BIO_CONSUMPTION_MATURE: 'Consumption',
   BATCH_INPUT: 'Consumption',
   BATCH_OUTPUT: 'Output',
-  BIO_OUTPUT: 'Output',
-  BIO_HARVEST: 'Harvest',
-  REVERSAL: 'Reversal',
   OVERHEAD: 'Overhead',
   DESCRIPTIVE: 'Descriptive',
 };
 
-export const formatBcEntryType = (type?: string) => {
+export const formatTransactionType = (type?: string) => {
   if (!type) return '—';
   const upper = type.toUpperCase();
-  if (BC_ENTRY_TYPES[upper]) return BC_ENTRY_TYPES[upper];
+  if (TRANSACTION_TYPE_LABELS[upper]) return TRANSACTION_TYPE_LABELS[upper];
   return upper.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 };
 
@@ -102,7 +96,7 @@ export const isInboundEntry = (entry: {
 };
 
 /** `quantity` tells a Transfer's receiving leg ("Receipt") from its shipping leg ("Transfer"). */
-export const formatBcEntryTypeLabel = (
+export const formatEntryType = (
   entryType?: string,
   quantity?: unknown,
 ) => {
@@ -117,7 +111,7 @@ export const formatBcEntryTypeLabel = (
   return upper.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 };
 
-export const BC_DOCUMENT_TYPES: Record<string, string> = {
+export const DOCUMENT_TYPE_LABELS: Record<string, string> = {
   GOODS_RECEIPT: 'GRN',
   STOCK_TRANSFER: 'Transfer Order',
   STOCK_ADJUSTMENT: 'Stock Adjustment',
@@ -125,9 +119,9 @@ export const BC_DOCUMENT_TYPES: Record<string, string> = {
   DAILY_ENTRY: 'Daily Operations Entry',
 };
 
-export const formatBcDocumentType = (type?: string) => {
+export const formatDocumentType = (type?: string) => {
   if (!type) return '—';
-  return BC_DOCUMENT_TYPES[type.toUpperCase()] || type.replace(/_/g, ' ');
+  return DOCUMENT_TYPE_LABELS[type.toUpperCase()] || type.replace(/_/g, ' ');
 };
 
 export const getSourceDocumentRoute = (documentType?: string) => {
@@ -297,7 +291,7 @@ export default function InventoryLedgerDetail({
                 Transaction Type:
               </span>
               <span className="font-mono text-xs font-bold" style={S.primary}>
-                {formatBcEntryType(entry.transaction_type)}
+                {formatTransactionType(entry.transaction_type)}
               </span>
             </div>
             <div
@@ -312,12 +306,12 @@ export default function InventoryLedgerDetail({
               </span>
               <StatusBadge
                 status={isPositive ? 'POSITIVE' : entry.entry_type}
-                label={formatBcEntryTypeLabel(entry.entry_type, entry.quantity)}
+                label={formatEntryType(entry.entry_type, entry.quantity)}
               />
             </div>
             {entry.document_type && (
               <Badge variant="neutral" className="text-xs">
-                {formatBcDocumentType(entry.document_type)}
+                {formatDocumentType(entry.document_type)}
               </Badge>
             )}
           </div>
@@ -352,7 +346,7 @@ export default function InventoryLedgerDetail({
               className="flex items-center gap-1.5 text-xs"
             >
               <ExternalLink className="h-3.5 w-3.5" /> View{' '}
-              {formatBcDocumentType(entry.document_type)}
+              {formatDocumentType(entry.document_type)}
             </Button>
           )}
           {!isStandalone && onOpenFullPage && (
@@ -618,7 +612,7 @@ export default function InventoryLedgerDetail({
                 Transaction Type
               </p>
               <p className="mt-0.5 font-mono font-bold" style={S.primary}>
-                {formatBcEntryType(entry.transaction_type)}
+                {formatTransactionType(entry.transaction_type)}
               </p>
             </div>
 
@@ -632,7 +626,7 @@ export default function InventoryLedgerDetail({
               <div className="mt-0.5">
                 <StatusBadge
                   status={isPositive ? 'POSITIVE' : entry.entry_type}
-                  label={formatBcEntryTypeLabel(
+                  label={formatEntryType(
                     entry.entry_type,
                     entry.quantity,
                   )}
@@ -1014,7 +1008,7 @@ export default function InventoryLedgerDetail({
                         {issue.document_no || '—'}
                       </TableCell>
                       <TableCell className="py-2.5 px-3" style={S.sub}>
-                        {formatBcEntryType(
+                        {formatTransactionType(
                           issue.transaction_type || issue.document_type,
                         )}
                       </TableCell>
@@ -1234,7 +1228,7 @@ export default function InventoryLedgerDetail({
                           : app.document_no || 'Inbound Layer'}
                       </TableCell>
                       <TableCell className="py-2.5 px-3" style={S.sub}>
-                        {formatBcEntryType(
+                        {formatTransactionType(
                           app.transaction_type || app.document_type,
                         )}
                       </TableCell>

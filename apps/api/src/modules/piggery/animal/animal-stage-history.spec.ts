@@ -5,6 +5,8 @@ import { BatchService } from '../../production/batch/batch.service';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { BioCostingProfileService } from '../../finance/bio-costing/bio-costing-profile.service';
 import { BioCostingResidualService } from '../../finance/bio-costing/bio-costing-residual.service';
+import { BioCostingExitService } from '../../finance/bio-costing/bio-costing-exit.service';
+import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { NobLobResolutionService } from '../../core/operational-area/nob-lob-resolution.service';
@@ -59,6 +61,8 @@ describe('AnimalService.transitionStage writes stage history (checklist 6)', () 
       providers: [
         AnimalService,
         { provide: ClsService, useValue: cls },
+        { provide: BioCostingExitService, useValue: { clearOnExit: jest.fn() } },
+        { provide: GlPostingService, useValue: { hasMapping: jest.fn(), postBatchCostEntry: jest.fn() } },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn() } },
         { provide: NobLobResolutionService, useValue: { resolve: jest.fn(async () => ({ nob_id: 'nob-1', lob_id: 'lob-pig' })) } },

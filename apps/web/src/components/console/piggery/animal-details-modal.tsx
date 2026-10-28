@@ -51,6 +51,7 @@ const TABS: { key: TabKey; label: string; icon: any }[] = [
   { key: 'costing', label: 'Costing & Valuation', icon: DollarSign },
 ];
 import { WeightReadings, ConsumptionSummary, DeathRecord, SemenLots } from './animal-card-activity';
+import { AnimalLedgerPostings } from './animal-ledger-postings';
 import { formatQuantity } from "@/lib/utils";
 
 function unwrap<T = any>(res: any): T {
@@ -77,7 +78,8 @@ function formatMoney(amount?: number | string | null): string {
   if (amount === null || amount === undefined || amount === '') return '—';
   const num = Number(amount);
   if (isNaN(num)) return '—';
-  return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // The sign before the symbol: -$23.37, not $-23.37.
+  return `${num < 0 ? '-' : ''}$${Math.abs(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 const human = (v: any) =>
@@ -720,8 +722,13 @@ export default function AnimalDetailsModal({
                     </div>
                     <div>
                       <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">Source Batch / Receipt</span>
+                      {/* The name, with what it is: the goods receipt she arrived on, or the batch or litter she was born in. Never the id. */}
                       <span className="font-mono text-[var(--text-primary)]">
-                        {fmt(animal?.source_batch_id || animal?.source_receipt_id)}
+                        {animal?.source_batch_id
+                          ? `Batch · ${animal?.source_batch_label || animal?.source_batch_no || '—'}`
+                          : animal?.source_receipt_id
+                            ? `GRN · ${animal?.source_receipt_no || '—'}`
+                            : '—'}
                       </span>
                     </div>
                     <div>
@@ -1149,6 +1156,8 @@ export default function AnimalDetailsModal({
                                 <th className="px-3 py-2">Type</th>
                                 <th className="px-3 py-2">{isMale ? 'Sow' : 'Boar'}</th>
                                 <th className="px-3 py-2">Batch</th>
+                                <th className="px-3 py-2">Semen Lot</th>
+                                {!isMale && <th className="px-3 py-2 text-right">Semen Cost</th>}
                                 <th className="px-3 py-2">Preg Check</th>
                                 <th className="px-3 py-2">Result</th>
                                 <th className="px-3 py-2">Due Date</th>
@@ -1172,6 +1181,22 @@ export default function AnimalDetailsModal({
                                     {isMale ? m.sow_code || '—' : m.boar_code || (m.semen_lot_no ? 'pooled lot' : '—')}
                                   </td>
                                   <td className="px-3 py-2 text-[var(--text-secondary)]">{m.batch_no || '—'}</td>
+                                  <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
+                                    {m.semen_lot_no ? (
+                                      <>
+                                        {m.semen_lot_no}
+                                        <span className="block text-[10px] text-[var(--text-muted)]">
+                                          {formatQuantity(m.semen_dose_qty ?? 1)} dose{Number(m.semen_dose_qty ?? 1) === 1 ? '' : 's'}
+                                          {m.semen_cost_per_dose != null && Number(m.semen_cost_per_dose) > 0 ? ` · ${formatMoney(m.semen_cost_per_dose)} / dose` : ''}
+                                        </span>
+                                      </>
+                                    ) : '—'}
+                                  </td>
+                                  {!isMale && (
+                                    <td className="px-3 py-2 font-mono text-right text-[var(--text-primary)]">
+                                      {m.semen_cost != null ? formatMoney(m.semen_cost) : '—'}
+                                    </td>
+                                  )}
                                   <td className="px-3 py-2 font-mono text-[var(--text-muted)]">
                                     {formatDate(m.preg_check_date)}
                                   </td>
@@ -1457,68 +1482,16 @@ export default function AnimalDetailsModal({
                   </div>
                 </div>
 
-                {/* Bio-Asset Ledger Table */}
-                <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
-                  <div className="mb-3 flex items-center justify-between border-b border-[var(--border)] pb-2">
-                    <h4 className="font-bold text-[var(--text-primary)] uppercase tracking-wider text-[11px] flex items-center gap-1.5">
-                      <Layers className="h-3.5 w-3.5 text-[var(--accent)]" /> Bio-Asset Ledger Postings
-                    </h4>
-                    <span className="text-[10px] font-mono text-[var(--text-muted)]">
-                      {ledgerEntries.length} Posting{ledgerEntries.length === 1 ? '' : 's'}
-                    </span>
-                  </div>
+                {/* Bio-Asset Ledger Postings: a card that folds away, filtered by kind and paged. */}
+                <AnimalLedgerPostings entries={ledgerEntries} loading={loadingLedger} format={{ date: formatDate, money: formatMoney, quantity: formatQuantity }} />
 
-                  {loadingLedger ? (
-                    <div className="py-8 text-center">
-                      <Loader2 className="mx-auto h-5 w-5 animate-spin text-[var(--text-muted)]" />
-                      <p className="mt-2 text-xs text-[var(--text-muted)]">Loading ledger entries…</p>
-                    </div>
-                  ) : ledgerEntries.length === 0 ? (
-                    <p className="py-4 text-center text-[var(--text-muted)]">
-                      No standalone bio-asset ledger entries posted yet. Valuation reflects registered acquisition cost.
-                    </p>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs border-collapse">
-                        <thead>
-                          <tr className="border-b border-[var(--border)] text-[10px] uppercase font-bold text-[var(--text-muted)] bg-[var(--surface-raised)]">
-                            <th className="px-3 py-2">Posting Date</th>
-                            <th className="px-3 py-2">Entry Type</th>
-                            <th className="px-3 py-2">Unit Cost / Rate</th>
-                            <th className="px-3 py-2">Quantity</th>
-                            <th className="px-3 py-2 text-right">Amount</th>
-                            <th className="px-3 py-2">Reference</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[var(--border)]">
-                          {ledgerEntries.map((le, idx) => (
-                            <tr key={le.entry_id || le.ledger_id || idx} className="hover:bg-[var(--surface-raised)]/60">
-                              <td className="px-3 py-2 font-mono text-[var(--text-primary)]">
-                                {formatDate(le.posting_date)}
-                              </td>
-                              <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">
-                                {le.entry_type}
-                              </td>
-                              <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
-                                {/* The ledger row's own columns are cost_amount_each_unit / cost_amount / document_no; the older names stay as fallbacks. */}
-                                {formatMoney(le.cost_amount_each_unit ?? le.unit_cost)}
-                              </td>
-                              <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
-                                {formatQuantity(le.quantity ?? 1)}
-                              </td>
-                              <td className="px-3 py-2 font-mono font-bold text-right text-[var(--text-primary)]">
-                                {formatMoney(le.cost_amount ?? (le.computed_cost || le.amount))}
-                              </td>
-                              <td className="px-3 py-2 font-mono text-[var(--text-muted)]">
-                                {le.document_no || le.posting_reference || le.reference || '—'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
+                {/* What she ate. Feed and overhead before her costing start are capitalised into the book value (rows above);
+                    from the start they are expensed, so they are not postings here but still belong to her cost. */}
+                <p className="text-[11px] text-[var(--text-muted)] px-1">
+                  Feed and overhead before {animal?.costing_start_date ? formatDate(animal.costing_start_date) : 'the costing start date'} are added to the book value (Consumption rows above).
+                  From that date they are expensed in the period and do not appear as postings; they are listed below.
+                </p>
+                <ConsumptionSummary activity={activity} />
               </div>
             )}
           </>

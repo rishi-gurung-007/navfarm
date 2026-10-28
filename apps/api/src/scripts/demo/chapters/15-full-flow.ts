@@ -391,12 +391,19 @@ export async function ensureBirthJournalMapping(ctx: DemoContext, db: MySql2Data
   const wip = accounts.find((a) => a.code === '1050');
   const inventory = accounts.find((a) => a.code === '1055');
   if (!wip || !inventory) { ctx.log('  birth-cost journal not switched on: the chart lacks account 1050 or 1055 (the litter still gets its cost in the bio-asset ledger)'); return; }
-  const [mapped] = await db.select({ id: schema.glMappingMaster.mapping_id }).from(schema.glMappingMaster).where(eq(schema.glMappingMaster.transaction_type, 'BIO_LITTER_BIRTH')).limit(1);
-  if (mapped) return;
-  try {
-    await ctx.app.get(GlMappingService).create({ company_id: ctx.companyId, transaction_type: 'BIO_LITTER_BIRTH', debit_gl_account_id: inventory.id, credit_gl_account_id: wip.id } as any, ctx.tenantId);
-    ctx.log('  GL mapping BIO_LITTER_BIRTH created (Dr 1055 Piglets Inventory / Cr 1050 Biological Assets Pre-mature)');
-  } catch (error) {
-    ctx.log(`  birth-cost journal not switched on: ${error instanceof Error ? error.message : error}`);
+  // The birth takes the sow's cost into Piglets Inventory; a gilt registered from the litter takes it back out into her own asset.
+  const wanted = [
+    { type: 'BIO_LITTER_BIRTH', debit: inventory.id, credit: wip.id, said: 'Dr 1055 Piglets Inventory / Cr 1050 Biological Assets Pre-mature' },
+    { type: 'BIO_GILT_ACQUISITION', debit: wip.id, credit: inventory.id, said: 'Dr 1050 Biological Assets Pre-mature / Cr 1055 Piglets Inventory' },
+  ];
+  for (const m of wanted) {
+    const [mapped] = await db.select({ id: schema.glMappingMaster.mapping_id }).from(schema.glMappingMaster).where(eq(schema.glMappingMaster.transaction_type, m.type)).limit(1);
+    if (mapped) continue;
+    try {
+      await ctx.app.get(GlMappingService).create({ company_id: ctx.companyId, transaction_type: m.type, debit_gl_account_id: m.debit, credit_gl_account_id: m.credit } as any, ctx.tenantId);
+      ctx.log(`  GL mapping ${m.type} created (${m.said})`);
+    } catch (error) {
+      ctx.log(`  ${m.type} journal not switched on: ${error instanceof Error ? error.message : error}`);
+    }
   }
 }
