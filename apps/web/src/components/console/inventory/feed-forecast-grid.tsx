@@ -6,6 +6,7 @@ import { ScrollTable } from "@/components/ui/scroll-table";
 import { Dialog } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { NA } from "@/utils/na";
+import { HoverHint } from "@/components/ui/hover-hint";
 import { formatDateShort } from "./feed-format";
 import { RecordLink, batchHref, itemHref, locationHref } from "./feed-requisition-header";
 
@@ -94,10 +95,23 @@ export interface SourceBalancePoint {
   runDownDate: string | null;
 }
 
+/** A batch whose feed changes in the window, as the API's dietChanges sends it. */
+export interface DietChange {
+  /** The batch group the forecast lines carry as batchGroupId. */
+  batchId: string;
+  fromItemId: string;
+  fromItemName: string;
+  toItemId: string;
+  toItemName: string;
+  changeDate: string;
+  nextSourceType: "SILO" | "STORE" | "NONE";
+  nextSourceCode: string | null;
+}
+
 type Translate = (key: any, vars?: any) => string;
 
 export const GRID_COLUMNS = [
-  "ffColBatch", "ffColStage", "ffColHouse", "ffColSiloCode", "ffColSiloName", "ffColSiloCapacity", "ffColRequiredFeedItem", "ffColCurrentSiloItem",
+  "ffColBatch", "ffColStage", "ffColHouse", "ffColSiloCode", "ffColSiloName", "ffColSiloCapacity", "ffColRequiredFeedItem", "ffColDietChangeDate", "ffColCurrentSiloItem",
   "ffColHeadCount", "ffColUom", "ffColFeedRate", "ffColOpeningSystemBalance", "ffColConfirmedReceipts", "ffColOpenTransfers", "ffColPlannedFeedAdded", "ffColPlannedFeedReference", "ffColDailyUse",
   "ffColFirstShortage", "ffColRecommendedQty", "ffColDeliveryDate",
 ] as const;
@@ -112,6 +126,12 @@ export interface ColumnSlot {
 export interface PivotedFeedRow extends ReportRow {
   closingBySlot: Record<string, number>;
   balanceBySlot: Record<string, BalanceCell>;
+  /** Position of the line's batch among the batches shown, for banding. */
+  batchIndex: number;
+  /** The first line of its batch: only this one shows the batch number. */
+  batchStart: boolean;
+  /** The diet change that starts this line's feed, if one does. */
+  dietChange: DietChange | null;
 }
 
 export interface BalanceCell {
@@ -230,6 +250,28 @@ function collapseForecastLines(rows: ReportRow[]): ReportRow[] {
   return [...lines.values()];
 }
 
+function batchKey(row: ReportRow): string {
+  return row.batchId || batchNoOnly(row);
+}
+
+/**
+ * Rishi, 30 Oct: one batch's lines sit together whatever stage, feed or silo
+ * each is on. Batches keep the API's order (house, then batch) by their first
+ * line; inside a batch the lines run by start date, so a diet change follows
+ * the feed it replaces.
+ */
+function groupBatchLines(lines: ReportRow[], rows: ReportRow[]): ReportRow[] {
+  const rank = new Map<string, number>();
+  rows.forEach((row) => {
+    if (!rank.has(batchKey(row))) rank.set(batchKey(row), rank.size);
+  });
+  return [...lines].sort((left, right) =>
+    (rank.get(batchKey(left)) ?? 0) - (rank.get(batchKey(right)) ?? 0)
+    || left.date.localeCompare(right.date)
+    || left.itemName.localeCompare(right.itemName)
+    || (left.sourceCode ?? "").localeCompare(right.sourceCode ?? ""));
+}
+
 function slotFor(date: string, view: string | undefined, from: string): ColumnSlot {
   if (view === "WEEKLY") {
     const start = addDaysIso(from, Math.max(0, Math.floor(diffDaysIso(from, date) / 7)) * 7);
@@ -249,6 +291,7 @@ export function pivotForecastRows(
   sourceBalances: SourceBalancePoint[] = [],
   view?: string,
   from?: string,
+  dietChanges: DietChange[] = [],
 ): { pivoted: PivotedFeedRow[]; columns: ColumnSlot[] } {
   const baseFrom =
     from ||
@@ -282,8 +325,19 @@ export function pivotForecastRows(
 
   const slots = new Map<string, ColumnSlot>();
 
+  let batchIndex = -1;
+  let previousBatch: string | null = null;
+
   const pivoted =
-    collapseForecastLines(rows).map((row) => {
+    groupBatchLines(collapseForecastLines(rows), rows).map((row) => {
+      const batchStart = batchKey(row) !== previousBatch;
+      if (batchStart) batchIndex += 1;
+      previousBatch = batchKey(row);
+      const dietChange = dietChanges.find((change) =>
+        change.batchId === row.batchGroupId
+        && change.toItemId === row.itemId
+        && change.changeDate >= row.date
+        && change.changeDate <= row.dateTo) ?? null;
       const closingBySlot:
         Record<string, number> = {};
       const balanceBySlot: Record<string, BalanceCell> = {};
@@ -371,6 +425,9 @@ export function pivotForecastRows(
         ...row,
         closingBySlot,
         balanceBySlot,
+        batchIndex,
+        batchStart,
+        dietChange,
         firstShortageDate: inWindow(row.firstShortageDate) ? row.firstShortageDate : null,
         deliveryDate: inWindow(row.firstShortageDate) ? row.deliveryDate : null,
       };
@@ -397,7 +454,7 @@ export function fmtKg(value: number | null | undefined): string {
 // UOM pins beside them once it is scrolled to, so House needs a fixed width for its offset.
 const BATCH_COL = { "--sticky-left": "0px" } as CSSProperties;
 const STAGE_COL = { "--sticky-left": "8.5rem" } as CSSProperties;
-const HOUSE_COL = { "--sticky-left": "17rem" } as CSSProperties;
+const HOUSE_COL = { "--sticky-left": "19.5rem" } as CSSProperties;
 const UOM_COL = { "--sticky-left": "28rem" } as CSSProperties;
 
 /** The batch number alone — a stage group's composite label is cut back when an older response has no plainBatchNo. */
@@ -435,6 +492,7 @@ export function FeedForecastGrid({
   sourceBalances = [],
   view,
   from,
+  dietChanges = [],
   loading,
   t,
 }: {
@@ -442,10 +500,11 @@ export function FeedForecastGrid({
   sourceBalances?: SourceBalancePoint[];
   view?: string;
   from?: string;
+  dietChanges?: DietChange[];
   loading: boolean;
   t: Translate;
 }) {
-  const { pivoted, columns } = pivotForecastRows(rows, sourceBalances, view, from);
+  const { pivoted, columns } = pivotForecastRows(rows, sourceBalances, view, from, dietChanges);
   const totalCols = GRID_COLUMNS.length + columns.length;
   const [selectedBalance, setSelectedBalance] = useState<{
     row: PivotedFeedRow;
@@ -461,12 +520,13 @@ export function FeedForecastGrid({
       <thead>
         <tr>
           <th scope="col" data-sticky-col="true" style={BATCH_COL} className={cn(TH, "w-[8.5rem] min-w-[8.5rem] max-w-[8.5rem]")}>{t("ffColBatch")}</th>
-          <th scope="col" data-sticky-col="true" style={STAGE_COL} className={cn(TH, "w-[8.5rem] min-w-[8.5rem] max-w-[8.5rem]")}>{t("ffColStage")}</th>
-          <th scope="col" data-sticky-col="last" style={HOUSE_COL} className={cn(TH, "w-[11rem] min-w-[11rem] max-w-[11rem]")}>{t("ffColHouse")}</th>
+          <th scope="col" data-sticky-col="true" style={STAGE_COL} className={cn(TH, "w-[11rem] min-w-[11rem] max-w-[11rem]")}>{t("ffColStage")}</th>
+          <th scope="col" data-sticky-col="last" style={HOUSE_COL} className={cn(TH, "w-[8.5rem] min-w-[8.5rem] max-w-[8.5rem]")}>{t("ffColHouse")}</th>
           <th scope="col" className={TH}>{t("ffColSiloCode")}</th>
           <th scope="col" className={TH}>{t("ffColSiloName")}</th>
           <th scope="col" className={cn(TH, NUM)}>{t("ffColSiloCapacity")}</th>
           <th scope="col" className={TH}>{t("ffColRequiredFeedItem")}</th>
+          <th scope="col" className={TH}>{t("ffColDietChangeDate")}</th>
           <th scope="col" className={TH}>{t("ffColCurrentSiloItem")}</th>
           <th scope="col" className={cn(TH, NUM)}>{t("ffColHeadCount")}</th>
           <th scope="col" data-sticky-col="last" style={UOM_COL} className={TH}>{t("ffColUom")}</th>
@@ -477,7 +537,7 @@ export function FeedForecastGrid({
           <th scope="col" className={cn(TH, NUM)}>{t("ffColPlannedFeedAdded")}</th>
           <th scope="col" className={TH}>{t("ffColPlannedFeedReference")}</th>
           <th scope="col" className={cn(TH, NUM)}>{t("ffColDailyUse")}</th>
-          {columns.map((column) => <th key={column.key} scope="col" className={cn(TH, NUM, "min-w-[8rem] bg-[var(--table-header-alt)]")} title={t("ffProjectedClosingOn", { date: column.label })}>{column.label}</th>)}
+          {columns.map((column) => <th key={column.key} scope="col" className={cn(TH, NUM, "min-w-[8rem] bg-[var(--table-header-alt)]")} title={t(view === "WEEKLY" ? "ffProjectedClosingWeek" : "ffProjectedClosingOn", { date: column.label })}>{column.label}</th>)}
           <th scope="col" className={TH}>{t("ffColFirstShortage")}</th>
           <th scope="col" className={cn(TH, NUM)}>{t("ffColRecommendedQty")}</th>
           <th scope="col" className={TH}>{t("ffColDeliveryDate")}</th>
@@ -488,15 +548,27 @@ export function FeedForecastGrid({
           <StateRow colSpan={totalCols}><Loader2 className="mx-auto mb-2 h-5 w-5 animate-spin" style={{ color: "var(--accent)" }} />{t("ffLoading")}</StateRow>
         ) : pivoted.length === 0 ? (
           <StateRow colSpan={totalCols}><Inbox className="mx-auto mb-2 h-6 w-6" style={{ color: "var(--text-muted)" }} />{t("ffNoRows")}</StateRow>
-        ) : pivoted.map((row, index) => (
-          <tr key={row.key} data-group-alt={index % 2 ? "true" : undefined} className={index % 2 ? "bg-[var(--table-row-alt)]" : undefined}>
-            <td data-sticky-col="true" style={BATCH_COL} className={cn(TD, "w-[8.5rem] max-w-[8.5rem] truncate font-medium")} title={batchNoOnly(row)}><RecordLink code={batchNoOnly(row)} href={row.batchId ? batchHref(row.batchId) : null} /></td>
-            <td data-sticky-col="true" style={STAGE_COL} className={cn(TD, "w-[8.5rem] max-w-[8.5rem] truncate")} title={stageLabel(row, t)}>{stageLabel(row, t)}</td>
-            <td data-sticky-col="last" style={HOUSE_COL} className={cn(TD, MUTED, "w-[11rem] max-w-[11rem] truncate")} title={row.shedCode}><RecordLink code={row.shedCode} href={row.shedId ? locationHref(row.shedId) : null} /></td>
+        ) : pivoted.map((row) => (
+          <tr key={row.key} data-batch-start={row.batchStart ? "true" : undefined} data-group-alt={row.batchIndex % 2 ? "true" : undefined} className={cn(row.batchIndex % 2 && "bg-[var(--table-row-alt)]")}>
+            <td data-sticky-col="true" style={BATCH_COL} className={cn(TD, "w-[8.5rem] max-w-[8.5rem] truncate font-medium")} title={batchNoOnly(row)}>{row.batchStart && <RecordLink code={batchNoOnly(row)} href={row.batchId ? batchHref(row.batchId) : null} />}</td>
+            <td data-sticky-col="true" style={STAGE_COL} className={cn(TD, "w-[11rem] max-w-[11rem] truncate")} title={stageLabel(row, t)}>{stageLabel(row, t)}</td>
+            <td data-sticky-col="last" style={HOUSE_COL} className={cn(TD, MUTED, "w-[8.5rem] max-w-[8.5rem] truncate")} title={row.shedCode}><RecordLink code={row.shedCode} href={row.shedId ? locationHref(row.shedId) : null} /></td>
             <td className={cn(TD, MUTED)}>{row.sourceCode ? <RecordLink code={row.sourceCode} href={row.sourceLocationId ? locationHref(row.sourceLocationId) : null} /> : t("ffNoSource")}</td>
             <td className={cn(TD, MUTED)}>{row.sourceName ?? t("ffNoSourceName")}</td>
-            <td className={cn(TD, NUM)}>{row.sourceType === "SILO" && row.sourceCapacityKg != null ? fmtKg(row.sourceCapacityKg) : NA}</td>
+            <td className={cn(TD, NUM)}>{row.sourceType === "SILO" && row.sourceCapacityKg != null
+              ? fmtKg(row.sourceCapacityKg)
+              : <HoverHint hint={t(row.sourceType === "SILO" ? "ffNaNoSiloCapacity" : row.sourceType === "STORE" ? "ffNaStoreNoCapacity" : "ffNaNoSource")}>{NA}</HoverHint>}</td>
             <td className={TD}><RecordLink code={row.itemName} href={row.itemId ? itemHref(row.itemId) : null} /></td>
+            {/* Rishi, 30 Oct: the diet change has its own column, the date the line's new feed starts. */}
+            <td
+              className={cn(TD, !row.dietChange && MUTED)}
+              title={row.dietChange ? t("ffDietChangeHint", {
+                from: row.dietChange.fromItemName,
+                to: row.dietChange.toItemName,
+                date: formatDateShort(row.dietChange.changeDate),
+                source: row.sourceCode ?? t("ffNoSource"),
+              }) : undefined}
+            >{row.dietChange ? formatDateShort(row.dietChange.changeDate) : <HoverHint hint={t("ffNaNoDietChange")}>{NA}</HoverHint>}</td>
             <td className={TD}>{row.currentItemName ? <RecordLink code={row.currentItemName} href={row.currentItemId ? itemHref(row.currentItemId) : null} /> : t("ffNoCurrentSiloItem")}</td>
             <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
             <td data-sticky-col="last" style={UOM_COL} className={TD}>KG</td>
@@ -514,6 +586,10 @@ export function FeedForecastGrid({
               const hasExpectedIncoming = !!balance && (balance.plannedIncomingKg > 0 || balance.openTransferKg > 0);
               const showIncoming = hasExpectedIncoming && !shownIncoming.has(sourceKey);
               if (showIncoming) shownIncoming.add(sourceKey);
+              // Rishi, 30 Oct: a date this line's feed is not required on reads N/A, not blank.
+              if (value === undefined) {
+                return <td key={column.key} className={cn(TD, NUM, MUTED)} data-not-required="true"><HoverHint hint={t("ffFeedNotRequiredOnDate")}>{NA}</HoverHint></td>;
+              }
               return <td key={column.key} className={cn(TD, NUM, value === 0 && "font-medium text-[var(--danger)]")}>
                 <button
                   type="button"
@@ -555,7 +631,7 @@ export function FeedForecastGrid({
           {selectedBalance.balance.confirmedReceiptKg > 0 && <div>+ {fmtKg(selectedBalance.balance.confirmedReceiptKg)} KG {t("ffConfirmedReceiptShort")}</div>}
           {selectedBalance.balance.usedBeforeReceivedKg > 0 && <div>− {fmtKg(selectedBalance.balance.usedBeforeReceivedKg)} KG {t("ffUsedBeforeReceivedShort")}</div>}
           {selectedBalance.balance.otherOutflowKg - selectedBalance.balance.usedBeforeReceivedKg > 0.0001 && <div>− {fmtKg(selectedBalance.balance.otherOutflowKg - selectedBalance.balance.usedBeforeReceivedKg)} KG {t("ffOtherMovementsShort")}</div>}
-          <div>− {fmtKg(selectedBalance.balance.dailyUseKg)} KG {t("ffDailyUseShort")}</div>
+          <div>− {fmtKg(selectedBalance.balance.dailyUseKg)} KG {t(view === "WEEKLY" ? "ffWeekUseShort" : "ffDailyUseShort")}</div>
           <div className="mt-2 border-t border-[var(--border)] pt-2 font-semibold">= {fmtKg(selectedBalance.balance.closingKg)} KG {t("ffClosingBalanceShort")}</div>
         </div>
         {selectedBalance.balance.incomingReferences.some((reference) => reference.referenceNo || reference.relatedReferenceNo) && <div className="space-y-1 text-xs text-[var(--text-secondary)]">

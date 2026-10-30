@@ -3,7 +3,7 @@ import { buildFeedForecast, type ForecastInput, type ForecastSource } from '../.
 import {
   DEFAULT_FEED_SETTINGS, DestinationInfo, approvalProblems, bagCountFor, buildLineBreakdown, deliveryDateNeedsRemarks, lineChangeProblems, deviationNeedsRemarks, feedTypeOf, planDraftUpsert,
   productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, roundOrderKg, runKeyFor, serverToday,
-  feedListStatusFilter, isOffBulkMultiple, keepHigherPriority, priorityChangeProblem, priorityEscalations,
+  feedListStatusFilter, isOffBulkMultiple, projectedSiloStockKg, quantityProblems, keepHigherPriority, priorityChangeProblem, priorityEscalations,
 } from './feed-requisition.rules';
 
 const S = DEFAULT_FEED_SETTINGS;
@@ -494,24 +494,48 @@ describe('buildLineBreakdown — per batch and house under each silo/item line (
   });
 });
 
-describe('A1 (10 Oct) — checkpoint 16: a bulk quantity off the bulk multiple needs a reason', () => {
-  const line = { lineSeq: 1, itemName: 'Weaner Diet R1', quantityKg: 4500, recommendedQtyKg: null, recommendedDeliveryDate: null, proposedDeliveryDate: '2026-09-23', feedType: 'BULK' as const };
-  const args = { remarks: null, today: '2026-09-23', submissionDeadline: '2026-09-26', bulkMultipleKg: 3000 };
+describe('Rishi, 30 Oct — quantityProblems: whole compartments or bags, and no silo past its capacity', () => {
+  const line = { label: 'Line 10000', itemName: 'Grower 2', quantityKg: 6000, feedType: 'BULK' as const, destinationLocationId: 'silo-1', destinationCode: 'MGH6-G2', capacityKg: 10000, deliveryDate: '2026-11-07' };
+  const args = { bulkMultipleKg: 3000, bagSizeKg: 50, stockOn: () => 2000 };
 
-  it('names the bulk line whose quantity is not a multiple of the bulk multiple when there are no remarks', () => {
-    expect(approvalProblems({ ...args, lines: [line] }))
-      .toEqual(['Line 1 (Weaner Diet R1): 4,500 kg is not a multiple of the 3,000 kg bulk order multiple. Remarks are required (checkpoint 16).']);
+  it('accepts a whole number of compartments that fits', () => {
+    expect(quantityProblems({ ...args, lines: [line] })).toEqual([]);
   });
-  it('accepts it with remarks', () => {
-    expect(approvalProblems({ ...args, remarks: 'Compartment 2 is half full', lines: [line] })).toEqual([]);
+  it('refuses a bulk quantity off the multiple, and approvalProblems no longer lets remarks answer it', () => {
+    expect(quantityProblems({ ...args, lines: [{ ...line, quantityKg: 4500 }] }))
+      .toEqual(['Line 10000 (Grower 2): 4,500 kg is not a multiple of the 3,000 kg bulk order multiple.']);
+    expect(approvalProblems({ remarks: null, today: '2026-09-23', submissionDeadline: '2026-09-26', lines: [{ lineSeq: 1, itemName: 'Grower 2', quantityKg: 4500, recommendedQtyKg: null, recommendedDeliveryDate: null, proposedDeliveryDate: '2026-09-23', feedType: 'BULK' }] })).toEqual([]);
   });
-  it('accepts a bulk multiple, and a bagged line off the bulk multiple', () => {
-    expect(approvalProblems({ ...args, lines: [{ ...line, quantityKg: 6000 }, { ...line, lineSeq: 2, feedType: 'BAGGED' as const }] })).toEqual([]);
+  it('holds a bagged line to whole bags, and checks no capacity for a store', () => {
+    expect(quantityProblems({ ...args, lines: [{ ...line, feedType: 'BAGGED' as const, quantityKg: 1025, capacityKg: null }] }))
+      .toEqual(['Line 10000 (Grower 2): 1,025 kg is not a whole number of 50 kg bags.']);
+  });
+  it('refuses a delivery that would fill the silo past its capacity on the delivery date, and says what fits', () => {
+    expect(quantityProblems({ ...args, lines: [{ ...line, quantityKg: 9000 }] }))
+      .toEqual(['Line 10000 (Grower 2): 9,000 kg into MGH6-G2, which is projected to hold 2,000 kg on 07/11/26, comes to 11,000 kg — more than its 10,000 kg capacity. At most 6,000 kg fits.']);
+  });
+  it('counts the other lines into the same silo that arrive by then', () => {
+    const second = { ...line, label: 'Line 20000', itemName: 'Grower 3', quantityKg: 3000, deliveryDate: '2026-11-08' };
+    expect(quantityProblems({ ...args, lines: [line, second] })).toHaveLength(1);
+    expect(quantityProblems({ ...args, lines: [line, second] })[0]).toContain('Line 20000');
   });
   it('tolerates floating-point noise on a multiple', () => {
     expect(isOffBulkMultiple(6000.0000000004, 3000)).toBe(false);
     expect(isOffBulkMultiple(4500, 3000)).toBe(true);
     expect(isOffBulkMultiple(4500, 0)).toBe(false);
+  });
+});
+
+describe('projectedSiloStockKg — what a silo holds on a morning', () => {
+  const p = (date: string, itemId: string, opening: number, closing: number) => ({ date, locationId: 'silo-1', itemId, openingSystemBalanceKg: opening, projectedClosingBalanceKg: closing });
+  const points = [p('2026-11-01', 'a', 3000, 2800), p('2026-11-02', 'a', 2800, 2600), p('2026-11-02', 'b', 500, 400), { ...p('2026-11-02', 'a', 9999, 9999), locationId: 'silo-2' }];
+  it('sums every item the silo holds that morning', () => {
+    expect(projectedSiloStockKg(points, 'silo-1', '2026-11-02', 0)).toBe(3300);
+  });
+  it('carries the last closing past the forecast, and uses the stock on hand before it or without one', () => {
+    expect(projectedSiloStockKg(points, 'silo-1', '2026-11-20', 0)).toBe(3000);
+    expect(projectedSiloStockKg(points, 'silo-1', '2026-10-30', 1234)).toBe(1234);
+    expect(projectedSiloStockKg(points, 'silo-9', '2026-11-02', 700)).toBe(700);
   });
 });
 
@@ -573,5 +597,24 @@ describe('feedTypeOf with the item feed form (12 Oct)', () => {
     expect(roundOrderKg(1210, type, S)).toBe(1250);
     expect(bagCountFor(1250, type, S)).toBe(25);
     expect(roundOrderKg(1210, feedTypeOf(silo, resolveItemFeedForm({ item_type: 'FEED', feed_form: 'BULK' })), S)).toBe(3000);
+  });
+});
+
+describe('runLineEvidence — a requisition from a saved calculation keeps its forecast figures (Rishi, 30 Oct)', () => {
+  const { runLineEvidence } = jest.requireActual('./feed-requisition.rules') as typeof import('./feed-requisition.rules');
+  it('reads the first day: one balance, every batch on the silo summed, days to one decimal, the earliest shortage', () => {
+    const e = runLineEvidence([
+      { forecast_date: '2026-10-30', opening_stock_kg: '2000.0000', daily_demand_kg: '150', shortage_date: null, provenance_snapshot: { batchNo: 'B1' } },
+      { forecast_date: '2026-10-30', opening_stock_kg: '2000.0000', daily_demand_kg: '150', shortage_date: null, provenance_snapshot: { lifecycleId: 'lc-weaner' } },
+      { forecast_date: '2026-10-31', opening_stock_kg: '1700.0000', daily_demand_kg: '150', shortage_date: '2026-11-05' },
+      { forecast_date: '2026-11-01', opening_stock_kg: '1400.0000', daily_demand_kg: '150', shortage_date: '2026-11-04' },
+    ], '2026-10-30');
+    expect(e).toEqual({ lifecycleRefId: 'lc-weaner', systemBalanceKg: 2000, dailyRequirementKg: 300, daysRemaining: 6.7, firstShortageDate: '2026-11-04', isNextDiet: false, daysBeforeDietChange: null });
+  });
+  it('marks a feed that starts after the planning date as the next diet, counted in days', () => {
+    const e = runLineEvidence([
+      { forecast_date: '2026-11-11', opening_stock_kg: '-5', daily_demand_kg: '9', shortage_date: '2026-11-11' },
+    ], '2026-10-30');
+    expect(e).toMatchObject({ systemBalanceKg: 0, dailyRequirementKg: 9, daysRemaining: 0, isNextDiet: true, daysBeforeDietChange: 12 });
   });
 });

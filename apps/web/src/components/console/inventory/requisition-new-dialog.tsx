@@ -65,6 +65,8 @@ import {
 } from './requisition-labels';
 import type { RequisitionView } from './requisitions-panel';
 import { RequisitionDocumentShell } from '../requisitions/requisition-document-shell';
+import { InlineAlert } from '@/components/ui/alert';
+import { quantityProblems } from './requisition-quantity-rules';
 
 interface Destination {
   location_id: string;
@@ -390,8 +392,22 @@ export function RequisitionNewDialog({
       .map((l) => l.date)
       .filter(Boolean)
       .sort()[0] ?? null;
+  // Rishi, 30 Oct: whole compartments or bags, checked here; the silo's capacity on the delivery
+  // date needs the forecast, so the API checks that on Create and says what fits.
+  const multipleProblems = settings
+    ? quantityProblems(
+        lines.map((l) => ({
+          quantityKg: Number(l.kg) || 0,
+          feedType: feedTypeOfDraft(l, destinations, items),
+          destinationId: l.dest,
+          deliveryDate: l.date,
+        })),
+        settings,
+      )
+    : [];
   const complete =
     Boolean(requisitionDate) &&
+    multipleProblems.length === 0 &&
     lines.every((l) => l.dest && l.item && Number(l.kg) > 0 && l.date);
 
   const create = async () => {
@@ -597,6 +613,27 @@ export function RequisitionNewDialog({
             }
           >
             <div className="flex flex-col gap-2 sm:col-span-12">
+              {multipleProblems.length > 0 && (
+                <InlineAlert variant="danger">
+                  <ul className="list-disc space-y-1 pl-4">
+                    {multipleProblems.map((p, i) => {
+                      const line = lines[p.line];
+                      const item = items.find((it) => it.item_id === line?.item);
+                      return (
+                        <li key={i}>
+                          {p.kind === 'MULTIPLE' &&
+                            t(p.bagged ? 'rqQtyNotWholeBags' : 'rqQtyNotBulkMultiple', {
+                              line: (p.line + 1) * LINE_STEP,
+                              item: item?.item_name ?? '',
+                              kg: Number(line?.kg || 0).toLocaleString('en-US'),
+                              multiple: p.multipleKg.toLocaleString('en-US'),
+                            })}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </InlineAlert>
+              )}
               <ScrollTable label={t('rqLinesLabel')}>
                 <thead>
                   <tr>

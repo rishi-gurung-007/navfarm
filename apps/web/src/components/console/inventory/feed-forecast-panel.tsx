@@ -11,6 +11,7 @@
  * today is the API's to decide (D16).
  */
 import { useEffect, useRef, useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { InlineAlert } from '@/components/ui/alert';
 import { showToast } from '@/components/ui/toast';
@@ -25,6 +26,7 @@ import {
 import { useLanguage } from '@/hooks/useLanguage';
 import { formatDateShort, todayIso, unwrap } from './feed-format';
 import {
+  DietChange,
   FeedForecastGrid,
   ReportRow,
   SourceBalancePoint,
@@ -74,6 +76,7 @@ interface ForecastData {
   rows: ReportRow[];
   sourceBalances: SourceBalancePoint[];
   flags: ForecastFlag[];
+  dietChanges?: DietChange[];
 }
 
 type CalculationState = 'EMPTY' | 'CALCULATED' | 'SAVED';
@@ -144,7 +147,6 @@ function FeedForecastPanelContent() {
   const [savingRun, setSavingRun] = useState(false);
   const [runHistoryReload, setRunHistoryReload] = useState(0);
   const [fromRunOpen, setFromRunOpen] = useState(false);
-  const [createAfterSave, setCreateAfterSave] = useState(false);
   const [createdRequisition, setCreatedRequisition] =
     useState<RequisitionView | null>(null);
 
@@ -221,6 +223,7 @@ function FeedForecastPanelContent() {
             ? display.sourceBalances
             : [],
           flags: Array.isArray(display.flags) ? display.flags : [],
+          dietChanges: Array.isArray(display.dietChanges) ? display.dietChanges : [],
         } as ForecastData;
         const runId = run.run_id ?? run.runId;
         let existingRequisitionId: string | null = null;
@@ -299,7 +302,8 @@ function FeedForecastPanelContent() {
     }
   }
 
-  async function saveRun() {
+  // Save & Create Requisition passes true. Read from state, the flag would still be false in this call.
+  async function saveRun(thenCreateRequisition = false) {
     if (!farmId || !data) return;
     setSavingRun(true);
     try {
@@ -335,10 +339,9 @@ function FeedForecastPanelContent() {
       }
       setCurrentRun({ ...saved, existingRequisitionId, canCreateRequisition });
       setCalculationState('SAVED');
-      if (createAfterSave && canCreateRequisition && !existingRequisitionId) {
+      if (thenCreateRequisition && canCreateRequisition && !existingRequisitionId) {
         setFromRunOpen(true);
       }
-      setCreateAfterSave(false);
       showToast.success(
         tRef.current('ffRunSaved', {
           code: saved.runCode,
@@ -450,6 +453,7 @@ function FeedForecastPanelContent() {
     ? data!.sourceBalances
     : [];
   const flags = Array.isArray(data?.flags) ? data!.flags : [];
+  const dietChanges = Array.isArray(data?.dietChanges) ? data!.dietChanges : [];
   const periodList = Array.isArray(periods) ? periods : [];
   const rangeBeforePlanning = !!data && data.forecastFrom === null;
   const rangeStartsAtPlanning =
@@ -460,6 +464,16 @@ function FeedForecastPanelContent() {
   const shownFrom = dateFrom || data?.from || '';
   const shownTo = dateTo || data?.to || '';
   const businessYear = businessYearStartOf(shownPlanning);
+  // Rishi, 30 Oct: the filters on screen are no longer the ones the unsaved
+  // calculation on screen was made with, so it must be recalculated, not saved.
+  const filtersChanged =
+    !!data &&
+    (view !== data.view ||
+      shownPlanning !== data.planningDate ||
+      (view === 'PERIOD'
+        ? (periodId || data.period?.periodId || '') !==
+          (data.period?.periodId ?? '')
+        : shownFrom !== data.from || (view === 'CUSTOM' && shownTo !== data.to)));
   // Nothing is forecast before the planning date, so a later planning date
   // pulls any earlier From / To forward with it.
   function changePlanningDate(value: string) {
@@ -488,10 +502,12 @@ function FeedForecastPanelContent() {
 
   return (
     <div data-fill-body className="w-full">
-      {/* One row at >=1024px (review, 27 Sep): a wrapped filter row left
-          "Date To" alone on a second line and took a third of the table's
-          height. The date pair shares a container so it never splits. */}
-      <div className="flex shrink-0 flex-wrap items-end gap-3 xl:flex-nowrap">
+      {/* The filters stay on one row (review, 27 Sep: a wrapped row left
+          "Date To" alone on a second line); the date pair shares a container
+          so it never splits. Rishi, 30 Oct: the actions wrap to their own
+          row, right-aligned, instead of running off the page's edge. */}
+      <div data-forecast-controls className="flex shrink-0 flex-wrap items-end gap-3">
+        <div data-forecast-filters className="flex min-w-0 flex-wrap items-end gap-3 xl:flex-nowrap">
         <div className="w-56 shrink-0">
           <FeedFarmSelect
             id="ff-farm"
@@ -607,9 +623,9 @@ function FeedForecastPanelContent() {
               <label className={labelCls} htmlFor="ff-from">
                 {t(
                   view === 'DAILY'
-                    ? 'ffDate'
+                    ? 'ffStartDate'
                     : view === 'WEEKLY'
-                      ? 'ffWeekStart'
+                      ? 'ffFirstWeekStarts'
                       : 'ffDateFrom',
                 )}
               </label>
@@ -645,11 +661,12 @@ function FeedForecastPanelContent() {
             </div>
           )}
         </div>
+        </div>
         {farm.loaded &&
           !farm.failed &&
           !noFarms &&
           (farmId || farm.isFixed) && (
-            <div className="ml-auto flex shrink-0 items-center gap-2">
+            <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
               {calculationState === 'EMPTY' && !savedRunFailed && (
                 <Button
                   size="sm"
@@ -661,11 +678,22 @@ function FeedForecastPanelContent() {
                   {loading ? t('ffCalculating') : t('ffCalculate')}
                 </Button>
               )}
-              {canSaveRun && calculationState === 'CALCULATED' && (
+              {calculationState === 'CALCULATED' && filtersChanged && (
+                <Button
+                  size="sm"
+                  onClick={calculate}
+                  disabled={
+                    !farmId || loading || (view === 'PERIOD' && !periodId)
+                  }
+                >
+                  {loading ? t('ffCalculating') : t('ffRecalculate')}
+                </Button>
+              )}
+              {canSaveRun && calculationState === 'CALCULATED' && !filtersChanged && (
                 <>
                   <Button
                     size="sm"
-                    onClick={saveRun}
+                    onClick={() => void saveRun()}
                     disabled={!data || loading || savingRun}
                   >
                     {savingRun ? t('ffSavingRun') : t('ffSaveRun')}
@@ -676,13 +704,10 @@ function FeedForecastPanelContent() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => {
-                        setCreateAfterSave(true);
-                        void saveRun();
-                      }}
+                      onClick={() => void saveRun(true)}
                       disabled={!data || loading || savingRun}
                     >
-                      {t('rqCreateFromSaved')}
+                      {t('ffSaveAndCreateRequisition')}
                     </Button>
                   )}
                 </>
@@ -702,12 +727,16 @@ function FeedForecastPanelContent() {
                       </Button>
                     )}
                   {canSaveRun && (
+                    // Rishi, 30 Oct: an icon, so the actions stay on the filters' row.
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={deleteCalculation}
+                      aria-label={t('ffDeleteCalculation')}
+                      title={t('ffDeleteCalculation')}
+                      className="w-9 px-0 text-[var(--danger)]"
                     >
-                      {t('ffDeleteCalculation')}
+                      <Trash2 className="h-4 w-4" />
                     </Button>
                   )}
                 </>
@@ -795,6 +824,7 @@ function FeedForecastPanelContent() {
                 sourceBalances={sourceBalances}
                 view={data.view}
                 from={data.from}
+                dietChanges={dietChanges}
                 loading={loading}
                 t={t}
               />
@@ -826,6 +856,7 @@ function FeedForecastPanelContent() {
           <FeedRequisitionFromRunDialog
             open={fromRunOpen}
             runId={currentRun?.run_id ?? currentRun?.runId ?? null}
+            farm={data?.farm ?? null}
             onClose={() => setFromRunOpen(false)}
             onView={(view) => {
               setFromRunOpen(false);

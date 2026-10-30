@@ -159,8 +159,8 @@ describe('FeedForecastPanel — admin', () => {
   it("renders the fourteen static row-70 columns plus one dated projected-closing column", async () => {
     render(<FeedForecastPanel />);
     const table = await screen.findByRole('table', { name: 'ffGridLabel' });
-    // 19 static columns (Stage added beside Batch, Rishi 10 Oct; UOM beside Head Count, 27 Oct; Silo Capacity beside Silo / Store Name, 28 Oct); both fixture rows fall on 25/09/26, so there is one date column.
-    expect(within(table).getAllByRole('columnheader')).toHaveLength(20 + 1);
+    // 19 static columns (Stage added beside Batch, Rishi 10 Oct; UOM beside Head Count, 27 Oct; Silo Capacity beside Silo / Store Name, 28 Oct; Diet Change Date beside Required Feed Item, 30 Oct); both fixture rows fall on 25/09/26, so there is one date column.
+    expect(within(table).getAllByRole('columnheader')).toHaveLength(21 + 1);
   });
 
   it("shares the window on screen with the Feed Requisition tab's Draft from forecast (Feed Forecast row 8)", async () => {
@@ -243,7 +243,7 @@ describe('FeedForecastPanel — admin', () => {
     render(<FeedForecastPanel />);
     await screen.findByText('ffCalculatePrompt');
     expect(forecastCalls()).toHaveLength(0);
-    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="xl:flex-nowrap"]') as HTMLElement;
+    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[data-forecast-controls]') as HTMLElement;
     const calculateButton = within(controlRow).getByRole('button', { name: 'ffCalculate' });
     fireEvent.click(calculateButton);
     await screen.findByRole('table');
@@ -258,7 +258,7 @@ describe('FeedForecastPanel — admin', () => {
     } }) }));
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
-    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="xl:flex-nowrap"]') as HTMLElement;
+    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[data-forecast-controls]') as HTMLElement;
     expect(within(controlRow).getByRole('button', { name: 'rqCreateFromSaved' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'rqViewRequisition' })).toBeNull();
   });
@@ -269,7 +269,7 @@ describe('FeedForecastPanel — admin', () => {
     } }) }));
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
-    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[class*="xl:flex-nowrap"]') as HTMLElement;
+    const controlRow = screen.getByLabelText('ffPlanningDate').closest('[data-forecast-controls]') as HTMLElement;
     expect(within(controlRow).getByRole('button', { name: 'rqViewRequisition' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'rqCreateFromSaved' })).toBeNull();
   });
@@ -303,7 +303,11 @@ describe('FeedForecastPanel — admin', () => {
   });
 
   it('does not persist a run on load or filter changes; Save Run posts the exact displayed filters', async () => {
-    get.mockImplementation(routedGet({ current: () => Promise.resolve({ success: true, data: null }) }));
+    get.mockImplementation(routedGet({
+      current: () => Promise.resolve({ success: true, data: null }),
+      // The API answers with the window it was asked for.
+      feedForecast: () => Promise.resolve({ ...forecastResponse, data: { ...forecastResponse.data, from: '2026-09-26' } }),
+    }));
     post.mockResolvedValue({ success: true, data: { runId: 'run-1', runCode: 'FFR-farm-vil100-000001', version: 1 } });
     render(<FeedForecastPanel />);
     await screen.findByText('ffCalculatePrompt');
@@ -321,6 +325,77 @@ describe('FeedForecastPanel — admin', () => {
       from: '2026-09-26', to: '2026-10-02',
     }));
     await waitFor(() => expect(showToast.success).toHaveBeenCalledWith('ffRunSaved:{"code":"FFR-farm-vil100-000001","version":1}'));
+  });
+
+  it('offers Recalculate instead of Save Run once the filters change, and shows the new calculation (Rishi, 30 Oct)', async () => {
+    const answer = (url: string) => {
+      const query = new URLSearchParams(url.split('?')[1]);
+      return Promise.resolve({ ...forecastResponse, data: { ...forecastResponse.data, from: query.get('from') ?? '2026-09-25' } });
+    };
+    get.mockImplementation((url: string) => (url.startsWith('/feed-forecast?') ? answer(url) : routedGet({ current: () => Promise.resolve({ success: true, data: null }) })(url)));
+    render(<FeedForecastPanel />);
+    await screen.findByText('ffCalculatePrompt');
+    fireEvent.click(screen.getByRole('button', { name: 'ffCalculate' }));
+    await screen.findByRole('button', { name: 'ffSaveRun' });
+    expect(screen.queryByRole('button', { name: 'ffRecalculate' })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('ffDateFrom'), { target: { value: '2026-09-27' } });
+    expect(screen.queryByRole('button', { name: 'ffSaveRun' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'ffSaveAndCreateRequisition' })).toBeNull();
+    expect(forecastCalls()).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'ffRecalculate' }));
+    await screen.findByRole('button', { name: 'ffSaveRun' });
+    expect(forecastCalls()).toHaveLength(2);
+    expect(forecastCalls()[1][0]).toContain('from=2026-09-27');
+    expect(screen.queryByRole('button', { name: 'ffRecalculate' })).toBeNull();
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('Save & Create Requisition saves the run, then opens the requisition form filled from it (Rishi, 30 Oct)', async () => {
+    const shortage = { ...forecastResponse, data: { ...forecastResponse.data, rows: forecastResponse.data.rows.map((r) => ({ ...r, recommendedQtyKg: 3000 })) } };
+    const previewLine = {
+      destination_location_id: 'silo-2', destination_code: 'VIL100/SILO-002', destination_name: 'Dry sow silo',
+      item_id: 'item-2', item_code: 'FEED-DS', item_name: 'Dry Sow Gestation Mash (14% CP)',
+      recommended_qty_kg: 3000, quantity_kg: 3000, proposed_delivery_date: '2026-09-26',
+    };
+    get.mockImplementation(routedGet({
+      current: () => Promise.resolve({ success: true, data: null }),
+      feedForecast: () => Promise.resolve(shortage),
+      preview: () => Promise.resolve({ success: true, data: { runId: 'run-1', runCode: 'RUN-VIL100-20260925-001', farmId: 'farm-vil100', existingRequisitionId: null, lines: [previewLine] } }),
+    }));
+    post.mockResolvedValue({ success: true, data: { runId: 'run-1', runCode: 'RUN-VIL100-20260925-001', version: 1 } });
+    render(<FeedForecastPanel />);
+    await screen.findByText('ffCalculatePrompt');
+    fireEvent.click(screen.getByRole('button', { name: 'ffCalculate' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'ffSaveAndCreateRequisition' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-forecast/runs', expect.objectContaining({ farmId: 'farm-vil100' })));
+    expect(((await screen.findByLabelText('rqNewKg:{"line":1}')) as HTMLInputElement).value).toBe('3000');
+    expect((screen.getByLabelText('rqNewPriorityNo:{"line":1}') as HTMLInputElement).value).toBe('1');
+  });
+
+  it('labels the first date for what each view shows (Rishi, 30 Oct)', async () => {
+    get.mockImplementation(routedGet({ current: () => Promise.resolve({ success: true, data: null }) }));
+    render(<FeedForecastPanel />);
+    await screen.findByText('ffCalculatePrompt');
+    fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'DAILY' } });
+    expect(screen.getByLabelText('ffStartDate')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'WEEKLY' } });
+    expect(screen.getByLabelText('ffFirstWeekStarts')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'CUSTOM' } });
+    expect(screen.getByLabelText('ffDateFrom')).toBeTruthy();
+    expect(screen.getByLabelText('ffDateTo')).toBeTruthy();
+  });
+
+  it('asks for Recalculate when only the view changes', async () => {
+    get.mockImplementation(routedGet({ current: () => Promise.resolve({ success: true, data: null }) }));
+    render(<FeedForecastPanel />);
+    await screen.findByText('ffCalculatePrompt');
+    fireEvent.click(screen.getByRole('button', { name: 'ffCalculate' }));
+    await screen.findByRole('button', { name: 'ffSaveRun' });
+    fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'WEEKLY' } });
+    expect(screen.getByRole('button', { name: 'ffRecalculate' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'ffSaveRun' })).toBeNull();
   });
 
   it('keeps run history visible but hides Save Run without create authority', async () => {
