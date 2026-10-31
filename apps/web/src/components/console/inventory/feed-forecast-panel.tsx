@@ -143,6 +143,8 @@ function FeedForecastPanelContent() {
   const [currentRun, setCurrentRun] = useState<CurrentForecastRun | null>(null);
   const [historicalRun, setHistoricalRun] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Rishi, 31 Oct: true only while Calculate runs — loading the saved calculation is not calculating.
+  const [calculating, setCalculating] = useState(false);
   const viewToken = useRef(0);
   const [savingRun, setSavingRun] = useState(false);
   const [runHistoryReload, setRunHistoryReload] = useState(0);
@@ -359,6 +361,7 @@ function FeedForecastPanelContent() {
   async function calculate() {
     if (!farmId || currentRun) return;
     setLoading(true);
+    setCalculating(true);
     try {
       const response = await api.get(
         `/feed-forecast?${forecastQueryString({ farmId, view, planningDate, from: dateFrom, to: dateTo, periodId })}`,
@@ -377,7 +380,17 @@ function FeedForecastPanelContent() {
       showToast.error(err?.message || tRef.current('ffFailedToLoad'));
     } finally {
       setLoading(false);
+      setCalculating(false);
     }
+  }
+
+  // A saved calculation's dates were copied into the filters when it loaded. Once it is gone, the next
+  // calculation plans from today (the API's farm day) — not from the deleted run's planning date.
+  function resetWindowToToday() {
+    setPlanningDate('');
+    setDateFrom('');
+    setDateTo('');
+    setPeriodId('');
   }
 
   async function deleteCalculation() {
@@ -388,6 +401,7 @@ function FeedForecastPanelContent() {
       setCurrentRun(null);
       setData(null);
       setCalculationState('EMPTY');
+      resetWindowToToday();
       showToast.success(tRef.current('ffCalculationDeleted'));
       setRunHistoryReload((value) => value + 1);
     } catch (err: any) {
@@ -667,7 +681,7 @@ function FeedForecastPanelContent() {
           !noFarms &&
           (farmId || farm.isFixed) && (
             <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
-              {calculationState === 'EMPTY' && !savedRunFailed && (
+              {calculationState === 'EMPTY' && !savedRunFailed && (!loading || calculating) && (
                 <Button
                   size="sm"
                   onClick={calculate}
@@ -675,7 +689,7 @@ function FeedForecastPanelContent() {
                     !farmId || loading || (view === 'PERIOD' && !periodId)
                   }
                 >
-                  {loading ? t('ffCalculating') : t('ffCalculate')}
+                  {calculating ? t('ffCalculating') : t('ffCalculate')}
                 </Button>
               )}
               {calculationState === 'CALCULATED' && filtersChanged && (
@@ -686,7 +700,7 @@ function FeedForecastPanelContent() {
                     !farmId || loading || (view === 'PERIOD' && !periodId)
                   }
                 >
-                  {loading ? t('ffCalculating') : t('ffRecalculate')}
+                  {calculating ? t('ffCalculating') : t('ffRecalculate')}
                 </Button>
               )}
               {canSaveRun && calculationState === 'CALCULATED' && !filtersChanged && (
@@ -750,9 +764,13 @@ function FeedForecastPanelContent() {
                     setCurrentRun(null);
                     setData(null);
                     setCalculationState('EMPTY');
+                    resetWindowToToday();
+                    // Reload the farm's current saved calculation, as on first load, rather than leave the page empty.
+                    viewToken.current += 1;
+                    setSavedRunReload((value) => value + 1);
                   }}
                 >
-                  {'Return to current calculation'}
+                  {t('ffReturnToCurrent')}
                 </Button>
               )}
             </div>
@@ -819,6 +837,9 @@ function FeedForecastPanelContent() {
         <>
           {data ? (
             <>
+              {calculationState === 'SAVED' && !historicalRun && data.planningDate < todayIso() && (
+                <InlineAlert variant="info">{t('ffSavedRunPast', { date: formatDateShort(data.planningDate) })}</InlineAlert>
+              )}
               <FeedForecastGrid
                 rows={rows}
                 sourceBalances={sourceBalances}

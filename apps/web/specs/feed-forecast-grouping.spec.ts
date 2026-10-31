@@ -53,3 +53,18 @@ describe('feed forecast grid keeps a batch together', () => {
     expect(pivoted.every((line) => line.dietChange === null)).toBe(true);
   });
 });
+
+describe('a feed that starts with nothing before it in the forecast (Rishi, 31 Oct)', () => {
+  it('dates the start on the batch\'s first line when it begins after the forecast\'s first day', () => {
+    const later = [
+      row({ batchId: 'B9', batchGroupId: 'B9', batchNo: 'BATCH-9', plainBatchNo: 'BATCH-9', stageCode: 'FARROWING', itemId: 'LZ', itemName: 'Lactate Z Line', date: '2026-11-11', dateTo: '2026-11-11' }),
+      row({ batchId: 'B9', batchGroupId: 'B9', batchNo: 'BATCH-9', plainBatchNo: 'BATCH-9', stageCode: 'FARROWING', itemId: 'LZ', itemName: 'Lactate Z Line', date: '2026-11-12', dateTo: '2026-11-12' }),
+    ];
+    const { pivoted } = pivotForecastRows([...rows, ...later], [], 'CUSTOM', '2026-11-01', dietChanges);
+    const byBatch = (b: string) => pivoted.filter((line) => line.plainBatchNo === b);
+    expect(byBatch('BATCH-9').map((line) => line.feedStart)).toEqual(['2026-11-11']);
+    // A line a diet change already dates, and a batch fed from the first day, have none.
+    expect(byBatch('BATCH-1').map((line) => line.feedStart)).toEqual([null, null, null]);
+    expect(byBatch('BATCH-2').map((line) => line.feedStart)).toEqual([null]);
+  });
+});

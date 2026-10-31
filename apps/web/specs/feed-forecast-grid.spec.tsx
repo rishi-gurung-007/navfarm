@@ -126,8 +126,9 @@ describe('FeedForecastGrid — Engine row 70', () => {
     const [first, second] = within(screen.getByRole('table')).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[column]);
     expect(first.textContent).toBe('N/A');
     expect(second.textContent).toBe('24/09/26');
-    expect(second.getAttribute('title')).toContain('Weaner Diet R1');
-    expect(second.getAttribute('title')).toContain('Weaner Diet R2');
+    const hint = second.querySelector('[data-hint]')!.getAttribute('data-hint');
+    expect(hint).toContain('Weaner Diet R1');
+    expect(hint).toContain('Weaner Diet R2');
   });
 
   it('words a weekly column and its balance as a week, not a day (Rishi, 30 Oct)', () => {
@@ -136,6 +137,19 @@ describe('FeedForecastGrid — Engine row 70', () => {
     expect(dated.getAttribute('title')).toContain('ffProjectedClosingWeek');
     fireEvent.click(screen.getByRole('button', { name: /ffBalanceExplainAria/ }));
     expect(screen.getByText(/ffWeekUseShort/)).toBeTruthy();
+  });
+
+  it('says on hover what each figure is, and words what lies ahead as what would happen (Rishi, 31 Oct)', () => {
+    render(<FeedForecastGrid rows={[row()]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    const hints = [...document.querySelectorAll('tbody [data-hint]')].map((el) => el.getAttribute('data-hint')!.split(':')[0]);
+    expect(hints).toEqual(expect.arrayContaining([
+      'ffHintStage', 'ffHintCapacity', 'ffHintHeads', 'ffHintRate', 'ffHintConfirmed', 'ffHintOpenTransfer',
+      'ffHintPlanned', 'ffHintDailyUse', 'ffHintClosing', 'ffHintShortage', 'ffHintRecommended', 'ffHintDelivery',
+    ]));
+    expect(hints.some((h) => h === 'ffHintOpening' || h === 'ffHintOpeningFuture')).toBe(true);
+    // The balance button keeps one tab stop: its hover is not a second one.
+    const inButton = document.querySelector('tbody button [data-hint]')!;
+    expect(inButton.getAttribute('tabindex')).toBeNull();
   });
 
   it('uses human descriptions instead of blank or dash placeholders', () => {

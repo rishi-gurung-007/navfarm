@@ -7,7 +7,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { NA } from "@/utils/na";
 import { HoverHint } from "@/components/ui/hover-hint";
-import { formatDateShort } from "./feed-format";
+import { formatDateShort, todayIso } from "./feed-format";
 import { RecordLink, batchHref, itemHref, locationHref } from "./feed-requisition-header";
 
 /** W2D W7: a planned feed requisition opens in the Feed Forecast requisition tab. */
@@ -132,6 +132,11 @@ export interface PivotedFeedRow extends ReportRow {
   batchStart: boolean;
   /** The diet change that starts this line's feed, if one does. */
   dietChange: DietChange | null;
+  /**
+   * Rishi, 31 Oct: the day this line's feed would start when its batch has no feed in the forecast before then —
+   * the forecast reports no diet change there (nothing earlier to change from), yet the batch's feed does change.
+   */
+  feedStart: string | null;
 }
 
 export interface BalanceCell {
@@ -428,10 +433,24 @@ export function pivotForecastRows(
         batchIndex,
         batchStart,
         dietChange,
+        feedStart: null as string | null,
         firstShortageDate: inWindow(row.firstShortageDate) ? row.firstShortageDate : null,
         deliveryDate: inWindow(row.firstShortageDate) ? row.deliveryDate : null,
       };
     });
+
+  // A batch's line that starts after the forecast's first day, with no earlier line of the same batch.
+  const firstDay = baseFrom;
+  const earliestByBatch = new Map<string, string>();
+  for (const line of pivoted) {
+    const at = earliestByBatch.get(batchKey(line));
+    if (!at || line.date < at) earliestByBatch.set(batchKey(line), line.date);
+  }
+  for (const line of pivoted) {
+    line.feedStart = !line.dietChange && firstDay && line.date > firstDay && earliestByBatch.get(batchKey(line)) === line.date
+      ? line.date
+      : null;
+  }
 
   return {
     pivoted,
@@ -451,11 +470,13 @@ export function fmtKg(value: number | null | undefined): string {
 }
 
 // Batch, Stage and House stay pinned; the offsets are the widths of the pinned columns before each.
-// UOM pins beside them once it is scrolled to, so House needs a fixed width for its offset.
+// Silo Capacity, then UOM, pin beside them once scrolled to (Rishi, 31 Oct), so House and Silo Capacity
+// need fixed widths for the offsets after them.
 const BATCH_COL = { "--sticky-left": "0px" } as CSSProperties;
 const STAGE_COL = { "--sticky-left": "8.5rem" } as CSSProperties;
 const HOUSE_COL = { "--sticky-left": "19.5rem" } as CSSProperties;
-const UOM_COL = { "--sticky-left": "28rem" } as CSSProperties;
+const CAPACITY_COL = { "--sticky-left": "28rem" } as CSSProperties;
+const UOM_COL = { "--sticky-left": "37rem" } as CSSProperties;
 
 /** The batch number alone — a stage group's composite label is cut back when an older response has no plainBatchNo. */
 function batchNoOnly(row: ReportRow): string {
@@ -524,7 +545,7 @@ export function FeedForecastGrid({
           <th scope="col" data-sticky-col="last" style={HOUSE_COL} className={cn(TH, "w-[8.5rem] min-w-[8.5rem] max-w-[8.5rem]")}>{t("ffColHouse")}</th>
           <th scope="col" className={TH}>{t("ffColSiloCode")}</th>
           <th scope="col" className={TH}>{t("ffColSiloName")}</th>
-          <th scope="col" className={cn(TH, NUM)}>{t("ffColSiloCapacity")}</th>
+          <th scope="col" data-sticky-col="true" style={CAPACITY_COL} className={cn(TH, NUM, "w-[9rem] min-w-[9rem] max-w-[9rem]")}>{t("ffColSiloCapacity")}</th>
           <th scope="col" className={TH}>{t("ffColRequiredFeedItem")}</th>
           <th scope="col" className={TH}>{t("ffColDietChangeDate")}</th>
           <th scope="col" className={TH}>{t("ffColCurrentSiloItem")}</th>
@@ -551,34 +572,36 @@ export function FeedForecastGrid({
         ) : pivoted.map((row) => (
           <tr key={row.key} data-batch-start={row.batchStart ? "true" : undefined} data-group-alt={row.batchIndex % 2 ? "true" : undefined} className={cn(row.batchIndex % 2 && "bg-[var(--table-row-alt)]")}>
             <td data-sticky-col="true" style={BATCH_COL} className={cn(TD, "w-[8.5rem] max-w-[8.5rem] truncate font-medium")} title={batchNoOnly(row)}>{row.batchStart && <RecordLink code={batchNoOnly(row)} href={row.batchId ? batchHref(row.batchId) : null} />}</td>
-            <td data-sticky-col="true" style={STAGE_COL} className={cn(TD, "w-[11rem] max-w-[11rem] truncate")} title={stageLabel(row, t)}>{stageLabel(row, t)}</td>
+            <td data-sticky-col="true" style={STAGE_COL} className={cn(TD, "w-[11rem] max-w-[11rem] truncate")}><HoverHint hint={t(row.stageProjected ? "ffHintStageProjected" : "ffHintStage", { batch: batchNoOnly(row), stage: row.stageName || row.stageCode, from: formatDateShort(row.date), to: formatDateShort(row.dateTo) })}>{stageLabel(row, t)}</HoverHint></td>
             <td data-sticky-col="last" style={HOUSE_COL} className={cn(TD, MUTED, "w-[8.5rem] max-w-[8.5rem] truncate")} title={row.shedCode}><RecordLink code={row.shedCode} href={row.shedId ? locationHref(row.shedId) : null} /></td>
             <td className={cn(TD, MUTED)}>{row.sourceCode ? <RecordLink code={row.sourceCode} href={row.sourceLocationId ? locationHref(row.sourceLocationId) : null} /> : t("ffNoSource")}</td>
             <td className={cn(TD, MUTED)}>{row.sourceName ?? t("ffNoSourceName")}</td>
-            <td className={cn(TD, NUM)}>{row.sourceType === "SILO" && row.sourceCapacityKg != null
-              ? fmtKg(row.sourceCapacityKg)
+            <td data-sticky-col="true" style={CAPACITY_COL} className={cn(TD, NUM, "w-[9rem] max-w-[9rem]")}>{row.sourceType === "SILO" && row.sourceCapacityKg != null
+              ? <HoverHint hint={t("ffHintCapacity", { silo: row.sourceCode ?? "", kg: fmtKg(row.sourceCapacityKg) })}>{fmtKg(row.sourceCapacityKg)}</HoverHint>
               : <HoverHint hint={t(row.sourceType === "SILO" ? "ffNaNoSiloCapacity" : row.sourceType === "STORE" ? "ffNaStoreNoCapacity" : "ffNaNoSource")}>{NA}</HoverHint>}</td>
             <td className={TD}><RecordLink code={row.itemName} href={row.itemId ? itemHref(row.itemId) : null} /></td>
             {/* Rishi, 30 Oct: the diet change has its own column, the date the line's new feed starts. */}
-            <td
-              className={cn(TD, !row.dietChange && MUTED)}
-              title={row.dietChange ? t("ffDietChangeHint", {
-                from: row.dietChange.fromItemName,
-                to: row.dietChange.toItemName,
-                date: formatDateShort(row.dietChange.changeDate),
-                source: row.sourceCode ?? t("ffNoSource"),
-              }) : undefined}
-            >{row.dietChange ? formatDateShort(row.dietChange.changeDate) : <HoverHint hint={t("ffNaNoDietChange")}>{NA}</HoverHint>}</td>
-            <td className={TD}>{row.currentItemName ? <RecordLink code={row.currentItemName} href={row.currentItemId ? itemHref(row.currentItemId) : null} /> : t("ffNoCurrentSiloItem")}</td>
-            <td className={cn(TD, NUM)}>{row.heads.toLocaleString("en-US")}</td>
+            <td className={cn(TD, !row.dietChange && MUTED)}>{row.dietChange
+              ? <HoverHint hint={t("ffDietChangeHint", {
+                  from: row.dietChange.fromItemName,
+                  to: row.dietChange.toItemName,
+                  date: formatDateShort(row.dietChange.changeDate),
+                  source: row.sourceCode ?? t("ffNoSource"),
+                })}>{formatDateShort(row.dietChange.changeDate)}</HoverHint>
+              : row.feedStart
+                ? <HoverHint hint={t("ffFeedStartHint", { item: row.itemName, date: formatDateShort(row.feedStart), batch: batchNoOnly(row) })}>{formatDateShort(row.feedStart)}</HoverHint>
+                : <HoverHint hint={t("ffNaNoDietChange")}>{NA}</HoverHint>}</td>
+            <td className={TD}>{row.currentItemName ? <RecordLink code={row.currentItemName} href={row.currentItemId ? itemHref(row.currentItemId) : null} /> : <HoverHint hint={t("ffHintNoCurrentItem", { silo: row.sourceCode ?? t("ffNoSource") })}>{t("ffNoCurrentSiloItem")}</HoverHint>}</td>
+            {/* Rishi, 31 Oct: every figure says on hover what it is; what lies ahead is worded as what would happen. */}
+            <td className={cn(TD, NUM)}><HoverHint hint={t("ffHintHeads", { heads: row.heads.toLocaleString("en-US"), batch: batchNoOnly(row), stage: row.stageName || row.stageCode })}>{row.heads.toLocaleString("en-US")}</HoverHint></td>
             <td data-sticky-col="last" style={UOM_COL} className={TD}>KG</td>
-            <td className={cn(TD, NUM)}>{fmtKg(row.feedRateKg)}</td>
-            <td className={cn(TD, NUM)}>{fmtKg(nonNegative(row.openingSystemBalanceKg))}</td>
-            <td className={cn(TD, NUM)}>{fmtKg(nonNegative(row.confirmedReceiptsKg))}</td>
-            <td className={cn(TD, NUM)}>{fmtKg(row.openTransferMovementKg ?? 0)}</td>
-            <td className={cn(TD, NUM)}>{fmtKg(row.plannedIncomingKg ?? 0)}</td>
+            <td className={cn(TD, NUM)}><HoverHint hint={t("ffHintRate", { kg: fmtKg(row.feedRateKg), item: row.itemName })}>{fmtKg(row.feedRateKg)}</HoverHint></td>
+            <td className={cn(TD, NUM)}><HoverHint hint={t(row.date > todayIso() ? "ffHintOpeningFuture" : "ffHintOpening", { kg: fmtKg(nonNegative(row.openingSystemBalanceKg)), item: row.itemName, silo: row.sourceCode ?? t("ffNoSource"), date: formatDateShort(row.date) })}>{fmtKg(nonNegative(row.openingSystemBalanceKg))}</HoverHint></td>
+            <td className={cn(TD, NUM)}><HoverHint hint={t("ffHintConfirmed", { kg: fmtKg(nonNegative(row.confirmedReceiptsKg)), silo: row.sourceCode ?? t("ffNoSource") })}>{fmtKg(nonNegative(row.confirmedReceiptsKg))}</HoverHint></td>
+            <td className={cn(TD, NUM)}><HoverHint hint={t("ffHintOpenTransfer", { kg: fmtKg(row.openTransferMovementKg ?? 0), silo: row.sourceCode ?? t("ffNoSource") })}>{fmtKg(row.openTransferMovementKg ?? 0)}</HoverHint></td>
+            <td className={cn(TD, NUM)}><HoverHint hint={t("ffHintPlanned", { kg: fmtKg(row.plannedIncomingKg ?? 0), silo: row.sourceCode ?? t("ffNoSource") })}>{fmtKg(row.plannedIncomingKg ?? 0)}</HoverHint></td>
             <td className={TD}><PlannedReferences references={row.incomingReferences} empty={t("ffNoPlannedFeed")} /></td>
-            <td className={cn(TD, NUM)}>{fmtKg(row.dailyUseKg)}</td>
+            <td className={cn(TD, NUM)}><HoverHint hint={t("ffHintDailyUse", { kg: fmtKg(row.dailyUseKg), heads: row.heads.toLocaleString("en-US"), rate: fmtKg(row.feedRateKg) })}>{fmtKg(row.dailyUseKg)}</HoverHint></td>
             {columns.map((column) => {
               const value = row.closingBySlot[column.key];
               const balance = row.balanceBySlot[column.key];
@@ -602,15 +625,23 @@ export function FeedForecastGrid({
                       that itemises the planned feed and expected transfer. */}
                   <span
                     data-incoming={showIncoming ? "true" : undefined}
-                    title={showIncoming ? t("ffIncomingCellHint") : undefined}
                     className={cn("block", showIncoming && "font-semibold text-[var(--accent)]")}
-                  >{fmtKg(value)}</span>
+                  ><HoverHint focusable={false} hint={[
+                    t(view === "WEEKLY" ? "ffHintClosingWeek" : "ffHintClosing", { kg: fmtKg(value), silo: row.sourceCode ?? t("ffNoSource"), date: column.label }),
+                    showIncoming ? t("ffIncomingCellHint") : t("ffHintClickBreakdown"),
+                  ].join(" ")}>{fmtKg(value)}</HoverHint></span>
                 </button>
               </td>;
             })}
-            <td className={cn(TD, row.firstShortageDate && "font-semibold text-[var(--danger)]")}>{row.firstShortageDate ? formatDateShort(row.firstShortageDate) : t("ffNoShortageProjected")}</td>
-            <td className={cn(TD, NUM)}>{fmtKg(row.recommendedQtyKg)}</td>
-            <td className={TD}>{row.deliveryDate ? formatDateShort(row.deliveryDate) : t("ffNoDeliveryRequired")}</td>
+            <td className={cn(TD, row.firstShortageDate && "font-semibold text-[var(--danger)]")}><HoverHint hint={row.firstShortageDate
+              ? t("ffHintShortage", { silo: row.sourceCode ?? t("ffNoSource"), item: row.itemName, date: formatDateShort(row.firstShortageDate) })
+              : t("ffHintNoShortage", { silo: row.sourceCode ?? t("ffNoSource"), item: row.itemName, date: formatDateShort(row.dateTo) })}>{row.firstShortageDate ? formatDateShort(row.firstShortageDate) : t("ffNoShortageProjected")}</HoverHint></td>
+            <td className={cn(TD, NUM)}><HoverHint hint={row.recommendedQtyKg > 0
+              ? t("ffHintRecommended", { kg: fmtKg(row.recommendedQtyKg), silo: row.sourceCode ?? t("ffNoSource") })
+              : t("ffHintNoRecommended")}>{fmtKg(row.recommendedQtyKg)}</HoverHint></td>
+            <td className={TD}><HoverHint hint={row.deliveryDate
+              ? t("ffHintDelivery", { date: formatDateShort(row.deliveryDate) })
+              : t("ffHintNoDelivery")}>{row.deliveryDate ? formatDateShort(row.deliveryDate) : t("ffNoDeliveryRequired")}</HoverHint></td>
           </tr>
         ))}
       </tbody>

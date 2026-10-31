@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { FeedForecastService, draftForecastRange } from '../../inventory/feed-forecast/feed-forecast.service';
-import { addDaysIso, exceedsCapacity, lifecycleRefLabel, projectedSiloStockKg } from './feed-requisition.rules';
+import { addDaysIso, dayCover, diffDaysIso, exceedsCapacity, lifecycleRefLabel, projectedSiloStockKg } from './feed-requisition.rules';
 import { isoProductionWeek } from '../../inventory/feed-forecast/feed-plan.rules';
 import type { CreateFeedConsolidationDto, FeedConsolidationQueryDto } from './dto/feed-requisition.dto';
 import { activeBinAssignments } from './feed-bin-assignments.query';
@@ -20,8 +20,17 @@ import { InventoryLedgerService } from '../../inventory/inventory-ledger/invento
 
 type User = { userId?: string; userType?: string };
 
-/** Rishi, 30 Oct: the sheet shows each silo's projected stock for this many days from the farm's today. */
+/** Rishi, 30 Oct: the sheet shows each silo's projected stock for at least this many days from the farm's today… */
 export const SHEET_FORECAST_DAYS = 14;
+/** …and on to the latest delivery on the sheet, so every delivery day is a column — never past the forecast's 45-day horizon. */
+export const SHEET_FORECAST_MAX_DAYS = 46;
+
+/** How many days from `today` the sheet's columns run: 14, or to the latest delivery date. */
+export function sheetForecastDays(today: string, deliveryDates: Array<string | null>): number {
+  const latest = deliveryDates.filter((d): d is string => !!d).map((d) => d.slice(0, 10)).sort().pop();
+  const toLatest = latest ? diffDaysIso(today, latest) + 1 : 0;
+  return Math.min(SHEET_FORECAST_MAX_DAYS, Math.max(SHEET_FORECAST_DAYS, toLatest));
+}
 
 // Requisition §1 row 34's priorities (feed-requisition.rules.ts), most urgent first.
 const PRIORITY_RANK: Record<string, number> = { CRITICAL_FIRST_PRIORITY: 0, CRITICAL: 1, WARNING: 2, INFO: 3 };
@@ -297,21 +306,33 @@ export class FeedConsolidationService {
     const hasStored = (s: (typeof stored)[number] | undefined) =>
       !!s && (s.first_shortage_date != null || s.days_remaining != null || s.system_balance_kg != null);
     // One live forecast per farm on the sheet (Rishi, 30 Oct: every line shows its silo's coming days, not only
-    // a manual one's figures); a farm the forecast cannot read is left N/A.
+    // a manual one's figures); a farm the forecast cannot read is left N/A. Rishi, 31 Oct: the sheet's own
+    // requisitions are what the mill is about to produce, so their deliveries are left out — each silo's days
+    // show how it runs down without them. Requisitions already on a sheet still count, and so does a transfer once
+    // it has shipped — a DRAFT transfer has not left anywhere (Rishi, 31 Oct; the sheet only, not the Calculation).
     type Forecast = Awaited<ReturnType<FeedForecastService['computeForFarm']>>;
     const liveFarms = [...new Map(rows.map((r) => [r.farm_id, r.company_id])).entries()];
     const liveByFarm = new Map<string, Forecast['sources']>();
     const balancesByFarm = new Map<string, Forecast['sourceBalances']>();
+    /** The same farm with every approved delivery counted, sheet ones included — what the capacity check reads. */
+    const balancesWithSheetByFarm = new Map<string, Forecast['sourceBalances']>();
     const todayByFarm = new Map<string, string>();
     for (const [farmId, companyId] of liveFarms) {
       if (!farmId || !companyId) continue;
       try {
         const clock = await this.forecast.farmToday(companyId, tenantId);
         const result = await this.forecast.withFarmScope(farmId, companyId, () =>
-          this.forecast.computeForFarm(farmId, companyId, tenantId, draftForecastRange(clock.today), clock));
+          this.forecast.computeForFarm(farmId, companyId, tenantId, {
+            ...draftForecastRange(clock.today),
+            excludePlannedRequisitionIds: [...new Set(rows.filter((r) => r.farm_id === farmId).map((r) => r.requisition_id))],
+            shippedTransfersOnly: true,
+          }, clock));
         liveByFarm.set(farmId, result.sources);
         balancesByFarm.set(farmId, result.sourceBalances ?? []);
         todayByFarm.set(farmId, clock.today);
+        const withSheet = await this.forecast.withFarmScope(farmId, companyId, () =>
+          this.forecast.computeForFarm(farmId, companyId, tenantId, { ...draftForecastRange(clock.today), shippedTransfersOnly: true }, clock));
+        balancesWithSheetByFarm.set(farmId, withSheet.sourceBalances ?? []);
       } catch (err) {
         this.logger.warn(`Live forecast for farm ${farmId} could not be read: ${(err as Error).message}`);
       }
@@ -329,8 +350,8 @@ export class FeedConsolidationService {
         }
       }
     }
-    const stockOf = (row: (typeof rows)[number], date: string) =>
-      projectedSiloStockKg(balancesByFarm.get(row.farm_id ?? '') ?? [], row.destination_silo_id!, date, onHandBySilo.get(row.destination_silo_id!) ?? 0);
+    const stockOf = (row: (typeof rows)[number], date: string, withSheet = false) =>
+      projectedSiloStockKg((withSheet ? balancesWithSheetByFarm : balancesByFarm).get(row.farm_id ?? '') ?? [], row.destination_silo_id!, date, onHandBySilo.get(row.destination_silo_id!) ?? 0);
 
     const balances = await this.ledgerBalances(rows.filter((r) => !hasStored(storedById.get(r.line_id))), tenantId);
     const num = (v: unknown) => (v == null ? null : Number(v));
@@ -342,7 +363,13 @@ export class FeedConsolidationService {
       const delivery = row.proposed_delivery_date ? String(row.proposed_delivery_date).slice(0, 10) : null;
       // The silo's projected stock each morning; it already counts every approved, open requisition's delivery.
       const forecastDays = today && isSilo
-        ? Array.from({ length: SHEET_FORECAST_DAYS }, (_, i) => { const date = addDaysIso(today, i); return { date, stock_kg: stockOf(row, date) }; })
+        ? Array.from({ length: sheetForecastDays(today, rows.map((r) => r.proposed_delivery_date)) }, (_, i) => {
+          const date = addDaysIso(today, i);
+          // This line's own feed at its silo that day: needed or not, and covered or short (dayCover).
+          const point = (balancesByFarm.get(row.farm_id ?? '') ?? []).find((p) => p.locationId === row.destination_silo_id && p.itemId === row.item_id && p.date === date);
+          const cover = dayCover(point);
+          return { date, stock_kg: stockOf(row, date), required_kg: cover?.requiredKg ?? null, covered: cover ? cover.covered : null };
+        })
         : [];
       const deliveryDayStockKg = today && isSilo && delivery ? stockOf(row, delivery) : null;
       const base = {
@@ -351,9 +378,14 @@ export class FeedConsolidationService {
         days_before_diet_change: s?.days_before_diet_change ?? null,
         forecast_days: forecastDays,
         delivery_day_stock_kg: deliveryDayStockKg,
+        // A delivery dated before today is late: the forecast counts it as arriving today (plannedIncomingFromRequisitions).
+        delivery_overdue: !!(today && delivery && delivery < today),
       };
-      // The 30 Oct quantity rule, read today: the morning stock on the delivery day plus this delivery past the capacity.
-      const overCapacity = deliveryDayStockKg !== null && exceedsCapacity(Number(row.quantity), deliveryDayStockKg, capacityKg);
+      // The 30 Oct quantity rule, read today: this delivery onto the silo's morning stock that day with every approved
+      // delivery before it counted (sheet ones too, as if all were produced; a late one arrives today) past the capacity.
+      const arrivalDate = delivery && today && delivery < today ? today : delivery;
+      const stockWithSheetKg = today && isSilo && arrivalDate ? stockOf(row, arrivalDate, true) : null;
+      const overCapacity = stockWithSheetKg !== null && exceedsCapacity(Number(row.quantity), stockWithSheetKg, capacityKg);
       if (hasStored(s)) {
         return {
           ...base,
@@ -366,7 +398,7 @@ export class FeedConsolidationService {
           recommended_delivery_date: s!.recommended_delivery_date ? String(s!.recommended_delivery_date).slice(0, 10) : null,
           is_next_diet: !!s!.is_next_diet,
           needs_silo_changeover: !!s!.needs_silo_changeover,
-          exceeds_silo_capacity: deliveryDayStockKg !== null ? overCapacity : !!s!.exceeds_silo_capacity,
+          exceeds_silo_capacity: stockWithSheetKg !== null ? overCapacity : !!s!.exceeds_silo_capacity,
         };
       }
       const live = (row.farm_id ? liveByFarm.get(row.farm_id) : undefined)?.find((src) => src.locationId === row.destination_silo_id && src.itemId === row.item_id);
@@ -381,7 +413,7 @@ export class FeedConsolidationService {
         recommended_delivery_date: null,
         is_next_diet: live?.isNextDiet ?? false,
         needs_silo_changeover: live?.noSiloHoldsItem ?? false,
-        exceeds_silo_capacity: deliveryDayStockKg !== null ? overCapacity : live ? exceedsCapacity(Number(row.quantity), live.deliveryDayOpeningKg, capacityKg) : false,
+        exceeds_silo_capacity: stockWithSheetKg !== null ? overCapacity : live ? exceedsCapacity(Number(row.quantity), live.deliveryDayOpeningKg, capacityKg) : false,
       };
     });
     return ranked.sort(byUrgency);

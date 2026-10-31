@@ -2295,6 +2295,16 @@ export class FeedForecastService {
       to?: string;
       planningDate?: string;
       horizonTo?: string;
+      /**
+       * Approved requisitions whose deliveries are left out of the projection. The mill sheet sends the ones it is
+       * about to rank (Rishi, 31 Oct): their feed is not produced yet, so counting it would hide the need it answers.
+       */
+      excludePlannedRequisitionIds?: string[];
+      /**
+       * Count a transfer only once it has shipped (In Transit / Partly Received), not while it is a DRAFT. The mill
+       * sheet asks for this (Rishi, 31 Oct): feed that has not left anywhere is not on its way to a silo.
+       */
+      shippedTransfersOnly?: boolean;
     } = {},
     clock?: FarmClock,
   ): Promise<FeedForecastResponse> {
@@ -2362,6 +2372,8 @@ export class FeedForecastService {
         stockDate,
         horizonTo,
         headerCutoff,
+        excludePlannedRequisitionIds: range.excludePlannedRequisitionIds,
+        shippedTransfersOnly: range.shippedTransfersOnly,
       });
       const input: ForecastInput = {
         ...loadedInput,
@@ -3075,7 +3087,7 @@ export class FeedForecastService {
     from: string,
     to: string,
     tenantId: string,
-    opts: { stockDate: string; horizonTo: string; headerCutoff: string },
+    opts: { stockDate: string; horizonTo: string; headerCutoff: string; excludePlannedRequisitionIds?: string[]; shippedTransfersOnly?: boolean },
   ): Promise<{
     input: ForecastInput;
     flags: ForecastFlag[];
@@ -3241,6 +3253,7 @@ export class FeedForecastService {
           tenantId,
           opts.stockDate,
           calculationHorizon,
+          opts.shippedTransfersOnly,
         )
       : [];
     const plannedRequisitions = stockIds.length
@@ -3250,6 +3263,7 @@ export class FeedForecastService {
           tenantId,
           opts.stockDate,
           calculationHorizon,
+          opts.excludePlannedRequisitionIds,
         )
       : [];
     const stock = stockAsOf({
@@ -3385,6 +3399,7 @@ export class FeedForecastService {
     tenantId: string,
     stockDate: string,
     horizonTo: string,
+    excludeRequisitionIds: string[] = [],
   ): Promise<import('./feed-forecast.engine').IncomingFeed[]> {
     const R = schema.requisition;
     const L = schema.requisitionLine;
@@ -3427,8 +3442,9 @@ export class FeedForecastService {
           )
       : [];
     const linked = new Set(links.map((link) => link.requisition_id));
+    const excluded = new Set(excludeRequisitionIds);
     return plannedIncomingFromRequisitions(
-      rows.map((row) => ({
+      rows.filter((row) => !excluded.has(row.requisition_id)).map((row) => ({
         ...row,
         transfer_link_id: linked.has(row.requisition_id) ? 'LINKED' : null,
       })),
@@ -3480,13 +3496,14 @@ export class FeedForecastService {
     tenantId: string,
     stockDate: string,
     horizonTo: string,
+    shippedOnly = false,
   ): Promise<FeedStockMovement[]> {
     const T = schema.stockTransfer;
     const TL = schema.stockTransferLine;
     const common = [
       eq(T.tenant_id, tenantId),
       eq(T.company_id, companyId),
-      inArray(T.status, [...OPEN_TRANSFER_STATUSES]),
+      inArray(T.status, OPEN_TRANSFER_STATUSES.filter((status) => !shippedOnly || status !== 'DRAFT')),
       isNull(T.deleted_at),
       lte(T.posting_date, horizonTo),
       ...restrictedScopeConditions(farmScope(this.cls), {

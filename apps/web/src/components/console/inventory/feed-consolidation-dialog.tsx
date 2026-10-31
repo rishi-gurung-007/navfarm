@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
-import { EmptyState } from "@/components/ui/states";
-import { Layers } from "lucide-react";
+import { EmptyState, LoadingState } from "@/components/ui/states";
+import { Check, Layers, X } from "lucide-react";
 import { useLanguage } from "@/hooks/useLanguage";
 import { showToast } from "@/components/ui/toast";
 import { unwrap } from "./feed-format";
@@ -32,7 +32,9 @@ type EligibleLine = {
   is_next_diet?: boolean; needs_silo_changeover?: boolean; exceeds_silo_capacity?: boolean;
   /** Rishi, 30 Oct: the line's Breed Lifecycle Row and countdown to its diet, and its silo's projected stock each morning. */
   lifecycle_ref_label?: string | null; days_before_diet_change?: number | null;
-  forecast_days?: Array<{ date: string; stock_kg: number }>; delivery_day_stock_kg?: number | null;
+  forecast_days?: Array<{ date: string; stock_kg: number; required_kg?: number | null; covered?: boolean | null }>; delivery_day_stock_kg?: number | null;
+  /** The delivery date is before today: the forecast counts it as arriving today, so the first day carries it. */
+  delivery_overdue?: boolean;
   batches?: Array<{ batch_id: string; batch_no: string | null; shed_code: string | null; heads: number | null }>;
 };
 
@@ -55,6 +57,8 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
   const [busy, setBusy] = useState(false);
   const [dateHint, setDateHint] = useState("");
   const [selectHint, setSelectHint] = useState("");
+  // Whether a search has answered yet, so an empty sheet says "none waiting" rather than "press Find".
+  const [searched, setSearched] = useState(false);
 
   const load = async () => {
     setBusy(true);
@@ -68,10 +72,18 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
       if (mode === "date") { if (fromDate) params.set("fromDate", fromDate); if (toDate) params.set("toDate", toDate); }
       const data = unwrap<EligibleLine[]>(await api.get(`/feed-requisition/consolidations/eligible?${params.toString()}`));
       setRows(Array.isArray(data) ? data : []);
+      setSearched(true);
       setSelected([]); setApproved({}); setReasons({});
     } catch (err: any) { showToast.error(err?.message || t("fcdLoadFailed")); }
     finally { setBusy(false); }
   };
+
+  // Rishi, 31 Oct: the sheet opens with every approved requisition waiting for it already listed; Find narrows
+  // or reloads it. Once per opening, so a search typed meanwhile is not overwritten.
+  useEffect(() => {
+    if (open && mode === "requisition") void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const requisitions = useMemo(() => {
     const map = new Map<string, EligibleLine>();
@@ -163,7 +175,7 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
           {th(t("fcdColSystemBalance"), "text-right")}{th(t("fcdColDailyUse"), "text-right")}
           {th(t("fcdColItemNo"), "min-w-32")}{th(t("fcdColItemName"), "min-w-56")}{th(t("fcdColBatches"), "min-w-52")}
           {th(t("fcdColDelivery"))}{th(t("fcdColRequested"), "text-right")}{th(t("fcdColRecommended"), "text-right")}
-          {forecastDates.map((date) => <th key={date} scope="col" className={`${TH} ${NUM} min-w-28 bg-(--table-header-alt)`} title={t("fcdForecastDayHint", { date: formatDateShort(date) })}>{formatDateShort(date)}</th>)}
+          {forecastDates.map((date) => <th key={date} scope="col" className={`${TH} min-w-20 text-center bg-(--table-header-alt)`} title={t("fcdForecastDayHint", { date: formatDateShort(date) })}>{formatDateShort(date)}</th>)}
           {th(t("fcdColNotes"), "min-w-40")}
           {th(t("fcdColBin"), "min-w-28")}{th(t("fcdColBinName"), "min-w-44")}{th(t("feedPlanColCapacity"), "min-w-36")}
           {th(t("fcdColApproved"), "text-right")}{th(t("fcdColReason"), "min-w-52")}{th(t("fcdColFigures"))}
@@ -204,7 +216,9 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
           </tr>;
         })}</tbody></table></div>}
       {selectHint && <p role="alert" className="text-xs" style={{ color: "var(--danger)" }}>{selectHint}</p>}
-      {!rows.length && <EmptyState icon={Layers} title={t("fcdPrompt")} className="py-10" />}
+      {!rows.length && (busy
+        ? <LoadingState label={t("fcdLoading")} />
+        : <EmptyState icon={Layers} title={t(searched ? "fcdEmpty" : "fcdPrompt")} className="py-10" />)}
     </div>
   </Dialog>;
 }
@@ -227,21 +241,47 @@ function CapacityCell({ row, t }: { row: EligibleLine; t: ReturnType<typeof useL
 }
 
 /**
- * One morning of the line's silo. The delivery day is outlined; a day the silo would hold more than its
- * capacity (the delivery on top of its stock) reads red, an empty one amber.
+ * One morning of the line's silo. The delivery day is outlined — a late delivery (dated before today) on the
+ * first day, in amber, since the forecast counts it as arriving today. A day the silo would hold more than
+ * its capacity reads red, an empty one amber. The delivery cell says on hover what arrives onto what.
  */
 function ForecastDayCell({ row, date, t, na }: { row: EligibleLine; date: string; t: ReturnType<typeof useLanguage>["t"]; na: string }) {
   const day = row.forecast_days?.find((d) => d.date === date);
   const delivery = row.proposed_delivery_date ? String(row.proposed_delivery_date).slice(0, 10) : null;
-  const isDelivery = delivery === date;
+  const late = !!row.delivery_overdue && row.forecast_days?.[0]?.date === date;
+  const isDelivery = delivery === date || late;
+  const outline = isDelivery ? `outline outline-2 -outline-offset-2 ${late ? "outline-(--warning)" : "outline-(--accent)"}` : "";
   if (!day) {
-    return <td className={`${TD} ${NUM} text-(--text-secondary)`}><HoverHint hint={t(row.destination_silo_id ? "fcdNaNoForecast" : "fcdNaStore")}>{na}</HoverHint></td>;
+    return <td className={`${TD} text-center text-(--text-secondary)`}><HoverHint hint={t(row.destination_silo_id ? "fcdNaNoForecast" : "fcdNaStore")}>{na}</HoverHint></td>;
   }
+  const deliveryHint = !isDelivery ? null : late
+    ? t("fcdLateDeliveryHint", { due: formatDateShort(delivery ?? ""), requested: formatKg(row.quantity), stock: formatKg(day.stock_kg) })
+    : t("fcdDeliveryDayHint", { requested: formatKg(row.quantity), stock: formatKg(row.delivery_day_stock_kg ?? day.stock_kg) });
+  // Rishi, 31 Oct: N/A on a day the line's feed is not needed; otherwise a tick when the silo covers the day's use, a cross when it falls short.
+  if (day.required_kg == null) {
+    return <td data-delivery-day={isDelivery || undefined} data-delivery-late={late || undefined} data-not-required="true" className={`${TD} text-center text-(--text-secondary) ${outline}`}>
+      <HoverHint hint={[t("fcdNotRequiredOnDate"), deliveryHint].filter(Boolean).join(" · ")}>{na}</HoverHint>
+    </td>;
+  }
+  // Rishi, 31 Oct: the cell shows only the tick or cross; the kilograms are in the hover.
   const over = row.silo_capacity_kg != null && day.stock_kg > row.silo_capacity_kg + 1e-6;
+  const coverHint = day.covered
+    ? t("fcdCoveredHint", { need: formatKg(day.required_kg), stock: formatKg(day.stock_kg) })
+    : t("fcdShortHint", { need: formatKg(day.required_kg), stock: formatKg(day.stock_kg) });
+  const overHint = over ? t("fcdOverCapacityHint", { capacity: formatKg(row.silo_capacity_kg) }) : null;
   return <td
     data-delivery-day={isDelivery || undefined}
-    className={`${TD} ${NUM} ${isDelivery ? "outline outline-2 -outline-offset-2 outline-(--accent)" : ""}`}
-    style={over ? { color: "var(--danger)", fontWeight: 600 } : day.stock_kg <= 0 ? { color: "var(--warning)", fontWeight: 600 } : undefined}
-    title={isDelivery ? t("fcdDeliveryDayHint", { requested: formatKg(row.quantity), stock: formatKg(row.delivery_day_stock_kg ?? day.stock_kg) }) : undefined}
-  >{formatKg(day.stock_kg)}</td>;
+    data-delivery-late={late || undefined}
+    data-covered={day.covered ? "true" : "false"}
+    data-over-capacity={over || undefined}
+    className={`${TD} text-center ${outline}`}
+  >
+    <HoverHint hint={[coverHint, overHint, deliveryHint].filter(Boolean).join(" · ")}>
+      <span className="inline-flex items-center justify-center">
+        {day.covered
+          ? <Check aria-label={t("fcdCovered")} className="h-4 w-4 shrink-0" style={{ color: "var(--success)" }} />
+          : <X aria-label={t("fcdShort")} className="h-4 w-4 shrink-0" style={{ color: "var(--danger)" }} />}
+      </span>
+    </HoverHint>
+  </td>;
 }

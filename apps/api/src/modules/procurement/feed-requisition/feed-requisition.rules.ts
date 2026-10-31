@@ -672,3 +672,26 @@ export function quantityProblems(args: {
   }
   return problems;
 }
+
+/** One day of a silo-and-feed in the forecast, as the mill sheet reads it. */
+export interface FeedDayPoint {
+  openingSystemBalanceKg: number;
+  confirmedReceiptKg?: number;
+  openTransferMovementKg?: number;
+  plannedIncomingKg?: number;
+  otherOutflowKg?: number;
+  dailyUseKg: number;
+}
+
+/**
+ * Rishi, 31 Oct: whether a line's feed is needed that day and whether its silo covers it. No forecast point, or no
+ * use, is "not required" (null). Otherwise the day is covered when the morning stock of that feed and what arrives
+ * that day, less any other outflow, meet the day's use.
+ */
+export function dayCover(point: FeedDayPoint | undefined): { requiredKg: number; covered: boolean } | null {
+  if (!point || !(point.dailyUseKg > 0)) return null;
+  const availableKg = Math.max(0, point.openingSystemBalanceKg)
+    + (point.confirmedReceiptKg ?? 0) + (point.openTransferMovementKg ?? 0) + (point.plannedIncomingKg ?? 0)
+    - (point.otherOutflowKg ?? 0);
+  return { requiredKg: round3(point.dailyUseKg), covered: availableKg + 1e-6 >= point.dailyUseKg };
+}

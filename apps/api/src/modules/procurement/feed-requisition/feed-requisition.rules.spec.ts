@@ -618,3 +618,16 @@ describe('runLineEvidence — a requisition from a saved calculation keeps its f
     expect(e).toMatchObject({ systemBalanceKg: 0, dailyRequirementKg: 9, daysRemaining: 0, isNextDiet: true, daysBeforeDietChange: 12 });
   });
 });
+
+describe('dayCover — the mill sheet ticks a day the silo feeds, crosses one it cannot (Rishi, 31 Oct)', () => {
+  const { dayCover } = jest.requireActual('./feed-requisition.rules') as typeof import('./feed-requisition.rules');
+  it('is not required without a forecast point or without use', () => {
+    expect(dayCover(undefined)).toBeNull();
+    expect(dayCover({ openingSystemBalanceKg: 500, dailyUseKg: 0 })).toBeNull();
+  });
+  it('covers the day when the morning stock and that day\'s arrivals meet the use', () => {
+    expect(dayCover({ openingSystemBalanceKg: 352.7, dailyUseKg: 347.3 })).toEqual({ requiredKg: 347.3, covered: true });
+    expect(dayCover({ openingSystemBalanceKg: 5.4, dailyUseKg: 347.3 })).toEqual({ requiredKg: 347.3, covered: false });
+    expect(dayCover({ openingSystemBalanceKg: 0, openTransferMovementKg: 3000, dailyUseKg: 347.3 })).toEqual({ requiredKg: 347.3, covered: true });
+  });
+});

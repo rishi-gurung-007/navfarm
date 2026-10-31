@@ -9,7 +9,12 @@ import { createPortal } from 'react-dom';
  * the reason shows in a small box fixed to the viewport, so a scrolling table
  * cannot clip it the way it clips a box placed inside the cell.
  */
-export function HoverHint({ hint, children }: { hint: string; children: ReactNode }) {
+export function HoverHint({ hint, children, focusable = true }: {
+  hint: string;
+  children: ReactNode;
+  /** false inside a control that is already focusable (a button), so keyboard users meet one stop, not two. */
+  focusable?: boolean;
+}) {
   const id = useId();
   const anchor = useRef<HTMLSpanElement>(null);
   const [at, setAt] = useState<{ left: number; top: number } | null>(null);
@@ -22,7 +27,7 @@ export function HoverHint({ hint, children }: { hint: string; children: ReactNod
     <>
       <span
         ref={anchor}
-        tabIndex={0}
+        tabIndex={focusable ? 0 : undefined}
         aria-describedby={at ? id : undefined}
         data-hint={hint}
         onMouseEnter={show}

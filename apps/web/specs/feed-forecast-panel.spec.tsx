@@ -120,7 +120,7 @@ describe('FeedForecastPanel — admin', () => {
     try {
       render(<FeedForecastPanel />);
       await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-forecast/runs/run-old'));
-      expect(await screen.findByRole('button', { name: 'Return to current calculation' })).toBeTruthy();
+      expect(await screen.findByRole('button', { name: 'ffReturnToCurrent' })).toBeTruthy();
     } finally {
       window.history.pushState({}, '', '/');
     }
@@ -143,12 +143,12 @@ describe('FeedForecastPanel — admin', () => {
     try {
       render(<FeedForecastPanel />);
       await waitFor(() => expect(get).toHaveBeenCalledWith('/feed-forecast/runs/run-old'));
-      expect(await screen.findByRole('button', { name: 'Return to current calculation' })).toBeTruthy();
+      expect(await screen.findByRole('button', { name: 'ffReturnToCurrent' })).toBeTruthy();
       expect((await screen.findAllByText(/OLD RUN Weaner/)).length).toBeGreaterThan(0);
       resolveCurrent(currentRunResponse);
       await currentPromise;
       for (let i = 0; i < 5; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-      await waitFor(() => expect(screen.getByRole('button', { name: 'Return to current calculation' })).toBeTruthy());
+      await waitFor(() => expect(screen.getByRole('button', { name: 'ffReturnToCurrent' })).toBeTruthy());
       expect(screen.getAllByText(/OLD RUN Weaner/).length).toBeGreaterThan(0);
       expect(screen.queryAllByText(/^Weaner Grower Mash/)).toHaveLength(0);
     } finally {
@@ -415,6 +415,28 @@ describe('FeedForecastPanel — admin', () => {
     await waitFor(() => expect(remove).toHaveBeenCalledWith('/feed-forecast/runs/run-current'));
     expect(await screen.findByText('ffCalculatePrompt')).toBeTruthy();
     expect(showToast.success).toHaveBeenCalledWith('ffCalculationDeleted');
+    // Rishi, 31 Oct: the deleted run's dates do not carry into the next calculation; it plans from today.
+    expect((screen.getByLabelText('ffPlanningDate') as HTMLInputElement).value).toBe('');
+    fireEvent.click(screen.getByRole('button', { name: 'ffCalculate' }));
+    await waitFor(() => expect(forecastCalls().at(-1)![0]).toBe('/feed-forecast?farmId=farm-vil100&view=CUSTOM'));
+  });
+
+  it('does not offer Calculate, or say Calculating, while the saved calculation loads (Rishi, 31 Oct)', async () => {
+    let answer: (value: unknown) => void = () => {};
+    get.mockImplementation(routedGet({ current: () => new Promise((resolve) => { answer = resolve; }) }));
+    render(<FeedForecastPanel />);
+    await screen.findByText('ffLoading');
+    expect(screen.queryByRole('button', { name: 'ffCalculate' })).toBeNull();
+    expect(screen.queryByText('ffCalculating')).toBeNull();
+    answer(currentRunResponse);
+    await screen.findByRole('table');
+  });
+
+  it('says when the saved calculation was planned for a day already past (Rishi, 31 Oct)', async () => {
+    // currentRunResponse is planned as of 25/09/26, before today.
+    render(<FeedForecastPanel />);
+    await screen.findByRole('table');
+    expect(screen.getByText(/ffSavedRunPast/)).toBeTruthy();
   });
 
   it('does not crash when the response has rows but no flags array', async () => {
