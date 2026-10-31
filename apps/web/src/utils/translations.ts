@@ -2631,6 +2631,8 @@ export const translations = {
     ffRecalculate: 'Recalculate',
     ffCalculating: 'Calculating…',
     ffReturnToCurrent: 'Return to current calculation',
+    ffCoveredByRequisition: 'Not offered for a new requisition — an open requisition would already cover the shortage: {{lines}}.',
+    ffCoveredLine: '{{silo}} · {{item}} by {{by}}',
     ffSavedRunPast: 'This saved calculation was planned as of {{date}}, so its earlier days have passed. Delete it and calculate again to plan from today.',
     ffCalculatePrompt: 'Select the filters and calculate the feed forecast.',
     ffDeleteCalculation: 'Delete calculation',

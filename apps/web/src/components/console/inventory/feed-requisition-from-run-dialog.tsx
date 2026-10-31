@@ -102,6 +102,8 @@ interface Preview {
   existingRequisitionId: string | null;
   settings?: { truckTargetKg?: number; bulkMultipleKg?: number; bagSizeKg?: number };
   lines: PreviewLine[];
+  /** Rishi, 31 Oct: run-downs another open requisition already solves — left out of the lines. */
+  covered_lines?: Array<{ destination_code: string; item_name: string; covered_by: string[] }>;
 }
 
 const kgOrNa = (value: number | null | undefined) =>
@@ -256,7 +258,12 @@ export function FeedRequisitionFromRunDialog({ open, runId, farm, onClose, onVie
       )}
     >
       {loading ? <p className="text-sm text-[var(--text-secondary)]">{t("rqFromRunLoading")}</p> : null}
-      {!loading && preview && lines.length === 0 ? <InlineAlert variant="info">{t("rqFromRunNoShortage")}</InlineAlert> : null}
+      {!loading && preview && (preview.covered_lines?.length ?? 0) > 0 && !preview.existingRequisitionId ? (
+        <InlineAlert variant="info">{t("ffCoveredByRequisition", {
+          lines: preview.covered_lines!.map((c) => t("ffCoveredLine", { silo: c.destination_code, item: c.item_name, by: c.covered_by.join(", ") })).join("; "),
+        })}</InlineAlert>
+      ) : null}
+      {!loading && preview && lines.length === 0 && !(preview.covered_lines?.length) ? <InlineAlert variant="info">{t("rqFromRunNoShortage")}</InlineAlert> : null}
       {!loading && preview && lines.length > 0 ? (
         <RequisitionDocumentShell className="text-xs">
           <FieldGroup>

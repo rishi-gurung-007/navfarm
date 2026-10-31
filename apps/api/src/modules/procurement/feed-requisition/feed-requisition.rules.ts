@@ -695,3 +695,53 @@ export function dayCover(point: FeedDayPoint | undefined): { requiredKg: number;
     - (point.otherOutflowKg ?? 0);
   return { requiredKg: round3(point.dailyUseKg), covered: availableKg + 1e-6 >= point.dailyUseKg };
 }
+
+/** An open feed requisition line: not rejected, cancelled or received yet. */
+export interface OpenRequisitionLine {
+  requisition_id: string;
+  req_no: string;
+  destination_location_id: string | null;
+  item_id: string | null;
+  quantity: number;
+  proposed_delivery_date: string | null;
+}
+
+/**
+ * What a forecast already counted: the requisitions it took as planned feed, and those whose transfer it took as
+ * an open transfer (incomingReferences on its source balances). Their feed is in its projection already.
+ */
+export function countedRequisitions(sourceBalances: unknown[] | undefined): { ids: Set<string>; nos: Set<string> } {
+  const ids = new Set<string>();
+  const nos = new Set<string>();
+  for (const point of sourceBalances ?? []) {
+    for (const ref of ((point as { incomingReferences?: unknown[] }).incomingReferences ?? []) as Array<{ kind?: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string }>) {
+      if (ref.kind === 'PLANNED_REQUISITION') {
+        if (ref.referenceId) ids.add(ref.referenceId);
+        if (ref.referenceNo) nos.add(ref.referenceNo);
+      }
+      if (ref.kind === 'OPEN_TRANSFER' && ref.relatedReferenceNo) nos.add(ref.relatedReferenceNo);
+    }
+  }
+  return { ids, nos };
+}
+
+/**
+ * Rishi, 31 Oct: whether open requisitions the forecast did not count would already solve one of its run-downs —
+ * for the same silo and feed, arriving by the first shortage date, together bringing at least the need. Then a
+ * requisition for that line is not offered again. A requisition the forecast counted is left out: its feed already
+ * lowered the need, so counting it here would hide what is still short.
+ */
+export function requisitionCover(
+  line: { destinationLocationId: string; itemId: string; needKg: number; shortageDate: string | null },
+  open: OpenRequisitionLine[],
+  counted: { ids: Set<string>; nos: Set<string> },
+): { covered: boolean; by: string[] } {
+  const by = open.filter((r) =>
+    r.destination_location_id === line.destinationLocationId
+    && r.item_id === line.itemId
+    && !counted.ids.has(r.requisition_id) && !counted.nos.has(r.req_no)
+    && !!r.proposed_delivery_date
+    && (!line.shortageDate || r.proposed_delivery_date.slice(0, 10) <= line.shortageDate));
+  const kgBy = by.reduce((sum, r) => sum + Number(r.quantity), 0);
+  return { covered: line.needKg > 0 && kgBy + 1e-6 >= line.needKg, by: [...new Set(by.map((r) => r.req_no))] };
+}

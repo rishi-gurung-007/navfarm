@@ -99,6 +99,9 @@ import {
   lineChangeProblems,
   lineKey,
   runLineEvidence,
+  countedRequisitions,
+  requisitionCover,
+  type OpenRequisitionLine,
   projectedSiloStockKg,
   quantityProblems,
   planDraftUpsert,
@@ -921,7 +924,7 @@ export class FeedRequisitionService implements OnModuleInit {
         ...DEFAULT_FEED_SETTINGS,
         ...(config?.values?.requisitionDraftSettings ?? {}),
       };
-      return {
+      const draft = {
         runId: run.run_id,
         runCode: run.run_code,
         planningDate: run.planning_date,
@@ -960,6 +963,9 @@ export class FeedRequisitionService implements OnModuleInit {
             recommended_qty_kg: quantity,
             quantity_kg: quantity,
             proposed_delivery_date: addDays(shortage, -2),
+            /** The run-down this line answers: its unrounded need by its first shortage (requisitionCover). */
+            need_kg: unroundedQuantity,
+            shortage_date: lines.map((line) => line.shortage_date).filter((date): date is string => !!date).sort()[0] ?? null,
             feed_type: feedType,
             source_type:
               destination?.location_type === 'STORE' ? 'STORE' : 'SILO',
@@ -984,7 +990,66 @@ export class FeedRequisitionService implements OnModuleInit {
           };
         }),
       };
+      // Rishi, 31 Oct: a line another open requisition would already solve is not offered again, whichever run or
+      // hand drafted that requisition. The run's own requisition is existingRequisitionId, handled by the caller.
+      const open = await this.openFeedRequisitionLines(farmId, tenantId, draft.existingRequisitionId);
+      const counted = countedRequisitions(
+        (run.output_snapshot as { display?: { sourceBalances?: unknown[] } } | null)?.display?.sourceBalances,
+      );
+      const covered: Array<{ destination_code: string; item_name: string; covered_by: string[] }> = [];
+      const lines = draft.lines.filter((line) => {
+        const cover = requisitionCover(
+          { destinationLocationId: line.destination_location_id, itemId: line.item_id, needKg: line.need_kg, shortageDate: line.shortage_date },
+          open,
+          counted,
+        );
+        if (cover.covered) covered.push({ destination_code: line.destination_code, item_name: line.item_name, covered_by: cover.by });
+        return !cover.covered;
+      });
+      return { ...draft, lines, covered_lines: covered };
     });
+  }
+
+  /**
+   * A farm's open feed requisition lines (Rishi, 31 Oct): not deleted, rejected, cancelled or received — what
+   * requisitionCover reads. `excludeRequisitionId` leaves out the one being asked about.
+   */
+  async openFeedRequisitionLines(farmId: string, tenantId: string, excludeRequisitionId?: string | null): Promise<OpenRequisitionLine[]> {
+    const R = schema.requisition;
+    const L = schema.requisitionLine;
+    const rows = await this.db
+      .select({
+        requisition_id: R.requisition_id,
+        req_no: R.req_no,
+        status: R.status,
+        approval_status: R.approval_status,
+        document_status: R.document_status,
+        destination_location_id: L.destination_location_id,
+        item_id: L.item_id,
+        quantity: L.quantity,
+        proposed_delivery_date: L.proposed_delivery_date,
+      })
+      .from(R)
+      .innerJoin(L, eq(L.requisition_id, R.requisition_id))
+      .where(and(eq(R.tenant_id, tenantId), eq(R.farm_id, farmId), eq(R.doc_type, FEED_DOC_TYPE), isNull(R.deleted_at)));
+    const closed = new Set(['REJECTED', 'CANCELLED', 'CLOSED', 'RECEIVED']);
+    return rows
+      .filter((r) => r.requisition_id !== excludeRequisitionId)
+      .filter((r) => !closed.has(String(r.status)) && !closed.has(String(r.approval_status ?? '')) && !closed.has(String(r.document_status ?? '')))
+      .map((r) => ({
+        requisition_id: r.requisition_id,
+        req_no: r.req_no,
+        destination_location_id: r.destination_location_id,
+        item_id: r.item_id,
+        quantity: Number(r.quantity),
+        proposed_delivery_date: r.proposed_delivery_date ? String(r.proposed_delivery_date).slice(0, 10) : null,
+      }));
+  }
+
+  /** GET /feed-requisition/open-lines: a farm's open feed requisition lines, for the Calculation's own cover check. */
+  async openLines(farmIdIn: string | undefined, tenantId: string, user: UserCtx) {
+    const { farmId, companyId } = await this.forecast.resolveFarm(farmIdIn, tenantId, user?.userType);
+    return this.forecast.withFarmScope(farmId, companyId, () => this.openFeedRequisitionLines(farmId, tenantId));
   }
 
   async previewFromRun(runId: string, tenantId: string, user: UserCtx) {

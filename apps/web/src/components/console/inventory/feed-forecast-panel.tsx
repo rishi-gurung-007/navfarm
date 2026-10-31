@@ -47,6 +47,7 @@ import { FeedRequisitionDetail } from './feed-requisition-detail';
 import { FeedRequisitionFromRunDialog } from './feed-requisition-from-run-dialog';
 import type { RequisitionView } from './feed-requisition-document';
 import { setForecastWindow } from './feed-forecast-window';
+import { countedRequisitions, requisitionCover, type OpenRequisitionLine, type ShortSource } from './requisition-cover';
 import {
   FeedForecastProvider,
   useFeedForecastContext,
@@ -77,9 +78,17 @@ interface ForecastData {
   sourceBalances: SourceBalancePoint[];
   flags: ForecastFlag[];
   dietChanges?: DietChange[];
+  /** The sources the forecast ran short, with their need and first shortage (requisitionCover). */
+  sources?: ShortSource[];
 }
 
 type CalculationState = 'EMPTY' | 'CALCULATED' | 'SAVED';
+
+interface CoveredLine {
+  destination_code: string;
+  item_name: string;
+  covered_by: string[];
+}
 
 interface CurrentForecastRun {
   run_id?: string;
@@ -89,6 +98,8 @@ interface CurrentForecastRun {
   version: number;
   existingRequisitionId?: string | null;
   canCreateRequisition?: boolean;
+  /** Rishi, 31 Oct: run-downs another open requisition already solves, so they are not offered again. */
+  coveredLines?: CoveredLine[];
   output_snapshot?: { display?: SavedForecastDisplay };
 }
 
@@ -145,6 +156,7 @@ function FeedForecastPanelContent() {
   const [loading, setLoading] = useState(false);
   // Rishi, 31 Oct: true only while Calculate runs — loading the saved calculation is not calculating.
   const [calculating, setCalculating] = useState(false);
+  const [openLines, setOpenLines] = useState<OpenRequisitionLine[]>([]);
   const viewToken = useRef(0);
   const [savingRun, setSavingRun] = useState(false);
   const [runHistoryReload, setRunHistoryReload] = useState(0);
@@ -230,13 +242,16 @@ function FeedForecastPanelContent() {
         const runId = run.run_id ?? run.runId;
         let existingRequisitionId: string | null = null;
         let canCreateRequisition = false;
+        let coveredLines: CoveredLine[] = [];
         if (runId) {
           try {
             const preview = unwrap<{
               existingRequisitionId?: string | null;
               lines?: unknown[];
+              covered_lines?: CoveredLine[];
             }>(await api.get(`/feed-requisition/from-run/${runId}/preview`));
             existingRequisitionId = preview.existingRequisitionId ?? null;
+            coveredLines = Array.isArray(preview.covered_lines) ? preview.covered_lines : [];
             canCreateRequisition =
               !!existingRequisitionId ||
               (Array.isArray(preview.lines) && preview.lines.length > 0);
@@ -246,7 +261,7 @@ function FeedForecastPanelContent() {
           }
         }
         if (superseded()) return;
-        setCurrentRun({ ...run, existingRequisitionId, canCreateRequisition });
+        setCurrentRun({ ...run, existingRequisitionId, canCreateRequisition, coveredLines });
         setCalculationState('SAVED');
         setData(resolved);
         hydrateWindow({
@@ -272,6 +287,25 @@ function FeedForecastPanelContent() {
       cancelled = true;
     };
   }, [farmId, hydrateWindow, savedRunReload]);
+
+  // The farm's open feed requisitions, read when a calculation is on screen unsaved, for its cover check.
+  useEffect(() => {
+    if (!farmId || calculationState !== 'CALCULATED') return;
+    let alive = true;
+    api
+      .get(`/feed-requisition/open-lines?${new URLSearchParams({ farmId }).toString()}`)
+      .then((res) => {
+        const list = unwrap<OpenRequisitionLine[]>(res);
+        if (alive) setOpenLines(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {
+        // Without the list nothing is taken as covered: Save & Create stays offered.
+        if (alive) setOpenLines([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [farmId, calculationState, data]);
 
   // Share the window on screen with the Feed Requisition tab's "Draft from forecast".
   useEffect(() => {
@@ -322,6 +356,7 @@ function FeedForecastPanelContent() {
       const saved = unwrap<{ runCode: string; version: number }>(response);
       let canCreateRequisition = false;
       let existingRequisitionId: string | null = null;
+      let coveredLines: CoveredLine[] = [];
       const savedRunId =
         (saved as CurrentForecastRun).run_id ??
         (saved as CurrentForecastRun).runId;
@@ -330,8 +365,10 @@ function FeedForecastPanelContent() {
           const preview = unwrap<{
             existingRequisitionId?: string | null;
             lines?: unknown[];
+            covered_lines?: CoveredLine[];
           }>(await api.get(`/feed-requisition/from-run/${savedRunId}/preview`));
           existingRequisitionId = preview.existingRequisitionId ?? null;
+          coveredLines = Array.isArray(preview.covered_lines) ? preview.covered_lines : [];
           canCreateRequisition =
             !!existingRequisitionId ||
             (Array.isArray(preview.lines) && preview.lines.length > 0);
@@ -339,7 +376,7 @@ function FeedForecastPanelContent() {
           canCreateRequisition = false;
         }
       }
-      setCurrentRun({ ...saved, existingRequisitionId, canCreateRequisition });
+      setCurrentRun({ ...saved, existingRequisitionId, canCreateRequisition, coveredLines });
       setCalculationState('SAVED');
       if (thenCreateRequisition && canCreateRequisition && !existingRequisitionId) {
         setFromRunOpen(true);
@@ -467,6 +504,16 @@ function FeedForecastPanelContent() {
     ? data!.sourceBalances
     : [];
   const flags = Array.isArray(data?.flags) ? data!.flags : [];
+  // Rishi, 31 Oct: an unsaved calculation's run-downs that open requisitions it did not count already solve.
+  const shortSources = (Array.isArray(data?.sources) ? data!.sources : []).filter((x) => Number(x.shortfallKg) > 0);
+  const counted = countedRequisitions(sourceBalances);
+  const calculatedCover = shortSources.map((x) => ({ source: x, ...requisitionCover(x, openLines, counted) }));
+  const uncoveredShortages = calculatedCover.filter((c) => !c.covered).length;
+  const coveredNotes: CoveredLine[] = calculationState === 'SAVED'
+    ? (currentRun?.coveredLines ?? [])
+    : calculationState === 'CALCULATED'
+      ? calculatedCover.filter((c) => c.covered).map((c) => ({ destination_code: c.source.sourceCode ?? '', item_name: c.source.itemName ?? '', covered_by: c.by }))
+      : [];
   const dietChanges = Array.isArray(data?.dietChanges) ? data!.dietChanges : [];
   const periodList = Array.isArray(periods) ? periods : [];
   const rangeBeforePlanning = !!data && data.forecastFrom === null;
@@ -712,9 +759,7 @@ function FeedForecastPanelContent() {
                   >
                     {savingRun ? t('ffSavingRun') : t('ffSaveRun')}
                   </Button>
-                  {data?.rows?.some(
-                    (row) => Number(row.recommendedQtyKg ?? 0) > 0,
-                  ) && (
+                  {uncoveredShortages > 0 && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -837,6 +882,13 @@ function FeedForecastPanelContent() {
         <>
           {data ? (
             <>
+              {coveredNotes.length > 0 && !currentRun?.existingRequisitionId && (
+                <InlineAlert variant="info">
+                  {t('ffCoveredByRequisition', {
+                    lines: coveredNotes.map((c) => t('ffCoveredLine', { silo: c.destination_code, item: c.item_name, by: c.covered_by.join(', ') })).join('; '),
+                  })}
+                </InlineAlert>
+              )}
               {calculationState === 'SAVED' && !historicalRun && data.planningDate < todayIso() && (
                 <InlineAlert variant="info">{t('ffSavedRunPast', { date: formatDateShort(data.planningDate) })}</InlineAlert>
               )}

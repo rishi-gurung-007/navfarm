@@ -631,3 +631,29 @@ describe('dayCover — the mill sheet ticks a day the silo feeds, crosses one it
     expect(dayCover({ openingSystemBalanceKg: 0, openTransferMovementKg: 3000, dailyUseKg: 347.3 })).toEqual({ requiredKg: 347.3, covered: true });
   });
 });
+
+describe('requisitionCover — a run-down another open requisition already solves is not offered again (Rishi, 31 Oct)', () => {
+  const { requisitionCover, countedRequisitions } = jest.requireActual('./feed-requisition.rules') as typeof import('./feed-requisition.rules');
+  const line = { destinationLocationId: 'silo-1', itemId: 'grower', needKg: 2500, shortageDate: '2026-11-09' };
+  const open = (over: Record<string, unknown> = {}) => ({ requisition_id: 'r5', req_no: 'REQ-5', destination_location_id: 'silo-1', item_id: 'grower', quantity: 3000, proposed_delivery_date: '2026-11-07', ...over });
+  const none = { ids: new Set<string>(), nos: new Set<string>() };
+
+  it('is covered by enough feed for the same silo and feed, arriving by the shortage', () => {
+    expect(requisitionCover(line, [open()], none)).toEqual({ covered: true, by: ['REQ-5'] });
+  });
+  it('is not covered when too little, too late, or for another silo or feed', () => {
+    expect(requisitionCover(line, [open({ quantity: 2000 })], none).covered).toBe(false);
+    expect(requisitionCover(line, [open({ proposed_delivery_date: '2026-11-10' })], none).covered).toBe(false);
+    expect(requisitionCover(line, [open({ destination_location_id: 'silo-2' })], none).covered).toBe(false);
+    expect(requisitionCover(line, [open({ item_id: 'weaner' })], none).covered).toBe(false);
+  });
+  it('adds up several requisitions', () => {
+    expect(requisitionCover(line, [open({ quantity: 1500 }), open({ requisition_id: 'r6', req_no: 'REQ-6', quantity: 1500 })], none))
+      .toEqual({ covered: true, by: ['REQ-5', 'REQ-6'] });
+  });
+  it('leaves out a requisition the forecast already counted, as planned feed or as its transfer', () => {
+    const counted = countedRequisitions([{ incomingReferences: [{ kind: 'PLANNED_REQUISITION', referenceId: 'r5', referenceNo: 'REQ-5' }, { kind: 'OPEN_TRANSFER', referenceNo: 'TR-1', relatedReferenceNo: 'REQ-6' }] }]);
+    expect(requisitionCover(line, [open()], counted).covered).toBe(false);
+    expect(requisitionCover(line, [open({ requisition_id: 'r6', req_no: 'REQ-6' })], counted).covered).toBe(false);
+  });
+});

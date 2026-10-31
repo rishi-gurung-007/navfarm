@@ -353,7 +353,8 @@ describe('FeedForecastPanel — admin', () => {
   });
 
   it('Save & Create Requisition saves the run, then opens the requisition form filled from it (Rishi, 30 Oct)', async () => {
-    const shortage = { ...forecastResponse, data: { ...forecastResponse.data, rows: forecastResponse.data.rows.map((r) => ({ ...r, recommendedQtyKg: 3000 })) } };
+    const shortage = { ...forecastResponse, data: { ...forecastResponse.data, rows: forecastResponse.data.rows.map((r) => ({ ...r, recommendedQtyKg: 3000 })),
+      sources: [{ locationId: 'silo-2', sourceCode: 'VIL100/SILO-002', itemId: 'item-2', itemName: 'Dry Sow Gestation Mash (14% CP)', shortfallKg: 2800, shortageDate: '2026-09-26' }] } };
     const previewLine = {
       destination_location_id: 'silo-2', destination_code: 'VIL100/SILO-002', destination_name: 'Dry sow silo',
       item_id: 'item-2', item_code: 'FEED-DS', item_name: 'Dry Sow Gestation Mash (14% CP)',
@@ -385,6 +386,21 @@ describe('FeedForecastPanel — admin', () => {
     fireEvent.change(screen.getByLabelText('ffView'), { target: { value: 'CUSTOM' } });
     expect(screen.getByLabelText('ffDateFrom')).toBeTruthy();
     expect(screen.getByLabelText('ffDateTo')).toBeTruthy();
+  });
+
+  it('does not offer Save & Create when an open requisition would already cover the shortage, and says which (Rishi, 31 Oct)', async () => {
+    const shortage = { ...forecastResponse, data: { ...forecastResponse.data,
+      sources: [{ locationId: 'silo-2', sourceCode: 'VIL100/SILO-002', itemId: 'item-2', itemName: 'Dry Sow Gestation Mash (14% CP)', shortfallKg: 2800, shortageDate: '2026-09-28' }] } };
+    const openLine = { requisition_id: 'req-7', req_no: 'REQ-VIL100-2026-00007', destination_location_id: 'silo-2', item_id: 'item-2', quantity: 3000, proposed_delivery_date: '2026-09-27' };
+    get.mockImplementation((url: string) => url.startsWith('/feed-requisition/open-lines')
+      ? Promise.resolve({ success: true, data: [openLine] })
+      : routedGet({ current: () => Promise.resolve({ success: true, data: null }), feedForecast: () => Promise.resolve(shortage) })(url));
+    render(<FeedForecastPanel />);
+    await screen.findByText('ffCalculatePrompt');
+    fireEvent.click(screen.getByRole('button', { name: 'ffCalculate' }));
+    await screen.findByRole('button', { name: 'ffSaveRun' });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'ffSaveAndCreateRequisition' })).toBeNull());
+    expect(screen.getByText(/ffCoveredByRequisition/).textContent).toContain('REQ-VIL100-2026-00007');
   });
 
   it('asks for Recalculate when only the view changes', async () => {
