@@ -8101,6 +8101,8 @@ export const requisitionLine = mysqlTable('requisition_line', {
   first_shortage_date: date('first_shortage_date', { mode: 'string' }),
   // Requisition §1 row 34, per line (0212): the urgency of this feed for this silo; escalate only.
   priority: varchar('priority', { length: 30 }),
+  // Rishi, 30 Oct (0214): the farm's own order for this line, 1 first, typed when drafting from a calculation; the mill ranks by it after shortage date and days left.
+  priority_no: int('priority_no'),
   unrounded_need_kg: decimal('unrounded_need_kg', { precision: 18, scale: 4 }),
   recommended_qty_kg: decimal('recommended_qty_kg', {
     precision: 18,

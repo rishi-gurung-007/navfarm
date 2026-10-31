@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Field } from "@/components/ui/field";
-import { EmptyState } from "@/components/ui/states";
-import { Layers } from "lucide-react";
+import { EmptyState, LoadingState } from "@/components/ui/states";
+import { Check, Layers, X } from "lucide-react";
 import { useLanguage } from "@/hooks/useLanguage";
 import { showToast } from "@/components/ui/toast";
 import { unwrap } from "./feed-format";
@@ -14,6 +14,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { millCapacityText, formatKg, type MillCapacityState, type MillCapacityStatus } from "./mill-capacity-view";
 import { PRIORITY_LABEL, labelOf } from "./requisition-labels";
 import { formatDateShort } from "./feed-format";
+import { HoverHint } from "@/components/ui/hover-hint";
 
 type EligibleLine = {
   requisition_id: string; req_no: string; farm_id: string; farm_code: string; farm_name: string | null;
@@ -25,10 +26,15 @@ type EligibleLine = {
   /** Engine r42–r43 for the line's diet on its production date (Requisition and Loading Sheet r125). */
   mill_capacity_state?: MillCapacityState; mill_capacity_status?: MillCapacityStatus | null; mill_demand_kg?: number | null;
   /** What the mill ranks by (GET …/consolidations/eligible): stored from the calculation, or live for a manual requisition. */
-  priority?: string | null; figures_source?: "STORED" | "LIVE" | "NONE";
+  priority?: string | null; priority_no?: number | null; figures_source?: "STORED" | "LIVE" | "NONE";
   silo_capacity_kg?: number | null; system_balance_kg?: number | null; daily_requirement_kg?: number | null;
   days_remaining?: number | null; first_shortage_date?: string | null; recommended_qty_kg?: number | null;
   is_next_diet?: boolean; needs_silo_changeover?: boolean; exceeds_silo_capacity?: boolean;
+  /** Rishi, 30 Oct: the line's Breed Lifecycle Row and countdown to its diet, and its silo's projected stock each morning. */
+  lifecycle_ref_label?: string | null; days_before_diet_change?: number | null;
+  forecast_days?: Array<{ date: string; stock_kg: number; required_kg?: number | null; covered?: boolean | null }>; delivery_day_stock_kg?: number | null;
+  /** The delivery date is before today: the forecast counts it as arriving today, so the first day carries it. */
+  delivery_overdue?: boolean;
   batches?: Array<{ batch_id: string; batch_no: string | null; shed_code: string | null; heads: number | null }>;
 };
 
@@ -51,6 +57,8 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
   const [busy, setBusy] = useState(false);
   const [dateHint, setDateHint] = useState("");
   const [selectHint, setSelectHint] = useState("");
+  // Whether a search has answered yet, so an empty sheet says "none waiting" rather than "press Find".
+  const [searched, setSearched] = useState(false);
 
   const load = async () => {
     setBusy(true);
@@ -64,10 +72,18 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
       if (mode === "date") { if (fromDate) params.set("fromDate", fromDate); if (toDate) params.set("toDate", toDate); }
       const data = unwrap<EligibleLine[]>(await api.get(`/feed-requisition/consolidations/eligible?${params.toString()}`));
       setRows(Array.isArray(data) ? data : []);
+      setSearched(true);
       setSelected([]); setApproved({}); setReasons({});
     } catch (err: any) { showToast.error(err?.message || t("fcdLoadFailed")); }
     finally { setBusy(false); }
   };
+
+  // Rishi, 31 Oct: the sheet opens with every approved requisition waiting for it already listed; Find narrows
+  // or reloads it. Once per opening, so a search typed meanwhile is not overwritten.
+  useEffect(() => {
+    if (open && mode === "requisition") void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const requisitions = useMemo(() => {
     const map = new Map<string, EligibleLine>();
@@ -81,6 +97,8 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
     return rows.filter((row) => shown.has(row.requisition_id));
   }, [rows, requisitions]);
   const selectedRows = rows.filter((row) => selected.includes(row.requisition_id));
+  // One column per forecast day across the sheet (farms share a calendar; a farm a day ahead adds its day).
+  const forecastDates = useMemo(() => [...new Set(lines.flatMap((row) => (row.forecast_days ?? []).map((d) => d.date)))].sort(), [lines]);
   const toggle = (id: string) => setSelected((current) => current.includes(id) ? current.filter((value) => value !== id) : [...current, id]);
 
   const create = async () => {
@@ -112,7 +130,7 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
   const binName = (row: EligibleLine) => row.loading_bin ? `${row.loading_bin_name ?? ""}${row.loading_bin_capacity_kg == null ? "" : ` · ${formatKg(row.loading_bin_capacity_kg)} KG`}` : t("fcdNotConfigured");
   const th = (label: string, cls = "") => <th key={label} scope="col" className={`${TH} ${cls}`}>{label}</th>;
 
-  return <Dialog open={open} onClose={onClose} title={t("fcdTitle")} description={t("fcdIntro")} maxWidth="xl" presentation="compact" className="w-[95vw] max-h-[85vh]" footer={<><Button variant="outline" onClick={onClose}>{t("fcdCancel")}</Button><Button onClick={create} disabled={busy || !selectedRows.length}>{t("fcdCreate")}</Button></>}>
+  return <Dialog open={open} onClose={onClose} title={t("fcdTitle")} description={t("fcdIntro")} maxWidth="xl" presentation="compact" className="w-[98vw] max-w-[98vw] h-[calc(100dvh-2rem)] sm:h-[calc(100dvh-3rem)]" footer={<><Button variant="outline" onClick={onClose}>{t("fcdCancel")}</Button><Button onClick={create} disabled={busy || !selectedRows.length}>{t("fcdCreate")}</Button></>}>
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-3 [&_.nf-input-sm]:h-9 [&>button]:h-9">
         <Field label={t("fcdSelectBy")} htmlFor="consolidation-filter">
@@ -145,17 +163,20 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
       </div>
       {dateHint && <p role="alert" className="text-xs" style={{ color: "var(--danger)" }}>{dateHint}</p>}
       {rows.length > 0 && <p className="text-xs text-(--text-secondary)">{t("fcdUrgencyHint")}</p>}
-      {rows.length > 0 && <div data-table-scroll className="max-h-[55vh] shrink-0 overflow-x-auto overflow-y-auto rounded-md border border-(--border) bg-(--surface)"><table aria-label={t("fcdTableLabel")} className="w-max min-w-full border-separate border-spacing-0 text-left">
+      {rows.length > 0 && <div data-table-scroll className="max-h-[calc(100dvh-21rem)] shrink-0 overflow-x-auto overflow-y-auto rounded-md border border-(--border) bg-(--surface)"><table aria-label={t("fcdTableLabel")} className="w-max min-w-full border-separate border-spacing-0 text-left">
         <thead><tr>
           <th scope="col" data-sticky-col="true" style={PIN("0rem")} className={`${TH} w-[3rem] min-w-[3rem]`}>{t("fcdColSelect")}</th>
           <th scope="col" data-sticky-col="true" style={PIN("3rem")} className={`${TH} w-[3rem] min-w-[3rem] text-right`}>{t("fcdColRank")}</th>
           <th scope="col" data-sticky-col="true" style={PIN("6rem")} className={`${TH} w-[12rem] min-w-[12rem]`}>{t("fcdColReqNo")}</th>
           <th scope="col" data-sticky-col="last" style={PIN("18rem")} className={`${TH} w-[10rem] min-w-[10rem]`}>{t("fcdColFarm")}</th>
-          {th(t("fcdColPriority"))}{th(t("fcdColFirstShortage"))}{th(t("fcdColDaysRemaining"), "text-right")}
+          {th(t("fcdColPriority"))}{th(t("fcdColPriorityNo"), "text-right")}{th(t("fcdColFirstShortage"))}{th(t("fcdColDaysRemaining"), "text-right")}
+          {th(t("fcdColLifecycle"), "min-w-52")}{th(t("fcdColDaysBeforeDiet"), "text-right")}
           {th(t("fcdColSiloCode"), "min-w-28")}{th(t("fcdColSiloName"), "min-w-40")}{th(t("fcdColSiloCapacity"), "text-right")}
           {th(t("fcdColSystemBalance"), "text-right")}{th(t("fcdColDailyUse"), "text-right")}
           {th(t("fcdColItemNo"), "min-w-32")}{th(t("fcdColItemName"), "min-w-56")}{th(t("fcdColBatches"), "min-w-52")}
-          {th(t("fcdColDelivery"))}{th(t("fcdColRequested"), "text-right")}{th(t("fcdColRecommended"), "text-right")}{th(t("fcdColNotes"), "min-w-40")}
+          {th(t("fcdColDelivery"))}{th(t("fcdColRequested"), "text-right")}{th(t("fcdColRecommended"), "text-right")}
+          {forecastDates.map((date) => <th key={date} scope="col" className={`${TH} min-w-20 text-center bg-(--table-header-alt)`} title={t("fcdForecastDayHint", { date: formatDateShort(date) })}>{formatDateShort(date)}</th>)}
+          {th(t("fcdColNotes"), "min-w-40")}
           {th(t("fcdColBin"), "min-w-28")}{th(t("fcdColBinName"), "min-w-44")}{th(t("feedPlanColCapacity"), "min-w-36")}
           {th(t("fcdColApproved"), "text-right")}{th(t("fcdColReason"), "min-w-52")}{th(t("fcdColFigures"))}
         </tr></thead>
@@ -168,8 +189,11 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
             <td data-sticky-col="true" style={PIN("6rem")} className={`${TD} w-[12rem] min-w-[12rem] whitespace-nowrap font-medium`}>{row.req_no}</td>
             <td data-sticky-col="last" style={PIN("18rem")} className={`${TD} w-[10rem] max-w-[10rem] truncate`} title={`${row.farm_code} — ${row.farm_name ?? ""}`}>{row.farm_code}<div className="truncate text-xs text-(--text-secondary)">{row.farm_name}</div></td>
             <td className={`${TD} whitespace-nowrap`}>{row.priority ? labelOf(PRIORITY_LABEL, row.priority, t) : NA}</td>
+            <td className={`${TD} ${NUM}`}>{row.priority_no ?? NA}</td>
             <td className={`${TD} whitespace-nowrap`}>{row.first_shortage_date ? formatDateShort(row.first_shortage_date) : row.figures_source === "NONE" ? NA : t("fcdNoShortage")}</td>
             <td className={`${TD} ${NUM}`}>{row.days_remaining == null ? NA : Number(row.days_remaining).toFixed(1)}</td>
+            <td className={`${TD} whitespace-normal break-words text-xs`}>{row.lifecycle_ref_label ?? <HoverHint hint={t("fcdNaLifecycle")}>{NA}</HoverHint>}</td>
+            <td className={`${TD} ${NUM}`}>{row.days_before_diet_change ?? <HoverHint hint={t(row.is_next_diet ? "fcdNaLifecycle" : "fcdNaNotNextDiet")}>{NA}</HoverHint>}</td>
             <td className={`${TD} whitespace-nowrap`}>{siloCode(row)}</td>
             <td className={`${TD} whitespace-normal break-words`}>{siloName(row)}</td>
             <td className={`${TD} ${NUM}`}>{row.silo_capacity_kg == null ? NA : `${formatKg(row.silo_capacity_kg)} KG`}</td>
@@ -181,6 +205,7 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
             <td className={`${TD} whitespace-nowrap`}>{row.proposed_delivery_date ? formatDateShort(row.proposed_delivery_date) : NA}</td>
             <td className={`${TD} ${NUM}`}>{formatKg(row.quantity)} KG</td>
             <td className={`${TD} ${NUM}`}>{row.recommended_qty_kg == null ? NA : `${formatKg(row.recommended_qty_kg)} KG`}</td>
+            {forecastDates.map((date) => <ForecastDayCell key={date} row={row} date={date} t={t} na={NA} />)}
             <td className={`${TD} whitespace-normal break-words text-xs`} style={notes ? { color: "var(--warning)" } : undefined}>{notes || NA}</td>
             <td className={`${TD} whitespace-nowrap`}>{binCode(row)}</td>
             <td className={`${TD} whitespace-normal break-words`}>{binName(row)}</td>
@@ -191,7 +216,9 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
           </tr>;
         })}</tbody></table></div>}
       {selectHint && <p role="alert" className="text-xs" style={{ color: "var(--danger)" }}>{selectHint}</p>}
-      {!rows.length && <EmptyState icon={Layers} title={t("fcdPrompt")} className="py-10" />}
+      {!rows.length && (busy
+        ? <LoadingState label={t("fcdLoading")} />
+        : <EmptyState icon={Layers} title={t(searched ? "fcdEmpty" : "fcdPrompt")} className="py-10" />)}
     </div>
   </Dialog>;
 }
@@ -211,4 +238,50 @@ function CapacityCell({ row, t }: { row: EligibleLine; t: ReturnType<typeof useL
       </span>
     )}
   </span>;
+}
+
+/**
+ * One morning of the line's silo. The delivery day is outlined — a late delivery (dated before today) on the
+ * first day, in amber, since the forecast counts it as arriving today. A day the silo would hold more than
+ * its capacity reads red, an empty one amber. The delivery cell says on hover what arrives onto what.
+ */
+function ForecastDayCell({ row, date, t, na }: { row: EligibleLine; date: string; t: ReturnType<typeof useLanguage>["t"]; na: string }) {
+  const day = row.forecast_days?.find((d) => d.date === date);
+  const delivery = row.proposed_delivery_date ? String(row.proposed_delivery_date).slice(0, 10) : null;
+  const late = !!row.delivery_overdue && row.forecast_days?.[0]?.date === date;
+  const isDelivery = delivery === date || late;
+  const outline = isDelivery ? `outline outline-2 -outline-offset-2 ${late ? "outline-(--warning)" : "outline-(--accent)"}` : "";
+  if (!day) {
+    return <td className={`${TD} text-center text-(--text-secondary)`}><HoverHint hint={t(row.destination_silo_id ? "fcdNaNoForecast" : "fcdNaStore")}>{na}</HoverHint></td>;
+  }
+  const deliveryHint = !isDelivery ? null : late
+    ? t("fcdLateDeliveryHint", { due: formatDateShort(delivery ?? ""), requested: formatKg(row.quantity), stock: formatKg(day.stock_kg) })
+    : t("fcdDeliveryDayHint", { requested: formatKg(row.quantity), stock: formatKg(row.delivery_day_stock_kg ?? day.stock_kg) });
+  // Rishi, 31 Oct: N/A on a day the line's feed is not needed; otherwise a tick when the silo covers the day's use, a cross when it falls short.
+  if (day.required_kg == null) {
+    return <td data-delivery-day={isDelivery || undefined} data-delivery-late={late || undefined} data-not-required="true" className={`${TD} text-center text-(--text-secondary) ${outline}`}>
+      <HoverHint hint={[t("fcdNotRequiredOnDate"), deliveryHint].filter(Boolean).join(" · ")}>{na}</HoverHint>
+    </td>;
+  }
+  // Rishi, 31 Oct: the cell shows only the tick or cross; the kilograms are in the hover.
+  const over = row.silo_capacity_kg != null && day.stock_kg > row.silo_capacity_kg + 1e-6;
+  const coverHint = day.covered
+    ? t("fcdCoveredHint", { need: formatKg(day.required_kg), stock: formatKg(day.stock_kg) })
+    : t("fcdShortHint", { need: formatKg(day.required_kg), stock: formatKg(day.stock_kg) });
+  const overHint = over ? t("fcdOverCapacityHint", { capacity: formatKg(row.silo_capacity_kg) }) : null;
+  return <td
+    data-delivery-day={isDelivery || undefined}
+    data-delivery-late={late || undefined}
+    data-covered={day.covered ? "true" : "false"}
+    data-over-capacity={over || undefined}
+    className={`${TD} text-center ${outline}`}
+  >
+    <HoverHint hint={[coverHint, overHint, deliveryHint].filter(Boolean).join(" · ")}>
+      <span className="inline-flex items-center justify-center">
+        {day.covered
+          ? <Check aria-label={t("fcdCovered")} className="h-4 w-4 shrink-0" style={{ color: "var(--success)" }} />
+          : <X aria-label={t("fcdShort")} className="h-4 w-4 shrink-0" style={{ color: "var(--danger)" }} />}
+      </span>
+    </HoverHint>
+  </td>;
 }

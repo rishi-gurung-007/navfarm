@@ -50,14 +50,16 @@ describe('feed requisition from a saved calculation', () => {
         location_type: 'SILO', feed_in_bags: false,
       }]],
       ['existing', []],
+      ['open', []],
     ]);
     let call = 0;
-    const order = ['run', 'lines', 'items', 'destinations', 'existing'];
+    const order = ['run', 'lines', 'items', 'destinations', 'existing', 'open'];
     const db: any = {
       select: jest.fn(() => {
         const key = order[call++];
         const chain: any = {
           from: () => chain,
+          innerJoin: () => chain,
           where: () => chain,
           orderBy: () => chain,
           limit: () => chain,
@@ -79,6 +81,17 @@ describe('feed requisition from a saved calculation', () => {
 
     expect(result.lines[0]).toMatchObject({ recommended_qty_kg: 6000, quantity_kg: 6000 });
     expect(forecast.getForecast).not.toHaveBeenCalled();
+
+    // Rishi, 31 Oct: an open requisition the run did not count, bringing the need before the shortage, solves the
+    // run-down — the line is left out and named as covered.
+    rows.set('open', [{
+      requisition_id: 'req-9', req_no: 'REQ-GRA100-2026-00009', status: 'PENDING_APPROVAL', approval_status: 'PENDING_APPROVAL', document_status: 'OPEN',
+      destination_location_id: 'silo-1', item_id: 'item-1', quantity: '6000.0000', proposed_delivery_date: '2026-10-11',
+    }]);
+    call = 0;
+    const covered = await service.previewFromRun('run-1', 'tenant-1', req.user);
+    expect(covered.lines).toEqual([]);
+    expect(covered.covered_lines).toEqual([{ destination_code: 'GRA100/SILO-001', item_name: 'Grower Feed', covered_by: ['REQ-GRA100-2026-00009'] }]);
   });
 
   it('refuses a second requisition for the same run before writing', async () => {
