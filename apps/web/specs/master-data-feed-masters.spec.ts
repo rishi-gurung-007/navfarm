@@ -94,7 +94,8 @@ describe('Reporting Period configuration and Alert Rules navigation', () => {
   // that asks for none is left to the table's usual display.
   it('asks for no new formatting on any other master, so their lists are unchanged', () => {
     const touched = MASTER_DATA_CONFIGS.filter((c) => (c.columns ?? []).some((col) => col.format || col.labels)).map((c) => c.key);
-    expect(touched.sort()).toEqual(['alert-rule', 'bin-diet-assignment', 'reporting-period']);
+    // Accounting Periods (R12) shows its Starting and Ending Dates the same way Reporting Periods does.
+    expect(touched.sort()).toEqual(['accounting-period', 'alert-rule', 'bin-diet-assignment', 'reporting-period']);
     for (const key of ['location', 'item', 'breed', 'stage', 'number-series']) {
       const cols = getConfig(key)?.columns ?? [];
       expect(cols.every((col) => !col.format && !col.labels)).toBe(true);

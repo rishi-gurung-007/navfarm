@@ -5978,6 +5978,50 @@ export const alertRule = mysqlTable(
 );
 
 /** Reporting Period Master (spec D20, migration 0121). One row per company and period; business_year and production_start_date are derived on save. */
+/**
+ * Accounting Period Master (Business Central's Accounting Periods): each row starts a period on its
+ * Starting Date and runs to the day before the next row's; a row marked New Fiscal Year starts a fiscal
+ * year. Kept alongside reporting_period (which the feed screens read); the Monthly Ops report (R12) reads this.
+ */
+export const accountingPeriod = mysqlTable(
+  'accounting_period',
+  {
+    accounting_period_id: varchar('accounting_period_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(
+      () => companyMaster.company_id,
+      { onDelete: 'cascade' },
+    ),
+    starting_date: date('starting_date', { mode: 'string' }).notNull(),
+    name: varchar('name', { length: 30 }).notNull(),
+    new_fiscal_year: boolean('new_fiscal_year').default(false).notNull(),
+    closed: boolean('closed').default(false).notNull(),
+    date_locked: boolean('date_locked').default(false).notNull(),
+    inventory_period_closed: boolean('inventory_period_closed')
+      .default(false)
+      .notNull(),
+    is_active: boolean('is_active').default(true).notNull(),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  },
+  (table) => ({
+    uqStart: uniqueIndex('uq_accounting_period_start').on(
+      table.tenant_id,
+      table.company_id,
+      table.starting_date,
+    ),
+  }),
+);
+
 export const reportingPeriod = mysqlTable(
   'reporting_period',
   {

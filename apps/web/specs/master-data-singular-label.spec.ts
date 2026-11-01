@@ -38,6 +38,7 @@ const EXPECTED: Record<string, string> = {
   reason: "Reason",
   "alert-rule": "Alert Rule",
   "reporting-period": "Reporting Period",
+  "accounting-period": "Accounting Period",
   "bin-diet-assignment": "BIN Diet Assignment",
   // "Currencies" -> "Currency": a -ies plural the trailing-s rule turns
   // into "Currencie", which is exactly what this map exists to catch.
