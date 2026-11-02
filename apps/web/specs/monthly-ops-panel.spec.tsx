@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import MonthlyOpsPanel from '../src/components/console/reports/monthly-ops-panel';
 import { api } from '../src/services/api-client';
 
@@ -51,5 +51,36 @@ describe('Monthly Ops — Generate button', () => {
 
     await pick('rptFarm', 'Kintyre');
     expect(screen.getByRole('button', { name: 'rptRegenerate' })).toBeTruthy();
+  });
+});
+
+// Rishi, 2 Nov: Empty Days and Cull are two columns; Empty Days is the month's total, with the sows it covers beneath.
+describe('Monthly Ops — Empty Days and Cull', () => {
+  it('shows Empty Days and Cull as separate columns', async () => {
+    const metrics = {
+      empty_days: 212, empty_sows: 18, sows_culled: 3, total_born: 0, born_alive: 0, litters_farrowed: 0,
+      sows_served_one_gestation_earlier: 0, services_farrowed: 0, farrowing_rate_pct: null, avg_wean_weight_kg: null,
+      total_litter_mass_kg: null, litters_weaned: 0, cdm_kg: 0, kg_sold: 0, average_sows: null, kg_sold_per_sow_year: null,
+      sows_due: 0, standovers: 0, standovers_pct: null, mortality_total: 0, mortality_by_category: [], sows_on_last_day: 0,
+      parity_distribution: [],
+    };
+    get.mockImplementation(async (url: string) => {
+      if (url.startsWith('/reports/monthly-ops/farms')) return { data: [{ farm_id: 'farm-1', farm_code: 'GRS', farm_name: 'Grasmere', company_id: 'co-1' }] };
+      if (url.startsWith('/reports/monthly-ops/years')) return { data: { years: ['2026-27'], current: '2026-27' } };
+      return { data: { farm: { farm_id: 'farm-1', farm_code: 'GRS', farm_name: 'Grasmere' }, year: '2026-27', generated_at: '2026-11-02T10:00:00Z',
+        rows: [{ month: 'October', start_date: '2026-09-27', end_date: '2026-10-24', breed_id: 'b', breed_name: 'Z-Line-Sow', metrics }] } };
+    });
+    render(<MonthlyOpsPanel />);
+    const generate = await screen.findByRole('button', { name: 'rptGenerate' });
+    await waitFor(() => expect((generate as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(generate);
+    const table = await screen.findByRole('table');
+    const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers).toEqual(expect.arrayContaining(['mopEmptyDays', 'mopCull']));
+    expect(headers).not.toContain('mopEmptyDaysCull');
+    const cells = within(within(table).getAllByRole('row')[1]).getAllByRole('cell').map((c) => c.textContent);
+    const at = headers.indexOf('mopEmptyDays');
+    expect(cells[at]).toBe('21218 sows');
+    expect(cells[headers.indexOf('mopCull')]).toBe('3');
   });
 });

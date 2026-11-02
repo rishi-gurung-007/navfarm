@@ -17,7 +17,8 @@ import type { TranslationKeys } from '@/utils/translations';
 type Row = Record<string, any>;
 
 interface OpsMetrics {
-  empty_days_per_cull: number | null;
+  empty_days: number;
+  empty_sows: number;
   sows_culled: number;
   total_born: number;
   born_alive: number;
@@ -79,12 +80,14 @@ const COLUMNS: Array<{
   cell: (m: OpsMetrics) => string;
   hint?: (m: OpsMetrics) => string;
 }> = [
+  // Rishi, 2 Nov: two columns. Empty Days is the month's total of days sows were not productive after farrowing.
   {
-    key: 'mopEmptyDaysCull',
+    key: 'mopEmptyDays',
     num: true,
-    cell: (m) => fmt(m.empty_days_per_cull, 1),
-    hint: (m) => `${m.sows_culled} culled`,
+    cell: (m) => fmt(m.empty_days, 0),
+    hint: (m) => `${m.empty_sows} sows`,
   },
+  { key: 'mopCull', num: true, cell: (m) => fmt(m.sows_culled, 0) },
   {
     key: 'mopTotalBorn',
     num: true,

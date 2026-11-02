@@ -126,7 +126,7 @@ export class MonthlyOpsService {
     const R = schema.breedingRecord;
     const services = sowIds.length ? await this.db.select({
       breeding_id: R.breeding_id, sow_animal_id: R.sow_animal_id, mating_date: R.mating_date,
-      expected_farrowing_date: R.expected_farrowing_date, conception_result: R.conception_result,
+      expected_farrowing_date: R.expected_farrowing_date, conception_result: R.conception_result, preg_check_date: R.preg_check_date,
     }).from(R).where(inArray(R.sow_animal_id, sowIds)) : [];
 
     // Sales of the farm's animals (any type) in the year, with the customer the sale's ledger entry names.
@@ -169,6 +169,7 @@ export class MonthlyOpsService {
           breeding_id: s.breeding_id, sow_animal_id: s.sow_animal_id, mating_date: String(s.mating_date).slice(0, 10),
           expected_farrowing_date: s.expected_farrowing_date ? String(s.expected_farrowing_date).slice(0, 10) : null,
           conception_result: s.conception_result ?? null,
+          preg_check_date: s.preg_check_date ? String(s.preg_check_date).slice(0, 10) : null,
         }));
         const opsSows: OpsSow[] = sowRows.filter((s) => s.breed_id === breed.breed_id).map((s) => ({
           animal_id: s.animal_id, entry_date: s.entry_date ? String(s.entry_date).slice(0, 10) : null,

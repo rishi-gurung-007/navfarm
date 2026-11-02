@@ -8,8 +8,9 @@ import { addDays } from '../../inventory/feed-forecast/feed-forecast.engine';
  *     gestation days, 115 when the breed has none), the share that farrowed — matched through the litter's own
  *     service, so it counts the same sows and never passes 100 %.
  *   - Avg Wean Weight / Total Litter Mass: the litters weaned in the month, as R07 reads them.
- *   - Empty Days/Cull: for sows culled in the month, the average days from their last weaning (or, with none, their
- *     last service, or their entry) to the cull.
+ *   - Empty Days (Rishi, 2 Nov): the total of the days in the month that sows were not productive after farrowing —
+ *     from a weaning, or a failed (REPEAT) service's pregnancy check, to the next service, or until she leaves.
+ *   - Cull: sows culled in the month.
  *   - CDM: kg (exit weight) of pigs sold to the Colcom customer in the month.
  *   - KG Sold/Sow/Year: kg sold in the month ÷ average sows × (365 ÷ days in the month).
  *   - Standovers %: sows due to farrow in the month (to today) that have not farrowed ÷ sows due.
@@ -38,6 +39,8 @@ export interface OpsService {
   mating_date: string;
   expected_farrowing_date: string | null;
   conception_result: string | null;
+  /** The pregnancy check: for a failed (REPEAT) service, the day she is known to be empty again. */
+  preg_check_date?: string | null;
 }
 
 export interface OpsSow {
@@ -67,7 +70,10 @@ export interface OpsMonth {
 }
 
 export interface OpsMetrics {
-  empty_days_per_cull: number | null;
+  /** Total sow-days in the month spent empty after farrowing (weaned or failed, not yet served again). */
+  empty_days: number;
+  /** The sows with at least one such day. */
+  empty_sows: number;
   sows_culled: number;
   total_born: number;
   born_alive: number;
@@ -143,19 +149,30 @@ export function computeMonthlyOps(args: {
   const weanedHead = weighed.reduce((a, f) => a + f.piglets_weaned, 0);
   const litterMass = weighed.reduce((a, f) => a + f.piglets_weaned * (f.avg_weaning_weight_kg as number), 0);
 
-  // Empty Days per cull.
+  // Cull: sows culled in the month.
   const culled = sows.filter((s) => within(s.cull_date, month));
-  const emptyDays = culled.map((s) => {
-    const cull = s.cull_date as string;
-    const lastWean = farrowings
-      .filter((f) => f.sow_animal_id === s.animal_id && f.weaning_date && f.weaning_date <= cull)
-      .map((f) => f.weaning_date as string).sort().pop();
-    const lastService = services
-      .filter((x) => x.sow_animal_id === s.animal_id && x.mating_date <= cull)
-      .map((x) => x.mating_date).sort().pop();
-    const from = lastWean ?? lastService ?? s.entry_date;
-    return from ? daysBetween(from, cull) : null;
-  }).filter((d): d is number => d !== null);
+
+  // Empty Days: each sow is empty from a weaning, or a failed service's pregnancy check, until her next service or the
+  // day she leaves; a gilt that has not farrowed is not counted. Only the days inside the month add up.
+  let empty_days = 0;
+  let empty_sows = 0;
+  for (const s of sows) {
+    const litters = farrowings.filter((f) => f.sow_animal_id === s.animal_id);
+    const served = services.filter((x) => x.sow_animal_id === s.animal_id).map((x) => x.mating_date).sort();
+    const starts = [
+      ...litters.map((f) => f.weaning_date),
+      ...services.filter((x) => x.sow_animal_id === s.animal_id && x.conception_result === 'REPEAT').map((x) => x.preg_check_date),
+    ].filter((d): d is string => !!d && litters.some((f) => f.farrowing_date <= d));
+    let days = 0;
+    for (const start of starts) {
+      const next = served.find((d) => d >= start);
+      const ends = [next, s.exit_date].filter((d): d is string => !!d).sort()[0]; // first day she is no longer empty
+      const from = start > month.startDate ? start : month.startDate;
+      const toExcl = ends && ends <= month.endDate ? ends : addDays(month.endDate, 1);
+      if (toExcl > from) days += daysBetween(from, toExcl);
+    }
+    if (days > 0) { empty_days += days; empty_sows += 1; }
+  }
 
   // Sales.
   const sold = sales.filter((s) => within(s.disposal_date, month));
@@ -195,7 +212,8 @@ export function computeMonthlyOps(args: {
   }
 
   return {
-    empty_days_per_cull: emptyDays.length ? round(emptyDays.reduce((a, d) => a + d, 0) / emptyDays.length, 1) : null,
+    empty_days,
+    empty_sows,
     sows_culled: culled.length,
     total_born,
     born_alive,

@@ -35,14 +35,58 @@ describe('R12 Monthly Ops — one farm, one accounting month, one breed', () => 
     expect(m).toMatchObject({ avg_wean_weight_kg: 7, total_litter_mass_kg: 140, litters_weaned: 2 });
   });
 
-  it('measures empty days per cull from the last weaning, else the last service', () => {
+  // Rishi, 2 Nov: Empty Days and Cull are two columns. Empty Days is the total of the days in the month that sows were
+  // not productive after farrowing: from weaning (or a failed service's pregnancy check) to the next service.
+  it('counts the sows culled in the month on their own', () => {
+    const m = run({ sows: [sow({ animal_id: 's1', cull_date: '2026-10-20', exit_date: '2026-10-20' }), sow({ animal_id: 's2', cull_date: '2026-11-01', exit_date: '2026-11-01' })] });
+    expect(m.sows_culled).toBe(1);
+  });
+
+  it('totals the empty days from weaning to the next service, inside the month only', () => {
     const m = run({
-      sows: [sow({ animal_id: 's1', cull_date: '2026-10-20', exit_date: '2026-10-20' }), sow({ animal_id: 's2', cull_date: '2026-10-10', exit_date: '2026-10-10' })],
-      farrowings: [litter({ sow_animal_id: 's1', weaning_date: '2026-10-10' })],
-      services: [service({ sow_animal_id: 's2', mating_date: '2026-09-30' })],
+      sows: [sow({ animal_id: 's1' }), sow({ animal_id: 's2' })],
+      farrowings: [
+        litter({ sow_animal_id: 's1', farrowing_date: '2026-09-01', weaning_date: '2026-10-01' }), // served 6 Oct: 5 days
+        litter({ sow_animal_id: 's2', farrowing_date: '2026-08-20', weaning_date: '2026-09-20' }), // served 2 Oct: 27 Sep-1 Oct, 5 days
+      ],
+      services: [
+        service({ sow_animal_id: 's1', breeding_id: 'b1', mating_date: '2026-10-06' }),
+        service({ sow_animal_id: 's2', breeding_id: 'b2', mating_date: '2026-10-02' }),
+      ],
     });
-    expect(m.sows_culled).toBe(2);
-    expect(m.empty_days_per_cull).toBe(10); // (10 + 10) / 2
+    expect(m).toMatchObject({ empty_days: 10, empty_sows: 2 });
+  });
+
+  it('runs on to the month end while she waits, and stops when she is culled', () => {
+    const m = run({
+      sows: [sow({ animal_id: 's1' }), sow({ animal_id: 's2', cull_date: '2026-10-15', exit_date: '2026-10-15' })],
+      farrowings: [
+        litter({ sow_animal_id: 's1', farrowing_date: '2026-09-01', weaning_date: '2026-10-20' }), // 20-24 Oct: 5 days
+        litter({ sow_animal_id: 's2', farrowing_date: '2026-09-01', weaning_date: '2026-10-10' }), // 10-14 Oct: 5 days
+      ],
+    });
+    expect(m).toMatchObject({ empty_days: 10, empty_sows: 2, sows_culled: 1 });
+  });
+
+  it('makes a sow empty again from a failed service\'s pregnancy check until she is served again', () => {
+    const m = run({
+      sows: [sow({ animal_id: 's1' })],
+      farrowings: [litter({ sow_animal_id: 's1', farrowing_date: '2026-07-01', weaning_date: '2026-08-01' })],
+      services: [
+        service({ sow_animal_id: 's1', breeding_id: 'b1', mating_date: '2026-08-05', conception_result: 'REPEAT', preg_check_date: '2026-10-03' }),
+        service({ sow_animal_id: 's1', breeding_id: 'b2', mating_date: '2026-10-12' }),
+      ],
+    });
+    expect(m).toMatchObject({ empty_days: 9, empty_sows: 1 }); // 3-11 Oct
+  });
+
+  it('leaves out a gilt that has not farrowed, and days she is pregnant or lactating', () => {
+    const m = run({
+      sows: [sow({ animal_id: 'g1' }), sow({ animal_id: 's1' })],
+      services: [service({ sow_animal_id: 'g1', breeding_id: 'g', mating_date: '2026-09-01', conception_result: 'REPEAT', preg_check_date: '2026-09-29' })],
+      farrowings: [litter({ sow_animal_id: 's1', farrowing_date: '2026-10-01', weaning_date: null })],
+    });
+    expect(m).toMatchObject({ empty_days: 0, empty_sows: 0 });
   });
 
   it('counts CDM as Colcom kg only, and scales kg sold per average sow to a year', () => {
