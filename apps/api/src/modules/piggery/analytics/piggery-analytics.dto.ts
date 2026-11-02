@@ -1,4 +1,4 @@
-import type { Alert, MetricRow } from './gm-dashboard.metrics';
+import type { Alert, FarmAlert, FarmRow, MetricRow } from './gm-dashboard.metrics';
 
 export interface QueryPiggeryGmDashboardDto {
   companyId?: string;
@@ -29,4 +29,17 @@ export interface PiggeryGmDashboardData {
   breeding: MetricRow[];
   weaner_grower: MetricRow[];
   alerts: Alert[];
+  /** With one farm chosen: its figures over This Week, the 4-week average, This Month, Prev. Month and 3 Months. */
+  farm_view: GmFarmView | null;
+}
+
+export interface GmFarmView {
+  farm: { farm_id: string; farm_code: string; farm_name: string };
+  /** Sows on the farm on the period's last day (or today). */
+  sows: number;
+  windows: Array<{ key: string; start_date: string; end_date: string }>;
+  kg_sold_per_sow_year_ytd: number | null;
+  breeding: FarmRow[];
+  weaner_grower: FarmRow[];
+  alerts: FarmAlert[];
 }

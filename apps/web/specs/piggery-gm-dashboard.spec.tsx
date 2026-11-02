@@ -31,6 +31,21 @@ const response = (periodId: string, farmId?: string) => ({
     weaner_grower: [{ key: 'gain_70_day', label: '70 Day Gain', unit: 'kg', lower_is_better: false, cells: {
       g: { value: 21.9, target: null, status: null }, p: { value: null, target: null, status: null } } }],
     alerts: [{ farm_id: 'g', farm_name: 'GRASMERE', metric: 'Farrowing Rate', unit: '%', value: 57.14, target: 90, status: 'RED' }],
+    farm_view: farmId ? {
+      farm: farms.find((f) => f.farm_id === farmId),
+      sows: 65,
+      kg_sold_per_sow_year_ytd: 2950,
+      breeding: [{ key: 'farrowing_rate_pct', label: 'Farrowing Rate', unit: '%', lower_is_better: false, target: 90, status: 'GREEN',
+        values: { this_week: 100, avg_4w: 57.14, this_month: 57.14, prev_month: 100, three_month: 91.84 },
+        trend: [100, 100, 100, 50, 0, 100] }],
+      weaner_grower: [{ key: 'fce_grower', label: 'FCE Grower', unit: '', lower_is_better: true, target: 2.4, status: 'RED',
+        values: { this_week: 3.65, avg_4w: 5.19, this_month: 5.19, prev_month: 2.15, three_month: 3.7 },
+        trend: [4.2, null, null, 3.43, null, 3.65] }],
+      alerts: [
+        { metric: 'FCE Grower', unit: '', value: 3.65, target: 2.4, status: 'RED', above: true },
+        { metric: 'Farrowing Rate', unit: '%', value: 100, target: 90, status: 'GREEN', above: true },
+      ],
+    } : null,
   },
 });
 
@@ -81,7 +96,7 @@ describe('GM Dashboard', () => {
     expect(financial.querySelectorAll('[data-status="NONE"]')).toHaveLength(16);
     expect(screen.getByRole('region', { name: 'gmdPigsToSlaughterProgress' })).toBeTruthy();
     expect(screen.getByRole('region', { name: 'gmdPbtProgress' })).toBeTruthy();
-    expect(screen.getByTestId('gmd-kg-month').textContent).toBe('3,000');
+    expect(screen.getByTestId('gmd-kg-value').textContent).toBe('3,000');
   });
 
   it('reloads for a chosen farm and keeps every farm in the picker', async () => {
@@ -90,9 +105,47 @@ describe('GM Dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'rptFarm' }));
     fireEvent.click(await screen.findByRole('option', { name: 'PORTA' }));
     await waitFor(() => expect(get).toHaveBeenLastCalledWith(expect.stringContaining('farmId=p')));
-    await waitFor(() => expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).not.toContain('GRASMERE'));
-    expect(screen.getByTestId('gmd-kg-month').textContent).toBe('3,100');
+    expect(await screen.findByRole('heading', { name: 'PORTA' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'rptFarm' }));
     expect(await screen.findByRole('option', { name: 'GRASMERE' })).toBeTruthy();
+  });
+});
+
+// Rishi, 2 Nov: with one farm chosen, the Farm view of the mockup.
+describe('GM Dashboard — one farm', () => {
+  async function chooseGrasmere() {
+    render(<PiggeryGmDashboard />);
+    await screen.findByRole('region', { name: 'gmdBreedingMatrix' });
+    fireEvent.click(screen.getByRole('button', { name: 'rptFarm' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'GRASMERE' }));
+    await screen.findByRole('heading', { name: 'GRASMERE' });
+  }
+
+  it('heads the page with the farm and its sows', async () => {
+    await chooseGrasmere();
+    expect(screen.getByText(/gmdSows/)).toBeTruthy();
+  });
+
+  it('shows This Week coloured by its status, the four averages and a six-week trend', async () => {
+    await chooseGrasmere();
+    const table = screen.getByRole('region', { name: 'gmdBreedingMatrix' });
+    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+      'gmdMetric', 'gmdThisWeek', 'gmdWeeklyAvg4w', 'gmdThisMonthAvg', 'gmdPrevMonthAvg', 'gmdThreeMonthAvg', 'gmdTrend',
+    ]);
+    const row = within(table).getAllByRole('row')[1];
+    const cells = within(row).getAllByRole('cell');
+    expect(cells.slice(0, 6).map((c) => c.textContent)).toEqual(['Farrowing Rate (%)', '100', '57.14', '57.14', '100', '91.84']);
+    expect((cells[1] as HTMLElement).style.color).toBe('var(--success)');
+    expect(within(table).getByTestId('trend').children).toHaveLength(6);
+    expect(screen.getByRole('region', { name: 'gmdFinancialMatrix' }).textContent).toContain('Pigs to Slaughter');
+  });
+
+  it('shows Kg Meat Sold for the year to date and This Week\'s alerts, misses first and on-target after', async () => {
+    await chooseGrasmere();
+    expect(screen.getByRole('region', { name: 'gmdKgSoldPerSowYearYtd' })).toBeTruthy();
+    expect(screen.getByTestId('gmd-kg-value').textContent).toBe('2,950');
+    const items = within(screen.getByRole('region', { name: 'gmdAlerts' })).getAllByRole('listitem').map((li) => li.textContent);
+    expect(items[0]).toContain('FCE Grower gmdAboveTarget (gmdThisWeek)');
+    expect(items[1]).toContain('Farrowing Rate gmdOnTarget (gmdThisWeek)');
   });
 });

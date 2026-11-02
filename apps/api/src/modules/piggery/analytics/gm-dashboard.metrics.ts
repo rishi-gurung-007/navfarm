@@ -147,6 +147,8 @@ export interface HeadMoveRow {
 
 /** What one batch's spell in a stage gives the matrix. */
 export interface StageExit {
+  /** The day it left the stage. */
+  exit_date: string;
   heads_in: number;
   heads_out: number;
   deaths: number;
@@ -188,6 +190,7 @@ export function stageExit(args: {
   const died = during(deaths).reduce((a, d) => a + d.quantity, 0);
   const weighed = weights.filter((w) => w.date >= start && w.date <= exit).sort((a, b) => a.date.localeCompare(b.date));
   return {
+    exit_date: exit,
     heads_in: headsIn + movedIn,
     heads_out: Math.max(0, headsIn + movedIn - died - movedOut),
     deaths: died,
@@ -249,4 +252,97 @@ export function alertsFrom(rows: MetricRow[], farms: Array<{ farm_id: string; fa
     }
   }
   return out.sort((a, b) => Number(b.status === 'RED') - Number(a.status === 'RED'));
+}
+
+// ── One farm (Rishi, 2 Nov: the Farm view of the mockup) ────────────────────────────────────────────────────
+
+export const WINDOW_KEYS = ['this_week', 'avg_4w', 'this_month', 'prev_month', 'three_month'] as const;
+export type WindowKey = (typeof WINDOW_KEYS)[number];
+export const TREND_WEEKS = 6;
+
+export interface Window {
+  key: string;
+  startDate: string;
+  endDate: string;
+}
+
+const shift = (day: string, days: number) => {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+
+/**
+ * The farm view's columns, all ending on `to` (the period's last day, or today): This Week is its last 7 days; the
+ * 4-week average its last 28; This Month the chosen Reporting Period; Prev. Month the period before it; 3 Months the
+ * chosen period and the two before. Then the last six weeks, oldest last, for the trend. A ratio over a window is the
+ * weekly figures averaged by their volume.
+ */
+export function farmWindows(
+  to: string,
+  period: { start_date: string },
+  previous: Array<{ start_date: string; end_date: string }>,
+): Window[] {
+  const [prev, prev2] = previous;
+  const out: Window[] = [
+    { key: 'this_week', startDate: shift(to, -6), endDate: to },
+    { key: 'avg_4w', startDate: shift(to, -27), endDate: to },
+    { key: 'this_month', startDate: period.start_date, endDate: to },
+  ];
+  if (prev) out.push({ key: 'prev_month', startDate: prev.start_date, endDate: prev.end_date });
+  out.push({ key: 'three_month', startDate: (prev2 ?? prev ?? period).start_date, endDate: to });
+  for (let i = 0; i < TREND_WEEKS; i++) out.push({ key: `week_${i}`, startDate: shift(to, -7 * i - 6), endDate: shift(to, -7 * i) });
+  return out;
+}
+
+export interface FarmRow {
+  key: string;
+  label: string;
+  unit: string;
+  lower_is_better: boolean;
+  target: number | null;
+  /** This Week against the target. */
+  status: Status;
+  values: Record<WindowKey, number | null>;
+  /** The last six weeks, oldest first. */
+  trend: Array<number | null>;
+}
+
+export function farmRow(
+  def: { key: string; label: string; unit: string; lower: boolean },
+  valueOf: (windowKey: string) => number | null,
+  target: Target | null,
+  has: (windowKey: string) => boolean,
+): FarmRow {
+  const values = Object.fromEntries(WINDOW_KEYS.map((k) => [k, has(k) ? valueOf(k) : null])) as Record<WindowKey, number | null>;
+  return {
+    key: def.key, label: def.label, unit: def.unit, lower_is_better: def.lower,
+    target: target?.average ?? null,
+    status: ragStatus(values.this_week, target, def.lower),
+    values,
+    trend: Array.from({ length: TREND_WEEKS }, (_, i) => valueOf(`week_${TREND_WEEKS - 1 - i}`)),
+  };
+}
+
+export interface FarmAlert {
+  metric: string;
+  unit: string;
+  value: number;
+  target: number | null;
+  status: 'RED' | 'AMBER' | 'GREEN';
+  /** Whether the miss (or the success) is the figure being above its target. */
+  above: boolean;
+}
+
+/** This Week's status of every row with a value and a target: red, then amber, then those on target. */
+export function farmAlerts(rows: FarmRow[]): FarmAlert[] {
+  const order = { RED: 0, AMBER: 1, GREEN: 2 } as const;
+  return rows
+    .filter((r) => r.values.this_week != null && r.status)
+    .map((r) => ({
+      metric: r.label, unit: r.unit, value: r.values.this_week as number, target: r.target,
+      status: r.status as 'RED' | 'AMBER' | 'GREEN',
+      above: r.target != null && (r.values.this_week as number) > r.target,
+    }))
+    .sort((a, b) => order[a.status] - order[b.status]);
 }

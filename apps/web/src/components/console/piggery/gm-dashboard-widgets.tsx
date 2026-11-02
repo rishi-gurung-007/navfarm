@@ -1,7 +1,7 @@
 'use client';
 
 import type { ElementType, ReactNode } from 'react';
-import { ArrowDown, ArrowUp, Bell, ChevronRight, CircleAlert } from 'lucide-react';
+import { ArrowDown, ArrowUp, Bell, ChevronRight, CircleAlert, CircleCheck } from 'lucide-react';
 import { Bar, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { NA } from '@/utils/na';
 import type { TranslationKeys } from '@/utils/translations';
@@ -339,27 +339,188 @@ export function AlertsPanel({ alerts, showAll, onToggle, t }: { alerts: Alert[];
   );
 }
 
-/** Kg Meat Sold / Sow / Year: the month's figure with its arrow, budget and variance; YTD beneath. */
-export function KgMeatCard({ icon: Icon, month, ytd, t }: { icon: ElementType; month: Figure; ytd: Figure; t: T }) {
-  const v = variance(month, false);
+/**
+ * Kg Meat Sold / Sow / Year: the main figure with its arrow, budget and variance; with `ytd`, the year to date beneath
+ * (all farms shows the month first; one farm shows the year to date only, as the mockup does).
+ */
+export function KgMeatCard({ icon: Icon, title, main, ytd, t }: { icon: ElementType; title: string; main: Figure; ytd?: Figure; t: T }) {
+  const v = variance(main, false);
   return (
-    <section className="rounded-md border border-(--border) bg-(--surface-raised) p-4" aria-label={t('gmdKgSoldPerSowYear')}>
+    <section className="rounded-md border border-(--border) bg-(--surface-raised) p-4" aria-label={title}>
       <div className="flex items-center gap-3">
         <Icon className="h-8 w-8 shrink-0 text-(--accent)" />
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold">{t('gmdKgSoldPerSowYear')}</h3>
+          <h3 className="text-sm font-semibold">{title}</h3>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span className="font-mono text-2xl font-bold tabular-nums" data-testid="gmd-kg-month">{fmt(month.actual)}</span>
+            <span className="font-mono text-2xl font-bold tabular-nums" data-testid="gmd-kg-value">{fmt(main.actual)}</span>
             <TrendArrow v={v} />
-            <span className="text-xs text-(--text-secondary)">{t('gmdBudget')} {fmt(month.budget)}</span>
+            <span className="text-xs text-(--text-secondary)">{t('gmdBudget')} {fmt(main.budget)}</span>
             <span className="text-xs text-(--text-secondary)">{t('gmdVar')} <VarianceText v={v} unit="" /></span>
           </div>
-          <p className="mt-1 text-xs text-(--text-secondary)">
-            {t('gmdYtd')} <span className="font-mono tabular-nums text-(--text-primary)" data-testid="gmd-kg-ytd">{fmt(ytd.actual)}</span>
-            {' · '}{t('gmdBudget')} {fmt(ytd.budget)}
-          </p>
+          {ytd && (
+            <p className="mt-1 text-xs text-(--text-secondary)">
+              {t('gmdYtd')} <span className="font-mono tabular-nums text-(--text-primary)" data-testid="gmd-kg-ytd">{fmt(ytd.actual)}</span>
+              {' · '}{t('gmdBudget')} {fmt(ytd.budget)}
+            </p>
+          )}
         </div>
       </div>
+    </section>
+  );
+}
+
+// ── One farm (Rishi, 2 Nov: the Farm view of the mockup) ────────────────────────────────────────────────────
+
+export const FARM_COLUMNS = ['this_week', 'avg_4w', 'this_month', 'prev_month', 'three_month'] as const;
+export type FarmColumn = (typeof FARM_COLUMNS)[number];
+
+const COLUMN_LABEL: Record<FarmColumn, TranslationKeys> = {
+  this_week: 'gmdThisWeek',
+  avg_4w: 'gmdWeeklyAvg4w',
+  this_month: 'gmdThisMonthAvg',
+  prev_month: 'gmdPrevMonthAvg',
+  three_month: 'gmdThreeMonthAvg',
+};
+
+export interface FarmRow {
+  key: string;
+  label: string;
+  unit: string;
+  lower_is_better: boolean;
+  target: number | null;
+  status: Status;
+  values: Record<FarmColumn, number | null>;
+  trend: Array<number | null>;
+}
+
+/** The last six weeks as small bars, tallest for the highest week; an empty week is a stub. */
+export function TrendBars({ values, label }: { values: Array<number | null>; label: string }) {
+  const present = values.filter((v): v is number => v != null);
+  const max = Math.max(...present.map(Math.abs), 0);
+  return (
+    <span className="inline-flex h-4 items-end gap-0.5" role="img" aria-label={label} title={label} data-testid="trend">
+      {values.map((v, i) => (
+        <span
+          key={i}
+          className="w-1 rounded-t-xs"
+          style={{
+            height: v == null || !max ? '2px' : `${Math.max(15, (Math.abs(v) / max) * 100)}%`,
+            backgroundColor: v == null ? 'var(--border)' : 'var(--text-secondary)',
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
+const unitSuffix = (unit: string) => (unit ? ` (${unit})` : '');
+
+/** A one-farm matrix: each metric over This Week (coloured against its target), the averages, and a trend. */
+export function FarmMatrix({
+  icon: Icon, title, rows, t, note,
+}: {
+  icon: ElementType;
+  title: string;
+  rows: FarmRow[];
+  t: T;
+  note?: ReactNode;
+}) {
+  return (
+    <section className="flex min-w-0 flex-col rounded-md border border-(--border) bg-(--surface)" aria-label={title}>
+      <header className="flex items-center gap-2 border-b border-(--border) px-4 py-3">
+        <Icon className="h-5 w-5 shrink-0 text-(--accent)" />
+        <h3 className="text-sm font-semibold">{title}</h3>
+        {note && <span className="ml-auto text-[10px] text-(--text-secondary)">{note}</span>}
+      </header>
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr className="bg-(--surface-raised) text-[10px] text-(--text-secondary)">
+              <th className="px-2 py-1.5 text-left font-medium">{t('gmdMetric')}</th>
+              {FARM_COLUMNS.map((c) => (
+                <th key={c} className="px-1 py-1.5 text-right font-medium leading-tight">{t(COLUMN_LABEL[c])}</th>
+              ))}
+              <th className="px-1.5 py-1.5 text-center font-medium">{t('gmdTrend')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => {
+              const tip = row.target != null ? `${t('gmdTarget')} ${fmt(row.target, row.unit)}` : t('gmdNoTarget');
+              return (
+                <tr key={row.key} className="border-t border-(--border)">
+                  <td className="px-2 py-1.5 leading-tight">{row.label}{row.unit === '%' ? ' (%)' : unitSuffix(row.unit)}</td>
+                  {FARM_COLUMNS.map((c) => (
+                    <td
+                      key={c}
+                      className={`px-1 py-1.5 text-right tabular-nums ${c === 'this_week' ? 'font-semibold' : ''}`}
+                      style={c === 'this_week' && row.status ? { color: STATUS_COLOR[row.status] } : undefined}
+                      title={c === 'this_week' ? tip : undefined}
+                    >
+                      {fmt(row.values[c])}
+                    </td>
+                  ))}
+                  <td className="px-1.5 py-1.5">
+                    <span className="flex items-center justify-center gap-1.5" title={tip}>
+                      <StatusDot status={row.status} size="sm" />
+                      <TrendBars values={row.trend} label={`${row.label}: ${row.trend.map((v) => fmt(v)).join(', ')}`} />
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+export interface FarmAlert {
+  metric: string;
+  unit: string;
+  value: number;
+  target: number | null;
+  status: 'RED' | 'AMBER' | 'GREEN';
+  above: boolean;
+}
+
+/** This Week's alerts for one farm: misses first, then the metrics on target. */
+export function FarmAlertsPanel({ alerts, showAll, onToggle, t }: { alerts: FarmAlert[]; showAll: boolean; onToggle: () => void; t: T }) {
+  const shown = showAll ? alerts : alerts.slice(0, ALERTS_SHOWN);
+  const misses = alerts.filter((a) => a.status !== 'GREEN').length;
+  return (
+    <section className="flex min-w-0 flex-1 flex-col rounded-md border border-(--border) bg-(--surface)" aria-label={t('gmdAlerts')}>
+      <header className="flex items-center gap-2 border-b border-(--border) px-4 py-3">
+        <Bell className="h-5 w-5 text-(--accent)" />
+        <h3 className="text-sm font-semibold">{t('gmdAlerts')}</h3>
+        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-(--danger) px-1.5 text-[11px] font-bold text-white">
+          {misses}
+        </span>
+        {alerts.length > ALERTS_SHOWN && (
+          <button type="button" onClick={onToggle} className="nf-press ml-auto text-xs font-semibold text-(--accent)">
+            {showAll ? t('gmdShowFewer') : t('gmdViewAll')}
+          </button>
+        )}
+      </header>
+      {shown.length ? (
+        <ul className="divide-y divide-(--border)">
+          {shown.map((a, i) => {
+            const Icon = a.status === 'GREEN' ? CircleCheck : CircleAlert;
+            const text = a.status === 'GREEN' ? t('gmdOnTarget') : a.above ? t('gmdAboveTarget') : t('gmdBelowTarget');
+            return (
+              <li key={`${a.metric}-${i}`} className="flex items-center gap-2.5 px-4 py-2 text-xs"
+                title={`${fmt(a.value, a.unit)} ${t('gmdVsTarget')} ${fmt(a.target, a.unit)}`}>
+                <Icon className="h-4.5 w-4.5 shrink-0" style={{ color: STATUS_COLOR[a.status] }} />
+                <span className="min-w-0 flex-1">{a.metric} {text} ({t('gmdThisWeek')})</span>
+                <span className="shrink-0 font-mono tabular-nums text-(--text-secondary)">{fmt(a.value, a.unit)}</span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-(--text-secondary)" />
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="px-4 py-3 text-xs text-(--text-secondary)">{t('gmdNoAlerts')}</p>
+      )}
     </section>
   );
 }

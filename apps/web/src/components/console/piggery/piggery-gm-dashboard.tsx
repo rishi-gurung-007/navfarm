@@ -10,7 +10,8 @@ import { Field } from '@/components/ui/field';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/states';
 import {
-  Alert, AlertsPanel, Farm, Figure, KgMeatCard, KpiCard, Matrix, MetricRow, NO_FIGURE, ProgressChart, ProgressPoint,
+  Alert, AlertsPanel, Farm, FarmAlert, FarmAlertsPanel, FarmMatrix, FarmRow, Figure, KgMeatCard, KpiCard, Matrix,
+  MetricRow, NO_FIGURE, ProgressChart, ProgressPoint,
 } from './gm-dashboard-widgets';
 
 type Period = {
@@ -29,6 +30,15 @@ export interface GmDashboardData {
   breeding: MetricRow[];
   weaner_grower: MetricRow[];
   alerts: Alert[];
+  /** With one farm chosen: its figures over This Week, the averages and a six-week trend. */
+  farm_view: {
+    farm: Farm;
+    sows: number;
+    kg_sold_per_sow_year_ytd: number | null;
+    breeding: FarmRow[];
+    weaner_grower: FarmRow[];
+    alerts: FarmAlert[];
+  } | null;
 }
 
 const ALL = '';
@@ -131,6 +141,11 @@ export default function PiggeryGmDashboard() {
   const financial: MetricRow[] = FINANCIAL_ROWS.map((r) => ({
     ...r, cells: Object.fromEntries(farms.map((f) => [f.farm_id, { value: null, target: null, status: null }])),
   }));
+  const farmView = farmId ? data?.farm_view ?? null : null;
+  const farmFinancial: FarmRow[] = FINANCIAL_ROWS.map((r) => ({
+    ...r, target: null, status: null, trend: Array(6).fill(null),
+    values: { this_week: null, avg_4w: null, this_month: null, prev_month: null, three_month: null },
+  }));
   // The business year's periods, for the YTD charts' axis; no actuals or budgets yet.
   const yearPoints: ProgressPoint[] = (data?.periods ?? [])
     .filter((p) => period && p.business_year === period.business_year)
@@ -140,9 +155,9 @@ export default function PiggeryGmDashboard() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3 rounded-md border border-(--border) bg-(--surface) p-3">
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold">{t('gmdTitle')}</h2>
+          <h2 className="text-lg font-semibold">{farmView ? farmView.farm.farm_name : t('gmdTitle')}</h2>
           <p className="text-xs text-(--text-secondary)">
-            {farmId ? farms[0]?.farm_name : t('gmdFarmsCount', { n: allFarms.length })} | {t('gmdSubtitle')}
+            {farmView ? t('gmdSows', { n: farmView.sows.toLocaleString('en-GB') }) : t('gmdFarmsCount', { n: allFarms.length })} | {t('gmdSubtitle')}
           </p>
           {period && (
             <p className="mt-1 text-xs text-(--text-secondary)" data-testid="gmd-dates">
@@ -197,18 +212,35 @@ export default function PiggeryGmDashboard() {
               sub={{ label: t('gmdStaffOverheads'), unit: money, month: NO_FIGURE, ytd: NO_FIGURE, lowerIsBetter: true }} />
           </div>
 
-          <div className="grid gap-3 xl:grid-cols-3" data-testid="gmd-matrices">
-            <Matrix icon={PiggyBank} title={t('gmdBreedingMatrix')} rows={breeding} farms={farms} t={t} note={period.period_code} />
-            <Matrix icon={Rat} title={t('gmdWeanerGrowerMatrix')} rows={data!.weaner_grower} farms={farms} t={t} note={period.period_code} />
-            <Matrix icon={Ham} title={t('gmdFinancialMatrix')} rows={financial} farms={farms} t={t} note={t('gmdNoDataYet')} />
-          </div>
+          {farmView ? (
+            <div className="grid gap-3 xl:grid-cols-3" data-testid="gmd-matrices">
+              <FarmMatrix icon={PiggyBank} title={t('gmdBreedingMatrix')} rows={farmView.breeding} t={t} note={period.period_code} />
+              <FarmMatrix icon={Rat} title={t('gmdWeanerGrowerMatrix')} rows={farmView.weaner_grower} t={t} note={period.period_code} />
+              <FarmMatrix icon={Ham} title={t('gmdFinancialMatrix')} rows={farmFinancial} t={t} note={t('gmdNoDataYet')} />
+            </div>
+          ) : (
+            <div className="grid gap-3 xl:grid-cols-3" data-testid="gmd-matrices">
+              <Matrix icon={PiggyBank} title={t('gmdBreedingMatrix')} rows={breeding} farms={farms} t={t} note={period.period_code} />
+              <Matrix icon={Rat} title={t('gmdWeanerGrowerMatrix')} rows={data!.weaner_grower} farms={farms} t={t} note={period.period_code} />
+              <Matrix icon={Ham} title={t('gmdFinancialMatrix')} rows={financial} farms={farms} t={t} note={t('gmdNoDataYet')} />
+            </div>
+          )}
 
           <div className="grid gap-3 xl:grid-cols-3" data-testid="gmd-bottom">
             <ProgressChart icon={PiggyBank} title={t('gmdPigsToSlaughterProgress')} points={yearPoints} t={t} />
             <ProgressChart icon={DollarSign} title={t('gmdPbtProgress')} points={yearPoints} t={t} />
             <div className="flex min-w-0 flex-col gap-3">
-              <KgMeatCard icon={Coins} month={kgMonth} ytd={kgYtd} t={t} />
-              <AlertsPanel alerts={data!.alerts} showAll={allAlerts} onToggle={() => setAllAlerts((v) => !v)} t={t} />
+              {farmView ? (
+                <>
+                  <KgMeatCard icon={Coins} title={t('gmdKgSoldPerSowYearYtd')} main={{ actual: farmView.kg_sold_per_sow_year_ytd, budget: null }} t={t} />
+                  <FarmAlertsPanel alerts={farmView.alerts} showAll={allAlerts} onToggle={() => setAllAlerts((v) => !v)} t={t} />
+                </>
+              ) : (
+                <>
+                  <KgMeatCard icon={Coins} title={t('gmdKgSoldPerSowYear')} main={kgMonth} ytd={kgYtd} t={t} />
+                  <AlertsPanel alerts={data!.alerts} showAll={allAlerts} onToggle={() => setAllAlerts((v) => !v)} t={t} />
+                </>
+              )}
             </div>
           </div>
         </>

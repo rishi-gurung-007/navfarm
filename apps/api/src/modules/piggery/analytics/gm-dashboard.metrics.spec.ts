@@ -1,5 +1,5 @@
 import {
-  alertsFrom, breedingFigures, kgSoldPerSowYear, meanTarget, ragStatus, stageExit, stageFigures, stageSegments,
+  alertsFrom, breedingFigures, farmAlerts, farmRow, farmWindows, kgSoldPerSowYear, meanTarget, ragStatus, stageExit, stageFigures, stageSegments,
 } from './gm-dashboard.metrics';
 import type { OpsMetrics } from '../reports/monthly-ops.metrics';
 
@@ -139,6 +139,57 @@ describe('alertsFrom', () => {
     expect(alertsFrom(rows, farms)).toEqual([
       { farm_id: 'b', farm_name: 'PORTA', metric: 'FCE Grower', unit: '', value: 2.9, target: 2.4, status: 'RED' },
       { farm_id: 'a', farm_name: 'GRASMERE', metric: 'Farrowing Rate', unit: '%', value: 85, target: 90, status: 'AMBER' },
+    ]);
+  });
+});
+
+// Rishi, 2 Nov: one farm shows This Week, Weekly Avg (4 wks), This Month, Prev. Month and 3 Months, and a trend.
+describe('farmWindows', () => {
+  const period = { start_date: '2026-09-27' };
+  const previous = [{ start_date: '2026-08-23', end_date: '2026-09-26' }, { start_date: '2026-07-26', end_date: '2026-08-22' }];
+
+  it('ends every column on the period end, with the reporting periods for the months', () => {
+    const w = farmWindows('2026-10-24', period, previous);
+    expect(w.slice(0, 5)).toEqual([
+      { key: 'this_week', startDate: '2026-10-18', endDate: '2026-10-24' },
+      { key: 'avg_4w', startDate: '2026-09-27', endDate: '2026-10-24' },
+      { key: 'this_month', startDate: '2026-09-27', endDate: '2026-10-24' },
+      { key: 'prev_month', startDate: '2026-08-23', endDate: '2026-09-26' },
+      { key: 'three_month', startDate: '2026-07-26', endDate: '2026-10-24' },
+    ]);
+    expect(w.slice(5).map((x) => x.key)).toEqual(['week_0', 'week_1', 'week_2', 'week_3', 'week_4', 'week_5']);
+    expect(w[10]).toEqual({ key: 'week_5', startDate: '2026-09-13', endDate: '2026-09-19' });
+  });
+
+  it('has no previous month for the first period, and starts 3 months at the earliest it has', () => {
+    const w = farmWindows('2026-10-24', period, []);
+    expect(w.find((x) => x.key === 'prev_month')).toBeUndefined();
+    expect(w.find((x) => x.key === 'three_month')?.startDate).toBe('2026-09-27');
+  });
+});
+
+describe('farmRow and farmAlerts', () => {
+  const values: Record<string, number | null> = {
+    this_week: 80, avg_4w: 85, this_month: 86, prev_month: 88, three_month: 87,
+    week_0: 80, week_1: 84, week_2: null, week_3: 90, week_4: 91, week_5: 92,
+  };
+  const has = (k: string) => k !== 'prev_month';
+  const row = farmRow({ key: 'fr', label: 'Farrowing Rate', unit: '%', lower: false }, (k) => values[k] ?? null, target(90), has);
+
+  it('shows each column, null where the window does not exist, the trend oldest first, and This Week\'s status', () => {
+    expect(row.values).toEqual({ this_week: 80, avg_4w: 85, this_month: 86, prev_month: null, three_month: 87 });
+    expect(row.trend).toEqual([92, 91, 90, null, 84, 80]);
+    expect(row).toMatchObject({ target: 90, status: 'RED' });
+  });
+
+  it('lists red, amber, then on-target rows, skipping those with no value or target', () => {
+    const fce = farmRow({ key: 'fce', label: 'FCE Grower', unit: '', lower: true }, (k) => (k === 'this_week' ? 2.5 : null), target(2.4), has);
+    const ok = farmRow({ key: 'm', label: 'Grower Mortality', unit: '%', lower: true }, (k) => (k === 'this_week' ? 1.8 : null), target(2), has);
+    const none = farmRow({ key: 'g', label: '70 Day Gain', unit: 'kg', lower: false }, () => 21, null, has);
+    expect(farmAlerts([ok, none, fce, row])).toEqual([
+      { metric: 'Farrowing Rate', unit: '%', value: 80, target: 90, status: 'RED', above: false },
+      { metric: 'FCE Grower', unit: '', value: 2.5, target: 2.4, status: 'AMBER', above: true },
+      { metric: 'Grower Mortality', unit: '%', value: 1.8, target: 2, status: 'GREEN', above: false },
     ]);
   });
 });

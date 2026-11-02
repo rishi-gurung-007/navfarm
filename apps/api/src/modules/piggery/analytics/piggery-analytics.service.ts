@@ -9,10 +9,10 @@ import { kpiLimits } from '../../production/lifecycle/kpi-limits';
 import { MonthlyOpsService } from '../reports/monthly-ops.service';
 import { targetsFromLifecycle, Target, Targets, TargetKey } from '../reports/farrowing-report.metrics';
 import type { OpsMetrics } from '../reports/monthly-ops.metrics';
-import { GmDashboardPeriod, PiggeryGmDashboardData, QueryPiggeryGmDashboardDto } from './piggery-analytics.dto';
+import { GmDashboardPeriod, GmFarmView, PiggeryGmDashboardData, QueryPiggeryGmDashboardDto } from './piggery-analytics.dto';
 import {
-  alertsFrom, BreedingFigures, breedingFigures, cell, DatedQty, HeadMoveRow, kgSoldPerSowYear, meanTarget, MetricRow,
-  StageBatch, stageExit, StageExit, StageFigures, stageFigures, stageSegments,
+  alertsFrom, BreedingFigures, breedingFigures, cell, DatedQty, farmAlerts, farmRow, farmWindows, HeadMoveRow,
+  kgSoldPerSowYear, meanTarget, MetricRow, StageBatch, stageExit, StageExit, StageFigures, stageFigures, stageSegments,
 } from './gm-dashboard.metrics';
 
 type Farm = { farm_id: string; farm_code: string; farm_name: string };
@@ -26,6 +26,24 @@ const BREEDING_ROWS: Array<{ key: keyof BreedingFigures; label: string; unit: st
   { key: 'weaned_per_sow', label: 'Avg Weaned / Sow', unit: '', target: 'wean_per_sow', lower: false },
   { key: 'avg_wean_weight_kg', label: 'Avg Wean Weight', unit: 'kg', target: 'weaning_weight', lower: false },
   { key: 'litter_mass_kg', label: 'Total Litter Mass', unit: 'kg', target: 'total_litter_mass', lower: false },
+];
+
+type StagePair = { weaner: StageFigures; grower: StageFigures };
+type ExitPair = { weaner: StageExit[]; grower: StageExit[] };
+const target = (exits: StageExit[], pick: (e: StageExit) => Target | null) => meanTarget(exits.map(pick));
+
+/** The Weaner-Grower rows: the figure from the stage spells, and its target from those spells' breeds. */
+const STAGE_ROWS: Array<{
+  key: string; label: string; unit: string; lower: boolean;
+  pick: (s: StagePair) => number | null;
+  target: ((e: ExitPair) => Target | null) | null;
+}> = [
+  { key: 'weight_70_day', label: 'Avg 70 Day Weight', unit: 'kg', lower: false, pick: (s) => s.weaner.exit_weight_kg, target: (e) => target(e.weaner, (x) => x.target_weight) },
+  { key: 'gain_70_day', label: '70 Day Gain', unit: 'kg', lower: false, pick: (s) => s.weaner.gain_kg, target: null },
+  { key: 'fce_weaner', label: 'FCE Weaner', unit: '', lower: true, pick: (s) => s.weaner.fce, target: (e) => target(e.weaner, (x) => x.target_fcr) },
+  { key: 'weaner_mortality', label: 'Weaner Mortality', unit: '%', lower: true, pick: (s) => s.weaner.mortality_pct, target: (e) => target(e.weaner, (x) => x.target_mortality) },
+  { key: 'fce_grower', label: 'FCE Grower', unit: '', lower: true, pick: (s) => s.grower.fce, target: (e) => target(e.grower, (x) => x.target_fcr) },
+  { key: 'grower_mortality', label: 'Grower Mortality', unit: '%', lower: true, pick: (s) => s.grower.mortality_pct, target: (e) => target(e.grower, (x) => x.target_mortality) },
 ];
 
 const WEANER = 'WEANER';
@@ -92,7 +110,7 @@ export class PiggeryAnalyticsService {
       .map(({ farm_id, farm_code, farm_name }) => ({ farm_id, farm_code, farm_name }));
 
     const empty: PiggeryGmDashboardData = {
-      period: null, periods, farms, kg_sold_per_sow_year: { month: {}, ytd: {} }, breeding: [], weaner_grower: [], alerts: [],
+      period: null, periods, farms, kg_sold_per_sow_year: { month: {}, ytd: {} }, breeding: [], weaner_grower: [], alerts: [], farm_view: null,
     };
     if (!chosen) return empty;
     const ytdFrom = periods.find((p) => p.business_year === chosen.business_year)?.start_date ?? chosen.start_date;
@@ -145,26 +163,13 @@ export class PiggeryAnalyticsService {
       const s = stageByFarm.get(f.farm_id)!;
       return [f.farm_id, { weaner: stageFigures(s.weaner), grower: stageFigures(s.grower), exits: s }];
     }));
-    const target = (exits: StageExit[], pick: (e: StageExit) => Target | null) => meanTarget(exits.map(pick));
-    const stageRow = (
-      key: string, label: string, unit: string, lower: boolean,
-      pick: (f: { weaner: StageFigures; grower: StageFigures }) => number | null,
-      targetOf: ((e: { weaner: StageExit[]; grower: StageExit[] }) => Target | null) | null,
-    ): MetricRow => ({
-      key, label, unit, lower_is_better: lower,
+    const weanerGrower: MetricRow[] = STAGE_ROWS.map((row) => ({
+      key: row.key, label: row.label, unit: row.unit, lower_is_better: row.lower,
       cells: Object.fromEntries(farms.map((f) => {
         const s = figures.get(f.farm_id)!;
-        return [f.farm_id, cell(pick(s), targetOf ? targetOf(s.exits) : null, lower)];
+        return [f.farm_id, cell(row.pick(s), row.target ? row.target(s.exits) : null, row.lower)];
       })),
-    });
-    const weanerGrower: MetricRow[] = [
-      stageRow('weight_70_day', 'Avg 70 Day Weight', 'kg', false, (s) => s.weaner.exit_weight_kg, (e) => target(e.weaner, (x) => x.target_weight)),
-      stageRow('gain_70_day', '70 Day Gain', 'kg', false, (s) => s.weaner.gain_kg, null),
-      stageRow('fce_weaner', 'FCE Weaner', '', true, (s) => s.weaner.fce, (e) => target(e.weaner, (x) => x.target_fcr)),
-      stageRow('weaner_mortality', 'Weaner Mortality', '%', true, (s) => s.weaner.mortality_pct, (e) => target(e.weaner, (x) => x.target_mortality)),
-      stageRow('fce_grower', 'FCE Grower', '', true, (s) => s.grower.fce, (e) => target(e.grower, (x) => x.target_fcr)),
-      stageRow('grower_mortality', 'Grower Mortality', '%', true, (s) => s.grower.mortality_pct, (e) => target(e.grower, (x) => x.target_mortality)),
-    ];
+    }));
 
     return {
       period, periods, farms,
@@ -172,6 +177,65 @@ export class PiggeryAnalyticsService {
       breeding,
       weaner_grower: weanerGrower,
       alerts: alertsFrom([...breeding, ...weanerGrower], farms),
+      farm_view: query.farmId && farms.length === 1
+        ? await this.farmView(tenantId, companyId, farms[0], period, periods, stageIds, scope, kgYtd[farms[0].farm_id] ?? null)
+        : null,
+    };
+  }
+
+  /**
+   * One farm, as the mockup's Farm view (Rishi, 2 Nov): each matrix row's figure for This Week, the 4-week average,
+   * This Month, Prev. Month and 3 Months (farmWindows), its six-week trend, and This Week against the target; the
+   * farm's sows on the period's last day; and This Week's red, amber and on-target rows as alerts.
+   */
+  private async farmView(
+    tenantId: string, companyId: string, farm: Farm,
+    period: GmDashboardPeriod & { to: string }, periods: GmDashboardPeriod[],
+    stageIds: Record<string, string[]>, scope: FarmScope, kgYtd: number | null,
+  ): Promise<GmFarmView> {
+    const at = periods.findIndex((p) => p.period_id === period.period_id);
+    const previous = [periods[at - 1], periods[at - 2]].filter((p): p is GmDashboardPeriod => !!p);
+    const windows = farmWindows(period.to, period, previous);
+    const has = (key: string) => windows.some((w) => w.key === key);
+    const from = windows.map((w) => w.startDate).sort()[0];
+
+    const rows = await this.ops.farmMetrics(tenantId, farm.farm_id, windows.map((w) => ({ name: w.key, ...w })));
+    const opsOf = (key: string) => rows.filter((r) => r.month === key).map((r) => r.metrics);
+    const breedIds = [...new Set(rows.map((r) => r.breed_id))];
+    const lifecycle = await this.lifecycleRows(tenantId, companyId, farm.farm_id, period.start_date, period.to, breedIds);
+    const perBreed = breedIds.map((id) => targetsFromLifecycle(lifecycle.filter((r) => r.breed_id === id), farm.farm_id));
+    const figures = new Map(windows.map((w) => [w.key, breedingFigures(opsOf(w.key))]));
+    const breeding = BREEDING_ROWS.map((row) => farmRow(
+      { key: row.key, label: row.label, unit: row.unit, lower: row.lower },
+      (k) => figures.get(k)?.[row.key] ?? null,
+      meanTarget(perBreed.map((t) => t[row.target])),
+      has,
+    ));
+
+    const exits = await this.stageExits(tenantId, companyId, farm.farm_id, from, period.to, stageIds, scope);
+    const inWindow = (list: StageExit[], key: string) => {
+      const w = windows.find((x) => x.key === key);
+      return w ? list.filter((e) => e.exit_date >= w.startDate && e.exit_date <= w.endDate) : [];
+    };
+    const stage = new Map(windows.map((w) => [w.key, {
+      weaner: stageFigures(inWindow(exits.weaner, w.key)), grower: stageFigures(inWindow(exits.grower, w.key)),
+    }]));
+    const weanerGrower = STAGE_ROWS.map((row) => farmRow(
+      { key: row.key, label: row.label, unit: row.unit, lower: row.lower },
+      (k) => (stage.get(k) ? row.pick(stage.get(k)!) : null),
+      row.target ? row.target(exits) : null,
+      has,
+    ));
+
+    const sows = opsOf('this_month').reduce((a, m) => a + m.sows_on_last_day, 0);
+    return {
+      farm,
+      sows,
+      windows: windows.filter((w) => !w.key.startsWith('week_')).map((w) => ({ key: w.key, start_date: w.startDate, end_date: w.endDate })),
+      kg_sold_per_sow_year_ytd: kgYtd,
+      breeding,
+      weaner_grower: weanerGrower,
+      alerts: farmAlerts([...breeding, ...weanerGrower]),
     };
   }
 
