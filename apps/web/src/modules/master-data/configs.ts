@@ -2638,6 +2638,8 @@ const item: MasterDataConfig = {
       min: 0,
       section: 'Units & Valuation',
       visibleWhen: { anyOf: [{ key: 'valuation_method', equals: 'STANDARD' }] },
+      // Rishi, 2 Nov: hidden on edit too when the item is not Standard, even if an old cost is stored.
+      hideStoredWhenHidden: true,
       requiredWhen: {
         anyOf: [{ key: 'valuation_method', equals: 'STANDARD' }],
       },
