@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { FileDown, Loader2, Play } from 'lucide-react';
+import { Check, FileDown, Loader2, Play, RefreshCw } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { getActiveCompanyId, getActiveFarmId } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -186,6 +186,8 @@ export default function MonthlyOpsPanel() {
   const [years, setYears] = useState<string[]>([]);
   const [year, setYear] = useState('');
   const [report, setReport] = useState<MonthlyOpsReport | null>(null);
+  /** The Year and Farm the shown report was generated for: the button reads Generated while they still match. */
+  const [generatedKey, setGeneratedKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -211,9 +213,10 @@ export default function MonthlyOpsPanel() {
       .catch(() => setYears([]));
   }, [companyId]);
 
-  useEffect(() => setReport(null), [farmId, year]);
-
+  // Rishi, 2 Nov: a changed Year or Farm keeps the report on screen and offers Regenerate, as the Farrowing Report does.
   const ready = Boolean(farmId && year);
+  const filtersKey = JSON.stringify([year, farmId]);
+  const upToDate = !!report && generatedKey === filtersKey;
   const generate = async () => {
     if (!ready) return;
     setLoading(true);
@@ -226,8 +229,10 @@ export default function MonthlyOpsPanel() {
           await api.get(`/reports/monthly-ops?${qs.toString()}`),
         ),
       );
+      setGeneratedKey(filtersKey);
     } catch (err: any) {
       setReport(null);
+      setGeneratedKey(null);
       setError(err?.message || t('rptLoadFailed'));
     } finally {
       setLoading(false);
@@ -283,13 +288,18 @@ export default function MonthlyOpsPanel() {
           />
         </Field>
         <div className="flex flex-wrap items-end gap-2">
-          <Button onClick={generate} disabled={!ready || loading} size="sm">
+          {/* Rishi, 2 Nov: Generate; Generated while Year and Farm match the report shown; Regenerate once one changes. */}
+          <Button onClick={generate} disabled={!ready || loading || upToDate} size="sm">
             {loading ? (
               <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : upToDate ? (
+              <Check className="mr-1.5 h-4 w-4" />
+            ) : report ? (
+              <RefreshCw className="mr-1.5 h-4 w-4" />
             ) : (
               <Play className="mr-1.5 h-4 w-4" />
             )}
-            {t('rptGenerate')}
+            {t(upToDate ? 'rptGenerated' : report ? 'rptRegenerate' : 'rptGenerate')}
           </Button>
           <Button
             variant="outline"
