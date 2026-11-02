@@ -885,6 +885,7 @@ export class FeedRequisitionService implements OnModuleInit {
             location_name: schema.locationMaster.location_name,
             location_type: schema.locationMaster.location_type,
             feed_in_bags: schema.locationMaster.feed_in_bags,
+            low_level_kg: schema.locationMaster.low_level_kg,
           })
           .from(schema.locationMaster)
           .where(
@@ -977,7 +978,13 @@ export class FeedRequisitionService implements OnModuleInit {
                   .map((line) => ({ ...line, forecast_date: String(line.forecast_date) })),
                 String(run.planning_date),
               );
+              const lowLevelKg = destination?.low_level_kg == null ? null : Number(destination.low_level_kg);
               return {
+                // Requisition row 34, as lineValues gives a drafted line: below the silo's low level, else by shortage.
+                priority: requisitionPriority(String(run.planning_date), [{
+                  belowLowLevel: destination?.location_type !== 'STORE' && lowLevelKg !== null && evidence.systemBalanceKg <= lowLevelKg,
+                  firstShortageDate: evidence.firstShortageDate,
+                }]),
                 system_balance_kg: evidence.systemBalanceKg,
                 daily_requirement_kg: evidence.dailyRequirementKg,
                 days_remaining: evidence.daysRemaining,
@@ -1260,6 +1267,7 @@ export class FeedRequisitionService implements OnModuleInit {
               recommended_qty_kg: String(source.recommended_qty_kg),
               recommended_delivery_date: source.proposed_delivery_date,
               proposed_delivery_date: line.proposed_delivery_date,
+              priority: source.priority,
               priority_no: line.priority_no ?? null,
               // The forecast figures the saved run held for this line (runLineEvidence).
               system_balance_kg: dec(source.system_balance_kg),

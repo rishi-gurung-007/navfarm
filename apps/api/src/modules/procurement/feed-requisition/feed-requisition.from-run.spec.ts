@@ -81,6 +81,15 @@ describe('feed requisition from a saved calculation', () => {
 
     expect(result.lines[0]).toMatchObject({ recommended_qty_kg: 6000, quantity_kg: 6000 });
     expect(forecast.getForecast).not.toHaveBeenCalled();
+    // Requisition row 34: each line carries its own priority, as a drafted one does — first shortage 4 days out.
+    expect(result.lines[0]).toMatchObject({ priority: 'WARNING' });
+
+    // At or below the silo's low level the line is Urgent, whatever the shortage date.
+    rows.set('destinations', [{ ...(rows.get('destinations') as object[])[0], low_level_kg: '500.0000' }]);
+    call = 0;
+    const low = await service.previewFromRun('run-1', 'tenant-1', req.user);
+    expect(low.lines[0]).toMatchObject({ priority: 'CRITICAL_FIRST_PRIORITY' });
+    rows.set('destinations', [{ ...(rows.get('destinations') as object[])[0], low_level_kg: null }]);
 
     // Rishi, 31 Oct: an open requisition the run did not count, bringing the need before the shortage, solves the
     // run-down — the line is left out and named as covered.
