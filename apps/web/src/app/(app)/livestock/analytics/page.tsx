@@ -5,8 +5,10 @@ import { LivestockPageShell } from "@/components/console/livestock/livestock-pag
 import HerdAnalyticsPanel from "@/components/console/piggery/herd-analytics-panel";
 import PiggeryGmDashboard from "@/components/console/piggery/piggery-gm-dashboard";
 import { BarChart3, LayoutDashboard } from "lucide-react";
+import { useLanguage } from "@/hooks/useLanguage";
 
 export default function PiggeryHerdAnalyticsPage() {
+  const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<"gm" | "demographics">("gm");
 
   return (
@@ -23,7 +25,7 @@ export default function PiggeryHerdAnalyticsPage() {
             }`}
           >
             <LayoutDashboard className="h-3.5 w-3.5" />
-            <span>GM Executive Dashboard</span>
+            <span>{t("gmdTitle")}</span>
           </button>
 
           <button

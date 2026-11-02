@@ -31,6 +31,8 @@ export interface OpsFarrowing {
   weaning_date: string | null;
   piglets_weaned: number;
   avg_weaning_weight_kg: number | null;
+  foster_received?: number;
+  fostered_out?: number;
 }
 
 export interface OpsService {
@@ -85,6 +87,13 @@ export interface OpsMetrics {
   avg_wean_weight_kg: number | null;
   total_litter_mass_kg: number | null;
   litters_weaned: number;
+  /** Piglets weaned from the litters weaned in the month. */
+  weaned_piglets: number;
+  /** Those litters' starting lot: born alive, plus fostered in, less fostered out. */
+  weaned_start_lot: number;
+  /** Of the litters weaned, those with a weaning weight, and their head. */
+  litters_weighed: number;
+  weighed_head: number;
   cdm_kg: number;
   kg_sold: number;
   average_sows: number | null;
@@ -224,6 +233,10 @@ export function computeMonthlyOps(args: {
     avg_wean_weight_kg: ratio(litterMass, weanedHead),
     total_litter_mass_kg: weighed.length ? round(litterMass) : null,
     litters_weaned: weaned.length,
+    weaned_piglets: weaned.reduce((a, f) => a + f.piglets_weaned, 0),
+    weaned_start_lot: weaned.reduce((a, f) => a + f.piglets_born_live + (f.foster_received ?? 0) - (f.fostered_out ?? 0), 0),
+    litters_weighed: weighed.length,
+    weighed_head: weanedHead,
     cdm_kg,
     kg_sold,
     average_sows,

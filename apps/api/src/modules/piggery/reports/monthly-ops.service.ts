@@ -89,8 +89,24 @@ export class MonthlyOpsService {
     if (!months.length) {
       throw new BadRequestException(`The Accounting Period Master has no month of fiscal year ${query.year} up to today.`);
     }
-    const yearStart = months[0].startDate;
-    const yearEnd = months[months.length - 1].endDate;
+    const rows = await this.farmMetrics(tenantId, farm.farm_id, months);
+    return { farm: { farm_id: farm.farm_id, farm_code: farm.farm_code, farm_name: farm.farm_name }, year: query.year, generated_at: new Date().toISOString(), rows };
+  }
+
+  /**
+   * The R12 metrics of one farm per sow breed over each of the given date ranges — the report's months, or any other
+   * range (the GM Dashboard's period and year to date). The caller has checked the farm is the user's to see.
+   */
+  async farmMetrics(
+    tenantId: string,
+    farmId: string,
+    months: Array<{ name: string; startDate: string; endDate: string }>,
+  ): Promise<MonthlyOpsRow[]> {
+    if (!months.length) return [];
+    const scope = farmScope(this.cls);
+    const farm = { farm_id: farmId };
+    const yearStart = months.map((m) => m.startDate).sort()[0];
+    const yearEnd = months.map((m) => m.endDate).sort().reverse()[0];
 
     const A = schema.animalRegister;
     const Loc = schema.locationMaster;
@@ -122,6 +138,7 @@ export class MonthlyOpsService {
       sow_animal_id: F.sow_animal_id, breeding_id: F.breeding_id, farrowing_date: F.farrowing_date,
       piglets_born_total: F.piglets_born_total, piglets_born_live: F.piglets_born_live,
       weaning_date: F.weaning_date, piglets_weaned: F.piglets_weaned, avg_weaning_weight_kg: F.avg_weaning_weight_kg,
+      foster_received: F.foster_received, fostered_out: F.fostered_out,
     }).from(F).where(inArray(F.sow_animal_id, sowIds)) : [];
     const R = schema.breedingRecord;
     const services = sowIds.length ? await this.db.select({
@@ -164,6 +181,7 @@ export class MonthlyOpsService {
           piglets_born_total: Number(f.piglets_born_total ?? 0), piglets_born_live: Number(f.piglets_born_live ?? 0),
           weaning_date: f.weaning_date ? String(f.weaning_date).slice(0, 10) : null,
           piglets_weaned: Number(f.piglets_weaned ?? 0), avg_weaning_weight_kg: num(f.avg_weaning_weight_kg),
+          foster_received: Number(f.foster_received ?? 0), fostered_out: Number(f.fostered_out ?? 0),
         }));
         const opsServices: OpsService[] = services.filter((s) => ofBreed(s.sow_animal_id)).map((s) => ({
           breeding_id: s.breeding_id, sow_animal_id: s.sow_animal_id, mating_date: String(s.mating_date).slice(0, 10),
@@ -192,6 +210,6 @@ export class MonthlyOpsService {
         });
       }
     }
-    return { farm: { farm_id: farm.farm_id, farm_code: farm.farm_code, farm_name: farm.farm_name }, year: query.year, generated_at: new Date().toISOString(), rows };
+    return rows;
   }
 }

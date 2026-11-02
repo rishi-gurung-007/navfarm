@@ -10,5 +10,6 @@ import { AccountingPeriodModule } from '../../master-data/accounting-period/acco
   imports: [AccountingPeriodModule],
   controllers: [FarrowingReportController, MonthlyOpsController],
   providers: [FarrowingReportService, MonthlyOpsService],
+  exports: [MonthlyOpsService],
 })
 export class ReportsModule {}
