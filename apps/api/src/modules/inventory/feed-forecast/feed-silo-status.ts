@@ -99,6 +99,8 @@ export function buildSelectedSiloDashboard(args: {
   status: SiloStatusRow;
   result: Pick<ForecastResult, 'sources' | 'daily'>;
   planningDate: string;
+  /** The Dashboard's selected shed: Animals Fed counts only its batches (Rishi, 2 Nov). */
+  shedId?: string | null;
   nextBinAssignment: NextBinAssignment | null;
 }): {
   silo: SiloStatusRow & {
@@ -108,14 +110,14 @@ export function buildSelectedSiloDashboard(args: {
     currentDietDaysRemaining: number | null;
     nextDietItemName: string | null;
     millLoadingBin: NextBinAssignment | null;
-    /** Rishi, 2 Nov: the heads of the batches drawing on this silo on the planning date. */
+    /** Rishi, 2 Nov: the heads of the selected shed's batches drawing on this silo on the planning date. */
     animalsFed: number;
-    animalsFedBatches: Array<{ batchNo: string; heads: number }>;
+    animalsFedBatches: Array<{ batchNo: string; stage: string; heads: number }>;
   };
   balanceSeries: SiloBalancePoint[];
   demandSeries: SiloDemandPoint[];
 } {
-  const { status, result, nextBinAssignment, planningDate } = args;
+  const { status, result, nextBinAssignment, planningDate, shedId } = args;
   const sources = result.sources.filter((source) => source.sourceType === 'SILO' && source.locationId === status.siloId);
   const currentSources = sources.filter((source) => source.itemId === status.currentDietItemId);
   // Same rule as the demand series: a next stage on the item already fed adds no separate next-diet need.
@@ -162,16 +164,23 @@ export function buildSelectedSiloDashboard(args: {
       closingKg: row.projectedClosingKg ?? Math.max(0, round3(row.currentInventoryKg - row.demandKg)),
     });
   }
-  // Rishi, 2 Nov: the animals fed from the silo — every batch row drawing on it on the planning date, with demand.
-  const headsByBatch = new Map<string, number>();
+  // Rishi, 2 Nov: the animals fed from the silo — the selected shed's batch rows drawing on it on the planning date,
+  // with demand. A silo can feed several sheds; the others are not counted.
+  // Each batch with the stage it is in that day; an animal-wise batch's label already carries its stage group
+  // ("B-6 · GESTATION"), so the batch number is the part before it.
+  const headsByBatch = new Map<string, { batchNo: string; stage: string; heads: number }>();
   for (const row of result.daily) {
     if (row.date !== planningDate || row.sourceType !== 'SILO' || row.destinationLocationId !== status.siloId) continue;
     if (!(row.demandKg > 0)) continue;
-    headsByBatch.set(row.batchNo, (headsByBatch.get(row.batchNo) ?? 0) + row.heads);
+    if (shedId && row.shedId !== shedId) continue;
+    const batchNo = row.batchNo.split(' · ')[0];
+    const key = `${batchNo}|${row.stageCode}`;
+    const entry = headsByBatch.get(key) ?? { batchNo, stage: row.stageCode, heads: 0 };
+    entry.heads += row.heads;
+    headsByBatch.set(key, entry);
   }
-  const animalsFedBatches = [...headsByBatch.entries()]
-    .map(([batchNo, heads]) => ({ batchNo, heads }))
-    .sort((a, b) => b.heads - a.heads || a.batchNo.localeCompare(b.batchNo));
+  const animalsFedBatches = [...headsByBatch.values()]
+    .sort((a, b) => b.heads - a.heads || a.batchNo.localeCompare(b.batchNo) || a.stage.localeCompare(b.stage));
   const animalsFed = animalsFedBatches.reduce((sum, batch) => sum + batch.heads, 0);
 
   const balanceSeries = [...byItemDate.values()].sort((a, b) =>

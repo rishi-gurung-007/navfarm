@@ -2632,6 +2632,7 @@ export class FeedForecastService {
         status,
         result: { sources: forecast.sources, daily: displayedDaily },
         planningDate,
+        shedId: query.shedId,
         nextBinAssignment,
       });
       return {

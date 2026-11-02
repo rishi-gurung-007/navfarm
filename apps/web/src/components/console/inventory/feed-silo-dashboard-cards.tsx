@@ -58,7 +58,7 @@ export interface SelectedSiloDashboard {
   millLoadingBin: MillLoadingBin | null;
   /** Rishi, 2 Nov: the heads of the batches drawing on this silo on the planning date, and those batches. */
   animalsFed?: number;
-  animalsFedBatches?: Array<{ batchNo: string; heads: number }>;
+  animalsFedBatches?: Array<{ batchNo: string; stage: string; heads: number }>;
 }
 
 type Translate = (key: TranslationKeys) => string;
@@ -208,7 +208,7 @@ export function FeedSiloDashboardCards({
         <StatCard label={t("fsdDaysFeedRemaining")} value={oneDecimal(silo.daysRemaining, unavailable)} unit={t("fsdDaysUnit")} sub={status || silo.firstShortageDate ? <span className="inline-flex flex-wrap items-center gap-2">{status && <StatusDot tone={status.tone} label={status.label} />}{silo.firstShortageDate && <span className="text-xs text-(--text-secondary)">{t("fsdFirstShortageDate")}: {formatDateShort(silo.firstShortageDate)}</span>}</span> : undefined} />
         <StatCard label={t("fsdRecommendedOrderKg")} value={number(silo.recommendedOrderKg, unavailable)} unit="kg" />
       </StatRow>
-      <AnimalsFedDialog open={batchesOpen} onClose={() => setBatchesOpen(false)} silo={silo} t={t} />
+      <AnimalsFedDialog open={batchesOpen} onClose={() => setBatchesOpen(false)} silo={silo} shed={shed ?? null} t={t} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card>
@@ -299,13 +299,15 @@ export function FeedSiloDashboardSkeleton({ label }: { label: string }) {
 }
 
 /**
- * Rishi, 2 Nov: the batches behind Animals Fed, from the card's info button — each batch, its stage group when it is
- * fed animal by animal ("BATCH-000380 · GESTATION"), and its heads, with the total.
+ * Rishi, 2 Nov: the batches behind Animals Fed, from the card's info button — each batch, the stage it is in that day
+ * (an animal-wise batch once per stage group), and its heads, with the total.
  */
-function AnimalsFedDialog({ open, onClose, silo, t }: { open: boolean; onClose: () => void; silo: SelectedSiloDashboard; t: Translate }) {
+function AnimalsFedDialog({ open, onClose, silo, shed, t }: { open: boolean; onClose: () => void; silo: SelectedSiloDashboard; shed: DashboardShed | null; t: Translate }) {
   const batches = silo.animalsFedBatches ?? [];
+  // Rishi, 2 Nov: the selected shed's batches only, so the dialog names the shed beside the silo.
+  const where = [shed ? shed.name || shed.code : null, silo.siloName || silo.siloCode].filter(Boolean).join(" — ");
   return (
-    <Dialog open={open} onClose={onClose} title={t("fsdAnimalsFedBatches")} description={silo.siloName || silo.siloCode} presentation="compact" maxWidth="md">
+    <Dialog open={open} onClose={onClose} title={t("fsdAnimalsFedBatches")} description={where} presentation="compact" maxWidth="md">
       {batches.length ? (
         <div className="max-h-[60vh] overflow-y-auto rounded-md border border-(--border)">
           <table className="w-full border-separate border-spacing-0 text-left text-sm">
@@ -315,16 +317,13 @@ function AnimalsFedDialog({ open, onClose, silo, t }: { open: boolean; onClose: 
               <th scope="col" className={`${TH} text-right`}>{t("fsdColHead")}</th>
             </tr></thead>
             <tbody>
-              {batches.map((b) => {
-                const [batchNo, ...stage] = b.batchNo.split(" · ");
-                return (
-                  <tr key={b.batchNo}>
-                    <td className={`${TD} font-medium`}>{batchNo}</td>
-                    <td className={`${TD} text-(--text-secondary)`}>{stage.length ? stage.join(" · ") : "—"}</td>
-                    <td className={`${TD} text-right tabular-nums`}>{b.heads.toLocaleString("en-US")}</td>
-                  </tr>
-                );
-              })}
+              {batches.map((b) => (
+                <tr key={`${b.batchNo}|${b.stage}`}>
+                  <td className={`${TD} font-medium`}>{b.batchNo}</td>
+                  <td className={`${TD} text-(--text-secondary)`}>{b.stage}</td>
+                  <td className={`${TD} text-right tabular-nums`}>{b.heads.toLocaleString("en-US")}</td>
+                </tr>
+              ))}
             </tbody>
             <tfoot><tr>
               <td className="px-3 py-2 font-semibold">{t("fsdTotal")}</td>
