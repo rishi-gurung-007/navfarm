@@ -239,8 +239,8 @@ function CapacityCell({ row, t }: { row: EligibleLine; t: ReturnType<typeof useL
 }
 
 /**
- * One morning of the line's silo. The delivery day is outlined — a late delivery (dated before today) on the
- * first day, in amber, since the forecast counts it as arriving today. A day the silo would hold more than
+ * One morning of the line's silo. The delivery day's tick, cross or N/A is circled (Rishi, 2 Nov) — a late
+ * delivery (dated before today) on the first day, in amber, since the forecast counts it as arriving today. A day the silo would hold more than
  * its capacity reads red, an empty one amber. The delivery cell says on hover what arrives onto what.
  */
 function ForecastDayCell({ row, date, t, na }: { row: EligibleLine; date: string; t: ReturnType<typeof useLanguage>["t"]; na: string }) {
@@ -248,7 +248,7 @@ function ForecastDayCell({ row, date, t, na }: { row: EligibleLine; date: string
   const delivery = row.proposed_delivery_date ? String(row.proposed_delivery_date).slice(0, 10) : null;
   const late = !!row.delivery_overdue && row.forecast_days?.[0]?.date === date;
   const isDelivery = delivery === date || late;
-  const outline = isDelivery ? `outline outline-2 -outline-offset-2 ${late ? "outline-(--warning)" : "outline-(--accent)"}` : "";
+  const circle = isDelivery ? `rounded-full ring-2 ${late ? "ring-(--warning)" : "ring-(--accent)"}` : "";
   if (!day) {
     return <td className={`${TD} text-center text-(--text-secondary)`}><HoverHint hint={t(row.destination_silo_id ? "fcdNaNoForecast" : "fcdNaStore")}>{na}</HoverHint></td>;
   }
@@ -257,8 +257,10 @@ function ForecastDayCell({ row, date, t, na }: { row: EligibleLine; date: string
     : t("fcdDeliveryDayHint", { requested: formatKg(row.quantity), stock: formatKg(row.delivery_day_stock_kg ?? day.stock_kg) });
   // Rishi, 31 Oct: N/A on a day the line's feed is not needed; otherwise a tick when the silo covers the day's use, a cross when it falls short.
   if (day.required_kg == null) {
-    return <td data-delivery-day={isDelivery || undefined} data-delivery-late={late || undefined} data-not-required="true" className={`${TD} text-center text-(--text-secondary) ${outline}`}>
-      <HoverHint hint={[t("fcdNotRequiredOnDate"), deliveryHint].filter(Boolean).join(" · ")}>{na}</HoverHint>
+    return <td data-delivery-day={isDelivery || undefined} data-delivery-late={late || undefined} data-not-required="true" className={`${TD} text-center text-(--text-secondary)`}>
+      <HoverHint hint={[t("fcdNotRequiredOnDate"), deliveryHint].filter(Boolean).join(" · ")}>
+        {isDelivery ? <span data-delivery-circle className={`inline-flex items-center justify-center px-2 py-0.5 ${circle}`}>{na}</span> : na}
+      </HoverHint>
     </td>;
   }
   // Rishi, 31 Oct: the cell shows only the tick or cross; the kilograms are in the hover.
@@ -272,10 +274,10 @@ function ForecastDayCell({ row, date, t, na }: { row: EligibleLine; date: string
     data-delivery-late={late || undefined}
     data-covered={day.covered ? "true" : "false"}
     data-over-capacity={over || undefined}
-    className={`${TD} text-center ${outline}`}
+    className={`${TD} text-center`}
   >
     <HoverHint hint={[coverHint, overHint, deliveryHint].filter(Boolean).join(" · ")}>
-      <span className="inline-flex items-center justify-center">
+      <span data-delivery-circle={isDelivery || undefined} className={`inline-flex h-7 w-7 items-center justify-center ${circle}`}>
         {day.covered
           ? <Check aria-label={t("fcdCovered")} className="h-4 w-4 shrink-0" style={{ color: "var(--success)" }} />
           : <X aria-label={t("fcdShort")} className="h-4 w-4 shrink-0" style={{ color: "var(--danger)" }} />}

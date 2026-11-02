@@ -41,8 +41,11 @@ describe('Mill consolidation sheet (Rishi, 30 Oct)', () => {
     expect(headers).toEqual(expect.arrayContaining(['fcdColLifecycle', 'fcdColDaysBeforeDiet', '31/10/26', '01/11/26', '02/11/26']));
     const [first, second] = within(table).getAllByRole('row').slice(1);
     expect(within(first).getByText('Z-LINE-SOW GROWER weeks 14–22')).toBeTruthy();
-    // The delivery morning is outlined; a morning past the 5,800 KG capacity says so on hover.
+    // The delivery morning is circled (Rishi, 2 Nov: a circle round the tick or cross, not a square round the cell);
+    // a morning past the 5,800 KG capacity says so on hover.
     const delivery = first.querySelector('td[data-delivery-day]') as HTMLElement;
+    expect(delivery.className).not.toMatch(/outline/);
+    expect(delivery.querySelector('[data-delivery-circle]')!.className).toMatch(/rounded-full.*ring-\(--accent\)/);
     expect(delivery.querySelector('[data-hint]')!.getAttribute('data-hint')).toContain('fcdDeliveryDayHint');
     const over = first.querySelector('td[data-over-capacity]')!;
     expect(over.querySelector('[data-hint]')!.getAttribute('data-hint')).toContain('fcdOverCapacityHint');
@@ -60,6 +63,7 @@ describe('Mill consolidation sheet (Rishi, 30 Oct)', () => {
     // A late delivery is outlined on the first day and says so on hover.
     const lateRow = within(table).getAllByRole('row')[3];
     const late = lateRow.querySelector('td[data-delivery-late]') as HTMLElement;
+    expect(late.querySelector('[data-delivery-circle]')!.className).toMatch(/rounded-full.*ring-\(--warning\)/);
     expect(late.textContent).toBe('');
     expect(late.querySelector('[data-hint]')!.getAttribute('data-hint')).toContain('fcdLateDeliveryHint');
     // A store line has no silo stock to project: N/A with the reason on hover.
