@@ -2638,6 +2638,8 @@ const item: MasterDataConfig = {
       min: 0,
       section: 'Units & Valuation',
       visibleWhen: { anyOf: [{ key: 'valuation_method', equals: 'STANDARD' }] },
+      // Rishi, 2 Nov: hidden on edit too when the item is not Standard, even if an old cost is stored.
+      hideStoredWhenHidden: true,
       requiredWhen: {
         anyOf: [{ key: 'valuation_method', equals: 'STANDARD' }],
       },
@@ -4235,6 +4237,60 @@ const reportingPeriod: MasterDataConfig = {
   ],
 };
 
+/**
+ * Accounting Period Master (Business Central's Accounting Periods). A period runs from its Starting Date to
+ * the day before the next one's; a New Fiscal Year row starts a fiscal year. The Monthly Ops report (R12)
+ * reads its months from here; Reporting Periods stays the feed screens' calendar.
+ */
+const accountingPeriod: MasterDataConfig = {
+  key: 'accounting-period',
+  label: 'Accounting Periods',
+  singular: 'Accounting Period',
+  apiBase: '/accounting-period',
+  idKey: 'accounting_period_id',
+  group: 'Farm Operations',
+  isPrimary: true,
+  businessAdminOnly: true,
+  description:
+    'Monthly accounting periods: each runs from its Starting Date to the day before the next one starts.',
+  columns: [
+    { key: 'starting_date', label: 'Starting Date', format: 'date' },
+    { key: 'name', label: 'Name' },
+    { key: 'ending_date', label: 'Ending Date', format: 'date' },
+    { key: 'fiscal_year', label: 'Fiscal Year' },
+    { key: 'new_fiscal_year', label: 'New Fiscal Year' },
+    { key: 'closed', label: 'Closed' },
+    { key: 'date_locked', label: 'Date Locked' },
+    { key: 'inventory_period_closed', label: 'Inventory Period Closed' },
+  ],
+  fields: [
+    { key: 'company_id', label: 'Company', type: 'text', hideInForm: true },
+    {
+      key: 'starting_date',
+      label: 'Starting Date',
+      type: 'date',
+      required: true,
+      helpText: 'The period runs to the day before the next period starts.',
+    },
+    {
+      key: 'name',
+      label: 'Name',
+      type: 'text',
+      required: true,
+      maxLength: 30,
+      helpText: 'The month name shown on reports, for example July.',
+    },
+    { key: 'new_fiscal_year', label: 'New Fiscal Year', type: 'boolean' },
+    { key: 'closed', label: 'Closed', type: 'boolean' },
+    { key: 'date_locked', label: 'Date Locked', type: 'boolean' },
+    {
+      key: 'inventory_period_closed',
+      label: 'Inventory Period Closed',
+      type: 'boolean',
+    },
+  ],
+};
+
 const binDietAssignment: MasterDataConfig = {
   key: 'bin-diet-assignment',
   label: 'BIN Diet Assignments',
@@ -5755,6 +5811,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   reason,
   alertRule,
   reportingPeriod,
+  accountingPeriod,
   binDietAssignment,
   disease,
   feedFormula,
@@ -5794,6 +5851,7 @@ export const MASTER_DATA_NAV_ORDER: string[] = [
   'animal',
   'activity',
   'reporting-period',
+  'accounting-period',
   'alert-rule',
 ];
 

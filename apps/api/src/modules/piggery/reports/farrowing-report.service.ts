@@ -33,6 +33,7 @@ import {
   isEmptyPeriod,
   matchPriorBatch,
   minusOneYear,
+  selectReportBatches,
   MortalityRow,
   ServiceRow,
   SowWeightRow,
@@ -63,6 +64,7 @@ export interface FarrowingReport {
     date_from: string;
     date_to: string;
     batch_no: string | null;
+    batch_status: 'ACTIVE' | 'CLOSED' | null;
     parity: number | null;
     sow_code: string | null;
   };
@@ -129,6 +131,7 @@ export class FarrowingReportService {
         batch_id: schema.batchHeader.batch_id,
         batch_no: schema.batchHeader.batch_no,
         breed_id: schema.batchHeader.breed_id,
+        status: schema.batchHeader.status,
       })
       .from(schema.batchHeader)
       .where(and(...batchConditions))
@@ -150,11 +153,10 @@ export class FarrowingReportService {
       sowCode = sow.animal_code;
     }
 
-    const selected = query.batchId
-      ? farmBatches.filter((b) => b.batch_id === query.batchId)
-      : farmBatches;
-    if (query.batchId && selected.length === 0)
+    if (query.batchId && !farmBatches.some((b) => b.batch_id === query.batchId))
       throw new NotFoundException('Batch not found on this farm.');
+    // The chosen batch and Batch Type (Rishi, 2 Nov) narrow the period's batches; the prior year stays the farm's.
+    const selected = selectReportBatches(farmBatches, query);
 
     const current = await this.periodData(
       selected.map((b) => b.batch_id),
@@ -270,7 +272,10 @@ export class FarrowingReportService {
       });
     }
 
-    const batchNo = query.batchId ? selected[0].batch_no : null;
+    const batchNo = query.batchId
+      ? (farmBatches.find((b) => b.batch_id === query.batchId)?.batch_no ??
+        null)
+      : null;
     return {
       farm: {
         farm_id: farm.farm_id,
@@ -281,6 +286,7 @@ export class FarrowingReportService {
         date_from: query.dateFrom,
         date_to: query.dateTo,
         batch_no: batchNo,
+        batch_status: query.batchStatus ?? null,
         parity: query.parity ?? null,
         sow_code: sowCode,
       },

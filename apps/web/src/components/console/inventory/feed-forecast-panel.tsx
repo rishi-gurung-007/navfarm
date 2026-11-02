@@ -11,6 +11,7 @@
  * today is the API's to decide (D16).
  */
 import { useEffect, useRef, useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { InlineAlert } from '@/components/ui/alert';
 import { showToast } from '@/components/ui/toast';
@@ -25,6 +26,7 @@ import {
 import { useLanguage } from '@/hooks/useLanguage';
 import { formatDateShort, todayIso, unwrap } from './feed-format';
 import {
+  DietChange,
   FeedForecastGrid,
   ReportRow,
   SourceBalancePoint,
@@ -45,6 +47,12 @@ import { FeedRequisitionDetail } from './feed-requisition-detail';
 import { FeedRequisitionFromRunDialog } from './feed-requisition-from-run-dialog';
 import type { RequisitionView } from './feed-requisition-document';
 import { setForecastWindow } from './feed-forecast-window';
+import {
+  countedRequisitions,
+  requisitionCover,
+  type OpenRequisitionLine,
+  type ShortSource,
+} from './requisition-cover';
 import {
   FeedForecastProvider,
   useFeedForecastContext,
@@ -74,9 +82,18 @@ interface ForecastData {
   rows: ReportRow[];
   sourceBalances: SourceBalancePoint[];
   flags: ForecastFlag[];
+  dietChanges?: DietChange[];
+  /** The sources the forecast ran short, with their need and first shortage (requisitionCover). */
+  sources?: ShortSource[];
 }
 
 type CalculationState = 'EMPTY' | 'CALCULATED' | 'SAVED';
+
+interface CoveredLine {
+  destination_code: string;
+  item_name: string;
+  covered_by: string[];
+}
 
 interface CurrentForecastRun {
   run_id?: string;
@@ -86,6 +103,8 @@ interface CurrentForecastRun {
   version: number;
   existingRequisitionId?: string | null;
   canCreateRequisition?: boolean;
+  /** Rishi, 31 Oct: run-downs another open requisition already solves, so they are not offered again. */
+  coveredLines?: CoveredLine[];
   output_snapshot?: { display?: SavedForecastDisplay };
 }
 
@@ -140,11 +159,13 @@ function FeedForecastPanelContent() {
   const [currentRun, setCurrentRun] = useState<CurrentForecastRun | null>(null);
   const [historicalRun, setHistoricalRun] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Rishi, 31 Oct: true only while Calculate runs — loading the saved calculation is not calculating.
+  const [calculating, setCalculating] = useState(false);
+  const [openLines, setOpenLines] = useState<OpenRequisitionLine[]>([]);
   const viewToken = useRef(0);
   const [savingRun, setSavingRun] = useState(false);
   const [runHistoryReload, setRunHistoryReload] = useState(0);
   const [fromRunOpen, setFromRunOpen] = useState(false);
-  const [createAfterSave, setCreateAfterSave] = useState(false);
   const [createdRequisition, setCreatedRequisition] =
     useState<RequisitionView | null>(null);
 
@@ -221,17 +242,25 @@ function FeedForecastPanelContent() {
             ? display.sourceBalances
             : [],
           flags: Array.isArray(display.flags) ? display.flags : [],
+          dietChanges: Array.isArray(display.dietChanges)
+            ? display.dietChanges
+            : [],
         } as ForecastData;
         const runId = run.run_id ?? run.runId;
         let existingRequisitionId: string | null = null;
         let canCreateRequisition = false;
+        let coveredLines: CoveredLine[] = [];
         if (runId) {
           try {
             const preview = unwrap<{
               existingRequisitionId?: string | null;
               lines?: unknown[];
+              covered_lines?: CoveredLine[];
             }>(await api.get(`/feed-requisition/from-run/${runId}/preview`));
             existingRequisitionId = preview.existingRequisitionId ?? null;
+            coveredLines = Array.isArray(preview.covered_lines)
+              ? preview.covered_lines
+              : [];
             canCreateRequisition =
               !!existingRequisitionId ||
               (Array.isArray(preview.lines) && preview.lines.length > 0);
@@ -241,7 +270,12 @@ function FeedForecastPanelContent() {
           }
         }
         if (superseded()) return;
-        setCurrentRun({ ...run, existingRequisitionId, canCreateRequisition });
+        setCurrentRun({
+          ...run,
+          existingRequisitionId,
+          canCreateRequisition,
+          coveredLines,
+        });
         setCalculationState('SAVED');
         setData(resolved);
         hydrateWindow({
@@ -267,6 +301,27 @@ function FeedForecastPanelContent() {
       cancelled = true;
     };
   }, [farmId, hydrateWindow, savedRunReload]);
+
+  // The farm's open feed requisitions, read when a calculation is on screen unsaved, for its cover check.
+  useEffect(() => {
+    if (!farmId || calculationState !== 'CALCULATED') return;
+    let alive = true;
+    api
+      .get(
+        `/feed-requisition/open-lines?${new URLSearchParams({ farmId }).toString()}`,
+      )
+      .then((res) => {
+        const list = unwrap<OpenRequisitionLine[]>(res);
+        if (alive) setOpenLines(Array.isArray(list) ? list : []);
+      })
+      .catch(() => {
+        // Without the list nothing is taken as covered: Save & Create stays offered.
+        if (alive) setOpenLines([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [farmId, calculationState, data]);
 
   // Share the window on screen with the Feed Requisition tab's "Draft from forecast".
   useEffect(() => {
@@ -299,7 +354,8 @@ function FeedForecastPanelContent() {
     }
   }
 
-  async function saveRun() {
+  // Save & Create Requisition passes true. Read from state, the flag would still be false in this call.
+  async function saveRun(thenCreateRequisition = false) {
     if (!farmId || !data) return;
     setSavingRun(true);
     try {
@@ -316,6 +372,7 @@ function FeedForecastPanelContent() {
       const saved = unwrap<{ runCode: string; version: number }>(response);
       let canCreateRequisition = false;
       let existingRequisitionId: string | null = null;
+      let coveredLines: CoveredLine[] = [];
       const savedRunId =
         (saved as CurrentForecastRun).run_id ??
         (saved as CurrentForecastRun).runId;
@@ -324,8 +381,12 @@ function FeedForecastPanelContent() {
           const preview = unwrap<{
             existingRequisitionId?: string | null;
             lines?: unknown[];
+            covered_lines?: CoveredLine[];
           }>(await api.get(`/feed-requisition/from-run/${savedRunId}/preview`));
           existingRequisitionId = preview.existingRequisitionId ?? null;
+          coveredLines = Array.isArray(preview.covered_lines)
+            ? preview.covered_lines
+            : [];
           canCreateRequisition =
             !!existingRequisitionId ||
             (Array.isArray(preview.lines) && preview.lines.length > 0);
@@ -333,12 +394,20 @@ function FeedForecastPanelContent() {
           canCreateRequisition = false;
         }
       }
-      setCurrentRun({ ...saved, existingRequisitionId, canCreateRequisition });
+      setCurrentRun({
+        ...saved,
+        existingRequisitionId,
+        canCreateRequisition,
+        coveredLines,
+      });
       setCalculationState('SAVED');
-      if (createAfterSave && canCreateRequisition && !existingRequisitionId) {
+      if (
+        thenCreateRequisition &&
+        canCreateRequisition &&
+        !existingRequisitionId
+      ) {
         setFromRunOpen(true);
       }
-      setCreateAfterSave(false);
       showToast.success(
         tRef.current('ffRunSaved', {
           code: saved.runCode,
@@ -356,6 +425,7 @@ function FeedForecastPanelContent() {
   async function calculate() {
     if (!farmId || currentRun) return;
     setLoading(true);
+    setCalculating(true);
     try {
       const response = await api.get(
         `/feed-forecast?${forecastQueryString({ farmId, view, planningDate, from: dateFrom, to: dateTo, periodId })}`,
@@ -374,7 +444,17 @@ function FeedForecastPanelContent() {
       showToast.error(err?.message || tRef.current('ffFailedToLoad'));
     } finally {
       setLoading(false);
+      setCalculating(false);
     }
+  }
+
+  // A saved calculation's dates were copied into the filters when it loaded. Once it is gone, the next
+  // calculation plans from today (the API's farm day) — not from the deleted run's planning date.
+  function resetWindowToToday() {
+    setPlanningDate('');
+    setDateFrom('');
+    setDateTo('');
+    setPeriodId('');
   }
 
   async function deleteCalculation() {
@@ -385,6 +465,7 @@ function FeedForecastPanelContent() {
       setCurrentRun(null);
       setData(null);
       setCalculationState('EMPTY');
+      resetWindowToToday();
       showToast.success(tRef.current('ffCalculationDeleted'));
       setRunHistoryReload((value) => value + 1);
     } catch (err: any) {
@@ -450,6 +531,29 @@ function FeedForecastPanelContent() {
     ? data!.sourceBalances
     : [];
   const flags = Array.isArray(data?.flags) ? data!.flags : [];
+  // Rishi, 31 Oct: an unsaved calculation's run-downs that open requisitions it did not count already solve.
+  const shortSources = (
+    Array.isArray(data?.sources) ? data!.sources : []
+  ).filter((x) => Number(x.shortfallKg) > 0);
+  const counted = countedRequisitions(sourceBalances);
+  const calculatedCover = shortSources.map((x) => ({
+    source: x,
+    ...requisitionCover(x, openLines, counted),
+  }));
+  const uncoveredShortages = calculatedCover.filter((c) => !c.covered).length;
+  const coveredNotes: CoveredLine[] =
+    calculationState === 'SAVED'
+      ? (currentRun?.coveredLines ?? [])
+      : calculationState === 'CALCULATED'
+        ? calculatedCover
+            .filter((c) => c.covered)
+            .map((c) => ({
+              destination_code: c.source.sourceCode ?? '',
+              item_name: c.source.itemName ?? '',
+              covered_by: c.by,
+            }))
+        : [];
+  const dietChanges = Array.isArray(data?.dietChanges) ? data!.dietChanges : [];
   const periodList = Array.isArray(periods) ? periods : [];
   const rangeBeforePlanning = !!data && data.forecastFrom === null;
   const rangeStartsAtPlanning =
@@ -460,6 +564,17 @@ function FeedForecastPanelContent() {
   const shownFrom = dateFrom || data?.from || '';
   const shownTo = dateTo || data?.to || '';
   const businessYear = businessYearStartOf(shownPlanning);
+  // Rishi, 30 Oct: the filters on screen are no longer the ones the unsaved
+  // calculation on screen was made with, so it must be recalculated, not saved.
+  const filtersChanged =
+    !!data &&
+    (view !== data.view ||
+      shownPlanning !== data.planningDate ||
+      (view === 'PERIOD'
+        ? (periodId || data.period?.periodId || '') !==
+          (data.period?.periodId ?? '')
+        : shownFrom !== data.from ||
+          (view === 'CUSTOM' && shownTo !== data.to)));
   // Nothing is forecast before the planning date, so a later planning date
   // pulls any earlier From / To forward with it.
   function changePlanningDate(value: string) {
@@ -488,169 +603,191 @@ function FeedForecastPanelContent() {
 
   return (
     <div data-fill-body className="w-full">
-      {/* One row at >=1024px (review, 27 Sep): a wrapped filter row left
-          "Date To" alone on a second line and took a third of the table's
-          height. The date pair shares a container so it never splits. */}
-      <div className="flex shrink-0 flex-wrap items-end gap-3 xl:flex-nowrap">
-        <div className="w-56 shrink-0">
-          <FeedFarmSelect
-            id="ff-farm"
-            label={t('ffFarm')}
-            farms={farm.farms}
-            farmId={farmId}
-            onChange={setFarmId}
-            fixedLabel={fixedLabel}
-          />
-        </div>
-        <div>
-          <label className={labelCls} htmlFor="ff-planning">
-            {t('ffPlanningDate')}
-          </label>
-          <input
-            id="ff-planning"
-            type="date"
-            value={shownPlanning}
-            onChange={(e) => changePlanningDate(e.target.value)}
-            className="nf-input-sm mt-1.5"
-            style={inputStyle}
-            title={
-              data
-                ? data.timeZone
-                  ? t('ffTimeZone', { zone: data.timeZone })
-                  : t('ffServerDay')
-                : undefined
-            }
-          />
-        </div>
-        <div className="w-36 shrink-0">
-          <label className={labelCls} htmlFor="ff-view">
-            {t('ffView')}
-          </label>
-          <div className="relative mt-1.5">
-            <SearchableSelect
-              value={view}
-              onChange={(val) => changeView(val as ForecastView)}
-              options={FORECAST_VIEWS.map((v) => ({
-                value: v,
-                label: t(FORECAST_VIEW_LABEL[v]),
-              }))}
-              columnHeaders={false}
-              searchPlaceholder="Search view…"
-              triggerClassName="nf-input-sm w-full h-9"
+      {/* The filters stay on one row (review, 27 Sep: a wrapped row left
+          "Date To" alone on a second line); the date pair shares a container
+          so it never splits. Rishi, 30 Oct: the actions wrap to their own
+          row, right-aligned, instead of running off the page's edge. */}
+      <div
+        data-forecast-controls
+        className="flex shrink-0 flex-wrap items-end gap-3"
+      >
+        <div
+          data-forecast-filters
+          className="flex min-w-0 flex-wrap items-end gap-3 xl:flex-nowrap"
+        >
+          <div className="w-56 shrink-0">
+            <FeedFarmSelect
+              id="ff-farm"
+              label={t('ffFarm')}
+              farms={farm.farms}
+              farmId={farmId}
+              onChange={setFarmId}
+              fixedLabel={fixedLabel}
             />
-            <select
-              id="ff-view"
-              value={view}
-              onChange={(e) => changeView(e.target.value as ForecastView)}
-              tabIndex={-1}
-              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
-            >
-              {FORECAST_VIEWS.map((v) => (
-                <option key={v} value={v}>
-                  {t(FORECAST_VIEW_LABEL[v])}
-                </option>
-              ))}
-            </select>
           </div>
-        </div>
-        <div className="flex shrink-0 items-end gap-3">
-          {view === 'PERIOD' ? (
-            <div className="w-56 shrink-0">
-              <label className={labelCls} htmlFor="ff-period">
-                {t('ffReportingPeriod')}
-              </label>
-              <div className="relative mt-1.5">
-                <SearchableSelect
-                  value={periodId}
-                  onChange={setPeriodId}
-                  options={periodList.map((p) => ({
-                    value: p.periodId,
-                    code: p.periodCode,
-                    name: `${formatDateShort(p.startDate)} – ${formatDateShort(p.endDate)}`,
-                    label: t('ffPeriodOption', {
+          <div>
+            <label className={labelCls} htmlFor="ff-planning">
+              {t('ffPlanningDate')}
+            </label>
+            <input
+              id="ff-planning"
+              type="date"
+              value={shownPlanning}
+              onChange={(e) => changePlanningDate(e.target.value)}
+              className="nf-input-sm mt-1.5"
+              style={inputStyle}
+              title={
+                data
+                  ? data.timeZone
+                    ? t('ffTimeZone', { zone: data.timeZone })
+                    : t('ffServerDay')
+                  : undefined
+              }
+            />
+          </div>
+          <div className="w-36 shrink-0">
+            <label className={labelCls} htmlFor="ff-view">
+              {t('ffView')}
+            </label>
+            <div className="relative mt-1.5">
+              <SearchableSelect
+                value={view}
+                onChange={(val) => changeView(val as ForecastView)}
+                options={FORECAST_VIEWS.map((v) => ({
+                  value: v,
+                  label: t(FORECAST_VIEW_LABEL[v]),
+                }))}
+                columnHeaders={false}
+                searchPlaceholder="Search view…"
+                triggerClassName="nf-input-sm w-full h-9"
+              />
+              <select
+                id="ff-view"
+                value={view}
+                onChange={(e) => changeView(e.target.value as ForecastView)}
+                tabIndex={-1}
+                className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              >
+                {FORECAST_VIEWS.map((v) => (
+                  <option key={v} value={v}>
+                    {t(FORECAST_VIEW_LABEL[v])}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-end gap-3">
+            {view === 'PERIOD' ? (
+              <div className="w-56 shrink-0">
+                <label className={labelCls} htmlFor="ff-period">
+                  {t('ffReportingPeriod')}
+                </label>
+                <div className="relative mt-1.5">
+                  <SearchableSelect
+                    value={periodId}
+                    onChange={setPeriodId}
+                    options={periodList.map((p) => ({
+                      value: p.periodId,
                       code: p.periodCode,
-                      from: formatDateShort(p.startDate),
-                      to: formatDateShort(p.endDate),
-                    }),
-                  }))}
-                  columnHeaders={['Period', 'Dates']}
-                  columns={[
-                    { key: 'code', label: 'Period' },
-                    { key: 'name', label: 'Dates' },
-                  ]}
-                  placeholder={t('ffPeriodCovering')}
-                  searchPlaceholder="Search period…"
-                  triggerClassName="nf-input-sm w-full h-9"
-                />
-                <select
-                  id="ff-period"
-                  value={periodId}
-                  onChange={(e) => setPeriodId(e.target.value)}
-                  tabIndex={-1}
-                  className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
-                >
-                  <option value="">{t('ffPeriodCovering')}</option>
-                  {periodList.map((p) => (
-                    <option key={p.periodId} value={p.periodId}>
-                      {t('ffPeriodOption', {
+                      name: `${formatDateShort(p.startDate)} – ${formatDateShort(p.endDate)}`,
+                      label: t('ffPeriodOption', {
                         code: p.periodCode,
                         from: formatDateShort(p.startDate),
                         to: formatDateShort(p.endDate),
-                      })}
-                    </option>
-                  ))}
-                </select>
+                      }),
+                    }))}
+                    columnHeaders={['Period', 'Dates']}
+                    columns={[
+                      { key: 'code', label: 'Period' },
+                      { key: 'name', label: 'Dates' },
+                    ]}
+                    placeholder={t('ffPeriodCovering')}
+                    searchPlaceholder="Search period…"
+                    triggerClassName="nf-input-sm w-full h-9"
+                  />
+                  <select
+                    id="ff-period"
+                    value={periodId}
+                    onChange={(e) => setPeriodId(e.target.value)}
+                    tabIndex={-1}
+                    className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                  >
+                    <option value="">{t('ffPeriodCovering')}</option>
+                    {periodList.map((p) => (
+                      <option key={p.periodId} value={p.periodId}>
+                        {t('ffPeriodOption', {
+                          code: p.periodCode,
+                          from: formatDateShort(p.startDate),
+                          to: formatDateShort(p.endDate),
+                        })}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            </div>
-          ) : (
-            <div>
-              <label className={labelCls} htmlFor="ff-from">
-                {t(
-                  view === 'DAILY'
-                    ? 'ffDate'
-                    : view === 'WEEKLY'
-                      ? 'ffWeekStart'
-                      : 'ffDateFrom',
-                )}
-              </label>
-              <input
-                id="ff-from"
-                type="date"
-                value={shownFrom}
-                min={shownPlanning || undefined}
-                onChange={(e) =>
-                  setDateFrom(clampToPlanning(e.target.value, shownPlanning))
-                }
-                className="nf-input-sm mt-1.5"
-                style={inputStyle}
-              />
-            </div>
-          )}
-          {view === 'CUSTOM' && (
-            <div>
-              <label className={labelCls} htmlFor="ff-to">
-                {t('ffDateTo')}
-              </label>
-              <input
-                id="ff-to"
-                type="date"
-                value={shownTo}
-                min={shownPlanning || undefined}
-                onChange={(e) =>
-                  setDateTo(clampToPlanning(e.target.value, shownPlanning))
-                }
-                className="nf-input-sm mt-1.5"
-                style={inputStyle}
-              />
-            </div>
-          )}
+            ) : (
+              <div>
+                <label className={labelCls} htmlFor="ff-from">
+                  {t(
+                    view === 'DAILY'
+                      ? 'ffStartDate'
+                      : view === 'WEEKLY'
+                        ? 'ffFirstWeekStarts'
+                        : 'ffDateFrom',
+                  )}
+                </label>
+                <input
+                  id="ff-from"
+                  type="date"
+                  value={shownFrom}
+                  min={shownPlanning || undefined}
+                  onChange={(e) =>
+                    setDateFrom(clampToPlanning(e.target.value, shownPlanning))
+                  }
+                  className="nf-input-sm mt-1.5"
+                  style={inputStyle}
+                />
+              </div>
+            )}
+            {view === 'CUSTOM' && (
+              <div>
+                <label className={labelCls} htmlFor="ff-to">
+                  {t('ffDateTo')}
+                </label>
+                <input
+                  id="ff-to"
+                  type="date"
+                  value={shownTo}
+                  min={shownPlanning || undefined}
+                  onChange={(e) =>
+                    setDateTo(clampToPlanning(e.target.value, shownPlanning))
+                  }
+                  className="nf-input-sm mt-1.5"
+                  style={inputStyle}
+                />
+              </div>
+            )}
+          </div>
         </div>
         {farm.loaded &&
           !farm.failed &&
           !noFarms &&
           (farmId || farm.isFixed) && (
-            <div className="ml-auto flex shrink-0 items-center gap-2">
-              {calculationState === 'EMPTY' && !savedRunFailed && (
+            <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+              {calculationState === 'EMPTY' &&
+                !savedRunFailed &&
+                (!loading || calculating) && (
+                  <Button
+                    size="sm"
+                    onClick={calculate}
+                    disabled={
+                      !farmId || loading || (view === 'PERIOD' && !periodId)
+                    }
+                  >
+                    {calculating ? t('ffCalculating') : t('ffCalculate')}
+                  </Button>
+                )}
+              {calculationState === 'CALCULATED' && filtersChanged && (
                 <Button
                   size="sm"
                   onClick={calculate}
@@ -658,35 +795,32 @@ function FeedForecastPanelContent() {
                     !farmId || loading || (view === 'PERIOD' && !periodId)
                   }
                 >
-                  {loading ? t('ffCalculating') : t('ffCalculate')}
+                  {calculating ? t('ffCalculating') : t('ffRecalculate')}
                 </Button>
               )}
-              {canSaveRun && calculationState === 'CALCULATED' && (
-                <>
-                  <Button
-                    size="sm"
-                    onClick={saveRun}
-                    disabled={!data || loading || savingRun}
-                  >
-                    {savingRun ? t('ffSavingRun') : t('ffSaveRun')}
-                  </Button>
-                  {data?.rows?.some(
-                    (row) => Number(row.recommendedQtyKg ?? 0) > 0,
-                  ) && (
+              {canSaveRun &&
+                calculationState === 'CALCULATED' &&
+                !filtersChanged && (
+                  <>
                     <Button
                       size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setCreateAfterSave(true);
-                        void saveRun();
-                      }}
+                      onClick={() => void saveRun()}
                       disabled={!data || loading || savingRun}
                     >
-                      {t('rqCreateFromSaved')}
+                      {savingRun ? t('ffSavingRun') : t('ffSaveRun')}
                     </Button>
-                  )}
-                </>
-              )}
+                    {uncoveredShortages > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void saveRun(true)}
+                        disabled={!data || loading || savingRun}
+                      >
+                        {t('ffSaveAndCreateRequisition')}
+                      </Button>
+                    )}
+                  </>
+                )}
               {calculationState === 'SAVED' && !historicalRun && (
                 <>
                   {currentRun?.existingRequisitionId && (
@@ -702,12 +836,16 @@ function FeedForecastPanelContent() {
                       </Button>
                     )}
                   {canSaveRun && (
+                    // Rishi, 30 Oct: an icon, so the actions stay on the filters' row.
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={deleteCalculation}
+                      aria-label={t('ffDeleteCalculation')}
+                      title={t('ffDeleteCalculation')}
+                      className="w-9 px-0 text-[var(--danger)]"
                     >
-                      {t('ffDeleteCalculation')}
+                      <Trash2 className="h-4 w-4" />
                     </Button>
                   )}
                 </>
@@ -721,9 +859,13 @@ function FeedForecastPanelContent() {
                     setCurrentRun(null);
                     setData(null);
                     setCalculationState('EMPTY');
+                    resetWindowToToday();
+                    // Reload the farm's current saved calculation, as on first load, rather than leave the page empty.
+                    viewToken.current += 1;
+                    setSavedRunReload((value) => value + 1);
                   }}
                 >
-                  {'Return to current calculation'}
+                  {t('ffReturnToCurrent')}
                 </Button>
               )}
             </div>
@@ -790,11 +932,37 @@ function FeedForecastPanelContent() {
         <>
           {data ? (
             <>
+              {coveredNotes.length > 0 &&
+                !currentRun?.existingRequisitionId && (
+                  <InlineAlert variant="info">
+                    {t('ffCoveredByRequisition', {
+                      lines: coveredNotes
+                        .map((c) =>
+                          t('ffCoveredLine', {
+                            silo: c.destination_code,
+                            item: c.item_name,
+                            by: c.covered_by.join(', '),
+                          }),
+                        )
+                        .join('; '),
+                    })}
+                  </InlineAlert>
+                )}
+              {calculationState === 'SAVED' &&
+                !historicalRun &&
+                data.planningDate < todayIso() && (
+                  <InlineAlert variant="info">
+                    {t('ffSavedRunPast', {
+                      date: formatDateShort(data.planningDate),
+                    })}
+                  </InlineAlert>
+                )}
               <FeedForecastGrid
                 rows={rows}
                 sourceBalances={sourceBalances}
                 view={data.view}
                 from={data.from}
+                dietChanges={dietChanges}
                 loading={loading}
                 t={t}
               />
@@ -826,6 +994,7 @@ function FeedForecastPanelContent() {
           <FeedRequisitionFromRunDialog
             open={fromRunOpen}
             runId={currentRun?.run_id ?? currentRun?.runId ?? null}
+            farm={data?.farm ?? null}
             onClose={() => setFromRunOpen(false)}
             onView={(view) => {
               setFromRunOpen(false);

@@ -76,6 +76,7 @@ import {
   StockTransferService,
   FeedReceiptControls,
 } from '../../inventory/stock-transfer/stock-transfer.service';
+import type { SourceBalancePoint } from '../../inventory/feed-forecast/feed-forecast.engine';
 import { toFarmFeedSettings } from '../../inventory/feed-settings/feed-settings.rules';
 import { maySelfApprove } from '../requisition/requisition.rules';
 import {
@@ -97,20 +98,23 @@ import {
   lifecycleRefLabel,
   lineChangeProblems,
   lineKey,
+  runLineEvidence,
+  countedRequisitions,
+  requisitionCover,
+  type OpenRequisitionLine,
+  projectedSiloStockKg,
+  quantityProblems,
   planDraftUpsert,
-  keepHigherPriority,
   productionCycle,
   recommendLines,
   requiredItemForManualLine,
-  requisitionPriority,
   roundOrderKg,
   runKeyFor,
   serverToday,
   wasEdited,
   feedListStatusFilter,
-  priorityChangeProblem,
-  priorityEscalations,
-  mostUrgentPriority,
+  approvalUrgency,
+  type UrgencyLine,
 } from './feed-requisition.rules';
 import {
   AutoDraftFeedRequisitionDto,
@@ -181,6 +185,12 @@ function isDeadlock(error: unknown): boolean {
 
 const dec = (n: number | null | undefined) => (n == null ? null : String(n));
 /** approved_at / deleted_at in the one Plan B timestamp convention: UTC, as utcTimestamp documents in the engine. */
+/** A feed line has no priority level (Rishi, 2 Nov): the column is kept for history but never sent. */
+const withoutPriority = <T extends { priority?: unknown }>({
+  priority: _priority,
+  ...rest
+}: T) => rest;
+
 const nowTs = () => utcTimestamp();
 /** A farm code is data, not a pattern: `_` or `%` in it must not widen the req_no LIKE. */
 const likePrefix = (prefix: string) =>
@@ -218,8 +228,6 @@ export function requisitionListFields() {
     status: R.status,
     document_status: R.document_status,
     fulfilment_status: R.fulfilment_status,
-    // The most urgent line's priority (row 34 lives on the lines): CFP, then CRITICAL, WARNING, INFO.
-    priority: sql<string | null>`(SELECT rl.priority FROM requisition_line rl WHERE rl.requisition_id = ${outer} AND rl.priority IS NOT NULL ORDER BY FIELD(rl.priority, 'CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO') LIMIT 1)`,
     required_date: R.required_date,
     submission_deadline: R.submission_deadline,
     created_at: R.created_at,
@@ -517,16 +525,14 @@ export class FeedRequisitionService implements OnModuleInit {
   }
 
   /**
-   * The draft-time snapshot columns of a line (Requisition §2). The line carries its own priority
-   * (row 34), worked out from its own shortage and low level, so the mill can prepare each feed in turn.
+   * The draft-time snapshot columns of a line (Requisition §2). A feed line has no priority level (Rishi,
+   * 2 Nov): the farm's Priority No. orders it for the mill, and approval urgency is worked out at submit.
    */
   private lineValues(
     line: DraftLine,
     forecastRunLineIds: string[] | null | undefined,
-    planningDate: string,
   ) {
     return {
-      priority: requisitionPriority(planningDate, [line]),
       item_id: line.itemId,
       description: line.itemName.slice(0, 200),
       uom: 'KG',
@@ -841,6 +847,10 @@ export class FeedRequisitionService implements OnModuleInit {
           item_id: schema.feedForecastRunLine.required_item_id,
           recommended_qty_kg: schema.feedForecastRunLine.recommended_qty_kg,
           shortage_date: schema.feedForecastRunLine.shortage_date,
+          forecast_date: schema.feedForecastRunLine.forecast_date,
+          opening_stock_kg: schema.feedForecastRunLine.opening_stock_kg,
+          daily_demand_kg: schema.feedForecastRunLine.daily_demand_kg,
+          provenance_snapshot: schema.feedForecastRunLine.provenance_snapshot,
         })
         .from(schema.feedForecastRunLine)
         .where(eq(schema.feedForecastRunLine.run_id, runId));
@@ -913,7 +923,7 @@ export class FeedRequisitionService implements OnModuleInit {
         ...DEFAULT_FEED_SETTINGS,
         ...(config?.values?.requisitionDraftSettings ?? {}),
       };
-      return {
+      const draft = {
         runId: run.run_id,
         runCode: run.run_code,
         planningDate: run.planning_date,
@@ -952,18 +962,271 @@ export class FeedRequisitionService implements OnModuleInit {
             recommended_qty_kg: quantity,
             quantity_kg: quantity,
             proposed_delivery_date: addDays(shortage, -2),
+            /** The run-down this line answers: its unrounded need by its first shortage (requisitionCover). */
+            need_kg: unroundedQuantity,
+            shortage_date:
+              lines
+                .map((line) => line.shortage_date)
+                .filter((date): date is string => !!date)
+                .sort()[0] ?? null,
             feed_type: feedType,
             source_type:
               destination?.location_type === 'STORE' ? 'STORE' : 'SILO',
             run_line_ids: lines.map((line) => line.run_line_id),
+            // Every run line of this silo and item, not only those short of feed: the balance and use are the day's.
+            ...(() => {
+              const evidence = runLineEvidence(
+                runLines
+                  .filter(
+                    (line) =>
+                      line.destination_location_id ===
+                        first.destination_location_id &&
+                      line.item_id === first.item_id,
+                  )
+                  .map((line) => ({
+                    ...line,
+                    forecast_date: String(line.forecast_date),
+                  })),
+                String(run.planning_date),
+              );
+              return {
+                system_balance_kg: evidence.systemBalanceKg,
+                daily_requirement_kg: evidence.dailyRequirementKg,
+                days_remaining: evidence.daysRemaining,
+                first_shortage_date: evidence.firstShortageDate,
+                is_next_diet: evidence.isNextDiet,
+                days_before_diet_change: evidence.daysBeforeDietChange,
+                lifecycle_ref_id: evidence.lifecycleRefId,
+              };
+            })(),
+          };
+        }),
+      };
+      // Rishi, 31 Oct: a line another open requisition would already solve is not offered again, whichever run or
+      // hand drafted that requisition. The run's own requisition is existingRequisitionId, handled by the caller.
+      const open = await this.openFeedRequisitionLines(
+        farmId,
+        tenantId,
+        draft.existingRequisitionId,
+      );
+      const counted = countedRequisitions(
+        (
+          run.output_snapshot as {
+            display?: { sourceBalances?: unknown[] };
+          } | null
+        )?.display?.sourceBalances,
+      );
+      const covered: Array<{
+        destination_code: string;
+        item_name: string;
+        covered_by: string[];
+      }> = [];
+      const lines = draft.lines.filter((line) => {
+        const cover = requisitionCover(
+          {
+            destinationLocationId: line.destination_location_id,
+            itemId: line.item_id,
+            needKg: line.need_kg,
+            shortageDate: line.shortage_date,
+          },
+          open,
+          counted,
+        );
+        if (cover.covered)
+          covered.push({
+            destination_code: line.destination_code,
+            item_name: line.item_name,
+            covered_by: cover.by,
+          });
+        return !cover.covered;
+      });
+      return { ...draft, lines, covered_lines: covered };
+    });
+  }
+
+  /**
+   * A farm's open feed requisition lines (Rishi, 31 Oct): not deleted, rejected, cancelled or received — what
+   * requisitionCover reads. `excludeRequisitionId` leaves out the one being asked about.
+   */
+  async openFeedRequisitionLines(
+    farmId: string,
+    tenantId: string,
+    excludeRequisitionId?: string | null,
+  ): Promise<OpenRequisitionLine[]> {
+    const R = schema.requisition;
+    const L = schema.requisitionLine;
+    const rows = await this.db
+      .select({
+        requisition_id: R.requisition_id,
+        req_no: R.req_no,
+        status: R.status,
+        approval_status: R.approval_status,
+        document_status: R.document_status,
+        destination_location_id: L.destination_location_id,
+        item_id: L.item_id,
+        quantity: L.quantity,
+        proposed_delivery_date: L.proposed_delivery_date,
+      })
+      .from(R)
+      .innerJoin(L, eq(L.requisition_id, R.requisition_id))
+      .where(
+        and(
+          eq(R.tenant_id, tenantId),
+          eq(R.farm_id, farmId),
+          eq(R.doc_type, FEED_DOC_TYPE),
+          isNull(R.deleted_at),
+        ),
+      );
+    const closed = new Set(['REJECTED', 'CANCELLED', 'CLOSED', 'RECEIVED']);
+    return rows
+      .filter((r) => r.requisition_id !== excludeRequisitionId)
+      .filter(
+        (r) =>
+          !closed.has(String(r.status)) &&
+          !closed.has(String(r.approval_status ?? '')) &&
+          !closed.has(String(r.document_status ?? '')),
+      )
+      .map((r) => ({
+        requisition_id: r.requisition_id,
+        req_no: r.req_no,
+        destination_location_id: r.destination_location_id,
+        item_id: r.item_id,
+        quantity: Number(r.quantity),
+        proposed_delivery_date: r.proposed_delivery_date
+          ? String(r.proposed_delivery_date).slice(0, 10)
+          : null,
+      }));
+  }
+
+  /** GET /feed-requisition/open-lines: a farm's open feed requisition lines, for the Calculation's own cover check. */
+  async openLines(
+    farmIdIn: string | undefined,
+    tenantId: string,
+    user: UserCtx,
+  ) {
+    const { farmId, companyId } = await this.forecast.resolveFarm(
+      farmIdIn,
+      tenantId,
+      user?.userType,
+    );
+    return this.forecast.withFarmScope(farmId, companyId, () =>
+      this.openFeedRequisitionLines(farmId, tenantId),
+    );
+  }
+
+  async previewFromRun(runId: string, tenantId: string, user: UserCtx) {
+    let draft = await this.savedRunDraft(runId, tenantId, user);
+    // Rishi, 30 Oct: the form checks Requested Qty against the silo's capacity on the date picked, as
+    // assertQuantityRules will on create — each silo's capacity and its projected stock on every forecast day.
+    const { companyId } = await this.forecast.resolveFarm(
+      draft.farmId,
+      tenantId,
+      user?.userType,
+    );
+    return this.forecast.withFarmScope(draft.farmId, companyId, async () => {
+      // The Breed Lifecycle Row as the requisition document words it (lifecycleRefLabel).
+      const lifecycleIds = [
+        ...new Set(
+          draft.lines
+            .map((l) => l.lifecycle_ref_id)
+            .filter((id): id is string => !!id),
+        ),
+      ];
+      const lifecycle = schema.breedLifecycleStages;
+      const labelRows = lifecycleIds.length
+        ? await this.db
+            .select({
+              lifecycle_id: lifecycle.lifecycle_id,
+              breed_code: schema.breedMaster.breed_code,
+              stage_code: schema.stageMaster.stage_code,
+              period_from: lifecycle.period_from,
+              period_to: lifecycle.period_to,
+              calc_unit: lifecycle.calc_unit,
+            })
+            .from(lifecycle)
+            .leftJoin(
+              schema.breedMaster,
+              eq(schema.breedMaster.breed_id, lifecycle.breed_id),
+            )
+            .leftJoin(
+              schema.stageMaster,
+              eq(schema.stageMaster.stage_id, lifecycle.stage_id),
+            )
+            .where(
+              and(
+                eq(lifecycle.tenant_id, tenantId),
+                inArray(lifecycle.lifecycle_id, lifecycleIds),
+              ),
+            )
+        : [];
+      const labelOf = new Map(
+        labelRows.map((r) => [r.lifecycle_id, lifecycleRefLabel(r)]),
+      );
+      draft = {
+        ...draft,
+        lines: draft.lines.map((l) => ({
+          ...l,
+          lifecycle_ref_label: l.lifecycle_ref_id
+            ? (labelOf.get(l.lifecycle_ref_id) ?? null)
+            : null,
+        })),
+      };
+      const destinations = await this.loadDestinations(
+        draft.lines.map((l) => l.destination_location_id),
+        tenantId,
+      );
+      const siloIds = [
+        ...new Set(
+          draft.lines
+            .map((l) => l.destination_location_id)
+            .filter((id) => destinations.get(id)?.locationType === 'SILO'),
+        ),
+      ];
+      if (!siloIds.length) return draft;
+      const clock = await this.forecast.farmToday(companyId, tenantId);
+      const forecast = await this.forecast.computeForFarm(
+        draft.farmId,
+        companyId,
+        tenantId,
+        draftForecastRange(clock.today, undefined),
+        clock,
+      );
+      const onHand = await this.siloFeed.currentItems(
+        siloIds,
+        companyId,
+        tenantId,
+      );
+      // Every day a delivery can be dated for: today to 60 days on (the forecast horizon is 45).
+      const dates = Array.from({ length: 61 }, (_, i) =>
+        addDays(clock.today, i),
+      );
+      return {
+        ...draft,
+        lines: draft.lines.map((line) => {
+          const dest = destinations.get(line.destination_location_id);
+          if (dest?.locationType !== 'SILO') return line;
+          const onHandKg =
+            onHand.get(line.destination_location_id)?.on_hand_qty ?? 0;
+          return {
+            ...line,
+            silo_capacity_kg: dest.capacityKg,
+            silo_on_hand_kg: Math.max(0, onHandKg),
+            // The silo's projected stock each morning (projectedSiloStockKg, as the create check reads it).
+            silo_stock_by_date: Object.fromEntries(
+              dates.map((date) => [
+                date,
+                projectedSiloStockKg(
+                  forecast.sourceBalances,
+                  line.destination_location_id,
+                  date,
+                  onHandKg,
+                ),
+              ]),
+            ),
           };
         }),
       };
     });
-  }
-
-  async previewFromRun(runId: string, tenantId: string, user: UserCtx) {
-    return this.savedRunDraft(runId, tenantId, user);
   }
 
   async createFromRun(
@@ -1010,6 +1273,28 @@ export class FeedRequisitionService implements OnModuleInit {
     const farm = await this.loadFarm(preview.farmId, companyId, tenantId);
     const clock = await this.forecast.farmToday(companyId, tenantId);
     const settings = { ...DEFAULT_FEED_SETTINGS, ...(preview.settings ?? {}) };
+    // The form showed the saved calculation's Bulk Order Multiple and bag size; the quantities are held to those.
+    await this.forecast.withFarmScope(preview.farmId, companyId, () =>
+      this.assertQuantityRules(
+        dto.lines.map((line, i) => {
+          const source = expected.get(
+            lineKey(line.destination_location_id, line.item_id),
+          )!;
+          return {
+            label: `Line ${(i + 1) * 10000}`,
+            itemName: source.item_name,
+            quantityKg: line.quantity_kg,
+            feedType: source.feed_type as FeedType,
+            destinationLocationId: line.destination_location_id,
+            deliveryDate: line.proposed_delivery_date,
+          };
+        }),
+        preview.farmId,
+        companyId,
+        tenantId,
+        { settings },
+      ),
+    );
     const cycle = productionCycle(
       preview.planningDate,
       settings.productionWeekday,
@@ -1096,6 +1381,15 @@ export class FeedRequisitionService implements OnModuleInit {
               recommended_qty_kg: String(source.recommended_qty_kg),
               recommended_delivery_date: source.proposed_delivery_date,
               proposed_delivery_date: line.proposed_delivery_date,
+              priority_no: line.priority_no ?? null,
+              // The forecast figures the saved run held for this line (runLineEvidence).
+              system_balance_kg: dec(source.system_balance_kg),
+              daily_requirement_kg: dec(source.daily_requirement_kg),
+              days_remaining: dec(source.days_remaining),
+              first_shortage_date: source.first_shortage_date,
+              is_next_diet: source.is_next_diet,
+              days_before_diet_change: source.days_before_diet_change,
+              lifecycle_ref_id: source.lifecycle_ref_id,
               quantity_edited:
                 Math.abs(line.quantity_kg - source.recommended_qty_kg) > 1e-6,
               bag_count: bagCountFor(
@@ -1372,7 +1666,7 @@ export class FeedRequisitionService implements OnModuleInit {
                 line_seq: (i + 1) * 10000,
                 quantity: String(line.recommendedQtyKg),
                 quantity_edited: false,
-                ...this.lineValues(line, runLinesFor(line), forecast.planningDate),
+                ...this.lineValues(line, runLinesFor(line)),
               }));
               await this.db.insert(schema.requisitionLine).values(inserted);
               for (const [i, line] of plan.insert.entries())
@@ -1392,43 +1686,13 @@ export class FeedRequisitionService implements OnModuleInit {
                 .delete(schema.requisitionLine)
                 .where(inArray(schema.requisitionLine.line_id, plan.remove));
             }
-            // A rerun may raise a line's priority but never lower it: the farm's escalation outranks a recomputed one.
-            const priorPriority = new Map(
-              plan.update.length
-                ? (
-                    await this.db
-                      .select({
-                        line_id: schema.requisitionLine.line_id,
-                        priority: schema.requisitionLine.priority,
-                      })
-                      .from(schema.requisitionLine)
-                      .where(
-                        inArray(
-                          schema.requisitionLine.line_id,
-                          plan.update.map((u) => u.lineId),
-                        ),
-                      )
-                  ).map((l) => [l.line_id, l.priority])
-                : [],
-            );
             for (const u of plan.update) {
-              const {
-                proposed_delivery_date: draftedDate,
-                priority: draftedPriority,
-                ...refreshed
-              } = this.lineValues(
-                u.line,
-                runLinesFor(u.line),
-                forecast.planningDate,
-              );
+              const { proposed_delivery_date: draftedDate, ...refreshed } =
+                this.lineValues(u.line, runLinesFor(u.line));
               await this.db
                 .update(schema.requisitionLine)
                 .set({
                   ...refreshed,
-                  priority: keepHigherPriority(
-                    priorPriority.get(u.lineId),
-                    draftedPriority,
-                  ),
                   // Req. row 29: a date the farm moved is not written back; only the recommendation beside it is refreshed.
                   ...(u.keepDeliveryDate
                     ? {}
@@ -1481,7 +1745,7 @@ export class FeedRequisitionService implements OnModuleInit {
                 line_seq: maxSeq + (i + 1) * 10000,
                 quantity: String(line.recommendedQtyKg),
                 quantity_edited: false,
-                ...this.lineValues(line, runLinesFor(line), forecast.planningDate),
+                ...this.lineValues(line, runLinesFor(line)),
               }));
               await this.db.insert(schema.requisitionLine).values(appended);
               for (const [i, line] of plan.insert.entries())
@@ -1877,6 +2141,30 @@ export class FeedRequisitionService implements OnModuleInit {
               )
               .limit(1)
           : [];
+        await this.assertQuantityRules(
+          dto.lines.map((line, i) => ({
+            label: `Line ${(i + 1) * 10000}`,
+            itemName: nameOf.get(line.item_id) ?? '',
+            quantityKg: line.quantity_kg,
+            feedType: feedTypeOf(
+              destinations.get(line.destination_location_id)!,
+              formOf.get(line.item_id),
+            ),
+            destinationLocationId: line.destination_location_id,
+            deliveryDate: line.proposed_delivery_date,
+          })),
+          farmId,
+          companyId,
+          tenantId,
+          {
+            settings: farm.settings,
+            destinations,
+            sourceBalances: demand.sourceBalances ?? [],
+            onHandKg: new Map(
+              [...held].map(([id, r]) => [id, r?.on_hand_qty ?? 0]),
+            ),
+          },
+        );
         return this.numbered(() =>
           withTenantTransaction(this.cls, async () => {
             await this.lockFarm(farmId, tenantId);
@@ -1926,9 +2214,7 @@ export class FeedRequisitionService implements OnModuleInit {
                   lineKey(line.destination_location_id, line.item_id),
                 );
                 return {
-                  ...(evidence
-                    ? this.lineValues(evidence, null, demand.planningDate)
-                    : {}),
+                  ...(evidence ? this.lineValues(evidence, null) : {}),
                   requisition_id: id,
                   // Requisition §1 row 42: the same NAV-style 10000-step convention the auto-drafted lines use.
                   line_seq: (i + 1) * 10000,
@@ -1952,6 +2238,8 @@ export class FeedRequisitionService implements OnModuleInit {
                     farm.settings,
                   ),
                   proposed_delivery_date: line.proposed_delivery_date,
+                  // The farm's order for the mill (Rishi, 2 Nov), as the from-calculation form stores it.
+                  priority_no: line.priority_no ?? null,
                   quantity_edited: true,
                 };
               }),
@@ -2884,7 +3172,6 @@ export class FeedRequisitionService implements OnModuleInit {
             schema.requisitionLine.destination_location_id,
           lifecycle_ref_id: schema.requisitionLine.lifecycle_ref_id,
           description: schema.requisitionLine.description,
-          priority: schema.requisitionLine.priority,
         })
         .from(schema.requisitionLine)
         .where(
@@ -2898,12 +3185,6 @@ export class FeedRequisitionService implements OnModuleInit {
         throw new BadRequestException(
           `Line ${edit.line_id} is not on this requisition.`,
         );
-      // A1 (10 Oct), Requisition §1 row 34 "can escalate": whoever may edit the line may raise its priority.
-      if (edit.priority !== undefined) {
-        const problem = priorityChangeProblem(line.priority, edit.priority);
-        if (problem)
-          throw new BadRequestException(`Line ${line.line_seq}: ${problem}`);
-      }
       const target = await this.changeLineTarget(
         requisitionId,
         line,
@@ -2932,7 +3213,6 @@ export class FeedRequisitionService implements OnModuleInit {
           ...(edit.proposed_delivery_date
             ? { proposed_delivery_date: edit.proposed_delivery_date }
             : {}),
-          ...(edit.priority !== undefined ? { priority: edit.priority } : {}),
         })
         .where(eq(schema.requisitionLine.line_id, edit.line_id));
     }
@@ -3161,6 +3441,13 @@ export class FeedRequisitionService implements OnModuleInit {
       await withTenantTransaction(this.cls, async () => {
         await this.lockOpen(id, tenantId, farmId, companyId);
         await this.applyLineEdits(id, dto.lines, farmId, companyId, tenantId);
+        if (dto.lines?.length)
+          await this.assertQuantityRules(
+            this.quantityLinesOf(await this.linesForCheck(id)),
+            farmId,
+            companyId,
+            tenantId,
+          );
         await this.db
           .update(schema.requisition)
           .set({
@@ -3175,7 +3462,100 @@ export class FeedRequisitionService implements OnModuleInit {
     });
   }
 
-  /** The lines as approvalProblems reads them (checkpoint 18). */
+  /**
+   * Rishi, 30 Oct: the quantity rules every feed requisition meets on create, edit, submit and approve
+   * (quantityProblems) — whole compartments or bags, and no silo filled past its capacity on the Proposed
+   * Delivery Date. The silo's stock that day is the live forecast's projection for the farm. A caller that
+   * already holds the settings, destinations, forecast or silo stock passes them (`known`) — `settings` also
+   * when the form showed other ones (a saved calculation's); anything not passed is read here.
+   */
+  private async assertQuantityRules(
+    lines: Array<{
+      label: string;
+      itemName: string;
+      quantityKg: number;
+      feedType: FeedType | null;
+      destinationLocationId: string;
+      deliveryDate: string;
+    }>,
+    farmId: string,
+    companyId: string,
+    tenantId: string,
+    known: {
+      settings?: { bulkMultipleKg: number; bagSizeKg: number };
+      destinations?: Map<string, Destination>;
+      sourceBalances?: SourceBalancePoint[];
+      onHandKg?: Map<string, number>;
+    } = {},
+  ): Promise<void> {
+    if (!lines.length) return;
+    const { bulkMultipleKg, bagSizeKg } =
+      known.settings ??
+      toFarmFeedSettings(
+        await this.feedSettings.resolveForFeedPlanning(companyId, farmId),
+      );
+    const destinations =
+      known.destinations ??
+      (await this.loadDestinations(
+        lines.map((l) => l.destinationLocationId),
+        tenantId,
+      ));
+    const checked = lines.map((l) => {
+      const dest = destinations.get(l.destinationLocationId);
+      return {
+        ...l,
+        destinationCode: dest?.code ?? '',
+        capacityKg: dest?.locationType === 'SILO' ? dest.capacityKg : null,
+      };
+    });
+    let stockOn: (siloId: string, date: string) => number = () => 0;
+    const siloIds = [
+      ...new Set(
+        checked
+          .filter((l) => l.capacityKg !== null)
+          .map((l) => l.destinationLocationId),
+      ),
+    ];
+    if (siloIds.length) {
+      let balances = known.sourceBalances;
+      if (!balances) {
+        const clock = await this.forecast.farmToday(companyId, tenantId);
+        balances = (
+          await this.forecast.computeForFarm(
+            farmId,
+            companyId,
+            tenantId,
+            draftForecastRange(clock.today, undefined),
+            clock,
+          )
+        ).sourceBalances;
+      }
+      let onHand = known.onHandKg;
+      if (!onHand) {
+        const residents = await this.siloFeed.currentItems(
+          siloIds,
+          companyId,
+          tenantId,
+        );
+        onHand = new Map(
+          siloIds.map((id) => [id, residents.get(id)?.on_hand_qty ?? 0]),
+        );
+      }
+      const points = balances ?? [];
+      const held = onHand;
+      stockOn = (siloId, date) =>
+        projectedSiloStockKg(points, siloId, date, held.get(siloId) ?? 0);
+    }
+    const problems = quantityProblems({
+      lines: checked,
+      bulkMultipleKg,
+      bagSizeKg,
+      stockOn,
+    });
+    if (problems.length) throw new BadRequestException(problems.join(' '));
+  }
+
+  /** The lines as approvalProblems and assertQuantityRules read them (checkpoint 18). */
   private async linesForCheck(requisitionId: string): Promise<ApprovalLine[]> {
     const lines = await this.db
       .select({
@@ -3188,6 +3568,7 @@ export class FeedRequisitionService implements OnModuleInit {
           schema.requisitionLine.recommended_delivery_date,
         proposed_delivery_date: schema.requisitionLine.proposed_delivery_date,
         feed_type: schema.requisitionLine.feed_type,
+        destination_location_id: schema.requisitionLine.destination_location_id,
       })
       .from(schema.requisitionLine)
       .leftJoin(
@@ -3211,19 +3592,49 @@ export class FeedRequisitionService implements OnModuleInit {
       // Review finding (Important 4, Task 9): header Remarks are also required on an item exception (row 36).
       itemException: exceptionReasonOf(l.description) !== null,
       feedType: (l.feed_type as FeedType | null) ?? null,
+      destinationLocationId: l.destination_location_id ?? null,
     }));
   }
 
-  /** A1 (10 Oct), checkpoint 16: the farm's bulk order multiple, read only when a line is BULK. */
-  private async bulkMultipleFor(
-    lines: ApprovalLine[],
-    companyId: string,
-    farmId: string | null,
-  ): Promise<number | undefined> {
-    if (!farmId || !lines.some((l) => l.feedType === 'BULK')) return undefined;
-    return toFarmFeedSettings(
-      await this.feedSettings.resolveForFeedPlanning(companyId, farmId),
-    ).bulkMultipleKg;
+  /** The lines' stored balance and first shortage, with their silo's low level, as approvalUrgency reads them. */
+  private async urgencyLines(requisitionId: string): Promise<UrgencyLine[]> {
+    const L = schema.locationMaster;
+    const rows = await this.db
+      .select({
+        location_type: L.location_type,
+        low_level_kg: L.low_level_kg,
+        system_balance_kg: schema.requisitionLine.system_balance_kg,
+        first_shortage_date: schema.requisitionLine.first_shortage_date,
+      })
+      .from(schema.requisitionLine)
+      .leftJoin(
+        L,
+        eq(L.location_id, schema.requisitionLine.destination_location_id),
+      )
+      .where(eq(schema.requisitionLine.requisition_id, requisitionId));
+    return rows.map((r) => ({
+      isSilo: !!r.location_type && r.location_type !== 'STORE',
+      systemBalanceKg:
+        r.system_balance_kg == null ? null : Number(r.system_balance_kg),
+      lowLevelKg: r.low_level_kg == null ? null : Number(r.low_level_kg),
+      firstShortageDate: r.first_shortage_date
+        ? String(r.first_shortage_date).slice(0, 10)
+        : null,
+    }));
+  }
+
+  /** linesForCheck as assertQuantityRules reads them. */
+  private quantityLinesOf(lines: ApprovalLine[]) {
+    return lines
+      .filter((l) => !!l.destinationLocationId && !!l.proposedDeliveryDate)
+      .map((l) => ({
+        label: `Line ${l.lineSeq}`,
+        itemName: l.itemName,
+        quantityKg: l.quantityKg,
+        feedType: l.feedType ?? null,
+        destinationLocationId: l.destinationLocationId!,
+        deliveryDate: l.proposedDeliveryDate,
+      }));
   }
 
   /**
@@ -3247,33 +3658,24 @@ export class FeedRequisitionService implements OnModuleInit {
         const row = await this.lockOpen(id, tenantId, farmId, companyId);
         await this.applyLineEdits(id, dto.lines, farmId, companyId, tenantId);
         const lines = await this.linesForCheck(id);
-        // The approval's urgency follows the most urgent line (row 34 lives on the lines).
-        const priority = mostUrgentPriority(
-          (
-            await this.db
-              .select({ priority: schema.requisitionLine.priority })
-              .from(schema.requisitionLine)
-              .where(eq(schema.requisitionLine.requisition_id, id))
-          ).map((l) => l.priority),
-        );
         const remarks =
           dto.remarks !== undefined
             ? dto.remarks?.trim() || null
             : row.remarks?.trim() || null;
         const { today } = await this.forecast.farmToday(companyId, tenantId);
-        const bulkMultipleKg = await this.bulkMultipleFor(
-          lines,
-          companyId,
-          farmId,
-        );
         const problems = approvalProblems({
           lines,
           remarks,
           today,
           submissionDeadline: row.submission_deadline,
-          bulkMultipleKg,
         });
         if (problems.length) throw new BadRequestException(problems.join(' '));
+        await this.assertQuantityRules(
+          this.quantityLinesOf(lines),
+          farmId,
+          companyId,
+          tenantId,
+        );
         const totalKg = lines.reduce((sum, l) => sum + l.quantityKg, 0);
         const requestId = await this.approvals.submitFarmDocument(
           {
@@ -3283,10 +3685,8 @@ export class FeedRequisitionService implements OnModuleInit {
             farmId,
             companyId,
             title: `Feed requisition ${row.req_no}`,
-            urgency:
-              priority === 'CRITICAL_FIRST_PRIORITY' || priority === 'CRITICAL'
-                ? 'HIGH'
-                : 'MEDIUM',
+            // Rishi, 2 Nov: no line priority; the urgency is worked out now from what the lines stored.
+            urgency: approvalUrgency(today, await this.urgencyLines(id)),
             itemOrStage: 'Feed',
             requestedQty: totalKg.toLocaleString('en-US', {
               maximumFractionDigits: 2,
@@ -3448,19 +3848,20 @@ export class FeedRequisitionService implements OnModuleInit {
     const finalRemarks = remarks || row.remarks?.trim() || null;
     const { today } = await this.forecast.farmToday(row.company_id, tenantId);
     const checkLines = await this.linesForCheck(row.requisition_id);
-    const bulkMultipleKg = await this.bulkMultipleFor(
-      checkLines,
-      row.company_id,
-      row.farm_id,
-    );
     const problems = approvalProblems({
       lines: checkLines,
       remarks: finalRemarks,
       today,
       submissionDeadline: row.submission_deadline,
-      bulkMultipleKg,
     });
     if (problems.length) throw new BadRequestException(problems.join(' '));
+    if (row.farm_id)
+      await this.assertQuantityRules(
+        this.quantityLinesOf(checkLines),
+        row.farm_id,
+        row.company_id,
+        tenantId,
+      );
     // F6: append, as a rejection does. Replacing threw away the farm's own
     // justification — the very thing checkpoints 18 and 22 asked it for.
     const storedRemarks = remarks
@@ -4305,8 +4706,6 @@ export class FeedRequisitionService implements OnModuleInit {
       approval_status: approvalStatus,
       document_status: documentStatus,
       fulfilment_status: fulfilmentStatus,
-      // Row 34 is per line now; the header shows the most urgent line's, derived, never stored.
-      priority: mostUrgentPriority(lines.map((l) => l.line.priority)),
       actions: {
         release: { enabled: releaseEnabled, reason: releaseReason },
         shipment: {
@@ -4365,9 +4764,9 @@ export class FeedRequisitionService implements OnModuleInit {
         forecast_run_no:
           row.forecast_run_no ?? row.req.forecast_run_key ?? null, // Engine Step 9 "Preserve run ID"
       },
+      // A feed line has no priority level (Rishi, 2 Nov); the column stays for history and is not shown.
       lines: lines.map((l) => ({
-        ...l.line,
-        priority_options: priorityEscalations(l.line.priority),
+        ...withoutPriority(l.line),
         item_code: l.item_code,
         item_name: l.item_name,
         item_description: l.item_name ?? null,

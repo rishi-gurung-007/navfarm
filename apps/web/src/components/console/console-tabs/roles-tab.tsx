@@ -83,6 +83,12 @@ const DEFAULT_RESOURCES = [
     nameKey: 'rolFarrowingReport',
   },
   {
+    module_code: 'REPORTS',
+    resource: 'MONTHLY_OPS',
+    name: 'Monthly Ops',
+    nameKey: 'rolMonthlyOps',
+  },
+  {
     module_code: 'FINANCE',
     resource: 'STOCK_VARIANCE',
     name: 'Stock Variance (Finance approval)',
@@ -282,6 +288,12 @@ const DEFAULT_RESOURCES = [
     resource: 'REPORTING_PERIOD',
     name: 'Reporting Periods',
     nameKey: 'rolReportingPeriods',
+  },
+  {
+    module_code: 'MASTER_DATA',
+    resource: 'ACCOUNTING_PERIOD',
+    name: 'Accounting Periods',
+    nameKey: 'rolAccountingPeriods',
   },
   {
     module_code: 'MASTER_DATA',

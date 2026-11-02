@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { ConsolePage } from '@/components/ui/console-page';
 import { ShieldAlert } from 'lucide-react';
 import FarrowingReportPanel from './farrowing-report-panel';
+import MonthlyOpsPanel from './monthly-ops-panel';
 
 /**
  * The operational reports (Triple-C_reports COMMENTS.xlsx), one entry per report, each with its own view
@@ -18,6 +19,12 @@ export const REPORT_SECTIONS = [
     href: '/reports/farrowing',
     labelKey: 'rptFarrowingReport',
     descriptionKey: 'rptFarrowingDescription',
+  },
+  {
+    key: 'MONTHLY_OPS',
+    href: '/reports/monthly-ops',
+    labelKey: 'rptMonthlyOps',
+    descriptionKey: 'rptMonthlyOpsDescription',
   },
 ] as const;
 
@@ -60,7 +67,11 @@ export function ReportPage({ reportKey }: { reportKey: ReportKey }) {
         title={t(section.labelKey)}
         description={t(section.descriptionKey)}
       />
-      <FarrowingReportPanel />
+      {section.key === 'MONTHLY_OPS' ? (
+        <MonthlyOpsPanel />
+      ) : (
+        <FarrowingReportPanel />
+      )}
     </ConsolePage>
   );
 }

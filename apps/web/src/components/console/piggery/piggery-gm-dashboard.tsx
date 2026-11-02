@@ -2,752 +2,548 @@
 
 import { useEffect, useState } from 'react';
 import {
-  Loader2,
-  Calendar,
-  RefreshCw,
-  ShieldAlert,
-  Layers,
-  HeartPulse,
-  Building2,
-  CheckCircle2,
+  BarChart3,
+  CalendarDays,
+  Coins,
+  DollarSign,
+  Ham,
+  PiggyBank,
+  Rat,
+  Weight,
 } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { getActiveCompanyId } from '@/hooks/useAuth';
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
-import { StatRow, StatCard } from '@/components/ui/stat-row';
+import { useLanguage } from '@/hooks/useLanguage';
+import { Field } from '@/components/ui/field';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import { EmptyState, ErrorState, Skeleton } from '@/components/ui/states';
+import {
+  Alert,
+  AlertsPanel,
+  Farm,
+  FarmAlert,
+  FarmAlertsPanel,
+  FarmMatrix,
+  FarmRow,
+  Figure,
+  KgMeatCard,
+  KpiCard,
+  Matrix,
+  MetricRow,
+  NO_FIGURE,
+  ProgressChart,
+  ProgressPoint,
+} from './gm-dashboard-widgets';
 
-interface PeriodOption {
-  periodId: string;
-  periodCode: string;
-  businessYear: string;
-  startDate: string;
-  endDate: string;
-  isActive: boolean;
+type Period = {
+  period_id: string;
+  period_code: string;
+  business_year: string;
+  start_date: string;
+  end_date: string;
+};
+
+export interface GmDashboardData {
+  period: (Period & { ytd_from: string; to: string }) | null;
+  periods: Period[];
+  farms: Farm[];
+  kg_sold_per_sow_year: {
+    month: Record<string, number | null>;
+    ytd: Record<string, number | null>;
+  };
+  breeding: MetricRow[];
+  weaner_grower: MetricRow[];
+  alerts: Alert[];
+  /** With one farm chosen: its figures over This Week, the averages and a six-week trend. */
+  farm_view: {
+    farm: Farm;
+    sows: number;
+    kg_sold_per_sow_year_ytd: number | null;
+    breeding: FarmRow[];
+    weaner_grower: FarmRow[];
+    alerts: FarmAlert[];
+  } | null;
 }
 
-interface LiveDashboardData {
-  metadata: {
-    tenantName: string;
-    companyName: string;
-    nobCode: string;
-    periodCode: string;
-    businessYear: string;
-    periodStartDate: string;
-    periodEndDate: string;
-    isPeriodActive: boolean;
-    availablePeriods: PeriodOption[];
-  };
-  activeHerdSummary: {
-    totalHeadcount: number;
-    sowsCount: number;
-    giltsCount: number;
-    boarsCount: number;
-    parityDistribution: {
-      p0Gilts: { count: number; pct: number };
-      p1: { count: number; pct: number };
-      p2: { count: number; pct: number };
-      p3: { count: number; pct: number };
-      p4Plus: { count: number; pct: number };
-    };
-    stagesDistribution: Array<{
-      stageName: string;
-      count: number;
-    }>;
-  };
-  reproductiveIntelligence: {
-    totalLittersRecorded: number;
-    totalPigletsBornLive: number;
-    avgBornAlivePerLitter: number;
-    totalPigletsWeaned: number;
-    weaningSurvivalRatePct: number;
-    preWeanMortalityPct: number;
-    conceptionPipeline: {
-      totalMatings: number;
-      confirmedPregnant: number;
-      repeatFailed: number;
-      completedWeaned: number;
-      aiInseminationCount: number;
-      naturalMatingCount: number;
-    };
-    recentLitters: Array<{
-      farrowId: string;
-      sowCode: string;
-      farrowingDate: string;
-      pigletsBornLive: number;
-      pigletsStillborn: number;
-      pigletsWeaned: number;
-      weaningDate: string | null;
-      avgBirthWeightKg: number | null;
-      avgWeaningWeightKg: number | null;
-    }>;
-  };
-  productionBatchesSummary: {
-    activeBatchesCount: number;
-    totalBatchHeadcount: number;
-    totalBatchWipValuation: number;
-    batchesByStage: Array<{
-      stageName: string;
-      count: number;
-      totalHeads: number;
-    }>;
-  };
-  facilityLocations: Array<{
-    locationId: string;
-    locationCode: string;
-    locationName: string;
-    headcount: number;
-    sowsCount: number;
-    giltsCount: number;
-    batchesCount: number;
-    wipValuation: number;
-    status: 'Active Operations' | 'Standby';
-  }>;
-}
+const ALL = '';
 
+const shortDate = (iso: string) =>
+  new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+
+const MONTHS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+/** A period code (YYYY-MM) as its month's short name, for the chart axes. */
+const monthOf = (code: string) =>
+  MONTHS[Number(code.split('-')[1]) - 1] ?? code;
+
+/**
+ * Phase 2 (Rishi, 2 Nov): the financial half has no data yet — no sales, kill sheet, cost-of-sales or overhead
+ * accounts, or budgets. Its rows and figures are laid out now and stay empty until the API returns them.
+ */
+const FINANCIAL_ROWS: Array<
+  Pick<MetricRow, 'key' | 'label' | 'unit' | 'lower_is_better'>
+> = [
+  {
+    key: 'pigs_to_slaughter',
+    label: 'Pigs to Slaughter',
+    unit: '',
+    lower_is_better: false,
+  },
+  { key: 'avg_cdm', label: 'Avg CDM', unit: 'kg', lower_is_better: false },
+  {
+    key: 'cost_of_sales',
+    label: 'Cost of Sales',
+    unit: '',
+    lower_is_better: true,
+  },
+  {
+    key: 'cos_per_tonne',
+    label: 'COS $/tonne',
+    unit: '',
+    lower_is_better: true,
+  },
+  {
+    key: 'gross_margin',
+    label: 'Gross Margin',
+    unit: '',
+    lower_is_better: false,
+  },
+  {
+    key: 'gross_margin_pct',
+    label: 'Gross Margin %',
+    unit: '%',
+    lower_is_better: false,
+  },
+  {
+    key: 'other_overheads',
+    label: 'Other Overheads',
+    unit: '',
+    lower_is_better: true,
+  },
+  {
+    key: 'staff_overheads',
+    label: 'Staff Overheads',
+    unit: '',
+    lower_is_better: true,
+  },
+];
+
+/**
+ * GM Dashboard (Rishi, 2 Nov; docs/superpowers/specs/2026-11-02-gm-dashboard-phase-1-design.md), on the grid of his
+ * mockup in the current theme: the five financial KPI cards; the Breeding & Farrowing, Weaner-Grower and Slaughter &
+ * Financial matrices, one dot per farm coloured against the lifecycle targets; the Pigs to Slaughter and PBT
+ * progress charts; Kg Meat Sold / Sow / Year and the Management Alerts. A Reporting Period (the one holding today
+ * first) and a farm filter it.
+ */
 export default function PiggeryGmDashboard() {
-  const { formatMoney } = useCompanyCurrency();
-  const companyId = getActiveCompanyId();
-
-  const [data, setData] = useState<LiveDashboardData | null>(null);
+  const { t } = useLanguage();
+  const { currency } = useCompanyCurrency(getActiveCompanyId() ?? undefined);
+  const [periodId, setPeriodId] = useState('');
+  const [farmId, setFarmId] = useState(ALL);
+  const [data, setData] = useState<GmDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [allAlerts, setAllAlerts] = useState(false);
 
-  // Filter States
-  const [selectedPeriodId, setSelectedPeriodId] = useState<string>('');
-  const [dateFrom, setDateFrom] = useState<string>('');
-  const [dateTo, setDateTo] = useState<string>('');
-  const [isCustomRange, setIsCustomRange] = useState(false);
-
-  const loadData = async (opts?: {
-    periodId?: string;
-    from?: string;
-    to?: string;
-  }) => {
+  const load = async (period: string, farm: string) => {
     setLoading(true);
     setError('');
     try {
       const params = new URLSearchParams();
+      const companyId = getActiveCompanyId();
       if (companyId) params.set('companyId', companyId);
-      if (opts?.periodId) params.set('periodId', opts.periodId);
-      if (opts?.from) params.set('dateFrom', opts.from);
-      if (opts?.to) params.set('dateTo', opts.to);
-
-      const qs = params.toString() ? `?${params.toString()}` : '';
-      const res = await api.get(`/piggery/analytics/gm-dashboard${qs}`);
-      const payload: LiveDashboardData = res?.data ?? res;
+      if (period) params.set('periodId', period);
+      if (farm) params.set('farmId', farm);
+      const res = await api.get(
+        `/piggery/analytics/gm-dashboard?${params.toString()}`,
+      );
+      const payload: GmDashboardData = res?.data ?? res;
       setData(payload);
-
-      if (!isCustomRange && payload?.metadata) {
-        setDateFrom(payload.metadata.periodStartDate);
-        setDateTo(payload.metadata.periodEndDate);
-      }
+      if (!period && payload.period) setPeriodId(payload.period.period_id);
     } catch (err: any) {
-      setError(err?.message || 'Failed to load live dashboard telemetry.');
+      setError(err?.message || t('gmdLoadFailed'));
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadData();
-  }, [companyId]); // eslint-disable-line react-hooks/exhaustive-deps
+    void load('', ALL);
+  }, []);
 
-  const handleApplyCustomDates = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!dateFrom || !dateTo) return;
-    setIsCustomRange(true);
-    loadData({ from: dateFrom, to: dateTo });
+  const choosePeriod = (value: string) => {
+    setPeriodId(value);
+    void load(value, farmId);
+  };
+  const chooseFarm = (value: string) => {
+    setFarmId(value);
+    void load(periodId, value);
   };
 
-  const handleResetToPeriod = () => {
-    setIsCustomRange(false);
-    setSelectedPeriodId('');
-    loadData();
+  // The response lists only the chosen farm; the picker keeps every farm from the last All Farms load.
+  const [allFarms, setAllFarms] = useState<Farm[]>([]);
+  useEffect(() => {
+    if (data && !farmId) setAllFarms(data.farms);
+  }, [data, farmId]);
+  const pickerFarms = [
+    { farm_id: ALL, farm_name: t('gmdAllFarms') },
+    ...allFarms,
+  ];
+
+  const period = data?.period ?? null;
+  const farms = data?.farms ?? [];
+  const money = currency?.iso_code ?? '';
+  const kgKey = farmId || 'all';
+  const kgMonth: Figure = {
+    actual: data?.kg_sold_per_sow_year.month[kgKey] ?? null,
+    budget: null,
+  };
+  const kgYtd: Figure = {
+    actual: data?.kg_sold_per_sow_year.ytd[kgKey] ?? null,
+    budget: null,
   };
 
-  if (loading && !data) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24">
-        <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" />
-        <p className="mt-3 text-xs text-[var(--text-secondary)]">
-          Querying live farm database telemetry...
-        </p>
-      </div>
-    );
-  }
-
-  if (error || !data) {
-    return (
-      <div
-        className="rounded-[var(--radius-lg)] border p-6 text-center text-xs"
-        style={{
-          borderColor: 'var(--danger)',
-          backgroundColor: 'var(--surface)',
-        }}
-      >
-        <ShieldAlert className="mx-auto h-6 w-6 text-[var(--danger)]" />
-        <p className="mt-2 font-semibold text-[var(--text-primary)]">
-          Telemetry Service Offline
-        </p>
-        <p className="mt-1 text-[var(--text-secondary)]">{error}</p>
-        <button
-          onClick={() => loadData()}
-          className="nf-press mt-4 rounded-[var(--radius-pill)] px-4 py-1.5 font-semibold text-white transition-opacity hover:opacity-90"
-          style={{ backgroundColor: 'var(--accent)' }}
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  const activeHerdSummary = data?.activeHerdSummary ?? {
-    totalHeadcount: 0,
-    sowsCount: 0,
-    giltsCount: 0,
-    boarsCount: 0,
-    parityDistribution: {
-      p0Gilts: { count: 0, pct: 0 },
-      p1: { count: 0, pct: 0 },
-      p2: { count: 0, pct: 0 },
-      p3: { count: 0, pct: 0 },
-      p4Plus: { count: 0, pct: 0 },
+  // Kg Meat Sold / Sow / Year closes the Breeding & Farrowing matrix, as in the mockup; it has no lifecycle target.
+  const breeding: MetricRow[] = [
+    ...(data?.breeding ?? []),
+    {
+      key: 'kg_sold_per_sow_year',
+      label: t('gmdKgSoldPerSowYear'),
+      unit: 'kg',
+      lower_is_better: false,
+      cells: Object.fromEntries(
+        farms.map((f) => [
+          f.farm_id,
+          {
+            value: data?.kg_sold_per_sow_year.month[f.farm_id] ?? null,
+            target: null,
+            status: null,
+          },
+        ]),
+      ),
     },
-    stagesDistribution: [],
-  };
-  const reproductiveIntelligence = data?.reproductiveIntelligence ?? {
-    totalLittersRecorded: 0,
-    totalPigletsBornLive: 0,
-    avgBornAlivePerLitter: 0,
-    totalPigletsWeaned: 0,
-    weaningSurvivalRatePct: 0,
-    preWeanMortalityPct: 0,
-    conceptionPipeline: {
-      totalMatings: 0,
-      confirmedPregnant: 0,
-      repeatFailed: 0,
-      completedWeaned: 0,
-      aiInseminationCount: 0,
-      naturalMatingCount: 0,
+  ];
+  const financial: MetricRow[] = FINANCIAL_ROWS.map((r) => ({
+    ...r,
+    cells: Object.fromEntries(
+      farms.map((f) => [
+        f.farm_id,
+        { value: null, target: null, status: null },
+      ]),
+    ),
+  }));
+  const farmView = farmId ? (data?.farm_view ?? null) : null;
+  const farmFinancial: FarmRow[] = FINANCIAL_ROWS.map((r) => ({
+    ...r,
+    target: null,
+    status: null,
+    trend: Array(6).fill(null),
+    values: {
+      this_week: null,
+      avg_4w: null,
+      this_month: null,
+      prev_month: null,
+      three_month: null,
     },
-    recentLitters: [],
-  };
-  const productionBatchesSummary = data?.productionBatchesSummary ?? {
-    activeBatchesCount: 0,
-    totalBatchHeadcount: 0,
-    totalBatchWipValuation: 0,
-    batchesByStage: [],
-  };
-  const facilityLocations = data?.facilityLocations ?? [];
+  }));
+  // The business year's periods, for the YTD charts' axis; no actuals or budgets yet.
+  const yearPoints: ProgressPoint[] = (data?.periods ?? [])
+    .filter((p) => period && p.business_year === period.business_year)
+    .map((p) => ({
+      label: monthOf(p.period_code),
+      actual: null,
+      budget: null,
+    }));
 
   return (
-    <div className="space-y-5">
-      {/* ── Filter Bar: Period, Year & Date Range (From / To) ── */}
-      <div
-        className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-lg)] border p-3 shadow-xs"
-        style={{
-          backgroundColor: 'var(--surface)',
-          borderColor: 'var(--border)',
-        }}
-      >
-        <div className="flex flex-wrap items-center gap-2.5">
-          {/* Date Range Inputs: From / To */}
-          <form
-            onSubmit={handleApplyCustomDates}
-            className="flex flex-wrap items-center gap-2"
-          >
-            <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-              <span>From:</span>
-              <input
-                type="date"
-                value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
-                className="rounded-[var(--radius-sm)] border px-2 py-1 text-xs font-mono font-medium"
-                style={{
-                  backgroundColor: 'var(--surface-raised)',
-                  borderColor: 'var(--border)',
-                  color: 'var(--text-primary)',
-                }}
-              />
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
-              <span>To:</span>
-              <input
-                type="date"
-                value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
-                className="rounded-[var(--radius-sm)] border px-2 py-1 text-xs font-mono font-medium"
-                style={{
-                  backgroundColor: 'var(--surface-raised)',
-                  borderColor: 'var(--border)',
-                  color: 'var(--text-primary)',
-                }}
-              />
-            </div>
-            <button
-              type="submit"
-              className="nf-press inline-flex items-center gap-1.5 rounded-[var(--radius-pill)] px-3 py-1 text-xs font-semibold text-white shadow-xs"
-              style={{ backgroundColor: 'var(--accent)' }}
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3 rounded-md border border-(--border) bg-(--surface) p-3">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold">
+            {farmView ? farmView.farm.farm_name : t('gmdTitle')}
+          </h2>
+          <p className="text-xs text-(--text-secondary)">
+            {farmView
+              ? t('gmdSows', { n: farmView.sows.toLocaleString('en-GB') })
+              : t('gmdFarmsCount', { n: allFarms.length })}{' '}
+            | {t('gmdSubtitle')}
+          </p>
+          {period && (
+            <p
+              className="mt-1 text-xs text-(--text-secondary)"
+              data-testid="gmd-dates"
             >
-              <Calendar className="h-3 w-3" />
-              <span>Filter</span>
-            </button>
-            {isCustomRange && (
-              <button
-                type="button"
-                onClick={handleResetToPeriod}
-                className="nf-press rounded-[var(--radius-pill)] border px-2.5 py-1 text-xs font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]"
-                style={{ borderColor: 'var(--border)' }}
-              >
-                Reset
-              </button>
-            )}
-          </form>
+              {t('gmdMonth')}: {shortDate(period.start_date)} –{' '}
+              {shortDate(period.to)} · {t('gmdYtd')}:{' '}
+              {shortDate(period.ytd_from)} – {shortDate(period.to)}
+            </p>
+          )}
         </div>
-
-        {/* Live Status Indicator */}
-        <div className="flex items-center gap-2">
-          <span
-            className="inline-flex items-center gap-1.5 rounded-[var(--radius-pill)] border px-2.5 py-1 text-xs font-medium"
-            style={{
-              backgroundColor: 'var(--success-muted)',
-              borderColor: 'var(--success)',
-              color: 'var(--success)',
-            }}
-          >
-            <span className="h-2 w-2 rounded-full bg-[var(--success)] animate-pulse" />
-            <span>100% Live Database Telemetry</span>
-          </span>
-          <button
-            onClick={() =>
-              loadData({
-                from: dateFrom,
-                to: dateTo,
-                periodId: selectedPeriodId,
-              })
-            }
-            className="nf-press p-1.5 rounded-full border text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]"
-            style={{ borderColor: 'var(--border)' }}
-            title="Refresh Live Data"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-          </button>
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label={t('gmdPeriod')}>
+            <SearchableSelect
+              ariaLabel={t('gmdPeriod')}
+              value={periodId}
+              onChange={choosePeriod}
+              options={[...(data?.periods ?? [])].reverse()}
+              valueKey="period_id"
+              getLabel={(r) =>
+                `${r.period_code} · ${shortDate(String(r.start_date))} – ${shortDate(String(r.end_date))} (${r.business_year})`
+              }
+              getSelectedLabel={(r) => `${r.period_code} (${r.business_year})`}
+              placeholder={t('gmdSelectPeriod')}
+              disabled={!data?.periods.length}
+            />
+          </Field>
+          <Field label={t('rptFarm')}>
+            <SearchableSelect
+              ariaLabel={t('rptFarm')}
+              value={farmId}
+              onChange={chooseFarm}
+              options={pickerFarms}
+              valueKey="farm_id"
+              getLabel={(r) => String(r.farm_name ?? '')}
+              placeholder={t('gmdAllFarms')}
+            />
+          </Field>
         </div>
       </div>
 
-      {/* ── Top Core Stat Cards (4 Cards) ── */}
-      <StatRow>
-        <StatCard
-          icon={Building2}
-          label="Active Registered Herd"
-          value={activeHerdSummary.totalHeadcount}
-          unit="Head"
-          sub={`${activeHerdSummary.sowsCount} Sows · ${activeHerdSummary.giltsCount} Gilts · ${activeHerdSummary.boarsCount} Boar`}
+      {error ? (
+        <ErrorState
+          message={error}
+          onRetry={() => void load(periodId, farmId)}
         />
-        <StatCard
-          icon={Layers}
-          label="Active Batches"
-          value={productionBatchesSummary.activeBatchesCount}
-          unit="Batches"
-          sub={`${productionBatchesSummary.totalBatchHeadcount} Total Livestock Heads in Batch`}
+      ) : loading && !data ? (
+        <GmDashboardSkeleton />
+      ) : !period ? (
+        <EmptyState
+          title={t('gmdNoPeriods')}
+          description={t('gmdNoPeriodsHint')}
         />
-        <StatCard
-          icon={Calendar}
-          label="Live Batch WIP Asset"
-          value={formatMoney(productionBatchesSummary.totalBatchWipValuation)}
-          unit="WIP"
-          sub="Direct Cost Accumulation from Live Ledger"
-        />
-        <StatCard
-          icon={HeartPulse}
-          label="Litter Weaning Efficiency"
-          value={`${reproductiveIntelligence.weaningSurvivalRatePct}%`}
-          unit="Survival"
-          sub={`${reproductiveIntelligence.totalPigletsWeaned} Weaned of ${reproductiveIntelligence.totalPigletsBornLive} Live Born (${reproductiveIntelligence.preWeanMortalityPct}% Loss)`}
-        />
-      </StatRow>
-
-      {/* ── Reproductive & Breeding Intelligence (3 Cards Grid) ── */}
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
-        {/* Card 1: Farrowing & Litters */}
-        <div
-          className="rounded-[var(--radius-md)] border p-4 shadow-xs space-y-3"
-          style={{
-            backgroundColor: 'var(--surface)',
-            borderColor: 'var(--border)',
-          }}
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-                Farrowing & Litters
-              </h3>
-              <p className="text-xs text-[var(--text-secondary)]">
-                Recorded litters in selected date range
-              </p>
-            </div>
-            <span
-              className="rounded-[var(--radius-pill)] px-2.5 py-0.5 text-xs font-semibold border"
-              style={{
-                backgroundColor: 'var(--surface-raised)',
-                borderColor: 'var(--border)',
+      ) : (
+        <>
+          <div
+            className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5"
+            data-testid="gmd-kpis"
+          >
+            <KpiCard
+              icon={PiggyBank}
+              title={t('gmdPigsToSlaughter')}
+              unit={t('gmdHead')}
+              month={NO_FIGURE}
+              ytd={NO_FIGURE}
+              t={t}
+            />
+            <KpiCard
+              icon={Weight}
+              title={t('gmdAvgCdm')}
+              unit="kg"
+              month={NO_FIGURE}
+              ytd={NO_FIGURE}
+              t={t}
+            />
+            <KpiCard
+              icon={Coins}
+              title={t('gmdCostOfSales')}
+              unit={money}
+              month={NO_FIGURE}
+              ytd={NO_FIGURE}
+              lowerIsBetter
+              t={t}
+              sub={{
+                label: t('gmdCosPerTonne'),
+                unit: money,
+                month: NO_FIGURE,
+                ytd: NO_FIGURE,
+                lowerIsBetter: true,
               }}
-            >
-              {reproductiveIntelligence.totalLittersRecorded} Litters
-            </span>
+            />
+            <KpiCard
+              icon={BarChart3}
+              title={t('gmdGrossMargin')}
+              unit={money}
+              month={NO_FIGURE}
+              ytd={NO_FIGURE}
+              t={t}
+              sub={{
+                label: t('gmdGrossMarginPct'),
+                unit: '%',
+                month: NO_FIGURE,
+                ytd: NO_FIGURE,
+                lowerIsBetter: false,
+              }}
+            />
+            <KpiCard
+              icon={CalendarDays}
+              title={t('gmdOtherOverheads')}
+              unit={money}
+              month={NO_FIGURE}
+              ytd={NO_FIGURE}
+              lowerIsBetter
+              t={t}
+              sub={{
+                label: t('gmdStaffOverheads'),
+                unit: money,
+                month: NO_FIGURE,
+                ytd: NO_FIGURE,
+                lowerIsBetter: true,
+              }}
+            />
           </div>
 
-          <div className="grid grid-cols-2 gap-2.5 pt-1">
+          {farmView ? (
             <div
-              className="rounded-[var(--radius-sm)] border p-2.5"
-              style={{
-                backgroundColor: 'var(--surface-raised)',
-                borderColor: 'var(--border)',
-              }}
+              className="grid gap-3 xl:grid-cols-3"
+              data-testid="gmd-matrices"
             >
-              <span className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">
-                Born Live
-              </span>
-              <p
-                className="mt-1 font-mono text-xl font-bold"
-                style={{ color: 'var(--success)' }}
-              >
-                {reproductiveIntelligence.totalPigletsBornLive}
-              </p>
-              <span className="text-[10px] text-[var(--text-secondary)]">
-                {reproductiveIntelligence.avgBornAlivePerLitter} avg/litter
-              </span>
+              <FarmMatrix
+                icon={PiggyBank}
+                title={t('gmdBreedingMatrix')}
+                rows={farmView.breeding}
+                t={t}
+                note={period.period_code}
+              />
+              <FarmMatrix
+                icon={Rat}
+                title={t('gmdWeanerGrowerMatrix')}
+                rows={farmView.weaner_grower}
+                t={t}
+                note={period.period_code}
+              />
+              <FarmMatrix
+                icon={Ham}
+                title={t('gmdFinancialMatrix')}
+                rows={farmFinancial}
+                t={t}
+                note={t('gmdNoDataYet')}
+              />
             </div>
+          ) : (
             <div
-              className="rounded-[var(--radius-sm)] border p-2.5"
-              style={{
-                backgroundColor: 'var(--surface-raised)',
-                borderColor: 'var(--border)',
-              }}
+              className="grid gap-3 xl:grid-cols-3"
+              data-testid="gmd-matrices"
             >
-              <span className="text-[10px] font-semibold text-[var(--text-muted)] uppercase">
-                Weaned
-              </span>
-              <p className="mt-1 font-mono text-xl font-bold text-[var(--accent)]">
-                {reproductiveIntelligence.totalPigletsWeaned}
-              </p>
-              <span className="text-[10px] text-[var(--text-secondary)]">
-                {reproductiveIntelligence.weaningSurvivalRatePct}% survival
-              </span>
+              <Matrix
+                icon={PiggyBank}
+                title={t('gmdBreedingMatrix')}
+                rows={breeding}
+                farms={farms}
+                t={t}
+                note={period.period_code}
+              />
+              <Matrix
+                icon={Rat}
+                title={t('gmdWeanerGrowerMatrix')}
+                rows={data!.weaner_grower}
+                farms={farms}
+                t={t}
+                note={period.period_code}
+              />
+              <Matrix
+                icon={Ham}
+                title={t('gmdFinancialMatrix')}
+                rows={financial}
+                farms={farms}
+                t={t}
+                note={t('gmdNoDataYet')}
+              />
             </div>
-          </div>
+          )}
 
-          {/* Recent Litters Mini Table */}
-          <div>
-            <span className="text-[11px] font-semibold text-[var(--text-secondary)]">
-              Recent Farrowing Records:
-            </span>
-            {reproductiveIntelligence.recentLitters.length === 0 ? (
-              <p className="mt-2 text-xs text-[var(--text-muted)] italic">
-                No litters recorded in this date range.
-              </p>
-            ) : (
-              <div
-                className="mt-1.5 divide-y overflow-hidden rounded-[var(--radius-sm)] border text-xs"
-                style={{ borderColor: 'var(--border)' }}
-              >
-                {reproductiveIntelligence.recentLitters.map((l) => (
-                  <div
-                    key={l.farrowId}
-                    className="flex items-center justify-between p-2 hover:bg-[var(--surface-raised)]"
-                  >
-                    <div>
-                      <span className="font-semibold text-[var(--text-primary)]">
-                        {l.sowCode}
-                      </span>
-                      <span className="ml-2 font-mono text-[10px] text-[var(--text-muted)]">
-                        {l.farrowingDate}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 font-mono">
-                      <span className="text-[var(--success)] font-semibold">
-                        {l.pigletsBornLive} live
-                      </span>
-                      <span className="text-[var(--text-muted)]">/</span>
-                      <span className="text-[var(--accent)] font-semibold">
-                        {l.pigletsWeaned} weaned
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Card 2: Breeding Pipeline */}
-        <div
-          className="rounded-[var(--radius-md)] border p-4 shadow-xs space-y-3"
-          style={{
-            backgroundColor: 'var(--surface)',
-            borderColor: 'var(--border)',
-          }}
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-                Mating & Insemination
-              </h3>
-              <p className="text-xs text-[var(--text-secondary)]">
-                Conception status & service methods
-              </p>
-            </div>
-            <span
-              className="rounded-[var(--radius-pill)] px-2.5 py-0.5 text-xs font-semibold border"
-              style={{
-                backgroundColor: 'var(--surface-raised)',
-                borderColor: 'var(--border)',
-              }}
-            >
-              {reproductiveIntelligence.conceptionPipeline.totalMatings}{' '}
-              Services
-            </span>
-          </div>
-
-          <div className="space-y-2 pt-1">
-            <div
-              className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2 text-xs"
-              style={{
-                backgroundColor: 'var(--surface-raised)',
-                borderColor: 'var(--border)',
-              }}
-            >
-              <span className="font-medium text-[var(--text-secondary)]">
-                Confirmed Pregnant
-              </span>
-              <span
-                className="font-mono font-bold"
-                style={{ color: 'var(--success)' }}
-              >
-                {reproductiveIntelligence.conceptionPipeline.confirmedPregnant}{' '}
-                Sows
-              </span>
-            </div>
-            <div
-              className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2 text-xs"
-              style={{
-                backgroundColor: 'var(--surface-raised)',
-                borderColor: 'var(--border)',
-              }}
-            >
-              <span className="font-medium text-[var(--text-secondary)]">
-                Completed / Weaned
-              </span>
-              <span className="font-mono font-bold text-[var(--accent)]">
-                {reproductiveIntelligence.conceptionPipeline.completedWeaned}{' '}
-                Sows
-              </span>
-            </div>
-            <div
-              className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2 text-xs"
-              style={{
-                backgroundColor: 'var(--surface-raised)',
-                borderColor: 'var(--border)',
-              }}
-            >
-              <span className="font-medium text-[var(--text-secondary)]">
-                Failed / Repeat
-              </span>
-              <span
-                className="font-mono font-bold"
-                style={{ color: 'var(--danger)' }}
-              >
-                {reproductiveIntelligence.conceptionPipeline.repeatFailed} Sows
-              </span>
-            </div>
-            <div
-              className="flex items-center justify-between rounded-[var(--radius-sm)] border p-2 text-xs"
-              style={{
-                backgroundColor: 'var(--surface-raised)',
-                borderColor: 'var(--border)',
-              }}
-            >
-              <span className="font-medium text-[var(--text-secondary)]">
-                AI vs Natural Mating
-              </span>
-              <span className="font-mono font-semibold text-[var(--text-primary)]">
-                {
-                  reproductiveIntelligence.conceptionPipeline
-                    .aiInseminationCount
-                }{' '}
-                AI ·{' '}
-                {reproductiveIntelligence.conceptionPipeline.naturalMatingCount}{' '}
-                Natural
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Card 3: Herd Parity & Stage Structure */}
-        <div
-          className="rounded-[var(--radius-md)] border p-4 shadow-xs space-y-3"
-          style={{
-            backgroundColor: 'var(--surface)',
-            borderColor: 'var(--border)',
-          }}
-        >
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-              Herd Parity & Stage Structure
-            </h3>
-            <p className="text-xs text-[var(--text-secondary)]">
-              Actual parity distribution across registered herd
-            </p>
-          </div>
-
-          {/* Parity Breakdown Bars */}
-          <div className="space-y-1.5 pt-1">
-            {[
-              {
-                label: 'Parity 0 (Gilts)',
-                count: activeHerdSummary.parityDistribution.p0Gilts.count,
-                pct: activeHerdSummary.parityDistribution.p0Gilts.pct,
-              },
-              {
-                label: 'Parity 1',
-                count: activeHerdSummary.parityDistribution.p1.count,
-                pct: activeHerdSummary.parityDistribution.p1.pct,
-              },
-              {
-                label: 'Parity 2',
-                count: activeHerdSummary.parityDistribution.p2.count,
-                pct: activeHerdSummary.parityDistribution.p2.pct,
-              },
-              {
-                label: 'Parity 3',
-                count: activeHerdSummary.parityDistribution.p3.count,
-                pct: activeHerdSummary.parityDistribution.p3.pct,
-              },
-              {
-                label: 'Parity 4+',
-                count: activeHerdSummary.parityDistribution.p4Plus.count,
-                pct: activeHerdSummary.parityDistribution.p4Plus.pct,
-              },
-            ].map((p) => (
-              <div key={p.label} className="space-y-1">
-                <div className="flex justify-between text-xs">
-                  <span className="font-medium text-[var(--text-secondary)]">
-                    {p.label}
-                  </span>
-                  <span className="font-mono font-semibold text-[var(--text-primary)]">
-                    {p.count} Head ({p.pct}%)
-                  </span>
-                </div>
-                <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all duration-500"
-                    style={{
-                      width: `${Math.max(p.pct, p.count > 0 ? 5 : 0)}%`,
-                      backgroundColor: 'var(--accent)',
+          <div className="grid gap-3 xl:grid-cols-3" data-testid="gmd-bottom">
+            <ProgressChart
+              icon={PiggyBank}
+              title={t('gmdPigsToSlaughterProgress')}
+              points={yearPoints}
+              t={t}
+            />
+            <ProgressChart
+              icon={DollarSign}
+              title={t('gmdPbtProgress')}
+              points={yearPoints}
+              t={t}
+            />
+            <div className="flex min-w-0 flex-col gap-3">
+              {farmView ? (
+                <>
+                  <KgMeatCard
+                    icon={Coins}
+                    title={t('gmdKgSoldPerSowYearYtd')}
+                    main={{
+                      actual: farmView.kg_sold_per_sow_year_ytd,
+                      budget: null,
                     }}
+                    t={t}
                   />
-                </div>
-              </div>
-            ))}
+                  <FarmAlertsPanel
+                    alerts={farmView.alerts}
+                    showAll={allAlerts}
+                    onToggle={() => setAllAlerts((v) => !v)}
+                    t={t}
+                  />
+                </>
+              ) : (
+                <>
+                  <KgMeatCard
+                    icon={Coins}
+                    title={t('gmdKgSoldPerSowYear')}
+                    main={kgMonth}
+                    ytd={kgYtd}
+                    t={t}
+                  />
+                  <AlertsPanel
+                    alerts={data!.alerts}
+                    showAll={allAlerts}
+                    onToggle={() => setAllAlerts((v) => !v)}
+                    t={t}
+                  />
+                </>
+              )}
+            </div>
           </div>
-        </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function GmDashboardSkeleton() {
+  return (
+    <div className="space-y-4" role="status" aria-busy="true">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+        {Array.from({ length: 5 }, (_, i) => (
+          <Skeleton key={i} className="h-40" />
+        ))}
       </div>
-
-      {/* ── Facility Locations & Farm Table (100% Live) ── */}
-      <div
-        className="rounded-[var(--radius-md)] border p-4 shadow-xs space-y-3"
-        style={{
-          backgroundColor: 'var(--surface)',
-          borderColor: 'var(--border)',
-        }}
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--text-primary)]">
-              Live Triple C Facility & Production Sites
-            </h3>
-            <p className="text-xs text-[var(--text-secondary)]">
-              Actual stock allocations & operational batch status across company
-              locations
-            </p>
-          </div>
-          <span
-            className="rounded-[var(--radius-pill)] border px-3 py-1 text-xs font-semibold"
-            style={{
-              backgroundColor: 'var(--surface-raised)',
-              borderColor: 'var(--border)',
-              color: 'var(--text-secondary)',
-            }}
-          >
-            {facilityLocations.length} Registered Sites
-          </span>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr
-                className="border-b text-[11px] font-semibold uppercase text-[var(--text-muted)]"
-                style={{ borderColor: 'var(--border)' }}
-              >
-                <th className="py-2.5 px-3">Farm Location</th>
-                <th className="py-2.5 px-3 text-right">Registered Herd</th>
-                <th className="py-2.5 px-3 text-right">Sows</th>
-                <th className="py-2.5 px-3 text-right">Gilts</th>
-                <th className="py-2.5 px-3 text-right">Active Batches</th>
-                <th className="py-2.5 px-3 text-right">Live WIP Asset</th>
-                <th className="py-2.5 px-3 text-right">Operational Status</th>
-              </tr>
-            </thead>
-            <tbody
-              className="divide-y font-mono"
-              style={{ borderColor: 'var(--border)' }}
-            >
-              {facilityLocations.map((f) => (
-                <tr
-                  key={f.locationId}
-                  className="hover:bg-[var(--surface-raised)] transition-colors"
-                >
-                  <td className="py-3 px-3 font-sans font-semibold text-[var(--text-primary)]">
-                    {f.locationName}{' '}
-                    <span className="text-[10px] font-mono text-[var(--text-muted)]">
-                      ({f.locationCode})
-                    </span>
-                  </td>
-                  <td className="py-3 px-3 text-right font-bold">
-                    {f.headcount} Head
-                  </td>
-                  <td className="py-3 px-3 text-right text-[var(--text-secondary)]">
-                    {f.sowsCount}
-                  </td>
-                  <td className="py-3 px-3 text-right text-[var(--text-secondary)]">
-                    {f.giltsCount}
-                  </td>
-                  <td className="py-3 px-3 text-right font-semibold">
-                    {f.batchesCount}
-                  </td>
-                  <td className="py-3 px-3 text-right font-semibold">
-                    {formatMoney(f.wipValuation)}
-                  </td>
-                  <td className="py-3 px-3 text-right font-sans">
-                    <span
-                      className={`inline-flex items-center gap-1 rounded-[var(--radius-pill)] px-2 py-0.5 text-[10px] font-semibold border ${
-                        f.status === 'Active Operations'
-                          ? 'bg-[var(--success-muted)] text-[var(--success)] border-[var(--success)]'
-                          : 'bg-slate-100 dark:bg-slate-800 text-[var(--text-muted)] border-transparent'
-                      }`}
-                    >
-                      {f.status === 'Active Operations' && (
-                        <CheckCircle2 className="h-3 w-3" />
-                      )}
-                      <span>{f.status}</span>
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="grid gap-3 xl:grid-cols-3">
+        {Array.from({ length: 3 }, (_, i) => (
+          <Skeleton key={i} className="h-80" />
+        ))}
+      </div>
+      <div className="grid gap-3 xl:grid-cols-3">
+        {Array.from({ length: 3 }, (_, i) => (
+          <Skeleton key={i} className="h-72" />
+        ))}
       </div>
     </div>
   );

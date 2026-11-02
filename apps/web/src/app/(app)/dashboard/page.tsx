@@ -1441,7 +1441,7 @@ export default function DashboardPage() {
 
           return (
             <div className="space-y-6">
-              {/* View Switcher: GM Executive Dashboard vs Batch Lifecycle Operations — the GM view reads the herd analytics,
+              {/* View Switcher: GM Dashboard vs Batch Lifecycle Operations — the GM view reads the herd analytics,
                 so a role without the Animal Register sees the batch view only. */}
               {can('/livestock') && (
                 <div
@@ -1457,7 +1457,7 @@ export default function DashboardPage() {
                     }`}
                   >
                     <LayoutDashboard className="h-3.5 w-3.5" />
-                    <span>Piggery GM Executive Dashboard</span>
+                    <span>{t('gmdTitle')}</span>
                   </button>
 
                   <button
@@ -1764,7 +1764,7 @@ export default function DashboardPage() {
                                 className="nf-press flex w-full items-center justify-between rounded-[var(--radius-sm)] border p-2.5 text-xs font-semibold hover:bg-[var(--surface-raised)]"
                                 style={{ borderColor: 'var(--border)' }}
                               >
-                                <span>Piggery GM Executive Dashboard</span>
+                                <span>{t('gmdTitle')}</span>
                                 <ChevronRight className="h-3.5 w-3.5" />
                               </button>
                             )}

@@ -38,7 +38,10 @@ export class FeedConsolidationQueryDto {
   @ApiPropertyOptional() @IsOptional() @IsDateString() fromDate?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() toDate?: string;
   /** The consolidate sheet's ranking figures (stored, or a live forecast for a manual requisition); a count needs none. */
-  @ApiPropertyOptional() @IsOptional() @IsIn(['true', 'false']) withPriority?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  withPriority?: string;
 }
 
 export class FeedConsolidationLineDto {
@@ -151,6 +154,15 @@ export class ManualFeedLineInput {
   @IsOptional()
   @IsUUID()
   reason_id?: string;
+  @ApiPropertyOptional({
+    description:
+      "The farm's order for this line, 1 first; the mill ranks by it after shortage date and days left",
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  priority_no?: number;
 }
 
 export class CreateManualFeedRequisitionDto {
@@ -184,6 +196,15 @@ export class FeedRequisitionFromRunLineDto {
   @Min(0.001)
   quantity_kg: number;
   @ApiProperty() @IsDateString() proposed_delivery_date: string;
+  @ApiPropertyOptional({
+    description:
+      "The farm's order for this line, 1 first; the mill ranks by it after shortage date and days left",
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  priority_no?: number;
 }
 
 export class CreateFeedRequisitionFromRunDto {
@@ -209,13 +230,6 @@ export class CreateFeedRequisitionFromRunDto {
  */
 export class FeedLineEditInput {
   @ApiProperty() @IsUUID() line_id: string;
-  @ApiPropertyOptional({
-    description: 'Requisition §1 row 34, per line: escalate only',
-    enum: ['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'],
-  })
-  @IsOptional()
-  @IsIn(['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'])
-  priority?: 'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)

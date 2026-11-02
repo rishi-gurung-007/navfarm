@@ -485,6 +485,9 @@ describe('buildSelectedSiloDashboard', () => {
       closingKg: number,
     ) => ({
       batchId,
+      batchNo: batchId,
+      stageCode: 'GROWER',
+      heads: 10,
       itemId,
       itemName,
       date,
@@ -583,6 +586,9 @@ describe('buildSelectedSiloDashboard', () => {
     };
     const day = {
       batchId: 'batch-a',
+      batchNo: 'batch-a',
+      stageCode: 'GROWER',
+      heads: 10,
       itemId: 'r1',
       itemName: 'Diet R1',
       date: '2026-09-23',
@@ -637,6 +643,112 @@ describe('buildSelectedSiloDashboard', () => {
     });
 
     expect(shaped.silo.millLoadingBin).toEqual(assignment);
+  });
+
+  // Rishi, 2 Nov: the animals fed from the silo — the heads of the selected shed's batches drawing on it on the
+  // planning date; another shed on the same silo is not counted.
+  it('counts the heads of the selected shed drawing on this silo on the planning date, batch by batch', () => {
+    const status = {
+      ...fact({}),
+      currentDietItemId: 'r1',
+      nextDietItemId: null,
+      requisitionId: null,
+      requisitionStatus: null,
+      submissionDeadline: null,
+      alert: null,
+    } as unknown as SiloStatusRow;
+    const row = (over: Record<string, unknown>) => ({
+      batchId: 'b1',
+      realBatchId: 'b1',
+      batchNo: 'B-1',
+      stageCode: 'GROWER',
+      shedId: 'shed-1',
+      itemId: 'r1',
+      itemName: 'Diet R1',
+      date: '2026-09-23',
+      heads: 100,
+      demandKg: 200,
+      sourceType: 'SILO',
+      destinationLocationId: 's1',
+      currentInventoryKg: 1500,
+      confirmedReceiptKg: 0,
+      ...over,
+    });
+    const shaped = buildSelectedSiloDashboard({
+      status,
+      planningDate: '2026-09-23',
+      shedId: 'shed-1',
+      nextBinAssignment: null,
+      result: {
+        sources: [],
+        daily: [
+          row({}),
+          row({
+            batchId: 'b2',
+            realBatchId: 'b2',
+            batchNo: 'B-2',
+            heads: 40,
+            stageCode: 'FINISHER',
+          }),
+          // An animal-wise batch is fed by stage group; its label carries the stage, the row its code.
+          row({
+            batchId: 'b6:gest',
+            realBatchId: 'b6',
+            batchNo: 'B-6 · GESTATION',
+            heads: 16,
+            stageCode: 'GESTATION',
+          }),
+          row({
+            batchId: 'b6:lact',
+            realBatchId: 'b6',
+            batchNo: 'B-6 · LACTATION',
+            heads: 3,
+            stageCode: 'LACTATION',
+          }),
+          row({ batchId: 'b1', date: '2026-09-24', heads: 99 }), // a later day
+          row({
+            batchId: 'b3',
+            batchNo: 'B-3',
+            heads: 70,
+            destinationLocationId: 's9',
+          }), // another silo
+          row({ batchId: 'b4', batchNo: 'B-4', heads: 25, demandKg: 0 }), // eats nothing from it that day
+          row({
+            batchId: 'b5',
+            batchNo: 'B-5',
+            heads: 30,
+            sourceType: 'STORE',
+          }), // fed from a store
+          row({ batchId: 'b7', batchNo: 'B-7', heads: 500, shedId: 'shed-2' }), // another shed on the same silo
+        ] as any,
+      },
+    });
+    // Rishi, 2 Nov: every batch with the stage it is in that day, not only the animal-wise ones.
+    expect(shaped.silo.animalsFed).toBe(159);
+    expect(shaped.silo.animalsFedBatches).toEqual([
+      { batchNo: 'B-1', stage: 'GROWER', heads: 100 },
+      { batchNo: 'B-2', stage: 'FINISHER', heads: 40 },
+      { batchNo: 'B-6', stage: 'GESTATION', heads: 16 },
+      { batchNo: 'B-6', stage: 'LACTATION', heads: 3 },
+    ]);
+  });
+
+  it('says 0 animals when no batch draws on the silo that day', () => {
+    const status = {
+      ...fact({}),
+      currentDietItemId: 'r1',
+      nextDietItemId: null,
+      alert: null,
+    } as unknown as SiloStatusRow;
+    const shaped = buildSelectedSiloDashboard({
+      status,
+      planningDate: '2026-09-23',
+      shedId: 'shed-1',
+      nextBinAssignment: null,
+      result: { sources: [], daily: [] },
+    });
+    expect(shaped.silo.animalsFed).toBe(0);
+    expect(shaped.silo.animalsFedBatches).toEqual([]);
   });
 });
 
