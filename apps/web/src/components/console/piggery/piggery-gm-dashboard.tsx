@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { BarChart3, CalendarDays, Coins, DollarSign, Ham, PiggyBank, RefreshCw, Rat, Weight } from 'lucide-react';
+import { BarChart3, CalendarDays, Coins, DollarSign, Ham, PiggyBank, Rat, Weight } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { getActiveCompanyId } from '@/hooks/useAuth';
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
@@ -175,15 +175,6 @@ export default function PiggeryGmDashboard() {
               placeholder={t('gmdAllFarms')}
             />
           </Field>
-          <button
-            type="button"
-            onClick={() => void load(periodId, farmId)}
-            aria-label={t('gmdRefresh')}
-            title={t('gmdRefresh')}
-            className="nf-press mb-1 rounded-full border border-(--border) p-1.5 text-(--text-secondary) hover:bg-(--surface-raised)"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-          </button>
         </div>
       </div>
 

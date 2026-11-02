@@ -2732,7 +2732,6 @@ export const translations = {
     gmdAllFarms: 'All Farms',
     gmdMonth: 'Month',
     gmdYtd: 'YTD',
-    gmdRefresh: 'Refresh',
     gmdLoadFailed: 'The GM Dashboard could not be loaded.',
     gmdNoPeriods: 'No reporting periods',
     gmdNoPeriodsHint: 'Add the Reporting Periods in Masters to see the GM Dashboard.',
