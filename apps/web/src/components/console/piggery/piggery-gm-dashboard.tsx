@@ -1,31 +1,17 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, RefreshCw, Scale } from 'lucide-react';
+import { BarChart3, CalendarDays, Coins, DollarSign, Ham, PiggyBank, RefreshCw, Rat, Weight } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { getActiveCompanyId } from '@/hooks/useAuth';
+import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import { useLanguage } from '@/hooks/useLanguage';
 import { Field } from '@/components/ui/field';
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { StatRow, StatCard } from '@/components/ui/stat-row';
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/states';
-import { NA } from '@/utils/na';
-
-type Status = 'GREEN' | 'AMBER' | 'RED' | null;
-
-interface Cell {
-  value: number | null;
-  target: number | null;
-  status: Status;
-}
-
-interface MetricRow {
-  key: string;
-  label: string;
-  unit: string;
-  lower_is_better: boolean;
-  cells: Record<string, Cell>;
-}
+import {
+  Alert, AlertsPanel, Farm, Figure, KgMeatCard, KpiCard, Matrix, MetricRow, NO_FIGURE, ProgressChart, ProgressPoint,
+} from './gm-dashboard-widgets';
 
 type Period = {
   period_id: string;
@@ -34,22 +20,6 @@ type Period = {
   start_date: string;
   end_date: string;
 };
-
-type Farm = {
-  farm_id: string;
-  farm_code: string;
-  farm_name: string;
-};
-
-interface Alert {
-  farm_id: string;
-  farm_name: string;
-  metric: string;
-  unit: string;
-  value: number;
-  target: number | null;
-  status: 'RED' | 'AMBER';
-}
 
 export interface GmDashboardData {
   period: (Period & { ytd_from: string; to: string }) | null;
@@ -63,32 +33,45 @@ export interface GmDashboardData {
 
 const ALL = '';
 
-/** The theme's own status colours (Rishi, 2 Nov: the GM Dashboard keeps the current theme). */
-const STATUS_COLOR: Record<Exclude<Status, null>, string> = {
-  GREEN: 'var(--success)',
-  AMBER: 'var(--warning)',
-  RED: 'var(--danger)',
-};
-
 const shortDate = (iso: string) =>
   new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 
-const show = (value: number | null | undefined, unit = '') =>
-  value == null ? NA : `${value.toLocaleString('en-GB', { maximumFractionDigits: 2 })}${unit ? (unit === '%' ? '%' : ` ${unit}`) : ''}`;
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** A period code (YYYY-MM) as its month's short name, for the chart axes. */
+const monthOf = (code: string) => MONTHS[Number(code.split('-')[1]) - 1] ?? code;
 
 /**
- * GM Dashboard (Rishi, 2 Nov; docs/superpowers/specs/2026-11-02-gm-dashboard-phase-1-design.md): a Reporting Period
- * (the one holding today first) and a farm; Kg Meat Sold / Sow / Year for the month and year to date; the Breeding &
- * Farrowing and Weaner-Grower matrices, one column per farm, coloured against the breed lifecycle targets; and the
- * alerts their red and amber cells raise.
+ * Phase 2 (Rishi, 2 Nov): the financial half has no data yet — no sales, kill sheet, cost-of-sales or overhead
+ * accounts, or budgets. Its rows and figures are laid out now and stay empty until the API returns them.
+ */
+const FINANCIAL_ROWS: Array<Pick<MetricRow, 'key' | 'label' | 'unit' | 'lower_is_better'>> = [
+  { key: 'pigs_to_slaughter', label: 'Pigs to Slaughter', unit: '', lower_is_better: false },
+  { key: 'avg_cdm', label: 'Avg CDM', unit: 'kg', lower_is_better: false },
+  { key: 'cost_of_sales', label: 'Cost of Sales', unit: '', lower_is_better: true },
+  { key: 'cos_per_tonne', label: 'COS $/tonne', unit: '', lower_is_better: true },
+  { key: 'gross_margin', label: 'Gross Margin', unit: '', lower_is_better: false },
+  { key: 'gross_margin_pct', label: 'Gross Margin %', unit: '%', lower_is_better: false },
+  { key: 'other_overheads', label: 'Other Overheads', unit: '', lower_is_better: true },
+  { key: 'staff_overheads', label: 'Staff Overheads', unit: '', lower_is_better: true },
+];
+
+/**
+ * GM Dashboard (Rishi, 2 Nov; docs/superpowers/specs/2026-11-02-gm-dashboard-phase-1-design.md), on the grid of his
+ * mockup in the current theme: the five financial KPI cards; the Breeding & Farrowing, Weaner-Grower and Slaughter &
+ * Financial matrices, one dot per farm coloured against the lifecycle targets; the Pigs to Slaughter and PBT
+ * progress charts; Kg Meat Sold / Sow / Year and the Management Alerts. A Reporting Period (the one holding today
+ * first) and a farm filter it.
  */
 export default function PiggeryGmDashboard() {
   const { t } = useLanguage();
+  const { currency } = useCompanyCurrency(getActiveCompanyId() ?? undefined);
   const [periodId, setPeriodId] = useState('');
   const [farmId, setFarmId] = useState(ALL);
   const [data, setData] = useState<GmDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [allAlerts, setAllAlerts] = useState(false);
 
   const load = async (period: string, farm: string) => {
     setLoading(true);
@@ -130,12 +113,43 @@ export default function PiggeryGmDashboard() {
   }, [data, farmId]);
   const pickerFarms = [{ farm_id: ALL, farm_name: t('gmdAllFarms') }, ...allFarms];
 
-  const kgKey = farmId || 'all';
   const period = data?.period ?? null;
+  const farms = data?.farms ?? [];
+  const money = currency?.iso_code ?? '';
+  const kgKey = farmId || 'all';
+  const kgMonth: Figure = { actual: data?.kg_sold_per_sow_year.month[kgKey] ?? null, budget: null };
+  const kgYtd: Figure = { actual: data?.kg_sold_per_sow_year.ytd[kgKey] ?? null, budget: null };
+
+  // Kg Meat Sold / Sow / Year closes the Breeding & Farrowing matrix, as in the mockup; it has no lifecycle target.
+  const breeding: MetricRow[] = [
+    ...(data?.breeding ?? []),
+    {
+      key: 'kg_sold_per_sow_year', label: t('gmdKgSoldPerSowYear'), unit: 'kg', lower_is_better: false,
+      cells: Object.fromEntries(farms.map((f) => [f.farm_id, { value: data?.kg_sold_per_sow_year.month[f.farm_id] ?? null, target: null, status: null }])),
+    },
+  ];
+  const financial: MetricRow[] = FINANCIAL_ROWS.map((r) => ({
+    ...r, cells: Object.fromEntries(farms.map((f) => [f.farm_id, { value: null, target: null, status: null }])),
+  }));
+  // The business year's periods, for the YTD charts' axis; no actuals or budgets yet.
+  const yearPoints: ProgressPoint[] = (data?.periods ?? [])
+    .filter((p) => period && p.business_year === period.business_year)
+    .map((p) => ({ label: monthOf(p.period_code), actual: null, budget: null }));
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3 rounded-md border border-(--border) bg-(--surface) p-3">
+        <div className="min-w-0">
+          <h2 className="text-lg font-semibold">{t('gmdTitle')}</h2>
+          <p className="text-xs text-(--text-secondary)">
+            {farmId ? farms[0]?.farm_name : t('gmdFarmsCount', { n: allFarms.length })} | {t('gmdSubtitle')}
+          </p>
+          {period && (
+            <p className="mt-1 text-xs text-(--text-secondary)" data-testid="gmd-dates">
+              {t('gmdMonth')}: {shortDate(period.start_date)} – {shortDate(period.to)} · {t('gmdYtd')}: {shortDate(period.ytd_from)} – {shortDate(period.to)}
+            </p>
+          )}
+        </div>
         <div className="flex flex-wrap items-end gap-3">
           <Field label={t('gmdPeriod')}>
             <SearchableSelect
@@ -161,21 +175,16 @@ export default function PiggeryGmDashboard() {
               placeholder={t('gmdAllFarms')}
             />
           </Field>
-          {period && (
-            <p className="pb-2 text-xs text-(--text-secondary)" data-testid="gmd-dates">
-              {t('gmdMonth')}: {shortDate(period.start_date)} – {shortDate(period.to)} · {t('gmdYtd')}: {shortDate(period.ytd_from)} – {shortDate(period.to)}
-            </p>
-          )}
+          <button
+            type="button"
+            onClick={() => void load(periodId, farmId)}
+            aria-label={t('gmdRefresh')}
+            title={t('gmdRefresh')}
+            className="nf-press mb-1 rounded-full border border-(--border) p-1.5 text-(--text-secondary) hover:bg-(--surface-raised)"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => void load(periodId, farmId)}
-          aria-label={t('gmdRefresh')}
-          title={t('gmdRefresh')}
-          className="nf-press rounded-full border border-(--border) p-1.5 text-(--text-secondary) hover:bg-(--surface-raised)"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-        </button>
       </div>
 
       {error ? (
@@ -186,122 +195,49 @@ export default function PiggeryGmDashboard() {
         <EmptyState title={t('gmdNoPeriods')} description={t('gmdNoPeriodsHint')} />
       ) : (
         <>
-          <StatRow columns={2}>
-            <StatCard
-              label={`${t('gmdKgSoldPerSowYear')} — ${t('gmdMonth')}`}
-              value={show(data!.kg_sold_per_sow_year.month[kgKey])}
-              unit="kg"
-              icon={Scale}
-              sub={period.period_code}
-            />
-            <StatCard
-              label={`${t('gmdKgSoldPerSowYear')} — ${t('gmdYtd')}`}
-              value={show(data!.kg_sold_per_sow_year.ytd[kgKey])}
-              unit="kg"
-              icon={Scale}
-              sub={period.business_year}
-            />
-          </StatRow>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5" data-testid="gmd-kpis">
+            <KpiCard icon={PiggyBank} title={t('gmdPigsToSlaughter')} unit={t('gmdHead')} month={NO_FIGURE} ytd={NO_FIGURE} t={t} />
+            <KpiCard icon={Weight} title={t('gmdAvgCdm')} unit="kg" month={NO_FIGURE} ytd={NO_FIGURE} t={t} />
+            <KpiCard icon={Coins} title={t('gmdCostOfSales')} unit={money} month={NO_FIGURE} ytd={NO_FIGURE} lowerIsBetter t={t}
+              sub={{ label: t('gmdCosPerTonne'), unit: money, month: NO_FIGURE, ytd: NO_FIGURE, lowerIsBetter: true }} />
+            <KpiCard icon={BarChart3} title={t('gmdGrossMargin')} unit={money} month={NO_FIGURE} ytd={NO_FIGURE} t={t}
+              sub={{ label: t('gmdGrossMarginPct'), unit: '%', month: NO_FIGURE, ytd: NO_FIGURE, lowerIsBetter: false }} />
+            <KpiCard icon={CalendarDays} title={t('gmdOtherOverheads')} unit={money} month={NO_FIGURE} ytd={NO_FIGURE} lowerIsBetter t={t}
+              sub={{ label: t('gmdStaffOverheads'), unit: money, month: NO_FIGURE, ytd: NO_FIGURE, lowerIsBetter: true }} />
+          </div>
 
-          <Matrix title={t('gmdBreedingMatrix')} rows={data!.breeding} farms={data!.farms} t={t} />
-          <Matrix title={t('gmdWeanerGrowerMatrix')} rows={data!.weaner_grower} farms={data!.farms} t={t} />
+          <div className="grid gap-3 xl:grid-cols-3" data-testid="gmd-matrices">
+            <Matrix icon={PiggyBank} title={t('gmdBreedingMatrix')} rows={breeding} farms={farms} t={t} note={period.period_code} />
+            <Matrix icon={Rat} title={t('gmdWeanerGrowerMatrix')} rows={data!.weaner_grower} farms={farms} t={t} note={period.period_code} />
+            <Matrix icon={Ham} title={t('gmdFinancialMatrix')} rows={financial} farms={farms} t={t} note={t('gmdNoDataYet')} />
+          </div>
 
-          <section className="rounded-md border border-(--border) bg-(--surface)" aria-label={t('gmdAlerts')}>
-            <h3 className="flex items-center gap-2 border-b border-(--border) px-4 py-3 text-sm font-semibold">
-              <AlertTriangle className="h-4 w-4 text-(--warning)" />
-              {t('gmdAlerts')}
-              <span className="text-xs font-normal text-(--text-secondary)">({data!.alerts.length})</span>
-            </h3>
-            {data!.alerts.length ? (
-              <ul className="divide-y divide-(--border)">
-                {data!.alerts.map((a, i) => (
-                  <li key={`${a.farm_id}-${a.metric}-${i}`} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-                    <StatusDot status={a.status} />
-                    <span className="font-medium">{a.farm_name}</span>
-                    <span className="text-(--text-secondary)">—</span>
-                    <span>{a.metric}</span>
-                    <span className="ml-auto font-mono tabular-nums">
-                      {show(a.value, a.unit)}
-                      <span className="text-(--text-secondary)"> {t('gmdVsTarget')} {show(a.target, a.unit)}</span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="px-4 py-3 text-sm text-(--text-secondary)">{t('gmdNoAlerts')}</p>
-            )}
-          </section>
+          <div className="grid gap-3 xl:grid-cols-3" data-testid="gmd-bottom">
+            <ProgressChart icon={PiggyBank} title={t('gmdPigsToSlaughterProgress')} points={yearPoints} t={t} />
+            <ProgressChart icon={DollarSign} title={t('gmdPbtProgress')} points={yearPoints} t={t} />
+            <div className="flex min-w-0 flex-col gap-3">
+              <KgMeatCard icon={Coins} month={kgMonth} ytd={kgYtd} t={t} />
+              <AlertsPanel alerts={data!.alerts} showAll={allAlerts} onToggle={() => setAllAlerts((v) => !v)} t={t} />
+            </div>
+          </div>
         </>
       )}
     </div>
   );
 }
 
-function StatusDot({ status }: { status: Status }) {
-  return (
-    <span
-      data-status={status ?? 'NONE'}
-      aria-hidden
-      className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-      style={status ? { backgroundColor: STATUS_COLOR[status] } : { border: '1px solid var(--border-strong, var(--border))' }}
-    />
-  );
-}
-
-function Matrix({ title, rows, farms, t }: { title: string; rows: MetricRow[]; farms: Farm[]; t: (key: any) => string }) {
-  return (
-    <section className="rounded-md border border-(--border) bg-(--surface)">
-      <h3 className="border-b border-(--border) px-4 py-3 text-sm font-semibold">{title}</h3>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs text-(--text-secondary)">
-              <th className="px-4 py-2 font-medium">{t('gmdMetric')}</th>
-              {farms.map((f) => (
-                <th key={f.farm_id} className="px-4 py-2 text-right font-medium" title={f.farm_name}>{f.farm_name}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.key} className="border-t border-(--border)">
-                <td className="px-4 py-2 font-medium">
-                  {row.label}
-                  {row.unit && <span className="text-(--text-secondary)"> ({row.unit})</span>}
-                </td>
-                {farms.map((f) => {
-                  const c = row.cells[f.farm_id];
-                  return (
-                    <td key={f.farm_id} className="px-4 py-2 text-right" title={c?.target != null ? `${t('gmdTarget')}: ${show(c.target)}` : t('gmdNoTarget')}>
-                      <span className="inline-flex items-center justify-end gap-2 font-mono tabular-nums">
-                        {show(c?.value)}
-                        <StatusDot status={c?.status ?? null} />
-                      </span>
-                      <div className="text-[11px] text-(--text-secondary)">
-                        {c?.target != null ? `${t('gmdTarget')} ${show(c.target)}` : t('gmdNoTarget')}
-                      </div>
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
-  );
-}
-
 function GmDashboardSkeleton() {
   return (
-    <div className="space-y-5" role="status" aria-busy="true">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Skeleton className="h-24" />
-        <Skeleton className="h-24" />
+    <div className="space-y-4" role="status" aria-busy="true">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+        {Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-40" />)}
       </div>
-      <Skeleton className="h-72" />
-      <Skeleton className="h-56" />
-      <Skeleton className="h-32" />
+      <div className="grid gap-3 xl:grid-cols-3">
+        {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-80" />)}
+      </div>
+      <div className="grid gap-3 xl:grid-cols-3">
+        {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-72" />)}
+      </div>
     </div>
   );
 }
