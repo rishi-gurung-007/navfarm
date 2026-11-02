@@ -26,6 +26,7 @@ import {
   CalendarClock,
   Receipt,
   FileChartColumn,
+  Truck,
 } from 'lucide-react';
 import {
   getStoredUser,
@@ -59,6 +60,7 @@ import {
   MASTER_DATA_NAV_ORDER,
 } from '@/modules/master-data/configs';
 import { filterNavByPermission } from '@/utils/nav-permissions';
+import { LOGISTICS_MASTER_NAV } from '@/modules/master-data/logistics-configs';
 
 /** All countries (0176 holds ~249; the list endpoint pages at 50 by default), by name. */
 const sortCountries = (rows: any) =>
@@ -458,6 +460,10 @@ export default function ConsoleLayout({
       href: '/inventory/feed-forecast?tab=physical-count',
     },
   ];
+  const logisticsChildren = LOGISTICS_MASTER_NAV.map((key) => {
+    const config = MASTER_DATA_CONFIGS.find((c) => c.key === key)!;
+    return { label: tLabel(config.label), href: `/logistics/${key}` };
+  });
   // Same list master-data-page-shell.tsx used to render as its own docked
   // column — folded into the primary nav's hover flyout instead, in the
   // client-requested order (MASTER_DATA_NAV_ORDER), so there is exactly one
@@ -547,6 +553,15 @@ export default function ConsoleLayout({
         href: '/requisitions',
         icon: ClipboardList,
         activePrefix: '/requisitions',
+      },
+      // Logistics (TDD: Logistics Module, Rishi 2 Nov): its masters first; trips join the flyout from Phase 2.
+      {
+        label: t('navLogistics'),
+        href: '/logistics/vehicle',
+        icon: Truck,
+        activePrefix: '/logistics',
+        children: logisticsChildren,
+        flyout: true,
       },
       {
         label: t('financeCosting'),
@@ -684,6 +699,15 @@ export default function ConsoleLayout({
         href: '/requisitions',
         icon: ClipboardList,
         activePrefix: '/requisitions',
+      },
+      // Logistics (TDD: Logistics Module, Rishi 2 Nov): its masters first; trips join the flyout from Phase 2.
+      {
+        label: t('navLogistics'),
+        href: '/logistics/vehicle',
+        icon: Truck,
+        activePrefix: '/logistics',
+        children: logisticsChildren,
+        flyout: true,
       },
       {
         label: t('financeCosting'),

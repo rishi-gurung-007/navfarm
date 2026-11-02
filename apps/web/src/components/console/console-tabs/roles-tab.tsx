@@ -143,6 +143,49 @@ const DEFAULT_RESOURCES = [
     name: 'Procurement Requisitions',
     nameKey: 'rolProcurementRequisitions',
   },
+  // LOGISTICS (Phase 1 masters, logistics-master.controller.ts)
+  {
+    module_code: 'LOGISTICS',
+    resource: 'VEHICLE',
+    name: 'Vehicles & Documents',
+    nameKey: 'rolLogVehicles',
+  },
+  {
+    module_code: 'LOGISTICS',
+    resource: 'DRIVER',
+    name: 'Drivers',
+    nameKey: 'rolLogDrivers',
+  },
+  {
+    module_code: 'LOGISTICS',
+    resource: 'DELIVERY_ZONE',
+    name: 'Delivery Zones',
+    nameKey: 'rolLogDeliveryZones',
+  },
+  {
+    module_code: 'LOGISTICS',
+    resource: 'ROUTE',
+    name: 'Routes & Stops',
+    nameKey: 'rolLogRoutes',
+  },
+  {
+    module_code: 'LOGISTICS',
+    resource: 'FREIGHT_RATE',
+    name: 'Freight Rates',
+    nameKey: 'rolLogFreightRates',
+  },
+  {
+    module_code: 'LOGISTICS',
+    resource: 'SERVICE_PLAN',
+    name: 'Service Plans',
+    nameKey: 'rolLogServicePlans',
+  },
+  {
+    module_code: 'LOGISTICS',
+    resource: 'SETTINGS',
+    name: 'Logistics Settings',
+    nameKey: 'rolLogSettings',
+  },
   // MASTER_DATA (Phase 2)
   {
     module_code: 'MASTER_DATA',

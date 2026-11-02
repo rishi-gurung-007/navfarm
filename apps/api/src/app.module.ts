@@ -43,6 +43,7 @@ import { ReasonModule } from './modules/master-data/reason/reason.module';
 import { AlertRuleModule } from './modules/system/alert-rule/alert-rule.module';
 import { ReportingPeriodModule } from './modules/master-data/reporting-period/reporting-period.module';
 import { AccountingPeriodModule } from './modules/master-data/accounting-period/accounting-period.module';
+import { LogisticsModule } from './modules/logistics/logistics.module';
 import { KpiMetricModule } from './modules/master-data/kpi-metric/kpi-metric.module';
 import { ActivityModule } from './modules/master-data/activity/activity.module';
 import { FeedFormulaModule } from './modules/master-data/feed-formula/feed-formula.module';
@@ -148,6 +149,7 @@ import { SystemController } from './system/system.controller';
     AlertRuleModule,
     ReportingPeriodModule,
     AccountingPeriodModule,
+    LogisticsModule,
     KpiMetricModule,
     ActivityModule,
     FeedFormulaModule,

@@ -48,7 +48,8 @@ function useMasterDataPageState() {
   return { ready, user, mayView, scopeKey };
 }
 
-export function MasterDataPageShell({ activeKey }: { activeKey: string }) {
+/** `basePath` is the route the sheet tabs link under: /master-data, or /logistics for the Logistics masters. */
+export function MasterDataPageShell({ activeKey, basePath = "/master-data" }: { activeKey: string; basePath?: string }) {
   const router = useRouter();
   const { t, tLabel } = useLanguage();
   const { ready, user, mayView, scopeKey } = useMasterDataPageState();
@@ -113,7 +114,7 @@ export function MasterDataPageShell({ activeKey }: { activeKey: string }) {
         label: tLabel(config.tabLabel || config.label),
       }))}
       value={activeConfig.key}
-      onChange={(key) => router.push(`/master-data/${key}`)}
+      onChange={(key) => router.push(`${basePath}/${key}`)}
     />
   ) : undefined;
 
