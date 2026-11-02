@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Check, FileDown, Loader2, Play, RefreshCw } from 'lucide-react';
+import { Check, FileSpreadsheet, Loader2, Play, RefreshCw } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { getActiveCompanyId, getActiveFarmId } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -19,7 +19,7 @@ import {
   NA,
   type FarrowingReport,
 } from './farrowing-report-columns';
-import { exportFarrowingPdf } from './farrowing-report-pdf';
+import { exportFarrowingExcel } from './farrowing-report-excel';
 
 type Row = Record<string, any>;
 
@@ -154,11 +154,11 @@ export default function FarrowingReportPanel() {
     }
   };
 
-  const exportPdf = async () => {
+  const exportExcel = async () => {
     if (!report) return;
     setExporting(true);
     try {
-      await exportFarrowingPdf(report, t);
+      await exportFarrowingExcel(report, t);
     } catch (err: any) {
       setError(err?.message || t('rptLoadFailed'));
     } finally {
@@ -171,7 +171,7 @@ export default function FarrowingReportPanel() {
   return (
     <div className="flex flex-col gap-4">
       <div
-        className="grid grid-cols-1 gap-3 rounded-[var(--radius-md)] border p-4 sm:grid-cols-2 lg:grid-cols-6"
+        className="grid grid-cols-1 gap-3 rounded-[var(--radius-md)] border p-4 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7"
         style={{
           backgroundColor: 'var(--surface)',
           borderColor: 'var(--border)',
@@ -195,7 +195,7 @@ export default function FarrowingReportPanel() {
             type="date"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
-            className="nf-input-sm w-full"
+            className="nf-input w-full"
             style={S.input}
           />
         </Field>
@@ -205,7 +205,7 @@ export default function FarrowingReportPanel() {
             type="date"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
-            className="nf-input-sm w-full"
+            className="nf-input w-full"
             style={S.input}
           />
         </Field>
@@ -263,9 +263,9 @@ export default function FarrowingReportPanel() {
             disabled={!farmId}
           />
         </Field>
-        <div className="flex flex-wrap items-center gap-2 sm:col-span-2 lg:col-span-6">
+        <div className="flex flex-wrap items-center gap-2 sm:col-span-2 lg:col-span-4 2xl:col-span-7">
           {/* Rishi, 2 Nov: Generate; Generated while the filters match the report shown; Regenerate once one changes. */}
-          <Button onClick={generate} disabled={!ready || loading || upToDate} size="sm">
+          <Button onClick={generate} disabled={!ready || loading || upToDate} >
             {loading ? (
               <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
             ) : upToDate ? (
@@ -279,16 +279,16 @@ export default function FarrowingReportPanel() {
           </Button>
           <Button
             variant="outline"
-            size="sm"
-            onClick={exportPdf}
+            
+            onClick={exportExcel}
             disabled={!report || report.rows.length === 0 || exporting}
           >
             {exporting ? (
               <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
             ) : (
-              <FileDown className="mr-1.5 h-4 w-4" />
+              <FileSpreadsheet className="mr-1.5 h-4 w-4" />
             )}
-            {t('rptExportPdf')}
+            {t('rptExportExcel')}
           </Button>
         </div>
       </div>

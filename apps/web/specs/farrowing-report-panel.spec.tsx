@@ -9,7 +9,7 @@ jest.mock('../src/hooks/useLanguage', () => {
   const t = (key: string, vars?: Record<string, unknown>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
   return { useLanguage: () => ({ t }) };
 });
-jest.mock('../src/components/console/reports/farrowing-report-pdf', () => ({ exportFarrowingPdf: jest.fn() }));
+jest.mock('../src/components/console/reports/farrowing-report-excel', () => ({ exportFarrowingExcel: jest.fn() }));
 
 const get = api.get as jest.Mock;
 const report = {

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Check, FileDown, Loader2, Play, RefreshCw } from 'lucide-react';
+import { Check, FileSpreadsheet, Loader2, Play, RefreshCw } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { getActiveCompanyId, getActiveFarmId } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -12,6 +12,7 @@ import { ScrollTable } from '@/components/ui/scroll-table';
 import { EmptyState } from '@/components/ui/states';
 import { Toast } from '@/components/ui/toast';
 import { NA } from '@/utils/na';
+import { downloadExcel } from '@/utils/excel-export';
 import type { TranslationKeys } from '@/utils/translations';
 
 type Row = Record<string, any>;
@@ -155,31 +156,18 @@ const COLUMNS: Array<{
 ];
 
 /** CSV of the generated report, one line per month and breed, with the hints as their own columns. */
-function toCsv(
-  report: MonthlyOpsReport,
-  t: (k: TranslationKeys) => string,
-): string {
-  const esc = (v: string) =>
-    /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
-  const head = [
-    t('mopMonth'),
-    t('mopFrom'),
-    t('mopTo'),
-    t('mopBreed'),
-    ...COLUMNS.map((c) => t(c.key)),
-  ];
-  const lines = report.rows.map((r) =>
-    [
-      r.month,
-      r.start_date,
-      r.end_date,
-      r.breed_name,
-      ...COLUMNS.map((c) => c.cell(r.metrics).replace(/\n/g, '; ')),
-    ]
-      .map(esc)
-      .join(','),
-  );
-  return [head.map(esc).join(','), ...lines].join('\n');
+/** The report as the Excel sheet (Rishi, 2 Nov: reports export to Excel only): the same columns as the screen. */
+function exportMonthlyOpsExcel(report: MonthlyOpsReport, t: (k: TranslationKeys, vars?: Record<string, string | number>) => string) {
+  return downloadExcel(`monthly-ops_${report.farm.farm_code}_${report.year}.xlsx`, {
+    name: t('rptMonthlyOps'),
+    title: t('rptMonthlyOps'),
+    info: [
+      `${t('rptFarm')}: ${report.farm.farm_code} - ${report.farm.farm_name}   ${t('mopYear')}: ${report.year}`,
+      t('rptGeneratedAt', { at: new Date(report.generated_at).toLocaleString() }),
+    ],
+    headers: [t('mopMonth'), t('mopFrom'), t('mopTo'), t('mopBreed'), ...COLUMNS.map((c) => t(c.key))],
+    rows: report.rows.map((r) => [r.month, r.start_date, r.end_date, r.breed_name, ...COLUMNS.map((c) => c.cell(r.metrics))]),
+  });
 }
 
 export default function MonthlyOpsPanel() {
@@ -242,16 +230,13 @@ export default function MonthlyOpsPanel() {
     }
   };
 
-  const exportCsv = () => {
+  const exportExcel = async () => {
     if (!report) return;
-    const blob = new Blob([toCsv(report, t)], {
-      type: 'text/csv;charset=utf-8',
-    });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `monthly-ops_${report.farm.farm_code}_${report.year}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    try {
+      await exportMonthlyOpsExcel(report, t);
+    } catch (err: any) {
+      setError(err?.message || t('rptLoadFailed'));
+    }
   };
 
   const TH =
@@ -260,7 +245,7 @@ export default function MonthlyOpsPanel() {
   return (
     <div className="flex flex-col gap-4">
       <div
-        className="grid grid-cols-1 gap-3 rounded-[var(--radius-md)] border p-4 sm:grid-cols-3"
+        className="grid grid-cols-1 gap-3 rounded-[var(--radius-md)] border p-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]"
         style={{
           backgroundColor: 'var(--surface)',
           borderColor: 'var(--border)',
@@ -290,9 +275,9 @@ export default function MonthlyOpsPanel() {
             placeholder={t('rptSelectFarm')}
           />
         </Field>
-        <div className="flex flex-wrap items-end gap-2">
+        <div className="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-1">
           {/* Rishi, 2 Nov: Generate; Generated while Year and Farm match the report shown; Regenerate once one changes. */}
-          <Button onClick={generate} disabled={!ready || loading || upToDate} size="sm">
+          <Button onClick={generate} disabled={!ready || loading || upToDate} >
             {loading ? (
               <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
             ) : upToDate ? (
@@ -306,12 +291,12 @@ export default function MonthlyOpsPanel() {
           </Button>
           <Button
             variant="outline"
-            size="sm"
-            onClick={exportCsv}
+            
+            onClick={exportExcel}
             disabled={!report || report.rows.length === 0}
           >
-            <FileDown className="mr-1.5 h-4 w-4" />
-            {t('mopExportCsv')}
+            <FileSpreadsheet className="mr-1.5 h-4 w-4" />
+            {t('rptExportExcel')}
           </Button>
         </div>
       </div>
