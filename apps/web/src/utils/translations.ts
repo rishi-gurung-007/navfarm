@@ -1585,15 +1585,22 @@ export const translations = {
     ffSaveAndCreateRequisition: 'Save & Create Requisition',
     rqdColPriorityNo: 'Priority No.',
     rqNewPriorityNo: 'Priority No. for line {{line}}',
-    rqNaNotNextDiet: 'This feed is already in use, so there is no diet change to count down to',
-    rqNaLifecycleNotInRun: 'No breed lifecycle row set this feed on the line\'s first day in the saved calculation',
+    rqNaNotNextDiet:
+      'This feed is already in use, so there is no diet change to count down to',
+    rqNaLifecycleNotInRun:
+      "No breed lifecycle row set this feed on the line's first day in the saved calculation",
     rqdColSiloCapacity: 'Silo Capacity KG',
-    rqNaNoSiloCapacity: 'No capacity is set for this silo in Location Master, so it is not checked',
+    rqNaNoSiloCapacity:
+      'No capacity is set for this silo in Location Master, so it is not checked',
     rqNaStoreNoCapacity: 'Delivered to a store, which has no silo capacity',
-    rqNaNoDailyUse: 'The line uses no feed on its first day, so days remaining cannot be worked out',
-    rqQtyNotBulkMultiple: 'Line {{line}} ({{item}}): {{kg}} KG is not a multiple of the {{multiple}} KG Bulk Order Multiple.',
-    rqQtyNotWholeBags: 'Line {{line}} ({{item}}): {{kg}} KG is not a whole number of {{multiple}} KG bags.',
-    rqQtyOverCapacity: 'Line {{line}} ({{item}}): {{silo}} is projected to hold {{stock}} KG on {{date}}; with this delivery it would hold {{total}} KG, more than its {{capacity}} KG capacity. At most {{fits}} KG fits.',
+    rqNaNoDailyUse:
+      'The line uses no feed on its first day, so days remaining cannot be worked out',
+    rqQtyNotBulkMultiple:
+      'Line {{line}} ({{item}}): {{kg}} KG is not a multiple of the {{multiple}} KG Bulk Order Multiple.',
+    rqQtyNotWholeBags:
+      'Line {{line}} ({{item}}): {{kg}} KG is not a whole number of {{multiple}} KG bags.',
+    rqQtyOverCapacity:
+      'Line {{line}} ({{item}}): {{silo}} is projected to hold {{stock}} KG on {{date}}; with this delivery it would hold {{total}} KG, more than its {{capacity}} KG capacity. At most {{fits}} KG fits.',
     rqPriorityNoHint: '1 is prepared first; leave blank for no order',
     rqViewRequisition: 'View requisition',
     rqFromRunTitle: 'Feed requisition from saved calculation',
@@ -2103,32 +2110,46 @@ export const translations = {
     ffColDietChangeDate: 'Diet Change Date',
     ffFeedNotRequiredOnDate: 'Feed not required on this date',
     ffHintStage: '{{batch}} is in {{stage}} for this line ({{from}} – {{to}})',
-    ffHintStageProjected: '{{batch}} would be in {{stage}} from {{from}} to {{to}}',
+    ffHintStageProjected:
+      '{{batch}} would be in {{stage}} from {{from}} to {{to}}',
     ffHintCapacity: '{{silo}} can hold up to {{kg}} KG',
     ffHintNoCurrentItem: '{{silo}} holds no feed now',
     ffHintHeads: '{{batch}} has {{heads}} head in {{stage}}',
     ffHintRate: 'Each head would eat {{kg}} KG of {{item}} a day',
-    ffHintOpening: '{{silo}} holds {{kg}} KG of {{item}} on the morning of {{date}}',
-    ffHintOpeningFuture: '{{silo}} would hold {{kg}} KG of {{item}} on the morning of {{date}}',
-    ffHintConfirmed: '{{kg}} KG received into {{silo}} and posted in these days',
-    ffHintOpenTransfer: '{{kg}} KG would arrive in {{silo}} on open transfers in these days',
-    ffHintPlanned: '{{kg}} KG would arrive in {{silo}} from approved feed requisitions in these days',
-    ffHintDailyUse: 'This line would use {{kg}} KG a day: {{heads}} head × {{rate}} KG',
+    ffHintOpening:
+      '{{silo}} holds {{kg}} KG of {{item}} on the morning of {{date}}',
+    ffHintOpeningFuture:
+      '{{silo}} would hold {{kg}} KG of {{item}} on the morning of {{date}}',
+    ffHintConfirmed:
+      '{{kg}} KG received into {{silo}} and posted in these days',
+    ffHintOpenTransfer:
+      '{{kg}} KG would arrive in {{silo}} on open transfers in these days',
+    ffHintPlanned:
+      '{{kg}} KG would arrive in {{silo}} from approved feed requisitions in these days',
+    ffHintDailyUse:
+      'This line would use {{kg}} KG a day: {{heads}} head × {{rate}} KG',
     ffHintClosing: '{{silo}} would hold {{kg}} KG at the end of {{date}}.',
-    ffHintClosingWeek: '{{silo}} would hold {{kg}} KG at the end of the week {{date}}.',
+    ffHintClosingWeek:
+      '{{silo}} would hold {{kg}} KG at the end of the week {{date}}.',
     ffHintClickBreakdown: 'Click for the breakdown.',
     ffHintShortage: '{{silo}} would run short of {{item}} on {{date}}',
-    ffHintNoShortage: '{{silo}} would hold enough {{item}} for this line through {{date}}',
-    ffHintRecommended: '{{kg}} KG would cover the shortage in {{silo}}, in whole compartments or bags',
+    ffHintNoShortage:
+      '{{silo}} would hold enough {{item}} for this line through {{date}}',
+    ffHintRecommended:
+      '{{kg}} KG would cover the shortage in {{silo}}, in whole compartments or bags',
     ffHintNoRecommended: 'No order would be needed for this line',
-    ffHintDelivery: 'Feed would need to arrive by {{date}}, two days before the shortage',
+    ffHintDelivery:
+      'Feed would need to arrive by {{date}}, two days before the shortage',
     ffHintNoDelivery: 'No delivery would be needed for this line',
     ffNaNoSiloCapacity: 'No capacity is set for this silo in Location Master',
     ffNaStoreNoCapacity: 'Fed from a store, which has no silo capacity',
     ffNaNoSource: 'No silo or store is assigned to this line',
-    ffNaNoDietChange: 'This line\'s feed would not change in the forecast window',
-    ffFeedStartHint: '{{item}} would start on {{date}}; {{batch}} has no feed in the forecast before then',
-    ffDietChangeHint: '{{from}} would change to {{to}} on {{date}}, and would be fed from {{source}}',
+    ffNaNoDietChange:
+      "This line's feed would not change in the forecast window",
+    ffFeedStartHint:
+      '{{item}} would start on {{date}}; {{batch}} has no feed in the forecast before then',
+    ffDietChangeHint:
+      '{{from}} would change to {{to}} on {{date}}, and would be fed from {{source}}',
     ffColHouse: 'Shed Code',
     ffColSiloCode: 'Silo / Store Code',
     ffColBatchNo: 'Batch No',
@@ -2147,7 +2168,8 @@ export const translations = {
     ffColDailyUse: 'Daily Use',
     ffColUom: 'UOM',
     ffProjectedClosingOn: 'Projected Closing Balance on {{date}}',
-    ffProjectedClosingWeek: 'Projected Closing Balance at the end of the week {{date}}',
+    ffProjectedClosingWeek:
+      'Projected Closing Balance at the end of the week {{date}}',
     ffBalanceExplainAria: 'Explain projected closing balance on {{date}}',
     ffBalanceExplainTitle: 'Projected balance — {{date}}',
     ffBalanceExplainBody:
@@ -2156,7 +2178,8 @@ export const translations = {
     ffPlannedIncomingShort: 'planned incoming',
     ffPlannedShort: 'planned',
     ffExpectedTransferShort: 'expected transfer',
-    ffIncomingCellHint: 'Feed would arrive this day. Click to see the planned feed and expected transfer.',
+    ffIncomingCellHint:
+      'Feed would arrive this day. Click to see the planned feed and expected transfer.',
     ffConfirmedReceiptShort: 'confirmed receipt',
     ffUsedBeforeReceivedShort:
       'used before it was received (ledger below zero)',
@@ -2250,7 +2273,8 @@ export const translations = {
     fsdDaysUnit: 'days',
     fsdAnimalsFed: 'Animals Fed',
     fsdHeadUnit: 'head',
-    fsdAnimalsFedNone: 'No batch in this shed draws on this silo on the planning date',
+    fsdAnimalsFedNone:
+      'No batch in this shed draws on this silo on the planning date',
     fsdAnimalsFedBatches: 'Batches in this shed fed from this silo',
     fsdColBatch: 'Batch',
     fsdColStage: 'Stage',
@@ -2507,19 +2531,26 @@ export const translations = {
     fcdColSiloCapacity: 'Silo Capacity',
     fcdColLifecycle: 'Breed Lifecycle Row',
     fcdColDaysBeforeDiet: 'Days Before Diet Change',
-    fcdForecastDayHint: 'Projected stock in the silo on the morning of {{date}}, without the deliveries of the requisitions on this sheet or any transfer not yet shipped',
+    fcdForecastDayHint:
+      'Projected stock in the silo on the morning of {{date}}, without the deliveries of the requisitions on this sheet or any transfer not yet shipped',
     fcdNotRequiredOnDate: 'Feed not required on this date',
     fcdCovered: 'Covered',
     fcdShort: 'Short',
-    fcdCoveredHint: 'Covered: the day will need {{need}} KG and the silo is projected to hold {{stock}} KG that morning',
-    fcdOverCapacityHint: 'more than the silo\'s {{capacity}} KG capacity',
-    fcdShortHint: 'Short: the day will need {{need}} KG but the silo is projected to hold only {{stock}} KG that morning',
-    fcdLateDeliveryHint: 'Late: due {{due}} and not yet received. Produced now, its {{requested}} KG should arrive onto {{stock}} KG this morning',
-    fcdDeliveryDayHint: 'Delivery day: {{requested}} KG should arrive onto {{stock}} KG projected that morning',
+    fcdCoveredHint:
+      'Covered: the day will need {{need}} KG and the silo is projected to hold {{stock}} KG that morning',
+    fcdOverCapacityHint: "more than the silo's {{capacity}} KG capacity",
+    fcdShortHint:
+      'Short: the day will need {{need}} KG but the silo is projected to hold only {{stock}} KG that morning',
+    fcdLateDeliveryHint:
+      'Late: due {{due}} and not yet received. Produced now, its {{requested}} KG should arrive onto {{stock}} KG this morning',
+    fcdDeliveryDayHint:
+      'Delivery day: {{requested}} KG should arrive onto {{stock}} KG projected that morning',
     fcdNaLifecycle: 'The requisition line carries no breed lifecycle row',
-    fcdNaNotNextDiet: 'This feed is already in use, so there is no diet change to count down to',
+    fcdNaNotNextDiet:
+      'This feed is already in use, so there is no diet change to count down to',
     fcdNaNoForecast: 'The forecast for this farm could not be read',
-    fcdNaStore: 'To be delivered to a store, which has no silo stock to project',
+    fcdNaStore:
+      'To be delivered to a store, which has no silo stock to project',
     fcdColSystemBalance: 'System Balance',
     fcdColDailyUse: 'Daily Use',
     fcdColItemNo: 'Item No.',
@@ -2538,7 +2569,8 @@ export const translations = {
     fcdOverCapacity: 'Over silo capacity',
     fcdNoShortage: 'No shortage',
     fcdHeads: 'head',
-    fcdUrgencyHint: 'Most urgent first: earliest shortage, then fewest days left, then Priority No. The days show each silo without the deliveries on this sheet, counting a transfer only once it has shipped. Ticking a line selects its whole requisition.',
+    fcdUrgencyHint:
+      'Most urgent first: earliest shortage, then fewest days left, then Priority No. The days show each silo without the deliveries on this sheet, counting a transfer only once it has shipped. Ticking a line selects its whole requisition.',
     fcdLine: 'Line',
     fcdSelectToEdit: 'Select the requisition to edit its lines below.',
     fcdNotConfigured: 'Not configured',
@@ -2635,9 +2667,11 @@ export const translations = {
     ffRecalculate: 'Recalculate',
     ffCalculating: 'Calculating…',
     ffReturnToCurrent: 'Return to current calculation',
-    ffCoveredByRequisition: 'Not offered for a new requisition — an open requisition would already cover the shortage: {{lines}}.',
+    ffCoveredByRequisition:
+      'Not offered for a new requisition — an open requisition would already cover the shortage: {{lines}}.',
     ffCoveredLine: '{{silo}} · {{item}} by {{by}}',
-    ffSavedRunPast: 'This saved calculation was planned as of {{date}}, so its earlier days have passed. Delete it and calculate again to plan from today.',
+    ffSavedRunPast:
+      'This saved calculation was planned as of {{date}}, so its earlier days have passed. Delete it and calculate again to plan from today.',
     ffCalculatePrompt: 'Select the filters and calculate the feed forecast.',
     ffDeleteCalculation: 'Delete calculation',
     ffCalculationDeleted: 'Calculation archived. You can calculate again.',
@@ -2681,7 +2715,8 @@ export const translations = {
       'System balance for {{sourceCode}} ({{itemName}}) was {{kg}} KG in the ledger on {{date}} — stock was used before it was received; check the postings.',
     ffNoteDayRange: '{{batchNo}} {{stageCode}} day {{days}} ({{dates}})',
     ffNoteShedItem: '{{shedCode}}: {{itemName}}',
-    ffNoteStageChangeItem: '{{batchNo}} would move to {{stageCode}} on {{date}}',
+    ffNoteStageChangeItem:
+      '{{batchNo}} would move to {{stageCode}} on {{date}}',
     ffNoteRangeBeforePlanning:
       'Nothing is forecast before the planning date ({{date}}).',
     ffFlagHeadsAssumedFlat: 'Head counts stay at the last posted count.',
@@ -2701,7 +2736,8 @@ export const translations = {
     rptFarrowingDescription:
       'Services, farrowings and litter results per sow batch, against the breed lifecycle targets and the same dates a year earlier.',
     rptMonthlyOps: 'Monthly Ops',
-    rptMonthlyOpsDescription: 'R12 Monthly Operational Report: breeding results per accounting month and sow breed, for one farm and fiscal year.',
+    rptMonthlyOpsDescription:
+      'R12 Monthly Operational Report: breeding results per accounting month and sow breed, for one farm and fiscal year.',
     mopYear: 'Year',
     mopSelectYear: 'Select a fiscal year',
     mopNoYears: 'No accounting periods yet',
@@ -2733,7 +2769,8 @@ export const translations = {
     gmdYtd: 'YTD',
     gmdLoadFailed: 'The GM Dashboard could not be loaded.',
     gmdNoPeriods: 'No reporting periods',
-    gmdNoPeriodsHint: 'Add the Reporting Periods in Masters to see the GM Dashboard.',
+    gmdNoPeriodsHint:
+      'Add the Reporting Periods in Masters to see the GM Dashboard.',
     gmdKgSoldPerSowYear: 'Kg Meat Sold / Sow / Year',
     gmdBreedingMatrix: 'Breeding & Farrowing Performance',
     gmdWeanerGrowerMatrix: 'Weaner-Grower Performance',

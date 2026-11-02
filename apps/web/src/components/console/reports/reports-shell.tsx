@@ -67,7 +67,11 @@ export function ReportPage({ reportKey }: { reportKey: ReportKey }) {
         title={t(section.labelKey)}
         description={t(section.descriptionKey)}
       />
-      {section.key === 'MONTHLY_OPS' ? <MonthlyOpsPanel /> : <FarrowingReportPanel />}
+      {section.key === 'MONTHLY_OPS' ? (
+        <MonthlyOpsPanel />
+      ) : (
+        <FarrowingReportPanel />
+      )}
     </ConsolePage>
   );
 }

@@ -44,16 +44,16 @@ Breeding & Farrowing reuses the Monthly Ops (R12) arithmetic on the period's dat
 breeds. The target is the lifecycle KPI named in brackets; with more than one sow breed on a farm, the average of
 their targets.
 
-| Metric | Value | Target |
-|---|---|---|
-| Farrowing Rate % | Services made one gestation before the period that farrowed ÷ those services (as R12) | FARROWING_RATE |
-| Total Born / Litter | Total born ÷ litters farrowed in the period | TOTAL_BORN |
-| Born Alive / Litter | Born alive ÷ litters farrowed | BORN_ALIVE |
-| Pre-wean Mortality % | Litters weaned in the period: (born alive + fostered in − fostered out − weaned) ÷ (born alive + fostered in − fostered out) | PRE_WEAN_MORTALITY, lower is better |
-| Avg Weaned / Sow | Piglets weaned ÷ litters weaned in the period | WEAN_PER_SOW |
-| Avg Wean Weight kg | Head-weighted weaning weight of litters weaned (as R07 / R12) | WEANING_WEIGHT |
-| Total Litter Mass kg | Weaned head × weight, per litter weaned in the period (the workbook's 102.7 kg is per litter) | TOTAL_LITTER_MASS |
-| Kg Meat Sold / Sow / Year | As R12: kg sold ÷ average sows × 365 ÷ days | none |
+| Metric                    | Value                                                                                                                        | Target                              |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Farrowing Rate %          | Services made one gestation before the period that farrowed ÷ those services (as R12)                                        | FARROWING_RATE                      |
+| Total Born / Litter       | Total born ÷ litters farrowed in the period                                                                                  | TOTAL_BORN                          |
+| Born Alive / Litter       | Born alive ÷ litters farrowed                                                                                                | BORN_ALIVE                          |
+| Pre-wean Mortality %      | Litters weaned in the period: (born alive + fostered in − fostered out − weaned) ÷ (born alive + fostered in − fostered out) | PRE_WEAN_MORTALITY, lower is better |
+| Avg Weaned / Sow          | Piglets weaned ÷ litters weaned in the period                                                                                | WEAN_PER_SOW                        |
+| Avg Wean Weight kg        | Head-weighted weaning weight of litters weaned (as R07 / R12)                                                                | WEANING_WEIGHT                      |
+| Total Litter Mass kg      | Weaned head × weight, per litter weaned in the period (the workbook's 102.7 kg is per litter)                                | TOTAL_LITTER_MASS                   |
+| Kg Meat Sold / Sow / Year | As R12: kg sold ÷ average sows × 365 ÷ days                                                                                  | none                                |
 
 Weaner-Grower works on **stage exits**: a batch counts in the period in which it leaves the stage. It leaves
 WEANER when it moves to the next stage (`batch_stage_log`), and leaves GROWER when it moves on or closes. That
@@ -61,14 +61,14 @@ matches the workbook, where 70-day weight is the weight at the end of the weaner
 WEANER to DOUBLE_STOCK at about 70 days of age). Heads, deaths and moves use the shared `batch-heads.ts` rules. Feed
 is the batch's unreversed CONSUMPTION kg while in the stage. Weight is the latest posted BODY_WEIGHT entry.
 
-| Metric | Value | Target |
-|---|---|---|
-| Avg 70 Day Weight kg | Head-weighted weight at weaner exit: last weighing in the stage | WEANER BODY_WEIGHT |
-| 70 Day Gain kg | Weaner exit weight − weaning weight of the batch's litters (first weighing in the stage if none) | none in the lifecycle master: uncoloured |
-| FCE Weaner | Feed in the weaner stage ÷ live-weight gained (heads out × exit weight − heads in × entry weight) | WEANER FCR, lower is better |
-| Weaner Mortality % | Deaths in the weaner stage ÷ heads that entered it | WEANER MORTALITY_PCT, lower is better |
-| FCE Grower | As FCE Weaner, for the GROWER stage; entry weight = last weighing before it entered | GROWER FCR, lower is better |
-| Grower Mortality % | As Weaner Mortality, for GROWER | GROWER MORTALITY_PCT, lower is better |
+| Metric               | Value                                                                                             | Target                                   |
+| -------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Avg 70 Day Weight kg | Head-weighted weight at weaner exit: last weighing in the stage                                   | WEANER BODY_WEIGHT                       |
+| 70 Day Gain kg       | Weaner exit weight − weaning weight of the batch's litters (first weighing in the stage if none)  | none in the lifecycle master: uncoloured |
+| FCE Weaner           | Feed in the weaner stage ÷ live-weight gained (heads out × exit weight − heads in × entry weight) | WEANER FCR, lower is better              |
+| Weaner Mortality %   | Deaths in the weaner stage ÷ heads that entered it                                                | WEANER MORTALITY_PCT, lower is better    |
+| FCE Grower           | As FCE Weaner, for the GROWER stage; entry weight = last weighing before it entered               | GROWER FCR, lower is better              |
+| Grower Mortality %   | As Weaner Mortality, for GROWER                                                                   | GROWER MORTALITY_PCT, lower is better    |
 
 DOUBLE_STOCK (between weaner and grower) is not shown, as the mockup and workbook have no row for it.
 

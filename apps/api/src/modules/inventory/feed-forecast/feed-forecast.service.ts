@@ -3088,7 +3088,13 @@ export class FeedForecastService {
     from: string,
     to: string,
     tenantId: string,
-    opts: { stockDate: string; horizonTo: string; headerCutoff: string; excludePlannedRequisitionIds?: string[]; shippedTransfersOnly?: boolean },
+    opts: {
+      stockDate: string;
+      horizonTo: string;
+      headerCutoff: string;
+      excludePlannedRequisitionIds?: string[];
+      shippedTransfersOnly?: boolean;
+    },
   ): Promise<{
     input: ForecastInput;
     flags: ForecastFlag[];
@@ -3445,10 +3451,12 @@ export class FeedForecastService {
     const linked = new Set(links.map((link) => link.requisition_id));
     const excluded = new Set(excludeRequisitionIds);
     return plannedIncomingFromRequisitions(
-      rows.filter((row) => !excluded.has(row.requisition_id)).map((row) => ({
-        ...row,
-        transfer_link_id: linked.has(row.requisition_id) ? 'LINKED' : null,
-      })),
+      rows
+        .filter((row) => !excluded.has(row.requisition_id))
+        .map((row) => ({
+          ...row,
+          transfer_link_id: linked.has(row.requisition_id) ? 'LINKED' : null,
+        })),
       stockDate,
       horizonTo,
     );
@@ -3504,7 +3512,12 @@ export class FeedForecastService {
     const common = [
       eq(T.tenant_id, tenantId),
       eq(T.company_id, companyId),
-      inArray(T.status, OPEN_TRANSFER_STATUSES.filter((status) => !shippedOnly || status !== 'DRAFT')),
+      inArray(
+        T.status,
+        OPEN_TRANSFER_STATUSES.filter(
+          (status) => !shippedOnly || status !== 'DRAFT',
+        ),
+      ),
       isNull(T.deleted_at),
       lte(T.posting_date, horizonTo),
       ...restrictedScopeConditions(farmScope(this.cls), {

@@ -25,7 +25,16 @@ export interface ShortSource {
 }
 
 /** The requisitions a forecast already counted, by its source balances' incoming references. */
-export function countedRequisitions(sourceBalances: Array<{ incomingReferences?: Array<{ kind?: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string }> }>) {
+export function countedRequisitions(
+  sourceBalances: Array<{
+    incomingReferences?: Array<{
+      kind?: string;
+      referenceId?: string;
+      referenceNo?: string;
+      relatedReferenceNo?: string;
+    }>;
+  }>,
+) {
   const ids = new Set<string>();
   const nos = new Set<string>();
   for (const point of sourceBalances) {
@@ -34,19 +43,31 @@ export function countedRequisitions(sourceBalances: Array<{ incomingReferences?:
         if (ref.referenceId) ids.add(ref.referenceId);
         if (ref.referenceNo) nos.add(ref.referenceNo);
       }
-      if (ref.kind === 'OPEN_TRANSFER' && ref.relatedReferenceNo) nos.add(ref.relatedReferenceNo);
+      if (ref.kind === 'OPEN_TRANSFER' && ref.relatedReferenceNo)
+        nos.add(ref.relatedReferenceNo);
     }
   }
   return { ids, nos };
 }
 
-export function requisitionCover(source: ShortSource, open: OpenRequisitionLine[], counted: { ids: Set<string>; nos: Set<string> }) {
-  const by = open.filter((r) =>
-    r.destination_location_id === source.locationId
-    && r.item_id === source.itemId
-    && !counted.ids.has(r.requisition_id) && !counted.nos.has(r.req_no)
-    && !!r.proposed_delivery_date
-    && (!source.shortageDate || r.proposed_delivery_date.slice(0, 10) <= source.shortageDate));
+export function requisitionCover(
+  source: ShortSource,
+  open: OpenRequisitionLine[],
+  counted: { ids: Set<string>; nos: Set<string> },
+) {
+  const by = open.filter(
+    (r) =>
+      r.destination_location_id === source.locationId &&
+      r.item_id === source.itemId &&
+      !counted.ids.has(r.requisition_id) &&
+      !counted.nos.has(r.req_no) &&
+      !!r.proposed_delivery_date &&
+      (!source.shortageDate ||
+        r.proposed_delivery_date.slice(0, 10) <= source.shortageDate),
+  );
   const kg = by.reduce((sum, r) => sum + Number(r.quantity), 0);
-  return { covered: source.shortfallKg > 0 && kg + 1e-6 >= source.shortfallKg, by: [...new Set(by.map((r) => r.req_no))] };
+  return {
+    covered: source.shortfallKg > 0 && kg + 1e-6 >= source.shortfallKg,
+    by: [...new Set(by.map((r) => r.req_no))],
+  };
 }

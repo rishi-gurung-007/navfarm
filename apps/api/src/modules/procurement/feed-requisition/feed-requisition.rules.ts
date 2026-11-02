@@ -48,10 +48,19 @@
  * re-exported here as `addDaysIso`/`diffDaysIso` rather than copied, so a
  * calendar bug can only exist in one place.
  */
-import { addDays, dayShort, diffDays, todayLocal, type BatchPk, type DailyForecastRow, type ForecastSource } from '../../inventory/feed-forecast/feed-forecast.engine';
+import {
+  addDays,
+  dayShort,
+  diffDays,
+  todayLocal,
+  type BatchPk,
+  type DailyForecastRow,
+  type ForecastSource,
+} from '../../inventory/feed-forecast/feed-forecast.engine';
 
 export type FeedType = 'BULK' | 'BAGGED';
-export type Priority = 'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
+export type Priority =
+  'CRITICAL_FIRST_PRIORITY' | 'CRITICAL' | 'WARNING' | 'INFO';
 
 export interface FarmFeedSettings {
   bulkMultipleKg: number;
@@ -62,7 +71,13 @@ export interface FarmFeedSettings {
   safetyStockKg: number;
 }
 
-export const DEFAULT_FEED_SETTINGS: FarmFeedSettings = { bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, productionWeekday: 0, safetyStockKg: 0 };
+export const DEFAULT_FEED_SETTINGS: FarmFeedSettings = {
+  bulkMultipleKg: 3000,
+  bagSizeKg: 50,
+  truckTargetKg: 30000,
+  productionWeekday: 0,
+  safetyStockKg: 0,
+};
 
 /** Checkpoint 18: "deviates more than 20 percent from Recommended Qty". */
 export const DEVIATION_LIMIT = 0.2;
@@ -140,28 +155,49 @@ export function runLineEvidence(rows: RunEvidenceRow[], planningDate: string) {
   const dates = [...new Set(rows.map((r) => r.forecast_date))].sort();
   const firstDate = dates[0] ?? planningDate;
   const firstDay = rows.filter((r) => r.forecast_date === firstDate);
-  const systemBalanceKg = Math.max(0, round3(Number(firstDay[0]?.opening_stock_kg ?? 0)));
-  const dailyRequirementKg = round3(firstDay.reduce((sum, r) => sum + Number(r.daily_demand_kg ?? 0), 0));
+  const systemBalanceKg = Math.max(
+    0,
+    round3(Number(firstDay[0]?.opening_stock_kg ?? 0)),
+  );
+  const dailyRequirementKg = round3(
+    firstDay.reduce((sum, r) => sum + Number(r.daily_demand_kg ?? 0), 0),
+  );
   const isNextDiet = firstDate > planningDate;
   // As draftLines: the lifecycle row of the first day's demand.
   const lifecycleOf = (r: RunEvidenceRow) => {
-    const p = r.provenance_snapshot as { lifecycleId?: unknown } | null | undefined;
-    return typeof p?.lifecycleId === 'string' && p.lifecycleId ? p.lifecycleId : null;
+    const p = r.provenance_snapshot as
+      { lifecycleId?: unknown } | null | undefined;
+    return typeof p?.lifecycleId === 'string' && p.lifecycleId
+      ? p.lifecycleId
+      : null;
   };
   return {
-    lifecycleRefId: firstDay.map(lifecycleOf).find((id): id is string => !!id) ?? null,
+    lifecycleRefId:
+      firstDay.map(lifecycleOf).find((id): id is string => !!id) ?? null,
     systemBalanceKg,
     dailyRequirementKg,
     // D1: one decimal; nothing to divide by when the line uses nothing that day.
-    daysRemaining: dailyRequirementKg > 0 ? Math.round((systemBalanceKg / dailyRequirementKg) * 10) / 10 : null,
-    firstShortageDate: rows.map((r) => r.shortage_date).filter((d): d is string => !!d).sort()[0] ?? null,
+    daysRemaining:
+      dailyRequirementKg > 0
+        ? Math.round((systemBalanceKg / dailyRequirementKg) * 10) / 10
+        : null,
+    firstShortageDate:
+      rows
+        .map((r) => r.shortage_date)
+        .filter((d): d is string => !!d)
+        .sort()[0] ?? null,
     isNextDiet,
-    daysBeforeDietChange: isNextDiet ? diffDaysIso(planningDate, firstDate) : null,
+    daysBeforeDietChange: isNextDiet
+      ? diffDaysIso(planningDate, firstDate)
+      : null,
   };
 }
 
 /** Requisition §1 row 15: Feed Type from Location Master. Nothing is recorded today, so a silo is bulk, a store bags (Q10). */
-export function feedTypeOf(dest: Pick<DestinationInfo, 'locationType' | 'feedInBags'>, itemForm?: FeedType | null): FeedType {
+export function feedTypeOf(
+  dest: Pick<DestinationInfo, 'locationType' | 'feedInBags'>,
+  itemForm?: FeedType | null,
+): FeedType {
   // Rishi 12 Oct: the item's own Bulk/Bagged (item_master.feed_form, else its type code) is what is rounded and counted.
   if (itemForm) return itemForm;
   if (dest.feedInBags === true) return 'BAGGED';
@@ -169,35 +205,58 @@ export function feedTypeOf(dest: Pick<DestinationInfo, 'locationType' | 'feedInB
   return dest.locationType === 'STORE' ? 'BAGGED' : 'BULK';
 }
 
-export function roundOrderKg(needKg: number, feedType: FeedType, s: FarmFeedSettings): number {
+export function roundOrderKg(
+  needKg: number,
+  feedType: FeedType,
+  s: FarmFeedSettings,
+): number {
   if (needKg <= 0) return 0;
   const multiple = feedType === 'BULK' ? s.bulkMultipleKg : s.bagSizeKg;
   // Rounded to 1e-6 before the ceiling so 3000.0000000004 kg does not become two compartments.
   return Math.ceil(Math.round((needKg / multiple) * 1e6) / 1e6) * multiple;
 }
 
-export function bagCountFor(kg: number, feedType: FeedType, s: FarmFeedSettings): number | null {
+export function bagCountFor(
+  kg: number,
+  feedType: FeedType,
+  s: FarmFeedSettings,
+): number | null {
   if (feedType !== 'BAGGED') return null;
   return Math.ceil(Math.round((kg / s.bagSizeKg) * 1e6) / 1e6);
 }
 
-export function deviationNeedsRemarks(recommendedKg: number | null, requestedKg: number): boolean {
+export function deviationNeedsRemarks(
+  recommendedKg: number | null,
+  requestedKg: number,
+): boolean {
   if (recommendedKg === null) return false; // a manual line has nothing to deviate from
   if (recommendedKg <= 0) return requestedKg > 0;
-  return Math.abs(requestedKg - recommendedKg) / recommendedKg > DEVIATION_LIMIT + 1e-9;
+  return (
+    Math.abs(requestedKg - recommendedKg) / recommendedKg >
+    DEVIATION_LIMIT + 1e-9
+  );
 }
 
-export function productionCycle(planningDate: string, productionWeekday: number): { productionDate: string; submissionDeadline: string } {
+export function productionCycle(
+  planningDate: string,
+  productionWeekday: number,
+): { productionDate: string; submissionDeadline: string } {
   const weekday = new Date(`${planningDate}T00:00:00Z`).getUTCDay();
   // Strictly after the planning date: a request made on production day itself is for the next cycle.
-  const ahead = ((productionWeekday - weekday + 7) % 7) || 7;
+  const ahead = (productionWeekday - weekday + 7) % 7 || 7;
   const productionDate = addDaysIso(planningDate, ahead);
   return { productionDate, submissionDeadline: addDaysIso(productionDate, -1) };
 }
 
 /** Engine Step 8 free-capacity warning: a direct KG comparison — silo_capacity_kg is always canonical KG. */
-export function exceedsCapacity(quantityKg: number, deliveryDayOpeningKg: number, capacityKg: number | null): boolean {
-  return capacityKg !== null && quantityKg + deliveryDayOpeningKg > capacityKg + 1e-6;
+export function exceedsCapacity(
+  quantityKg: number,
+  deliveryDayOpeningKg: number,
+  capacityKg: number | null,
+): boolean {
+  return (
+    capacityKg !== null && quantityKg + deliveryDayOpeningKg > capacityKg + 1e-6
+  );
 }
 
 export function recommendLines(args: {
@@ -217,26 +276,52 @@ export function recommendLines(args: {
   /** item id -> the item's own Bulk/Bagged (resolveItemFeedForm); it wins over the destination's Feed Type. */
   itemForms?: Map<string, FeedType>;
 }): DraftLine[] {
-  const { planningDate, to, sources, destinations, settings, currentBalanceKg, includeZeroNeed = false, itemForms } = args;
+  const {
+    planningDate,
+    to,
+    sources,
+    destinations,
+    settings,
+    currentBalanceKg,
+    includeZeroNeed = false,
+    itemForms,
+  } = args;
   const lines: DraftLine[] = [];
   for (const s of sources) {
     // Q3 (Plan R): what an order must bring so the silo stays above its low level through `to`, incoming counted.
     // "Never offset next diet with stock of current diet" still holds because each source is one container and one item.
     const unroundedNeedKg = Math.max(0, round3(s.shortfallKg));
     if (unroundedNeedKg <= 0 && !includeZeroNeed) continue; // Engine Step 8: automatic drafts contain shortage lines only.
-    const dest = destinations.get(s.locationId) ?? { locationId: s.locationId, locationType: s.sourceType, feedInBags: null, lowLevelKg: null, capacityKg: null };
+    const dest = destinations.get(s.locationId) ?? {
+      locationId: s.locationId,
+      locationType: s.sourceType,
+      feedInBags: null,
+      lowLevelKg: null,
+      capacityKg: null,
+    };
     const feedType = feedTypeOf(dest, itemForms?.get(s.itemId));
     const recommendedQtyKg = roundOrderKg(unroundedNeedKg, feedType, settings);
     const key = lineKey(s.locationId, s.itemId);
-    const systemBalanceKg = currentBalanceKg ? Math.max(0, round3(currentBalanceKg.get(key) ?? 0)) : s.balanceKg; // never below zero (Rishi, 12 Oct)
+    const systemBalanceKg = currentBalanceKg
+      ? Math.max(0, round3(currentBalanceKg.get(key) ?? 0))
+      : s.balanceKg; // never below zero (Rishi, 12 Oct)
     // Req. row 29: derived from the earliest projected shortage; nothing short in the window → the window's end.
     // 9d D1: the shortage is looked for over the forecast's standard horizon, so it can fall past `to`; that is
     // "nothing short in the window" too — the order window stays `to`.
-    const shortage = s.shortageDate && s.shortageDate <= to ? s.shortageDate : null;
-    const recommendedDeliveryDate = shortage ? (shortage < planningDate ? planningDate : shortage) : to;
+    const shortage =
+      s.shortageDate && s.shortageDate <= to ? s.shortageDate : null;
+    const recommendedDeliveryDate = shortage
+      ? shortage < planningDate
+        ? planningDate
+        : shortage
+      : to;
     // Engine Step 8 free-capacity warning: a direct KG comparison — silo_capacity_kg is always canonical KG.
     const capacityKg = dest.locationType === 'SILO' ? dest.capacityKg : null;
-    const exceedsSiloCapacity = exceedsCapacity(recommendedQtyKg, s.deliveryDayOpeningKg, capacityKg);
+    const exceedsSiloCapacity = exceedsCapacity(
+      recommendedQtyKg,
+      s.deliveryDayOpeningKg,
+      capacityKg,
+    );
     lines.push({
       key,
       destinationLocationId: s.locationId,
@@ -246,11 +331,15 @@ export function recommendLines(args: {
       itemName: s.itemName,
       feedType,
       isNextDiet: s.isNextDiet,
-      daysBeforeDietChange: s.isNextDiet && s.firstDemandDate ? diffDaysIso(planningDate, s.firstDemandDate) : null,
+      daysBeforeDietChange:
+        s.isNextDiet && s.firstDemandDate
+          ? diffDaysIso(planningDate, s.firstDemandDate)
+          : null,
       lifecycleRefId: s.lifecycleIds[0] ?? null,
       systemBalanceKg,
       // Requisition §2 row 50 "Daily consumption for this silo": today's, or for a next diet its first day's.
-      dailyRequirementKg: s.planningDayDemandKg > 0 ? s.planningDayDemandKg : s.firstDayDemandKg,
+      dailyRequirementKg:
+        s.planningDayDemandKg > 0 ? s.planningDayDemandKg : s.firstDayDemandKg,
       daysRemaining: s.daysLeft,
       firstShortageDate: s.shortageDate ?? null,
       unroundedNeedKg,
@@ -261,7 +350,10 @@ export function recommendLines(args: {
       exceedsSiloCapacity,
       capacityKg,
       deliveryDayOpeningKg: s.deliveryDayOpeningKg,
-      belowLowLevel: dest.locationType === 'SILO' && dest.lowLevelKg !== null && systemBalanceKg <= dest.lowLevelKg,
+      belowLowLevel:
+        dest.locationType === 'SILO' &&
+        dest.lowLevelKg !== null &&
+        systemBalanceKg <= dest.lowLevelKg,
       needsSiloChangeover: s.noSiloHoldsItem,
     });
   }
@@ -269,13 +361,25 @@ export function recommendLines(args: {
 }
 
 /** Req. row 29: "Farm Manager can edit with reason" — remarks only when the farm moved the date off the forecast's. */
-export function deliveryDateNeedsRemarks(line: { recommendedDeliveryDate: string | null; proposedDeliveryDate: string }): boolean {
-  return line.recommendedDeliveryDate !== null && line.proposedDeliveryDate !== line.recommendedDeliveryDate;
+export function deliveryDateNeedsRemarks(line: {
+  recommendedDeliveryDate: string | null;
+  proposedDeliveryDate: string;
+}): boolean {
+  return (
+    line.recommendedDeliveryDate !== null &&
+    line.proposedDeliveryDate !== line.recommendedDeliveryDate
+  );
 }
 
-export function requisitionPriority(planningDate: string, lines: Pick<DraftLine, 'belowLowLevel' | 'firstShortageDate'>[]): Priority {
+export function requisitionPriority(
+  planningDate: string,
+  lines: Pick<DraftLine, 'belowLowLevel' | 'firstShortageDate'>[],
+): Priority {
   if (lines.some((l) => l.belowLowLevel)) return 'CRITICAL_FIRST_PRIORITY';
-  const shortages = lines.map((l) => l.firstShortageDate).filter((d): d is string => !!d).sort();
+  const shortages = lines
+    .map((l) => l.firstShortageDate)
+    .filter((d): d is string => !!d)
+    .sort();
   if (!shortages.length) return 'INFO';
   const days = diffDaysIso(planningDate, shortages[0]);
   if (days < 3) return 'CRITICAL';
@@ -297,7 +401,14 @@ export interface ExistingDraftLine {
 
 export interface DraftUpsertPlan {
   insert: DraftLine[];
-  update: { lineId: string; line: DraftLine; keepQuantity: boolean; priorQuantityKg: number; keepDeliveryDate: boolean; priorProposedDeliveryDate: string | null }[];
+  update: {
+    lineId: string;
+    line: DraftLine;
+    keepQuantity: boolean;
+    priorQuantityKg: number;
+    keepDeliveryDate: boolean;
+    priorProposedDeliveryDate: string | null;
+  }[];
   remove: string[];
   keep: string[];
 }
@@ -309,8 +420,17 @@ export interface DraftUpsertPlan {
  * A line drafted with no recommended date (written before the column existed,
  * or manual) has nothing to differ from.
  */
-export function deliveryDateWasMoved(line: Pick<ExistingDraftLine, 'recommendedDeliveryDate' | 'proposedDeliveryDate'>): boolean {
-  return !!line.recommendedDeliveryDate && !!line.proposedDeliveryDate && line.proposedDeliveryDate !== line.recommendedDeliveryDate;
+export function deliveryDateWasMoved(
+  line: Pick<
+    ExistingDraftLine,
+    'recommendedDeliveryDate' | 'proposedDeliveryDate'
+  >,
+): boolean {
+  return (
+    !!line.recommendedDeliveryDate &&
+    !!line.proposedDeliveryDate &&
+    line.proposedDeliveryDate !== line.recommendedDeliveryDate
+  );
 }
 
 /**
@@ -320,8 +440,17 @@ export function deliveryDateWasMoved(line: Pick<ExistingDraftLine, 'recommendedD
  * drafted with (or a line drafted with none) counts as changed too, so a line
  * written before the flag existed is never overwritten either.
  */
-export function wasEdited(line: Pick<ExistingDraftLine, 'quantityKg' | 'recommendedQtyKg' | 'quantityEdited'>): boolean {
-  return line.quantityEdited === true || line.recommendedQtyKg === null || Math.abs(line.quantityKg - line.recommendedQtyKg) > 1e-6;
+export function wasEdited(
+  line: Pick<
+    ExistingDraftLine,
+    'quantityKg' | 'recommendedQtyKg' | 'quantityEdited'
+  >,
+): boolean {
+  return (
+    line.quantityEdited === true ||
+    line.recommendedQtyKg === null ||
+    Math.abs(line.quantityKg - line.recommendedQtyKg) > 1e-6
+  );
 }
 
 /**
@@ -330,8 +459,17 @@ export function wasEdited(line: Pick<ExistingDraftLine, 'quantityKg' | 'recommen
  * "Farm Manager final … qty"), and a (destination, item) already on another
  * requisition of the cycle is not drafted twice (row 9).
  */
-export function planDraftUpsert(existing: ExistingDraftLine[], covered: Set<string>, wanted: DraftLine[]): DraftUpsertPlan {
-  const plan: DraftUpsertPlan = { insert: [], update: [], remove: [], keep: [] };
+export function planDraftUpsert(
+  existing: ExistingDraftLine[],
+  covered: Set<string>,
+  wanted: DraftLine[],
+): DraftUpsertPlan {
+  const plan: DraftUpsertPlan = {
+    insert: [],
+    update: [],
+    remove: [],
+    keep: [],
+  };
   const byKey = new Map(existing.map((e) => [e.key, e]));
   const wantedKeys = new Set<string>();
   for (const line of wanted) {
@@ -339,10 +477,15 @@ export function planDraftUpsert(existing: ExistingDraftLine[], covered: Set<stri
     wantedKeys.add(line.key);
     const prior = byKey.get(line.key);
     if (!prior) plan.insert.push(line);
-    else plan.update.push({
-      lineId: prior.lineId, line, keepQuantity: wasEdited(prior), priorQuantityKg: prior.quantityKg,
-      keepDeliveryDate: deliveryDateWasMoved(prior), priorProposedDeliveryDate: prior.proposedDeliveryDate ?? null,
-    });
+    else
+      plan.update.push({
+        lineId: prior.lineId,
+        line,
+        keepQuantity: wasEdited(prior),
+        priorQuantityKg: prior.quantityKg,
+        keepDeliveryDate: deliveryDateWasMoved(prior),
+        priorProposedDeliveryDate: prior.proposedDeliveryDate ?? null,
+      });
   }
   for (const prior of existing) {
     if (wantedKeys.has(prior.key)) continue;
@@ -385,7 +528,8 @@ export interface ApprovalLine {
   destinationLocationId?: string | null;
 }
 
-const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 3 });
+const kg = (n: number) =>
+  n.toLocaleString('en-US', { maximumFractionDigits: 3 });
 
 /**
  * What stops an approval (Requisition §4 step 4). Remarks answer both the 20 %
@@ -393,23 +537,37 @@ const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 3 }
  * one field on the header (row 36), so one set of remarks covers every line.
  * The deadline day itself is still on time — only a later day is the exception.
  */
-export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string | null | undefined; today: string; submissionDeadline: string | null }): string[] {
-  if (!args.lines.length) return ['A requisition needs at least one line to be approved.'];
+export function approvalProblems(args: {
+  lines: ApprovalLine[];
+  remarks: string | null | undefined;
+  today: string;
+  submissionDeadline: string | null;
+}): string[] {
+  if (!args.lines.length)
+    return ['A requisition needs at least one line to be approved.'];
   if (args.remarks?.trim()) return [];
   const problems: string[] = [];
   for (const l of args.lines) {
     if (deviationNeedsRemarks(l.recommendedQtyKg, l.quantityKg)) {
-      problems.push(`Line ${l.lineSeq} (${l.itemName}): ${kg(l.quantityKg)} kg is more than 20% off the recommended ${kg(l.recommendedQtyKg ?? 0)} kg. Add remarks to explain.`);
+      problems.push(
+        `Line ${l.lineSeq} (${l.itemName}): ${kg(l.quantityKg)} kg is more than 20% off the recommended ${kg(l.recommendedQtyKg ?? 0)} kg. Add remarks to explain.`,
+      );
     }
     if (deliveryDateNeedsRemarks(l)) {
-      problems.push(`Line ${l.lineSeq} (${l.itemName}): the delivery date differs from the forecast's. Remarks are required (Requisition row 29).`);
+      problems.push(
+        `Line ${l.lineSeq} (${l.itemName}): the delivery date differs from the forecast's. Remarks are required (Requisition row 29).`,
+      );
     }
     if (l.itemException) {
-      problems.push(`Line ${l.lineSeq} (${l.itemName}): feed item differs from the lifecycle requirement (exception). Remarks are required (Requisition row 36).`);
+      problems.push(
+        `Line ${l.lineSeq} (${l.itemName}): feed item differs from the lifecycle requirement (exception). Remarks are required (Requisition row 36).`,
+      );
     }
   }
   if (args.submissionDeadline && args.today > args.submissionDeadline) {
-    problems.push(`The submission deadline (${dayShort(args.submissionDeadline)}) has passed. Add remarks to explain.`);
+    problems.push(
+      `The submission deadline (${dayShort(args.submissionDeadline)}) has passed. Add remarks to explain.`,
+    );
   }
   return problems;
 }
@@ -419,7 +577,10 @@ export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string 
  * bulk quantity that is not a whole number of compartments (Req. row 28, the
  * bulk order multiple). Same 1e-6 tolerance roundOrderKg uses.
  */
-export function isOffBulkMultiple(quantityKg: number, bulkMultipleKg: number): boolean {
+export function isOffBulkMultiple(
+  quantityKg: number,
+  bulkMultipleKg: number,
+): boolean {
   if (!(bulkMultipleKg > 0)) return false;
   const compartments = Math.round((quantityKg / bulkMultipleKg) * 1e6) / 1e6;
   return Math.abs(compartments - Math.round(compartments)) > 1e-6;
@@ -438,12 +599,24 @@ export interface UrgencyLine {
  * worked out when the requisition is submitted, by requisitionPriority's rule against that day: HIGH when a silo
  * is at or below its low level or the first shortage is under 3 days away, otherwise MEDIUM.
  */
-export function approvalUrgency(today: string, lines: UrgencyLine[]): 'HIGH' | 'MEDIUM' {
-  const level = requisitionPriority(today, lines.map((l) => ({
-    belowLowLevel: l.isSilo && l.lowLevelKg !== null && l.systemBalanceKg !== null && l.systemBalanceKg <= l.lowLevelKg,
-    firstShortageDate: l.firstShortageDate,
-  })));
-  return level === 'CRITICAL_FIRST_PRIORITY' || level === 'CRITICAL' ? 'HIGH' : 'MEDIUM';
+export function approvalUrgency(
+  today: string,
+  lines: UrgencyLine[],
+): 'HIGH' | 'MEDIUM' {
+  const level = requisitionPriority(
+    today,
+    lines.map((l) => ({
+      belowLowLevel:
+        l.isSilo &&
+        l.lowLevelKg !== null &&
+        l.systemBalanceKg !== null &&
+        l.systemBalanceKg <= l.lowLevelKg,
+      firstShortageDate: l.firstShortageDate,
+    })),
+  );
+  return level === 'CRITICAL_FIRST_PRIORITY' || level === 'CRITICAL'
+    ? 'HIGH'
+    : 'MEDIUM';
 }
 
 /**
@@ -451,10 +624,21 @@ export function approvalUrgency(today: string, lines: UrgencyLine[]): 'HIGH' | '
  * the transfer states in fulfilment_status; everything else (the approval
  * workflow, IN_CONSOLIDATION) in requisition.status.
  */
-const FULFILMENT_FILTERS = new Set(['TRANSFER_OPEN', 'PARTIALLY_SHIPPED', 'SHIPPED', 'PARTIALLY_RECEIVED', 'RECEIVED']);
-export function feedListStatusFilter(status: string): { column: 'status' | 'document_status' | 'fulfilment_status'; value: string } {
-  if (status === 'RELEASED') return { column: 'document_status', value: status };
-  if (FULFILMENT_FILTERS.has(status)) return { column: 'fulfilment_status', value: status };
+const FULFILMENT_FILTERS = new Set([
+  'TRANSFER_OPEN',
+  'PARTIALLY_SHIPPED',
+  'SHIPPED',
+  'PARTIALLY_RECEIVED',
+  'RECEIVED',
+]);
+export function feedListStatusFilter(status: string): {
+  column: 'status' | 'document_status' | 'fulfilment_status';
+  value: string;
+} {
+  if (status === 'RELEASED')
+    return { column: 'document_status', value: status };
+  if (FULFILMENT_FILTERS.has(status))
+    return { column: 'fulfilment_status', value: status };
   return { column: 'status', value: status };
 }
 
@@ -466,21 +650,36 @@ export function feedListStatusFilter(status: string): { column: 'status' | 'docu
  * item or an empty one). A store holds many items, so only a silo is tested.
  * A line with no lifecycle requirement (a manual line) has nothing to differ from.
  */
-export const ITEM_EXCEPTION_PROBLEM = 'Feed item differs from the lifecycle requirement: record an exception reason (Requisition row 13).';
-export const SILO_HOLDS_OTHER_PROBLEM = 'Silo holds another feed with stock: choose a silo holding this item or an empty one (checkpoint 4).';
+export const ITEM_EXCEPTION_PROBLEM =
+  'Feed item differs from the lifecycle requirement: record an exception reason (Requisition row 13).';
+export const SILO_HOLDS_OTHER_PROBLEM =
+  'Silo holds another feed with stock: choose a silo holding this item or an empty one (checkpoint 4).';
 
 export function lineChangeProblems(line: {
   requiredItemId: string | null;
   itemId: string;
   exceptionReason: string | null;
-  destination: { locationType: 'SILO' | 'STORE'; heldItemId: string | null; heldBalanceKg: number };
+  destination: {
+    locationType: 'SILO' | 'STORE';
+    heldItemId: string | null;
+    heldBalanceKg: number;
+  };
 }): string[] {
   const problems: string[] = [];
-  if (line.requiredItemId !== null && line.itemId !== line.requiredItemId && !line.exceptionReason?.trim()) {
+  if (
+    line.requiredItemId !== null &&
+    line.itemId !== line.requiredItemId &&
+    !line.exceptionReason?.trim()
+  ) {
     problems.push(ITEM_EXCEPTION_PROBLEM);
   }
   const d = line.destination;
-  if (d.locationType === 'SILO' && d.heldItemId !== null && d.heldItemId !== line.itemId && d.heldBalanceKg > 1e-6) {
+  if (
+    d.locationType === 'SILO' &&
+    d.heldItemId !== null &&
+    d.heldItemId !== line.itemId &&
+    d.heldBalanceKg > 1e-6
+  ) {
     problems.push(SILO_HOLDS_OTHER_PROBLEM);
   }
   return problems;
@@ -491,8 +690,12 @@ export function lineChangeProblems(line: {
  * no new column), prefixed so it is never mistaken for an item name.
  */
 export const EXCEPTION_PREFIX = 'Exception: ';
-export function exceptionReasonOf(description: string | null | undefined): string | null {
-  return description?.startsWith(EXCEPTION_PREFIX) ? description.slice(EXCEPTION_PREFIX.length) : null;
+export function exceptionReasonOf(
+  description: string | null | undefined,
+): string | null {
+  return description?.startsWith(EXCEPTION_PREFIX)
+    ? description.slice(EXCEPTION_PREFIX.length)
+    : null;
 }
 
 /**
@@ -504,18 +707,43 @@ export function exceptionReasonOf(description: string | null | undefined): strin
  * demanded item when it is not (so lineChangeProblems reports the exception),
  * and null when nothing is demanded there.
  */
-export function requiredItemForManualLine(sources: Array<{ locationId: string; itemId: string }>, destinationId: string, itemId: string): string | null {
-  const here = [...new Set(sources.filter((s) => s.locationId === destinationId).map((s) => s.itemId))].sort();
+export function requiredItemForManualLine(
+  sources: Array<{ locationId: string; itemId: string }>,
+  destinationId: string,
+  itemId: string,
+): string | null {
+  const here = [
+    ...new Set(
+      sources
+        .filter((s) => s.locationId === destinationId)
+        .map((s) => s.itemId),
+    ),
+  ].sort();
   if (!here.length) return null;
   return here.includes(itemId) ? itemId : here[0];
 }
 
 /** Requisition §1 row 17 "Breed Lifecycle Row Reference": e.g. `L-LINE WEANER days 25–27`. */
-const CALC_UNIT_WORD: Record<string, string> = { DAY: 'days', WEEK: 'weeks', MONTH: 'months' };
-export function lifecycleRefLabel(r: { breed_code?: string | null; stage_code?: string | null; period_from?: number | null; period_to?: number | null; calc_unit?: string | null }): string | null {
+const CALC_UNIT_WORD: Record<string, string> = {
+  DAY: 'days',
+  WEEK: 'weeks',
+  MONTH: 'months',
+};
+export function lifecycleRefLabel(r: {
+  breed_code?: string | null;
+  stage_code?: string | null;
+  period_from?: number | null;
+  period_to?: number | null;
+  calc_unit?: string | null;
+}): string | null {
   if (!r.breed_code && !r.stage_code) return null;
-  const unit = r.calc_unit ? (CALC_UNIT_WORD[r.calc_unit] ?? r.calc_unit.toLowerCase()) : 'days';
-  const range = r.period_from != null && r.period_to != null ? ` ${unit} ${r.period_from}–${r.period_to}` : '';
+  const unit = r.calc_unit
+    ? (CALC_UNIT_WORD[r.calc_unit] ?? r.calc_unit.toLowerCase())
+    : 'days';
+  const range =
+    r.period_from != null && r.period_to != null
+      ? ` ${unit} ${r.period_from}–${r.period_to}`
+      : '';
   return `${[r.breed_code, r.stage_code].filter(Boolean).join(' ')}${range}`;
 }
 
@@ -549,13 +777,38 @@ export interface LineBreakdownRow {
  * demand's — the figures the order was raised on. A row with no destination
  * (nothing feeds it), outside the window, or with no demand adds nothing.
  */
-export function buildLineBreakdown(daily: Pick<DailyForecastRow,
-  'date' | 'batchId' | 'realBatchId' | 'groupStageId' | 'batchNo' | 'shedId' | 'shedCode' | 'itemId' | 'destinationLocationId' | 'heads' | 'feedRateKg' | 'demandKg' | 'lifecycleId'>[],
-from: string, to: string): Map<string, LineBreakdownRow[]> {
+export function buildLineBreakdown(
+  daily: Pick<
+    DailyForecastRow,
+    | 'date'
+    | 'batchId'
+    | 'realBatchId'
+    | 'groupStageId'
+    | 'batchNo'
+    | 'shedId'
+    | 'shedCode'
+    | 'itemId'
+    | 'destinationLocationId'
+    | 'heads'
+    | 'feedRateKg'
+    | 'demandKg'
+    | 'lifecycleId'
+  >[],
+  from: string,
+  to: string,
+): Map<string, LineBreakdownRow[]> {
   const byLine = new Map<string, Map<string, LineBreakdownRow>>();
-  const ordered = [...daily].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const ordered = [...daily].sort((a, b) =>
+    a.date < b.date ? -1 : a.date > b.date ? 1 : 0,
+  );
   for (const d of ordered) {
-    if (!d.destinationLocationId || d.date < from || d.date > to || !(d.demandKg > 0)) continue;
+    if (
+      !d.destinationLocationId ||
+      d.date < from ||
+      d.date > to ||
+      !(d.demandKg > 0)
+    )
+      continue;
     const key = lineKey(d.destinationLocationId, d.itemId);
     const rows = byLine.get(key) ?? new Map<string, LineBreakdownRow>();
     byLine.set(key, rows);
@@ -573,13 +826,28 @@ from: string, to: string): Map<string, LineBreakdownRow[]> {
       continue;
     }
     rows.set(rowKey, {
-      batchId: d.realBatchId, stageId: d.groupStageId || null, batchNo: d.batchNo, shedId, shedCode: d.shedCode, heads: d.heads, feedRateKg: d.feedRateKg,
-      lifecycleRefId: d.lifecycleId || null, demandKg: round3(d.demandKg), firstDemandDate: d.date,
+      batchId: d.realBatchId,
+      stageId: d.groupStageId || null,
+      batchNo: d.batchNo,
+      shedId,
+      shedCode: d.shedCode,
+      heads: d.heads,
+      feedRateKg: d.feedRateKg,
+      lifecycleRefId: d.lifecycleId || null,
+      demandKg: round3(d.demandKg),
+      firstDemandDate: d.date,
     });
   }
   const out = new Map<string, LineBreakdownRow[]>();
   for (const [key, rows] of byLine) {
-    out.set(key, [...rows.values()].sort((a, b) => a.batchNo.localeCompare(b.batchNo) || a.shedCode.localeCompare(b.shedCode)));
+    out.set(
+      key,
+      [...rows.values()].sort(
+        (a, b) =>
+          a.batchNo.localeCompare(b.batchNo) ||
+          a.shedCode.localeCompare(b.shedCode),
+      ),
+    );
   }
   return out;
 }
@@ -598,13 +866,32 @@ export interface SiloBalancePoint {
  * After the forecast's last day for the silo the last closing carries; before
  * its first (or with no forecast for the silo at all) the stock on hand now.
  */
-export function projectedSiloStockKg(points: SiloBalancePoint[], siloId: string, date: string, onHandKg: number): number {
+export function projectedSiloStockKg(
+  points: SiloBalancePoint[],
+  siloId: string,
+  date: string,
+  onHandKg: number,
+): number {
   const mine = points.filter((p) => p.locationId === siloId);
   const onDay = mine.filter((p) => p.date === date);
-  if (onDay.length) return round3(onDay.reduce((sum, p) => sum + Math.max(0, p.openingSystemBalanceKg), 0));
+  if (onDay.length)
+    return round3(
+      onDay.reduce((sum, p) => sum + Math.max(0, p.openingSystemBalanceKg), 0),
+    );
   const lastByItem = new Map<string, SiloBalancePoint>();
-  for (const p of mine) if (p.date < date && (!lastByItem.get(p.itemId) || lastByItem.get(p.itemId)!.date < p.date)) lastByItem.set(p.itemId, p);
-  if (lastByItem.size) return round3([...lastByItem.values()].reduce((sum, p) => sum + Math.max(0, p.projectedClosingBalanceKg), 0));
+  for (const p of mine)
+    if (
+      p.date < date &&
+      (!lastByItem.get(p.itemId) || lastByItem.get(p.itemId)!.date < p.date)
+    )
+      lastByItem.set(p.itemId, p);
+  if (lastByItem.size)
+    return round3(
+      [...lastByItem.values()].reduce(
+        (sum, p) => sum + Math.max(0, p.projectedClosingBalanceKg),
+        0,
+      ),
+    );
   return Math.max(0, onHandKg);
 }
 
@@ -636,22 +923,39 @@ export function quantityProblems(args: {
 }): string[] {
   const problems: string[] = [];
   for (const l of args.lines) {
-    const multiple = l.feedType === 'BAGGED' ? args.bagSizeKg : l.feedType === 'BULK' ? args.bulkMultipleKg : 0;
+    const multiple =
+      l.feedType === 'BAGGED'
+        ? args.bagSizeKg
+        : l.feedType === 'BULK'
+          ? args.bulkMultipleKg
+          : 0;
     if (multiple > 0 && isOffBulkMultiple(l.quantityKg, multiple)) {
-      problems.push(l.feedType === 'BAGGED'
-        ? `${l.label} (${l.itemName}): ${kg(l.quantityKg)} kg is not a whole number of ${kg(multiple)} kg bags.`
-        : `${l.label} (${l.itemName}): ${kg(l.quantityKg)} kg is not a multiple of the ${kg(multiple)} kg bulk order multiple.`);
+      problems.push(
+        l.feedType === 'BAGGED'
+          ? `${l.label} (${l.itemName}): ${kg(l.quantityKg)} kg is not a whole number of ${kg(multiple)} kg bags.`
+          : `${l.label} (${l.itemName}): ${kg(l.quantityKg)} kg is not a multiple of the ${kg(multiple)} kg bulk order multiple.`,
+      );
     }
     if (l.capacityKg === null) continue;
     const delivered = args.lines
-      .filter((o) => o.destinationLocationId === l.destinationLocationId && o.deliveryDate <= l.deliveryDate)
+      .filter(
+        (o) =>
+          o.destinationLocationId === l.destinationLocationId &&
+          o.deliveryDate <= l.deliveryDate,
+      )
       .reduce((sum, o) => sum + o.quantityKg, 0);
     const stockKg = args.stockOn(l.destinationLocationId, l.deliveryDate);
     if (delivered + stockKg > l.capacityKg + 1e-6) {
       // What fits, in whole compartments or bags like the quantity itself.
-      const freeKg = Math.max(0, round3(l.capacityKg - stockKg - (delivered - l.quantityKg)));
-      const fitsKg = multiple > 0 ? Math.floor(freeKg / multiple + 1e-9) * multiple : freeKg;
-      problems.push(`${l.label} (${l.itemName}): ${kg(delivered)} kg into ${l.destinationCode}, which is projected to hold ${kg(stockKg)} kg on ${dayShort(l.deliveryDate)}, comes to ${kg(round3(delivered + stockKg))} kg — more than its ${kg(l.capacityKg)} kg capacity. At most ${kg(fitsKg)} kg fits.`);
+      const freeKg = Math.max(
+        0,
+        round3(l.capacityKg - stockKg - (delivered - l.quantityKg)),
+      );
+      const fitsKg =
+        multiple > 0 ? Math.floor(freeKg / multiple + 1e-9) * multiple : freeKg;
+      problems.push(
+        `${l.label} (${l.itemName}): ${kg(delivered)} kg into ${l.destinationCode}, which is projected to hold ${kg(stockKg)} kg on ${dayShort(l.deliveryDate)}, comes to ${kg(round3(delivered + stockKg))} kg — more than its ${kg(l.capacityKg)} kg capacity. At most ${kg(fitsKg)} kg fits.`,
+      );
     }
   }
   return problems;
@@ -672,12 +976,20 @@ export interface FeedDayPoint {
  * use, is "not required" (null). Otherwise the day is covered when the morning stock of that feed and what arrives
  * that day, less any other outflow, meet the day's use.
  */
-export function dayCover(point: FeedDayPoint | undefined): { requiredKg: number; covered: boolean } | null {
+export function dayCover(
+  point: FeedDayPoint | undefined,
+): { requiredKg: number; covered: boolean } | null {
   if (!point || !(point.dailyUseKg > 0)) return null;
-  const availableKg = Math.max(0, point.openingSystemBalanceKg)
-    + (point.confirmedReceiptKg ?? 0) + (point.openTransferMovementKg ?? 0) + (point.plannedIncomingKg ?? 0)
-    - (point.otherOutflowKg ?? 0);
-  return { requiredKg: round3(point.dailyUseKg), covered: availableKg + 1e-6 >= point.dailyUseKg };
+  const availableKg =
+    Math.max(0, point.openingSystemBalanceKg) +
+    (point.confirmedReceiptKg ?? 0) +
+    (point.openTransferMovementKg ?? 0) +
+    (point.plannedIncomingKg ?? 0) -
+    (point.otherOutflowKg ?? 0);
+  return {
+    requiredKg: round3(point.dailyUseKg),
+    covered: availableKg + 1e-6 >= point.dailyUseKg,
+  };
 }
 
 /** An open feed requisition line: not rejected, cancelled or received yet. */
@@ -694,16 +1006,26 @@ export interface OpenRequisitionLine {
  * What a forecast already counted: the requisitions it took as planned feed, and those whose transfer it took as
  * an open transfer (incomingReferences on its source balances). Their feed is in its projection already.
  */
-export function countedRequisitions(sourceBalances: unknown[] | undefined): { ids: Set<string>; nos: Set<string> } {
+export function countedRequisitions(sourceBalances: unknown[] | undefined): {
+  ids: Set<string>;
+  nos: Set<string>;
+} {
   const ids = new Set<string>();
   const nos = new Set<string>();
   for (const point of sourceBalances ?? []) {
-    for (const ref of ((point as { incomingReferences?: unknown[] }).incomingReferences ?? []) as Array<{ kind?: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string }>) {
+    for (const ref of ((point as { incomingReferences?: unknown[] })
+      .incomingReferences ?? []) as Array<{
+      kind?: string;
+      referenceId?: string;
+      referenceNo?: string;
+      relatedReferenceNo?: string;
+    }>) {
       if (ref.kind === 'PLANNED_REQUISITION') {
         if (ref.referenceId) ids.add(ref.referenceId);
         if (ref.referenceNo) nos.add(ref.referenceNo);
       }
-      if (ref.kind === 'OPEN_TRANSFER' && ref.relatedReferenceNo) nos.add(ref.relatedReferenceNo);
+      if (ref.kind === 'OPEN_TRANSFER' && ref.relatedReferenceNo)
+        nos.add(ref.relatedReferenceNo);
     }
   }
   return { ids, nos };
@@ -716,16 +1038,28 @@ export function countedRequisitions(sourceBalances: unknown[] | undefined): { id
  * lowered the need, so counting it here would hide what is still short.
  */
 export function requisitionCover(
-  line: { destinationLocationId: string; itemId: string; needKg: number; shortageDate: string | null },
+  line: {
+    destinationLocationId: string;
+    itemId: string;
+    needKg: number;
+    shortageDate: string | null;
+  },
   open: OpenRequisitionLine[],
   counted: { ids: Set<string>; nos: Set<string> },
 ): { covered: boolean; by: string[] } {
-  const by = open.filter((r) =>
-    r.destination_location_id === line.destinationLocationId
-    && r.item_id === line.itemId
-    && !counted.ids.has(r.requisition_id) && !counted.nos.has(r.req_no)
-    && !!r.proposed_delivery_date
-    && (!line.shortageDate || r.proposed_delivery_date.slice(0, 10) <= line.shortageDate));
+  const by = open.filter(
+    (r) =>
+      r.destination_location_id === line.destinationLocationId &&
+      r.item_id === line.itemId &&
+      !counted.ids.has(r.requisition_id) &&
+      !counted.nos.has(r.req_no) &&
+      !!r.proposed_delivery_date &&
+      (!line.shortageDate ||
+        r.proposed_delivery_date.slice(0, 10) <= line.shortageDate),
+  );
   const kgBy = by.reduce((sum, r) => sum + Number(r.quantity), 0);
-  return { covered: line.needKg > 0 && kgBy + 1e-6 >= line.needKg, by: [...new Set(by.map((r) => r.req_no))] };
+  return {
+    covered: line.needKg > 0 && kgBy + 1e-6 >= line.needKg,
+    by: [...new Set(by.map((r) => r.req_no))],
+  };
 }

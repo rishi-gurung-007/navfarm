@@ -98,12 +98,16 @@ export function weekStart(date: string): string {
 export type ReportBatchStatus = 'ACTIVE' | 'CLOSED';
 
 /** The batches the report covers: the chosen batch, if any, and of the chosen Batch Type, if any. */
-export function selectReportBatches<T extends { batch_id: string; status: string | null }>(
+export function selectReportBatches<
+  T extends { batch_id: string; status: string | null },
+>(
   batches: T[],
   filter: { batchId?: string; batchStatus?: ReportBatchStatus },
 ): T[] {
   return batches.filter(
-    (b) => (!filter.batchId || b.batch_id === filter.batchId) && (!filter.batchStatus || b.status === filter.batchStatus),
+    (b) =>
+      (!filter.batchId || b.batch_id === filter.batchId) &&
+      (!filter.batchStatus || b.status === filter.batchStatus),
   );
 }
 

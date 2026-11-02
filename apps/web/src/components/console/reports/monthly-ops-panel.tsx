@@ -157,17 +157,37 @@ const COLUMNS: Array<{
 
 /** CSV of the generated report, one line per month and breed, with the hints as their own columns. */
 /** The report as the Excel sheet (Rishi, 2 Nov: reports export to Excel only): the same columns as the screen. */
-function exportMonthlyOpsExcel(report: MonthlyOpsReport, t: (k: TranslationKeys, vars?: Record<string, string | number>) => string) {
-  return downloadExcel(`monthly-ops_${report.farm.farm_code}_${report.year}.xlsx`, {
-    name: t('rptMonthlyOps'),
-    title: t('rptMonthlyOps'),
-    info: [
-      `${t('rptFarm')}: ${report.farm.farm_code} - ${report.farm.farm_name}   ${t('mopYear')}: ${report.year}`,
-      t('rptGeneratedAt', { at: new Date(report.generated_at).toLocaleString() }),
-    ],
-    headers: [t('mopMonth'), t('mopFrom'), t('mopTo'), t('mopBreed'), ...COLUMNS.map((c) => t(c.key))],
-    rows: report.rows.map((r) => [r.month, r.start_date, r.end_date, r.breed_name, ...COLUMNS.map((c) => c.cell(r.metrics))]),
-  });
+function exportMonthlyOpsExcel(
+  report: MonthlyOpsReport,
+  t: (k: TranslationKeys, vars?: Record<string, string | number>) => string,
+) {
+  return downloadExcel(
+    `monthly-ops_${report.farm.farm_code}_${report.year}.xlsx`,
+    {
+      name: t('rptMonthlyOps'),
+      title: t('rptMonthlyOps'),
+      info: [
+        `${t('rptFarm')}: ${report.farm.farm_code} - ${report.farm.farm_name}   ${t('mopYear')}: ${report.year}`,
+        t('rptGeneratedAt', {
+          at: new Date(report.generated_at).toLocaleString(),
+        }),
+      ],
+      headers: [
+        t('mopMonth'),
+        t('mopFrom'),
+        t('mopTo'),
+        t('mopBreed'),
+        ...COLUMNS.map((c) => t(c.key)),
+      ],
+      rows: report.rows.map((r) => [
+        r.month,
+        r.start_date,
+        r.end_date,
+        r.breed_name,
+        ...COLUMNS.map((c) => c.cell(r.metrics)),
+      ]),
+    },
+  );
 }
 
 export default function MonthlyOpsPanel() {
@@ -277,7 +297,7 @@ export default function MonthlyOpsPanel() {
         </Field>
         <div className="flex flex-wrap items-end gap-2 sm:col-span-2 lg:col-span-1">
           {/* Rishi, 2 Nov: Generate; Generated while Year and Farm match the report shown; Regenerate once one changes. */}
-          <Button onClick={generate} disabled={!ready || loading || upToDate} >
+          <Button onClick={generate} disabled={!ready || loading || upToDate}>
             {loading ? (
               <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
             ) : upToDate ? (
@@ -287,11 +307,17 @@ export default function MonthlyOpsPanel() {
             ) : (
               <Play className="mr-1.5 h-4 w-4" />
             )}
-            {t(upToDate ? 'rptGenerated' : report ? 'rptRegenerate' : 'rptGenerate')}
+            {t(
+              upToDate
+                ? 'rptGenerated'
+                : report
+                  ? 'rptRegenerate'
+                  : 'rptGenerate',
+            )}
           </Button>
           <Button
             variant="outline"
-            
+
             onClick={exportExcel}
             disabled={!report || report.rows.length === 0}
           >

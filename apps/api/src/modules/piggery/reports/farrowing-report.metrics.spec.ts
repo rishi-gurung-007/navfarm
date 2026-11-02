@@ -297,12 +297,31 @@ describe('selectReportBatches', () => {
     { batch_id: 'b3', batch_no: 'B-3', status: 'ACTIVE' },
   ];
   it('keeps every batch for All, or only the Active or Closed ones', () => {
-    expect(selectReportBatches(batches, {}).map((b) => b.batch_id)).toEqual(['b1', 'b2', 'b3']);
-    expect(selectReportBatches(batches, { batchStatus: 'ACTIVE' }).map((b) => b.batch_id)).toEqual(['b1', 'b3']);
-    expect(selectReportBatches(batches, { batchStatus: 'CLOSED' }).map((b) => b.batch_id)).toEqual(['b2']);
+    expect(selectReportBatches(batches, {}).map((b) => b.batch_id)).toEqual([
+      'b1',
+      'b2',
+      'b3',
+    ]);
+    expect(
+      selectReportBatches(batches, { batchStatus: 'ACTIVE' }).map(
+        (b) => b.batch_id,
+      ),
+    ).toEqual(['b1', 'b3']);
+    expect(
+      selectReportBatches(batches, { batchStatus: 'CLOSED' }).map(
+        (b) => b.batch_id,
+      ),
+    ).toEqual(['b2']);
   });
   it('applies both a chosen batch and the type: a batch of the other type leaves nothing', () => {
-    expect(selectReportBatches(batches, { batchId: 'b2', batchStatus: 'CLOSED' }).map((b) => b.batch_id)).toEqual(['b2']);
-    expect(selectReportBatches(batches, { batchId: 'b2', batchStatus: 'ACTIVE' })).toEqual([]);
+    expect(
+      selectReportBatches(batches, {
+        batchId: 'b2',
+        batchStatus: 'CLOSED',
+      }).map((b) => b.batch_id),
+    ).toEqual(['b2']);
+    expect(
+      selectReportBatches(batches, { batchId: 'b2', batchStatus: 'ACTIVE' }),
+    ).toEqual([]);
   });
 });

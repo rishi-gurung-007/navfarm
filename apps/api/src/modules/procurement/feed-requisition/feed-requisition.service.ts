@@ -186,7 +186,10 @@ function isDeadlock(error: unknown): boolean {
 const dec = (n: number | null | undefined) => (n == null ? null : String(n));
 /** approved_at / deleted_at in the one Plan B timestamp convention: UTC, as utcTimestamp documents in the engine. */
 /** A feed line has no priority level (Rishi, 2 Nov): the column is kept for history but never sent. */
-const withoutPriority = <T extends { priority?: unknown }>({ priority: _priority, ...rest }: T) => rest;
+const withoutPriority = <T extends { priority?: unknown }>({
+  priority: _priority,
+  ...rest
+}: T) => rest;
 
 const nowTs = () => utcTimestamp();
 /** A farm code is data, not a pattern: `_` or `%` in it must not widen the req_no LIKE. */
@@ -961,7 +964,11 @@ export class FeedRequisitionService implements OnModuleInit {
             proposed_delivery_date: addDays(shortage, -2),
             /** The run-down this line answers: its unrounded need by its first shortage (requisitionCover). */
             need_kg: unroundedQuantity,
-            shortage_date: lines.map((line) => line.shortage_date).filter((date): date is string => !!date).sort()[0] ?? null,
+            shortage_date:
+              lines
+                .map((line) => line.shortage_date)
+                .filter((date): date is string => !!date)
+                .sort()[0] ?? null,
             feed_type: feedType,
             source_type:
               destination?.location_type === 'STORE' ? 'STORE' : 'SILO',
@@ -969,8 +976,17 @@ export class FeedRequisitionService implements OnModuleInit {
             // Every run line of this silo and item, not only those short of feed: the balance and use are the day's.
             ...(() => {
               const evidence = runLineEvidence(
-                runLines.filter((line) => line.destination_location_id === first.destination_location_id && line.item_id === first.item_id)
-                  .map((line) => ({ ...line, forecast_date: String(line.forecast_date) })),
+                runLines
+                  .filter(
+                    (line) =>
+                      line.destination_location_id ===
+                        first.destination_location_id &&
+                      line.item_id === first.item_id,
+                  )
+                  .map((line) => ({
+                    ...line,
+                    forecast_date: String(line.forecast_date),
+                  })),
                 String(run.planning_date),
               );
               return {
@@ -988,18 +1004,40 @@ export class FeedRequisitionService implements OnModuleInit {
       };
       // Rishi, 31 Oct: a line another open requisition would already solve is not offered again, whichever run or
       // hand drafted that requisition. The run's own requisition is existingRequisitionId, handled by the caller.
-      const open = await this.openFeedRequisitionLines(farmId, tenantId, draft.existingRequisitionId);
-      const counted = countedRequisitions(
-        (run.output_snapshot as { display?: { sourceBalances?: unknown[] } } | null)?.display?.sourceBalances,
+      const open = await this.openFeedRequisitionLines(
+        farmId,
+        tenantId,
+        draft.existingRequisitionId,
       );
-      const covered: Array<{ destination_code: string; item_name: string; covered_by: string[] }> = [];
+      const counted = countedRequisitions(
+        (
+          run.output_snapshot as {
+            display?: { sourceBalances?: unknown[] };
+          } | null
+        )?.display?.sourceBalances,
+      );
+      const covered: Array<{
+        destination_code: string;
+        item_name: string;
+        covered_by: string[];
+      }> = [];
       const lines = draft.lines.filter((line) => {
         const cover = requisitionCover(
-          { destinationLocationId: line.destination_location_id, itemId: line.item_id, needKg: line.need_kg, shortageDate: line.shortage_date },
+          {
+            destinationLocationId: line.destination_location_id,
+            itemId: line.item_id,
+            needKg: line.need_kg,
+            shortageDate: line.shortage_date,
+          },
           open,
           counted,
         );
-        if (cover.covered) covered.push({ destination_code: line.destination_code, item_name: line.item_name, covered_by: cover.by });
+        if (cover.covered)
+          covered.push({
+            destination_code: line.destination_code,
+            item_name: line.item_name,
+            covered_by: cover.by,
+          });
         return !cover.covered;
       });
       return { ...draft, lines, covered_lines: covered };
@@ -1010,7 +1048,11 @@ export class FeedRequisitionService implements OnModuleInit {
    * A farm's open feed requisition lines (Rishi, 31 Oct): not deleted, rejected, cancelled or received — what
    * requisitionCover reads. `excludeRequisitionId` leaves out the one being asked about.
    */
-  async openFeedRequisitionLines(farmId: string, tenantId: string, excludeRequisitionId?: string | null): Promise<OpenRequisitionLine[]> {
+  async openFeedRequisitionLines(
+    farmId: string,
+    tenantId: string,
+    excludeRequisitionId?: string | null,
+  ): Promise<OpenRequisitionLine[]> {
     const R = schema.requisition;
     const L = schema.requisitionLine;
     const rows = await this.db
@@ -1027,35 +1069,69 @@ export class FeedRequisitionService implements OnModuleInit {
       })
       .from(R)
       .innerJoin(L, eq(L.requisition_id, R.requisition_id))
-      .where(and(eq(R.tenant_id, tenantId), eq(R.farm_id, farmId), eq(R.doc_type, FEED_DOC_TYPE), isNull(R.deleted_at)));
+      .where(
+        and(
+          eq(R.tenant_id, tenantId),
+          eq(R.farm_id, farmId),
+          eq(R.doc_type, FEED_DOC_TYPE),
+          isNull(R.deleted_at),
+        ),
+      );
     const closed = new Set(['REJECTED', 'CANCELLED', 'CLOSED', 'RECEIVED']);
     return rows
       .filter((r) => r.requisition_id !== excludeRequisitionId)
-      .filter((r) => !closed.has(String(r.status)) && !closed.has(String(r.approval_status ?? '')) && !closed.has(String(r.document_status ?? '')))
+      .filter(
+        (r) =>
+          !closed.has(String(r.status)) &&
+          !closed.has(String(r.approval_status ?? '')) &&
+          !closed.has(String(r.document_status ?? '')),
+      )
       .map((r) => ({
         requisition_id: r.requisition_id,
         req_no: r.req_no,
         destination_location_id: r.destination_location_id,
         item_id: r.item_id,
         quantity: Number(r.quantity),
-        proposed_delivery_date: r.proposed_delivery_date ? String(r.proposed_delivery_date).slice(0, 10) : null,
+        proposed_delivery_date: r.proposed_delivery_date
+          ? String(r.proposed_delivery_date).slice(0, 10)
+          : null,
       }));
   }
 
   /** GET /feed-requisition/open-lines: a farm's open feed requisition lines, for the Calculation's own cover check. */
-  async openLines(farmIdIn: string | undefined, tenantId: string, user: UserCtx) {
-    const { farmId, companyId } = await this.forecast.resolveFarm(farmIdIn, tenantId, user?.userType);
-    return this.forecast.withFarmScope(farmId, companyId, () => this.openFeedRequisitionLines(farmId, tenantId));
+  async openLines(
+    farmIdIn: string | undefined,
+    tenantId: string,
+    user: UserCtx,
+  ) {
+    const { farmId, companyId } = await this.forecast.resolveFarm(
+      farmIdIn,
+      tenantId,
+      user?.userType,
+    );
+    return this.forecast.withFarmScope(farmId, companyId, () =>
+      this.openFeedRequisitionLines(farmId, tenantId),
+    );
   }
 
   async previewFromRun(runId: string, tenantId: string, user: UserCtx) {
     let draft = await this.savedRunDraft(runId, tenantId, user);
     // Rishi, 30 Oct: the form checks Requested Qty against the silo's capacity on the date picked, as
     // assertQuantityRules will on create — each silo's capacity and its projected stock on every forecast day.
-    const { companyId } = await this.forecast.resolveFarm(draft.farmId, tenantId, user?.userType);
+    const { companyId } = await this.forecast.resolveFarm(
+      draft.farmId,
+      tenantId,
+      user?.userType,
+    );
     return this.forecast.withFarmScope(draft.farmId, companyId, async () => {
       // The Breed Lifecycle Row as the requisition document words it (lifecycleRefLabel).
-      const lifecycleIds = [...new Set(draft.lines.map((l) => l.lifecycle_ref_id).filter((id): id is string => !!id))];
+      const lifecycleIds = [
+        ...new Set(
+          draft.lines
+            .map((l) => l.lifecycle_ref_id)
+            .filter((id): id is string => !!id),
+        ),
+      ];
       const lifecycle = schema.breedLifecycleStages;
       const labelRows = lifecycleIds.length
         ? await this.db
@@ -1068,38 +1144,85 @@ export class FeedRequisitionService implements OnModuleInit {
               calc_unit: lifecycle.calc_unit,
             })
             .from(lifecycle)
-            .leftJoin(schema.breedMaster, eq(schema.breedMaster.breed_id, lifecycle.breed_id))
-            .leftJoin(schema.stageMaster, eq(schema.stageMaster.stage_id, lifecycle.stage_id))
-            .where(and(eq(lifecycle.tenant_id, tenantId), inArray(lifecycle.lifecycle_id, lifecycleIds)))
+            .leftJoin(
+              schema.breedMaster,
+              eq(schema.breedMaster.breed_id, lifecycle.breed_id),
+            )
+            .leftJoin(
+              schema.stageMaster,
+              eq(schema.stageMaster.stage_id, lifecycle.stage_id),
+            )
+            .where(
+              and(
+                eq(lifecycle.tenant_id, tenantId),
+                inArray(lifecycle.lifecycle_id, lifecycleIds),
+              ),
+            )
         : [];
-      const labelOf = new Map(labelRows.map((r) => [r.lifecycle_id, lifecycleRefLabel(r)]));
+      const labelOf = new Map(
+        labelRows.map((r) => [r.lifecycle_id, lifecycleRefLabel(r)]),
+      );
       draft = {
         ...draft,
-        lines: draft.lines.map((l) => ({ ...l, lifecycle_ref_label: l.lifecycle_ref_id ? labelOf.get(l.lifecycle_ref_id) ?? null : null })),
+        lines: draft.lines.map((l) => ({
+          ...l,
+          lifecycle_ref_label: l.lifecycle_ref_id
+            ? (labelOf.get(l.lifecycle_ref_id) ?? null)
+            : null,
+        })),
       };
-      const destinations = await this.loadDestinations(draft.lines.map((l) => l.destination_location_id), tenantId);
-      const siloIds = [...new Set(draft.lines.map((l) => l.destination_location_id).filter((id) => destinations.get(id)?.locationType === 'SILO'))];
+      const destinations = await this.loadDestinations(
+        draft.lines.map((l) => l.destination_location_id),
+        tenantId,
+      );
+      const siloIds = [
+        ...new Set(
+          draft.lines
+            .map((l) => l.destination_location_id)
+            .filter((id) => destinations.get(id)?.locationType === 'SILO'),
+        ),
+      ];
       if (!siloIds.length) return draft;
       const clock = await this.forecast.farmToday(companyId, tenantId);
-      const forecast = await this.forecast.computeForFarm(draft.farmId, companyId, tenantId, draftForecastRange(clock.today, undefined), clock);
-      const onHand = await this.siloFeed.currentItems(siloIds, companyId, tenantId);
+      const forecast = await this.forecast.computeForFarm(
+        draft.farmId,
+        companyId,
+        tenantId,
+        draftForecastRange(clock.today, undefined),
+        clock,
+      );
+      const onHand = await this.siloFeed.currentItems(
+        siloIds,
+        companyId,
+        tenantId,
+      );
       // Every day a delivery can be dated for: today to 60 days on (the forecast horizon is 45).
-      const dates = Array.from({ length: 61 }, (_, i) => addDays(clock.today, i));
+      const dates = Array.from({ length: 61 }, (_, i) =>
+        addDays(clock.today, i),
+      );
       return {
         ...draft,
         lines: draft.lines.map((line) => {
           const dest = destinations.get(line.destination_location_id);
           if (dest?.locationType !== 'SILO') return line;
-          const onHandKg = onHand.get(line.destination_location_id)?.on_hand_qty ?? 0;
+          const onHandKg =
+            onHand.get(line.destination_location_id)?.on_hand_qty ?? 0;
           return {
             ...line,
             silo_capacity_kg: dest.capacityKg,
             silo_on_hand_kg: Math.max(0, onHandKg),
             // The silo's projected stock each morning (projectedSiloStockKg, as the create check reads it).
-            silo_stock_by_date: Object.fromEntries(dates.map((date) => [
-              date,
-              projectedSiloStockKg(forecast.sourceBalances, line.destination_location_id, date, onHandKg),
-            ])),
+            silo_stock_by_date: Object.fromEntries(
+              dates.map((date) => [
+                date,
+                projectedSiloStockKg(
+                  forecast.sourceBalances,
+                  line.destination_location_id,
+                  date,
+                  onHandKg,
+                ),
+              ]),
+            ),
           };
         }),
       };
@@ -1154,7 +1277,9 @@ export class FeedRequisitionService implements OnModuleInit {
     await this.forecast.withFarmScope(preview.farmId, companyId, () =>
       this.assertQuantityRules(
         dto.lines.map((line, i) => {
-          const source = expected.get(lineKey(line.destination_location_id, line.item_id))!;
+          const source = expected.get(
+            lineKey(line.destination_location_id, line.item_id),
+          )!;
           return {
             label: `Line ${(i + 1) * 10000}`,
             itemName: source.item_name,
@@ -2021,7 +2146,10 @@ export class FeedRequisitionService implements OnModuleInit {
             label: `Line ${(i + 1) * 10000}`,
             itemName: nameOf.get(line.item_id) ?? '',
             quantityKg: line.quantity_kg,
-            feedType: feedTypeOf(destinations.get(line.destination_location_id)!, formOf.get(line.item_id)),
+            feedType: feedTypeOf(
+              destinations.get(line.destination_location_id)!,
+              formOf.get(line.item_id),
+            ),
             destinationLocationId: line.destination_location_id,
             deliveryDate: line.proposed_delivery_date,
           })),
@@ -2032,7 +2160,9 @@ export class FeedRequisitionService implements OnModuleInit {
             settings: farm.settings,
             destinations,
             sourceBalances: demand.sourceBalances ?? [],
-            onHandKg: new Map([...held].map(([id, r]) => [id, r?.on_hand_qty ?? 0])),
+            onHandKg: new Map(
+              [...held].map(([id, r]) => [id, r?.on_hand_qty ?? 0]),
+            ),
           },
         );
         return this.numbered(() =>
@@ -2084,9 +2214,7 @@ export class FeedRequisitionService implements OnModuleInit {
                   lineKey(line.destination_location_id, line.item_id),
                 );
                 return {
-                  ...(evidence
-                    ? this.lineValues(evidence, null)
-                    : {}),
+                  ...(evidence ? this.lineValues(evidence, null) : {}),
                   requisition_id: id,
                   // Requisition §1 row 42: the same NAV-style 10000-step convention the auto-drafted lines use.
                   line_seq: (i + 1) * 10000,
@@ -3314,7 +3442,12 @@ export class FeedRequisitionService implements OnModuleInit {
         await this.lockOpen(id, tenantId, farmId, companyId);
         await this.applyLineEdits(id, dto.lines, farmId, companyId, tenantId);
         if (dto.lines?.length)
-          await this.assertQuantityRules(this.quantityLinesOf(await this.linesForCheck(id)), farmId, companyId, tenantId);
+          await this.assertQuantityRules(
+            this.quantityLinesOf(await this.linesForCheck(id)),
+            farmId,
+            companyId,
+            tenantId,
+          );
         await this.db
           .update(schema.requisition)
           .set({
@@ -3337,7 +3470,14 @@ export class FeedRequisitionService implements OnModuleInit {
    * when the form showed other ones (a saved calculation's); anything not passed is read here.
    */
   private async assertQuantityRules(
-    lines: Array<{ label: string; itemName: string; quantityKg: number; feedType: FeedType | null; destinationLocationId: string; deliveryDate: string }>,
+    lines: Array<{
+      label: string;
+      itemName: string;
+      quantityKg: number;
+      feedType: FeedType | null;
+      destinationLocationId: string;
+      deliveryDate: string;
+    }>,
     farmId: string,
     companyId: string,
     tenantId: string,
@@ -3349,10 +3489,17 @@ export class FeedRequisitionService implements OnModuleInit {
     } = {},
   ): Promise<void> {
     if (!lines.length) return;
-    const { bulkMultipleKg, bagSizeKg } = known.settings ?? toFarmFeedSettings(
-      await this.feedSettings.resolveForFeedPlanning(companyId, farmId),
-    );
-    const destinations = known.destinations ?? await this.loadDestinations(lines.map((l) => l.destinationLocationId), tenantId);
+    const { bulkMultipleKg, bagSizeKg } =
+      known.settings ??
+      toFarmFeedSettings(
+        await this.feedSettings.resolveForFeedPlanning(companyId, farmId),
+      );
+    const destinations =
+      known.destinations ??
+      (await this.loadDestinations(
+        lines.map((l) => l.destinationLocationId),
+        tenantId,
+      ));
     const checked = lines.map((l) => {
       const dest = destinations.get(l.destinationLocationId);
       return {
@@ -3362,23 +3509,49 @@ export class FeedRequisitionService implements OnModuleInit {
       };
     });
     let stockOn: (siloId: string, date: string) => number = () => 0;
-    const siloIds = [...new Set(checked.filter((l) => l.capacityKg !== null).map((l) => l.destinationLocationId))];
+    const siloIds = [
+      ...new Set(
+        checked
+          .filter((l) => l.capacityKg !== null)
+          .map((l) => l.destinationLocationId),
+      ),
+    ];
     if (siloIds.length) {
       let balances = known.sourceBalances;
       if (!balances) {
         const clock = await this.forecast.farmToday(companyId, tenantId);
-        balances = (await this.forecast.computeForFarm(farmId, companyId, tenantId, draftForecastRange(clock.today, undefined), clock)).sourceBalances;
+        balances = (
+          await this.forecast.computeForFarm(
+            farmId,
+            companyId,
+            tenantId,
+            draftForecastRange(clock.today, undefined),
+            clock,
+          )
+        ).sourceBalances;
       }
       let onHand = known.onHandKg;
       if (!onHand) {
-        const residents = await this.siloFeed.currentItems(siloIds, companyId, tenantId);
-        onHand = new Map(siloIds.map((id) => [id, residents.get(id)?.on_hand_qty ?? 0]));
+        const residents = await this.siloFeed.currentItems(
+          siloIds,
+          companyId,
+          tenantId,
+        );
+        onHand = new Map(
+          siloIds.map((id) => [id, residents.get(id)?.on_hand_qty ?? 0]),
+        );
       }
       const points = balances ?? [];
       const held = onHand;
-      stockOn = (siloId, date) => projectedSiloStockKg(points, siloId, date, held.get(siloId) ?? 0);
+      stockOn = (siloId, date) =>
+        projectedSiloStockKg(points, siloId, date, held.get(siloId) ?? 0);
     }
-    const problems = quantityProblems({ lines: checked, bulkMultipleKg, bagSizeKg, stockOn });
+    const problems = quantityProblems({
+      lines: checked,
+      bulkMultipleKg,
+      bagSizeKg,
+      stockOn,
+    });
     if (problems.length) throw new BadRequestException(problems.join(' '));
   }
 
@@ -3434,13 +3607,19 @@ export class FeedRequisitionService implements OnModuleInit {
         first_shortage_date: schema.requisitionLine.first_shortage_date,
       })
       .from(schema.requisitionLine)
-      .leftJoin(L, eq(L.location_id, schema.requisitionLine.destination_location_id))
+      .leftJoin(
+        L,
+        eq(L.location_id, schema.requisitionLine.destination_location_id),
+      )
       .where(eq(schema.requisitionLine.requisition_id, requisitionId));
     return rows.map((r) => ({
       isSilo: !!r.location_type && r.location_type !== 'STORE',
-      systemBalanceKg: r.system_balance_kg == null ? null : Number(r.system_balance_kg),
+      systemBalanceKg:
+        r.system_balance_kg == null ? null : Number(r.system_balance_kg),
       lowLevelKg: r.low_level_kg == null ? null : Number(r.low_level_kg),
-      firstShortageDate: r.first_shortage_date ? String(r.first_shortage_date).slice(0, 10) : null,
+      firstShortageDate: r.first_shortage_date
+        ? String(r.first_shortage_date).slice(0, 10)
+        : null,
     }));
   }
 
@@ -3491,7 +3670,12 @@ export class FeedRequisitionService implements OnModuleInit {
           submissionDeadline: row.submission_deadline,
         });
         if (problems.length) throw new BadRequestException(problems.join(' '));
-        await this.assertQuantityRules(this.quantityLinesOf(lines), farmId, companyId, tenantId);
+        await this.assertQuantityRules(
+          this.quantityLinesOf(lines),
+          farmId,
+          companyId,
+          tenantId,
+        );
         const totalKg = lines.reduce((sum, l) => sum + l.quantityKg, 0);
         const requestId = await this.approvals.submitFarmDocument(
           {
@@ -3672,7 +3856,12 @@ export class FeedRequisitionService implements OnModuleInit {
     });
     if (problems.length) throw new BadRequestException(problems.join(' '));
     if (row.farm_id)
-      await this.assertQuantityRules(this.quantityLinesOf(checkLines), row.farm_id, row.company_id, tenantId);
+      await this.assertQuantityRules(
+        this.quantityLinesOf(checkLines),
+        row.farm_id,
+        row.company_id,
+        tenantId,
+      );
     // F6: append, as a rejection does. Replacing threw away the farm's own
     // justification — the very thing checkpoints 18 and 22 asked it for.
     const storedRemarks = remarks

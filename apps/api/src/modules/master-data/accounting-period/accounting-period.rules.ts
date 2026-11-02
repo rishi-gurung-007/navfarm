@@ -29,8 +29,12 @@ export function fiscalYearLabel(startDate: string): string {
  * The periods in date order, each ending the day before the next starts (Business Central's rule), each
  * labelled with the fiscal year a New Fiscal Year row opened. Periods before the first such row have none.
  */
-export function accountingCalendar(rows: AccountingPeriodRow[]): AccountingMonth[] {
-  const ordered = [...rows].sort((a, b) => a.starting_date.localeCompare(b.starting_date));
+export function accountingCalendar(
+  rows: AccountingPeriodRow[],
+): AccountingMonth[] {
+  const ordered = [...rows].sort((a, b) =>
+    a.starting_date.localeCompare(b.starting_date),
+  );
   let fiscalYear: string | null = null;
   return ordered.map((row, i) => {
     if (row.new_fiscal_year) fiscalYear = fiscalYearLabel(row.starting_date);
@@ -46,8 +50,17 @@ export function accountingCalendar(rows: AccountingPeriodRow[]): AccountingMonth
 }
 
 /** The fiscal years the calendar holds, latest first, and the one holding `today` (null when none does). */
-export function fiscalYears(months: AccountingMonth[], today: string): { years: string[]; current: string | null } {
-  const years = [...new Set(months.map((m) => m.fiscalYear).filter((y): y is string => !!y))].sort().reverse();
-  const holding = months.find((m) => m.startDate <= today && (m.endDate === null || today <= m.endDate));
+export function fiscalYears(
+  months: AccountingMonth[],
+  today: string,
+): { years: string[]; current: string | null } {
+  const years = [
+    ...new Set(months.map((m) => m.fiscalYear).filter((y): y is string => !!y)),
+  ]
+    .sort()
+    .reverse();
+  const holding = months.find(
+    (m) => m.startDate <= today && (m.endDate === null || today <= m.endDate),
+  );
   return { years, current: holding?.fiscalYear ?? null };
 }

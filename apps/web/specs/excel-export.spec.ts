@@ -17,9 +17,16 @@ describe('downloadExcel', () => {
   let clicked: string | null = null;
   beforeEach(() => {
     saved = null;
-    (URL as any).createObjectURL = jest.fn((b: Blob) => { saved = b; return 'blob:x'; });
+    (URL as any).createObjectURL = jest.fn((b: Blob) => {
+      saved = b;
+      return 'blob:x';
+    });
     (URL as any).revokeObjectURL = jest.fn();
-    jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) { clicked = this.download; });
+    jest
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        clicked = this.download;
+      });
   });
 
   const read = async () => {
@@ -39,11 +46,18 @@ describe('downloadExcel', () => {
       title: 'Farrowing Report',
       info: ['Farm: GRS - Grasmere'],
       lead: ['Sow Batch'],
-      groups: [{ label: 'Sows Served', span: 2 }, { label: 'Farrowing Rate', span: 1 }],
+      groups: [
+        { label: 'Sows Served', span: 2 },
+        { label: 'Farrowing Rate', span: 1 },
+      ],
       headers: ['Actual', 'Target', 'Actual'],
-      rows: [['BATCH-1', '12', 'N/A', '+2.5'], ['Farm Total', '20', '18', '-1']],
+      rows: [
+        ['BATCH-1', '12', 'N/A', '+2.5'],
+        ['Farm Total', '20', '18', '-1'],
+      ],
       boldRows: new Set([1]),
-      tone: (_r, c, v) => (c === 3 ? (String(v).startsWith('+') ? 'good' : 'bad') : null),
+      tone: (_r, c, v) =>
+        c === 3 ? (String(v).startsWith('+') ? 'good' : 'bad') : null,
       note: 'Prior year note',
     });
     expect(clicked).toBe('farrowing-report_GRS.xlsx');
@@ -57,7 +71,11 @@ describe('downloadExcel', () => {
     expect(ws.getCell('B4').value).toBe('Sows Served');
     expect(ws.getCell('C4').isMerged).toBe(true);
     expect(ws.getCell('D4').value).toBe('Farrowing Rate');
-    expect([ws.getCell('B5').value, ws.getCell('C5').value, ws.getCell('D5').value]).toEqual(['Actual', 'Target', 'Actual']);
+    expect([
+      ws.getCell('B5').value,
+      ws.getCell('C5').value,
+      ws.getCell('D5').value,
+    ]).toEqual(['Actual', 'Target', 'Actual']);
     expect(ws.getCell('B6').value).toBe(12);
     expect(ws.getCell('C6').value).toBe('N/A');
     expect(ws.getCell('D6').value).toBe('+2.5');
@@ -65,16 +83,26 @@ describe('downloadExcel', () => {
     expect(ws.getCell('A7').font?.bold).toBe(true);
     expect(ws.getCell('D7').font?.color?.argb).toBe('FFB7293E');
     expect(ws.getCell('A9').value).toBe('Prior year note');
-    expect(ws.views[0]).toMatchObject({ state: 'frozen', xSplit: 1, ySplit: 5 });
+    expect(ws.views[0]).toMatchObject({
+      state: 'frozen',
+      xSplit: 1,
+      ySplit: 5,
+    });
   });
 
   it('writes one header row when the columns are not grouped', async () => {
     await downloadExcel('monthly-ops.xlsx', {
-      name: 'Monthly Ops', title: 'Monthly Ops', headers: ['Month', 'Cull'], rows: [['October', '3']],
+      name: 'Monthly Ops',
+      title: 'Monthly Ops',
+      headers: ['Month', 'Cull'],
+      rows: [['October', '3']],
     });
     expect(clicked).toBe('monthly-ops.xlsx');
     const ws = await read();
-    expect([ws.getCell('A3').value, ws.getCell('B3').value]).toEqual(['Month', 'Cull']);
+    expect([ws.getCell('A3').value, ws.getCell('B3').value]).toEqual([
+      'Month',
+      'Cull',
+    ]);
     expect(ws.getCell('B4').value).toBe(3);
   });
 });

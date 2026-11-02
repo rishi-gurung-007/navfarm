@@ -20,7 +20,9 @@ function detached<T>(value: T): T {
 
 export function buildConfigSnapshot<T>(settings: T) {
   const values = canonical(detached(settings)) as T;
-  const hash = createHash('sha256').update(JSON.stringify(values)).digest('hex');
+  const hash = createHash('sha256')
+    .update(JSON.stringify(values))
+    .digest('hex');
   return { version: `sha256:${hash}`, hash, values };
 }
 
@@ -44,7 +46,11 @@ export function runCodePrefix(farmCode: string, date: string): string {
  * codes already saved for that prefix; the next number follows the highest.
  * Older FFR-<farm>-<version> codes never match a prefix and are left as they are.
  */
-export function runCodeFor(farmCode: string, date: string, existingCodes: readonly string[]): string {
+export function runCodeFor(
+  farmCode: string,
+  date: string,
+  existingCodes: readonly string[],
+): string {
   const prefix = runCodePrefix(farmCode, date);
   let highest = 0;
   for (const code of existingCodes) {
@@ -128,8 +134,20 @@ export function buildOutputSnapshot(
   display?: ForecastRunDisplaySnapshot,
 ): ForecastRunOutputSnapshot {
   if (display) {
-    (display.daily ?? []).forEach((row, index) => assertNonNegativeQuantities(row as Record<string, unknown>, QUANTITY_KEYS, `Forecast daily row ${index + 1}`));
-    (display.sourceBalances ?? []).forEach((row, index) => assertNonNegativeQuantities(row as Record<string, unknown>, QUANTITY_KEYS, `Forecast source balance ${index + 1}`));
+    (display.daily ?? []).forEach((row, index) =>
+      assertNonNegativeQuantities(
+        row as Record<string, unknown>,
+        QUANTITY_KEYS,
+        `Forecast daily row ${index + 1}`,
+      ),
+    );
+    (display.sourceBalances ?? []).forEach((row, index) =>
+      assertNonNegativeQuantities(
+        row as Record<string, unknown>,
+        QUANTITY_KEYS,
+        `Forecast source balance ${index + 1}`,
+      ),
+    );
   }
   const material = lines
     .map((line) => canonical(detached(line)))
@@ -183,10 +201,22 @@ interface ForecastRunLineInput {
   indicative?: boolean;
 }
 
-type ValidatedForecastRunLineInput = ForecastRunLineInput & Required<Pick<ForecastRunLineInput,
-  | 'date' | 'realBatchId' | 'itemId' | 'heads' | 'feedRateKg' | 'openingStockKg'
-  | 'confirmedReceiptKg' | 'demandKg' | 'projectedClosingKg' | 'recommendedQtyKg'
->>;
+type ValidatedForecastRunLineInput = ForecastRunLineInput &
+  Required<
+    Pick<
+      ForecastRunLineInput,
+      | 'date'
+      | 'realBatchId'
+      | 'itemId'
+      | 'heads'
+      | 'feedRateKg'
+      | 'openingStockKg'
+      | 'confirmedReceiptKg'
+      | 'demandKg'
+      | 'projectedClosingKg'
+      | 'recommendedQtyKg'
+    >
+  >;
 
 /**
  * Rishi, 12 Oct: every quantity in the calculation is 0 or positive — negative stock is physically impossible.
@@ -194,43 +224,76 @@ type ValidatedForecastRunLineInput = ForecastRunLineInput & Required<Pick<Foreca
  * Signed variances (Feed Plan Variance, stock-count Variance) are not stock quantities and are not listed here.
  */
 export const QUANTITY_KEYS = [
-  'heads', 'feedRateKg', 'openingStockKg', 'confirmedReceiptKg', 'otherOutflowKg', 'openTransferMovementKg', 'plannedIncomingKg',
-  'demandKg', 'perDayIntakeKg', 'currentInventoryKg', 'projectedClosingKg', 'recommendedQtyKg',
+  'heads',
+  'feedRateKg',
+  'openingStockKg',
+  'confirmedReceiptKg',
+  'otherOutflowKg',
+  'openTransferMovementKg',
+  'plannedIncomingKg',
+  'demandKg',
+  'perDayIntakeKg',
+  'currentInventoryKg',
+  'projectedClosingKg',
+  'recommendedQtyKg',
   // sourceBalances use these names for the same quantities
-  'openingSystemBalanceKg', 'dailyUseKg', 'projectedClosingBalanceKg',
+  'openingSystemBalanceKg',
+  'dailyUseKg',
+  'projectedClosingBalanceKg',
 ] as const;
 
-export function assertNonNegativeQuantities(row: Record<string, unknown>, keys: readonly string[], where: string): void {
+export function assertNonNegativeQuantities(
+  row: Record<string, unknown>,
+  keys: readonly string[],
+  where: string,
+): void {
   for (const key of keys) {
     const value = row[key];
     if (typeof value === 'number' && Number.isFinite(value) && value < 0) {
-      throw new BadRequestException(`${where} has a negative ${key} (${value}). Stock quantities in the Feed Forecast cannot be below zero, so this calculation was not saved.`);
+      throw new BadRequestException(
+        `${where} has a negative ${key} (${value}). Stock quantities in the Feed Forecast cannot be below zero, so this calculation was not saved.`,
+      );
     }
   }
 }
 
-export function buildRunLineSnapshots(output: { daily: ForecastRunLineInput[] }): ForecastRunLineSnapshot[] {
+export function buildRunLineSnapshots(output: {
+  daily: ForecastRunLineInput[];
+}): ForecastRunLineSnapshot[] {
   // D1 (3 Oct): validate realBatchId, the genuine batch_header PK — never the engine's composite `batchId`
   // (display/grouping key only), which is a `<batch_id>:<stageId>` string for an ANIMAL_WISE/REGISTERED batch
   // and is never a valid batch_header PK at any column width.
   const requiredText = ['date', 'realBatchId', 'itemId'] as const;
   const requiredNumbers = [
-    'heads', 'feedRateKg', 'openingStockKg', 'confirmedReceiptKg', 'demandKg',
-    'projectedClosingKg', 'recommendedQtyKg',
+    'heads',
+    'feedRateKg',
+    'openingStockKg',
+    'confirmedReceiptKg',
+    'demandKg',
+    'projectedClosingKg',
+    'recommendedQtyKg',
   ] as const;
 
   return output.daily.map((line, index) => {
     for (const key of requiredText) {
       if (typeof line[key] !== 'string' || line[key].length === 0) {
-        throw new BadRequestException(`Forecast run line ${index + 1} is missing ${key}.`);
+        throw new BadRequestException(
+          `Forecast run line ${index + 1} is missing ${key}.`,
+        );
       }
     }
     for (const key of requiredNumbers) {
       if (typeof line[key] !== 'number' || !Number.isFinite(line[key])) {
-        throw new BadRequestException(`Forecast run line ${index + 1} is missing ${key}.`);
+        throw new BadRequestException(
+          `Forecast run line ${index + 1} is missing ${key}.`,
+        );
       }
     }
-    assertNonNegativeQuantities(line as Record<string, unknown>, QUANTITY_KEYS, `Forecast run line ${index + 1}`);
+    assertNonNegativeQuantities(
+      line as Record<string, unknown>,
+      QUANTITY_KEYS,
+      `Forecast run line ${index + 1}`,
+    );
     // The checks above are deliberately data-driven; make their resulting
     // type explicit because TypeScript cannot narrow several indexed fields
     // on the containing object across those loops.
@@ -252,22 +315,24 @@ export function buildRunLineSnapshots(output: { daily: ForecastRunLineInput[] })
       shortageDate: line.shortageDate ?? null,
       recommendedQtyKg: validated.recommendedQtyKg,
       provenanceSnapshot: {
-        ...(line.provenance && typeof line.provenance === 'object' && !Array.isArray(line.provenance)
-          ? detached(line.provenance) as Record<string, unknown>
+        ...(line.provenance &&
+        typeof line.provenance === 'object' &&
+        !Array.isArray(line.provenance)
+          ? (detached(line.provenance) as Record<string, unknown>)
           : detached({
-        batchNo: line.batchNo,
-        shedCode: line.shedCode,
-        stageCode: line.stageCode,
-        itemNo: line.itemNo,
-        itemName: line.itemName,
-        lifecycleId: line.lifecycleId,
-        sourceType: line.sourceType,
-        sourceCode: line.sourceCode,
-        perDayIntakeKg: line.perDayIntakeKg,
-        daysOfStock: line.daysOfStock,
-        sharedBatchCount: line.sharedBatchCount,
-        indicative: line.indicative,
-          })),
+              batchNo: line.batchNo,
+              shedCode: line.shedCode,
+              stageCode: line.stageCode,
+              itemNo: line.itemNo,
+              itemName: line.itemName,
+              lifecycleId: line.lifecycleId,
+              sourceType: line.sourceType,
+              sourceCode: line.sourceCode,
+              perDayIntakeKg: line.perDayIntakeKg,
+              daysOfStock: line.daysOfStock,
+              sharedBatchCount: line.sharedBatchCount,
+              indicative: line.indicative,
+            })),
         runDownDate: line.runDownDate ?? null,
       },
     };

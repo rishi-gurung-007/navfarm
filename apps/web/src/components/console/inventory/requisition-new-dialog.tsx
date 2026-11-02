@@ -107,7 +107,10 @@ const EMPTY: Draft = {
   priorityNo: '',
 };
 /** A new line takes the next Priority No., as the from-calculation form numbers its lines 1…N. */
-const nextLine = (count: number): Draft => ({ ...EMPTY, priorityNo: String(count + 1) });
+const nextLine = (count: number): Draft => ({
+  ...EMPTY,
+  priorityNo: String(count + 1),
+});
 const validPriorityNo = (value: string) =>
   value === '' || (Number.isInteger(Number(value)) && Number(value) >= 1);
 const inputStyle = {
@@ -622,7 +625,9 @@ export function RequisitionNewDialog({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setLines((cur) => [...cur, nextLine(cur.length)])}
+                onClick={() =>
+                  setLines((cur) => [...cur, nextLine(cur.length)])
+                }
               >
                 <Plus className="h-3.5 w-3.5" /> {t('rqNewAddLine')}
               </Button>
@@ -634,16 +639,25 @@ export function RequisitionNewDialog({
                   <ul className="list-disc space-y-1 pl-4">
                     {multipleProblems.map((p, i) => {
                       const line = lines[p.line];
-                      const item = items.find((it) => it.item_id === line?.item);
+                      const item = items.find(
+                        (it) => it.item_id === line?.item,
+                      );
                       return (
                         <li key={i}>
                           {p.kind === 'MULTIPLE' &&
-                            t(p.bagged ? 'rqQtyNotWholeBags' : 'rqQtyNotBulkMultiple', {
-                              line: (p.line + 1) * LINE_STEP,
-                              item: item?.item_name ?? '',
-                              kg: Number(line?.kg || 0).toLocaleString('en-US'),
-                              multiple: p.multipleKg.toLocaleString('en-US'),
-                            })}
+                            t(
+                              p.bagged
+                                ? 'rqQtyNotWholeBags'
+                                : 'rqQtyNotBulkMultiple',
+                              {
+                                line: (p.line + 1) * LINE_STEP,
+                                item: item?.item_name ?? '',
+                                kg: Number(line?.kg || 0).toLocaleString(
+                                  'en-US',
+                                ),
+                                multiple: p.multipleKg.toLocaleString('en-US'),
+                              },
+                            )}
                         </li>
                       );
                     })}
@@ -659,7 +673,8 @@ export function RequisitionNewDialog({
                         scope="col"
                         className={cn(
                           TH,
-                          (c === 'rqdColRequested' || c === 'rqdColPriorityNo') &&
+                          (c === 'rqdColRequested' ||
+                            c === 'rqdColPriorityNo') &&
                             'text-right',
                         )}
                         title={

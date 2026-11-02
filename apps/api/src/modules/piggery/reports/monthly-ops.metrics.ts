@@ -102,16 +102,29 @@ export interface OpsMetrics {
   standovers: number;
   standovers_pct: number | null;
   mortality_total: number;
-  mortality_by_category: Array<{ category: string; deaths: number; share_pct: number }>;
+  mortality_by_category: Array<{
+    category: string;
+    deaths: number;
+    share_pct: number;
+  }>;
   sows_on_last_day: number;
-  parity_distribution: Array<{ parity: (typeof PARITY_BANDS)[number]; sows: number; share_pct: number }>;
+  parity_distribution: Array<{
+    parity: (typeof PARITY_BANDS)[number];
+    sows: number;
+    share_pct: number;
+  }>;
 }
 
 const round = (value: number, places = 2) => Number(value.toFixed(places));
-const ratio = (num: number, den: number, scale = 1) => (den > 0 ? round((num / den) * scale) : null);
-const within = (date: string | null | undefined, m: OpsMonth) => !!date && date >= m.startDate && date <= m.endDate;
+const ratio = (num: number, den: number, scale = 1) =>
+  den > 0 ? round((num / den) * scale) : null;
+const within = (date: string | null | undefined, m: OpsMonth) =>
+  !!date && date >= m.startDate && date <= m.endDate;
 const daysBetween = (from: string, to: string) =>
-  Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
+  Math.round(
+    (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) /
+      86_400_000,
+  );
 
 /** Days in the month the report covers: start to end, both counted. */
 export function monthDays(m: OpsMonth): number {
@@ -120,12 +133,21 @@ export function monthDays(m: OpsMonth): number {
 
 /** A sow is in the herd on `day` from her entry date until the day before she leaves. */
 function inHerd(sow: OpsSow, day: string): boolean {
-  return (!sow.entry_date || sow.entry_date <= day) && (!sow.exit_date || sow.exit_date > day);
+  return (
+    (!sow.entry_date || sow.entry_date <= day) &&
+    (!sow.exit_date || sow.exit_date > day)
+  );
 }
 
 /** Her litters farrowed on or before `day`: parity 0 is a gilt that has not farrowed yet. */
-export function parityOn(sowId: string, day: string, farrowings: OpsFarrowing[]): number {
-  return farrowings.filter((f) => f.sow_animal_id === sowId && f.farrowing_date <= day).length;
+export function parityOn(
+  sowId: string,
+  day: string,
+  farrowings: OpsFarrowing[],
+): number {
+  return farrowings.filter(
+    (f) => f.sow_animal_id === sowId && f.farrowing_date <= day,
+  ).length;
 }
 
 export function computeMonthlyOps(args: {
@@ -139,7 +161,8 @@ export function computeMonthlyOps(args: {
   sales: OpsSale[];
   deaths: OpsDeath[];
 }): OpsMetrics {
-  const { month, gestationDays, farrowings, services, sows, sales, deaths } = args;
+  const { month, gestationDays, farrowings, services, sows, sales, deaths } =
+    args;
 
   // Born
   const farrowed = farrowings.filter((f) => within(f.farrowing_date, month));
@@ -147,16 +170,28 @@ export function computeMonthlyOps(args: {
   const born_alive = farrowed.reduce((a, f) => a + f.piglets_born_live, 0);
 
   // Farrowing Rate: the services one gestation earlier, and how many of those very services farrowed.
-  const served = { startDate: addDays(month.startDate, -gestationDays), endDate: addDays(month.endDate, -gestationDays) };
+  const served = {
+    startDate: addDays(month.startDate, -gestationDays),
+    endDate: addDays(month.endDate, -gestationDays),
+  };
   const cohort = services.filter((s) => within(s.mating_date, served));
-  const littersOf = new Set(farrowings.map((f) => f.breeding_id).filter(Boolean));
-  const cohortFarrowed = cohort.filter((s) => littersOf.has(s.breeding_id)).length;
+  const littersOf = new Set(
+    farrowings.map((f) => f.breeding_id).filter(Boolean),
+  );
+  const cohortFarrowed = cohort.filter((s) =>
+    littersOf.has(s.breeding_id),
+  ).length;
 
   // Weaning (as R07): litters weaned in the month with a weight.
   const weaned = farrowings.filter((f) => within(f.weaning_date, month));
-  const weighed = weaned.filter((f) => f.piglets_weaned > 0 && f.avg_weaning_weight_kg != null);
+  const weighed = weaned.filter(
+    (f) => f.piglets_weaned > 0 && f.avg_weaning_weight_kg != null,
+  );
   const weanedHead = weighed.reduce((a, f) => a + f.piglets_weaned, 0);
-  const litterMass = weighed.reduce((a, f) => a + f.piglets_weaned * (f.avg_weaning_weight_kg as number), 0);
+  const litterMass = weighed.reduce(
+    (a, f) => a + f.piglets_weaned * (f.avg_weaning_weight_kg as number),
+    0,
+  );
 
   // Cull: sows culled in the month.
   const culled = sows.filter((s) => within(s.cull_date, month));
@@ -167,26 +202,46 @@ export function computeMonthlyOps(args: {
   let empty_sows = 0;
   for (const s of sows) {
     const litters = farrowings.filter((f) => f.sow_animal_id === s.animal_id);
-    const served = services.filter((x) => x.sow_animal_id === s.animal_id).map((x) => x.mating_date).sort();
+    const served = services
+      .filter((x) => x.sow_animal_id === s.animal_id)
+      .map((x) => x.mating_date)
+      .sort();
     const starts = [
       ...litters.map((f) => f.weaning_date),
-      ...services.filter((x) => x.sow_animal_id === s.animal_id && x.conception_result === 'REPEAT').map((x) => x.preg_check_date),
-    ].filter((d): d is string => !!d && litters.some((f) => f.farrowing_date <= d));
+      ...services
+        .filter(
+          (x) =>
+            x.sow_animal_id === s.animal_id && x.conception_result === 'REPEAT',
+        )
+        .map((x) => x.preg_check_date),
+    ].filter(
+      (d): d is string => !!d && litters.some((f) => f.farrowing_date <= d),
+    );
     let days = 0;
     for (const start of starts) {
       const next = served.find((d) => d >= start);
-      const ends = [next, s.exit_date].filter((d): d is string => !!d).sort()[0]; // first day she is no longer empty
+      const ends = [next, s.exit_date]
+        .filter((d): d is string => !!d)
+        .sort()[0]; // first day she is no longer empty
       const from = start > month.startDate ? start : month.startDate;
-      const toExcl = ends && ends <= month.endDate ? ends : addDays(month.endDate, 1);
+      const toExcl =
+        ends && ends <= month.endDate ? ends : addDays(month.endDate, 1);
       if (toExcl > from) days += daysBetween(from, toExcl);
     }
-    if (days > 0) { empty_days += days; empty_sows += 1; }
+    if (days > 0) {
+      empty_days += days;
+      empty_sows += 1;
+    }
   }
 
   // Sales.
   const sold = sales.filter((s) => within(s.disposal_date, month));
   const kg_sold = round(sold.reduce((a, s) => a + (s.exit_weight_kg ?? 0), 0));
-  const cdm_kg = round(sold.filter((s) => s.is_colcom).reduce((a, s) => a + (s.exit_weight_kg ?? 0), 0));
+  const cdm_kg = round(
+    sold
+      .filter((s) => s.is_colcom)
+      .reduce((a, s) => a + (s.exit_weight_kg ?? 0), 0),
+  );
   const days = monthDays(month);
   let sowDays = 0;
   for (let i = 0; i < days; i++) {
@@ -196,11 +251,17 @@ export function computeMonthlyOps(args: {
   const average_sows = days > 0 ? round(sowDays / days) : null;
 
   // Standovers: due in the month (to today), not written off as failed, and no litter from that service.
-  const farrowedServices = new Set(farrowings.map((f) => f.breeding_id).filter(Boolean));
-  const due = services.filter(
-    (s) => within(s.expected_farrowing_date, month) && !['FAILED', 'REPEAT'].includes(s.conception_result ?? ''),
+  const farrowedServices = new Set(
+    farrowings.map((f) => f.breeding_id).filter(Boolean),
   );
-  const standovers = due.filter((s) => !farrowedServices.has(s.breeding_id)).length;
+  const due = services.filter(
+    (s) =>
+      within(s.expected_farrowing_date, month) &&
+      !['FAILED', 'REPEAT'].includes(s.conception_result ?? ''),
+  );
+  const standovers = due.filter(
+    (s) => !farrowedServices.has(s.breeding_id),
+  ).length;
 
   // Mortality by category.
   const inMonth = deaths.filter((d) => within(d.transaction_date, month));
@@ -234,20 +295,33 @@ export function computeMonthlyOps(args: {
     total_litter_mass_kg: weighed.length ? round(litterMass) : null,
     litters_weaned: weaned.length,
     weaned_piglets: weaned.reduce((a, f) => a + f.piglets_weaned, 0),
-    weaned_start_lot: weaned.reduce((a, f) => a + f.piglets_born_live + (f.foster_received ?? 0) - (f.fostered_out ?? 0), 0),
+    weaned_start_lot: weaned.reduce(
+      (a, f) =>
+        a +
+        f.piglets_born_live +
+        (f.foster_received ?? 0) -
+        (f.fostered_out ?? 0),
+      0,
+    ),
     litters_weighed: weighed.length,
     weighed_head: weanedHead,
     cdm_kg,
     kg_sold,
     average_sows,
-    kg_sold_per_sow_year: average_sows ? round((kg_sold / average_sows) * (365 / days)) : null,
+    kg_sold_per_sow_year: average_sows
+      ? round((kg_sold / average_sows) * (365 / days))
+      : null,
     sows_due: due.length,
     standovers,
     standovers_pct: ratio(standovers, due.length, 100),
     mortality_total,
     mortality_by_category: [...byCategory.entries()]
       .sort((a, b) => b[1] - a[1])
-      .map(([category, n]) => ({ category, deaths: n, share_pct: ratio(n, mortality_total, 100) ?? 0 })),
+      .map(([category, n]) => ({
+        category,
+        deaths: n,
+        share_pct: ratio(n, mortality_total, 100) ?? 0,
+      })),
     sows_on_last_day: present.length,
     parity_distribution: PARITY_BANDS.map((parity) => ({
       parity,

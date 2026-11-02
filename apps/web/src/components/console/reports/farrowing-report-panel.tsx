@@ -71,7 +71,9 @@ export default function FarrowingReportPanel() {
   const [dateTo, setDateTo] = useState('');
   const [batchId, setBatchId] = useState('');
   // Rishi, 2 Nov: Batch Type — All, Active or Closed batches.
-  const [batchStatus, setBatchStatus] = useState<'ALL' | 'ACTIVE' | 'CLOSED'>('ALL');
+  const [batchStatus, setBatchStatus] = useState<'ALL' | 'ACTIVE' | 'CLOSED'>(
+    'ALL',
+  );
   const [parity, setParity] = useState('');
   const [sowId, setSowId] = useState('');
   const [options, setOptions] = useState<{ batches: Row[]; sows: Row[] }>({
@@ -117,14 +119,30 @@ export default function FarrowingReportPanel() {
   }, [farmId, companyId]);
 
   const ready = Boolean(farmId && dateFrom && dateTo);
-  const filtersKey = JSON.stringify([farmId, dateFrom, dateTo, batchStatus, batchId, parity, sowId]);
+  const filtersKey = JSON.stringify([
+    farmId,
+    dateFrom,
+    dateTo,
+    batchStatus,
+    batchId,
+    parity,
+    sowId,
+  ]);
   const upToDate = !!report && generatedKey === filtersKey;
   // The batch picker offers only batches of the chosen type; a chosen batch of the other type is cleared.
-  const batchOptions = batchStatus === 'ALL' ? options.batches : options.batches.filter((b) => b.status === batchStatus);
+  const batchOptions =
+    batchStatus === 'ALL'
+      ? options.batches
+      : options.batches.filter((b) => b.status === batchStatus);
   const chooseBatchStatus = (value: string) => {
     const next = (value || 'ALL') as 'ALL' | 'ACTIVE' | 'CLOSED';
     setBatchStatus(next);
-    if (next !== 'ALL' && batchId && options.batches.find((b) => b.batch_id === batchId)?.status !== next) setBatchId('');
+    if (
+      next !== 'ALL' &&
+      batchId &&
+      options.batches.find((b) => b.batch_id === batchId)?.status !== next
+    )
+      setBatchId('');
   };
 
   const generate = async () => {
@@ -265,7 +283,7 @@ export default function FarrowingReportPanel() {
         </Field>
         <div className="flex flex-wrap items-center gap-2 sm:col-span-2 lg:col-span-4 2xl:col-span-7">
           {/* Rishi, 2 Nov: Generate; Generated while the filters match the report shown; Regenerate once one changes. */}
-          <Button onClick={generate} disabled={!ready || loading || upToDate} >
+          <Button onClick={generate} disabled={!ready || loading || upToDate}>
             {loading ? (
               <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
             ) : upToDate ? (
@@ -275,11 +293,17 @@ export default function FarrowingReportPanel() {
             ) : (
               <Play className="mr-1.5 h-4 w-4" />
             )}
-            {t(upToDate ? 'rptGenerated' : report ? 'rptRegenerate' : 'rptGenerate')}
+            {t(
+              upToDate
+                ? 'rptGenerated'
+                : report
+                  ? 'rptRegenerate'
+                  : 'rptGenerate',
+            )}
           </Button>
           <Button
             variant="outline"
-            
+
             onClick={exportExcel}
             disabled={!report || report.rows.length === 0 || exporting}
           >

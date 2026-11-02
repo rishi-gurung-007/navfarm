@@ -26,39 +26,63 @@ export interface MetricRow {
 export const DEFAULT_TOLERANCE = 0.1;
 
 const round = (value: number, places = 2) => Number(value.toFixed(places));
-const ratio = (num: number, den: number, scale = 1) => (den > 0 ? round((num / den) * scale) : null);
+const ratio = (num: number, den: number, scale = 1) =>
+  den > 0 ? round((num / den) * scale) : null;
 
 /**
  * Green at or better than the target's Average Value; amber when worse but within its tolerance band on that side
  * (or 10 % of the average when it has none); red beyond. No value or no target: no status.
  */
-export function ragStatus(value: number | null, target: Target | null, lowerIsBetter: boolean): Status {
+export function ragStatus(
+  value: number | null,
+  target: Target | null,
+  lowerIsBetter: boolean,
+): Status {
   if (value == null || !target) return null;
   const { average, lower, upper } = target;
   if (average == null) {
     if (lower == null && upper == null) return null;
-    return (lower == null || value >= lower) && (upper == null || value <= upper) ? 'GREEN' : 'RED';
+    return (lower == null || value >= lower) &&
+      (upper == null || value <= upper)
+      ? 'GREEN'
+      : 'RED';
   }
   if (lowerIsBetter ? value <= average : value >= average) return 'GREEN';
   const limit = lowerIsBetter
-    ? upper ?? average * (1 + DEFAULT_TOLERANCE)
-    : lower ?? average * (1 - DEFAULT_TOLERANCE);
+    ? (upper ?? average * (1 + DEFAULT_TOLERANCE))
+    : (lower ?? average * (1 - DEFAULT_TOLERANCE));
   return (lowerIsBetter ? value <= limit : value >= limit) ? 'AMBER' : 'RED';
 }
 
 /** One target for a farm from several (its breeds, or its batches' breeds): their averages and limits averaged. */
-export function meanTarget(targets: Array<Target | null | undefined>): Target | null {
+export function meanTarget(
+  targets: Array<Target | null | undefined>,
+): Target | null {
   const present = targets.filter((t): t is Target => !!t);
   if (!present.length) return null;
   const mean = (pick: (t: Target) => number | null) => {
     const values = present.map(pick).filter((v): v is number => v != null);
-    return values.length ? round(values.reduce((a, v) => a + v, 0) / values.length, 4) : null;
+    return values.length
+      ? round(values.reduce((a, v) => a + v, 0) / values.length, 4)
+      : null;
   };
-  return { average: mean((t) => t.average), lower: mean((t) => t.lower), upper: mean((t) => t.upper) };
+  return {
+    average: mean((t) => t.average),
+    lower: mean((t) => t.lower),
+    upper: mean((t) => t.upper),
+  };
 }
 
-export function cell(value: number | null, target: Target | null, lowerIsBetter: boolean): Cell {
-  return { value, target: target?.average ?? null, status: ragStatus(value, target, lowerIsBetter) };
+export function cell(
+  value: number | null,
+  target: Target | null,
+  lowerIsBetter: boolean,
+): Cell {
+  return {
+    value,
+    target: target?.average ?? null,
+    status: ragStatus(value, target, lowerIsBetter),
+  };
 }
 
 /** Breeding & Farrowing figures of one farm from its sow breeds' R12 metrics over the same dates. */
@@ -73,24 +97,48 @@ export interface BreedingFigures {
 }
 
 export function breedingFigures(perBreed: OpsMetrics[]): BreedingFigures {
-  const sum = (pick: (m: OpsMetrics) => number) => perBreed.reduce((a, m) => a + pick(m), 0);
+  const sum = (pick: (m: OpsMetrics) => number) =>
+    perBreed.reduce((a, m) => a + pick(m), 0);
   const litters = sum((m) => m.litters_farrowed);
   const startLot = sum((m) => m.weaned_start_lot);
   const weighedHead = sum((m) => m.weighed_head);
   const mass = sum((m) => m.total_litter_mass_kg ?? 0);
   return {
-    farrowing_rate_pct: ratio(sum((m) => m.services_farrowed), sum((m) => m.sows_served_one_gestation_earlier), 100),
-    total_born_per_litter: ratio(sum((m) => m.total_born), litters),
-    born_alive_per_litter: ratio(sum((m) => m.born_alive), litters),
-    pre_wean_mortality_pct: ratio(startLot - sum((m) => m.weaned_piglets), startLot, 100),
-    weaned_per_sow: ratio(sum((m) => m.weaned_piglets), sum((m) => m.litters_weaned)),
+    farrowing_rate_pct: ratio(
+      sum((m) => m.services_farrowed),
+      sum((m) => m.sows_served_one_gestation_earlier),
+      100,
+    ),
+    total_born_per_litter: ratio(
+      sum((m) => m.total_born),
+      litters,
+    ),
+    born_alive_per_litter: ratio(
+      sum((m) => m.born_alive),
+      litters,
+    ),
+    pre_wean_mortality_pct: ratio(
+      startLot - sum((m) => m.weaned_piglets),
+      startLot,
+      100,
+    ),
+    weaned_per_sow: ratio(
+      sum((m) => m.weaned_piglets),
+      sum((m) => m.litters_weaned),
+    ),
     avg_wean_weight_kg: ratio(mass, weighedHead),
-    litter_mass_kg: ratio(mass, sum((m) => m.litters_weighed)),
+    litter_mass_kg: ratio(
+      mass,
+      sum((m) => m.litters_weighed),
+    ),
   };
 }
 
 /** Kg sold per sow per year over the dates the metrics cover: kg sold ÷ average sows × 365 ÷ days. */
-export function kgSoldPerSowYear(perBreed: OpsMetrics[], days: number): number | null {
+export function kgSoldPerSowYear(
+  perBreed: OpsMetrics[],
+  days: number,
+): number | null {
   const sows = perBreed.reduce((a, m) => a + (m.average_sows ?? 0), 0);
   const kg = perBreed.reduce((a, m) => a + m.kg_sold, 0);
   return sows > 0 && days > 0 ? round((kg / sows) * (365 / days)) : null;
@@ -123,7 +171,10 @@ export interface Segment {
 export function stageSegments(batch: StageBatch, stage: string): Segment[] {
   const moves = [...batch.moves].sort((a, b) => a.date.localeCompare(b.date));
   const spells: Array<{ stage: string | null; start: string }> = [
-    { stage: moves[0]?.from ?? (moves.length ? null : batch.current_stage_code), start: batch.start_date },
+    {
+      stage: moves[0]?.from ?? (moves.length ? null : batch.current_stage_code),
+      start: batch.start_date,
+    },
     ...moves.map((m) => ({ stage: m.to, start: m.date })),
   ];
   const out: Segment[] = [];
@@ -176,19 +227,42 @@ export function stageExit(args: {
   feed: DatedQty[];
   weights: DatedQty[];
   entryWeight: number | null;
-  targets: { weight: Target | null; fcr: Target | null; mortality: Target | null };
+  targets: {
+    weight: Target | null;
+    fcr: Target | null;
+    mortality: Target | null;
+  };
 }): StageExit {
-  const { segment, opening, deaths, moves, feed, weights, entryWeight, targets } = args;
+  const {
+    segment,
+    opening,
+    deaths,
+    moves,
+    feed,
+    weights,
+    entryWeight,
+    targets,
+  } = args;
   const { start, exit } = segment;
-  const before = (rows: DatedQty[], day: string) => rows.filter((r) => r.date < day).reduce((a, r) => a + r.quantity, 0);
-  const during = <T extends { date: string }>(rows: T[]) => rows.filter((r) => r.date >= start && r.date < exit);
-  const movedTo = moves.filter((m) => m.date <= start).reduce((a, m) => a + m.heads, 0);
+  const before = (rows: DatedQty[], day: string) =>
+    rows.filter((r) => r.date < day).reduce((a, r) => a + r.quantity, 0);
+  const during = <T extends { date: string }>(rows: T[]) =>
+    rows.filter((r) => r.date >= start && r.date < exit);
+  const movedTo = moves
+    .filter((m) => m.date <= start)
+    .reduce((a, m) => a + m.heads, 0);
   const headsIn = Math.max(0, opening - before(deaths, start) + movedTo);
   const spellMoves = moves.filter((m) => m.date > start && m.date < exit);
-  const movedIn = spellMoves.filter((m) => m.heads > 0).reduce((a, m) => a + m.heads, 0);
-  const movedOut = spellMoves.filter((m) => m.heads < 0).reduce((a, m) => a - m.heads, 0);
+  const movedIn = spellMoves
+    .filter((m) => m.heads > 0)
+    .reduce((a, m) => a + m.heads, 0);
+  const movedOut = spellMoves
+    .filter((m) => m.heads < 0)
+    .reduce((a, m) => a - m.heads, 0);
   const died = during(deaths).reduce((a, d) => a + d.quantity, 0);
-  const weighed = weights.filter((w) => w.date >= start && w.date <= exit).sort((a, b) => a.date.localeCompare(b.date));
+  const weighed = weights
+    .filter((w) => w.date >= start && w.date <= exit)
+    .sort((a, b) => a.date.localeCompare(b.date));
   return {
     exit_date: exit,
     heads_in: headsIn + movedIn,
@@ -196,7 +270,9 @@ export function stageExit(args: {
     deaths: died,
     feed_kg: during(feed).reduce((a, f) => a + f.quantity, 0),
     entry_weight_kg: entryWeight,
-    exit_weight_kg: weighed.length ? weighed[weighed.length - 1].quantity : null,
+    exit_weight_kg: weighed.length
+      ? weighed[weighed.length - 1].quantity
+      : null,
     target_weight: targets.weight,
     target_fcr: targets.fcr,
     target_mortality: targets.mortality,
@@ -213,21 +289,50 @@ export interface StageFigures {
 
 /** A farm's figures for a stage from the spells that ended in the period. */
 export function stageFigures(exits: StageExit[]): StageFigures {
-  const weighed = exits.filter((e) => e.exit_weight_kg != null && e.heads_out > 0);
+  const weighed = exits.filter(
+    (e) => e.exit_weight_kg != null && e.heads_out > 0,
+  );
   const outHeads = weighed.reduce((a, e) => a + e.heads_out, 0);
   const both = weighed.filter((e) => e.entry_weight_kg != null);
   const bothHeads = both.reduce((a, e) => a + e.heads_out, 0);
   const gained = both.map((e) => ({
     feed: e.feed_kg,
-    gain: e.heads_out * (e.exit_weight_kg as number) - e.heads_in * (e.entry_weight_kg as number),
+    gain:
+      e.heads_out * (e.exit_weight_kg as number) -
+      e.heads_in * (e.entry_weight_kg as number),
   }));
   const liveGain = gained.reduce((a, g) => a + g.gain, 0);
   return {
     exits: exits.length,
-    exit_weight_kg: ratio(weighed.reduce((a, e) => a + e.heads_out * (e.exit_weight_kg as number), 0), outHeads),
-    gain_kg: ratio(both.reduce((a, e) => a + e.heads_out * ((e.exit_weight_kg as number) - (e.entry_weight_kg as number)), 0), bothHeads),
-    fce: liveGain > 0 ? ratio(gained.reduce((a, g) => a + g.feed, 0), liveGain) : null,
-    mortality_pct: ratio(exits.reduce((a, e) => a + e.deaths, 0), exits.reduce((a, e) => a + e.heads_in, 0), 100),
+    exit_weight_kg: ratio(
+      weighed.reduce(
+        (a, e) => a + e.heads_out * (e.exit_weight_kg as number),
+        0,
+      ),
+      outHeads,
+    ),
+    gain_kg: ratio(
+      both.reduce(
+        (a, e) =>
+          a +
+          e.heads_out *
+            ((e.exit_weight_kg as number) - (e.entry_weight_kg as number)),
+        0,
+      ),
+      bothHeads,
+    ),
+    fce:
+      liveGain > 0
+        ? ratio(
+            gained.reduce((a, g) => a + g.feed, 0),
+            liveGain,
+          )
+        : null,
+    mortality_pct: ratio(
+      exits.reduce((a, e) => a + e.deaths, 0),
+      exits.reduce((a, e) => a + e.heads_in, 0),
+      100,
+    ),
   };
 }
 
@@ -242,21 +347,41 @@ export interface Alert {
 }
 
 /** Every red and amber cell, red first, then in matrix order. */
-export function alertsFrom(rows: MetricRow[], farms: Array<{ farm_id: string; farm_name: string }>): Alert[] {
+export function alertsFrom(
+  rows: MetricRow[],
+  farms: Array<{ farm_id: string; farm_name: string }>,
+): Alert[] {
   const out: Alert[] = [];
   for (const row of rows) {
     for (const farm of farms) {
       const c = row.cells[farm.farm_id];
-      if (!c || c.value == null || (c.status !== 'RED' && c.status !== 'AMBER')) continue;
-      out.push({ farm_id: farm.farm_id, farm_name: farm.farm_name, metric: row.label, unit: row.unit, value: c.value, target: c.target, status: c.status });
+      if (!c || c.value == null || (c.status !== 'RED' && c.status !== 'AMBER'))
+        continue;
+      out.push({
+        farm_id: farm.farm_id,
+        farm_name: farm.farm_name,
+        metric: row.label,
+        unit: row.unit,
+        value: c.value,
+        target: c.target,
+        status: c.status,
+      });
     }
   }
-  return out.sort((a, b) => Number(b.status === 'RED') - Number(a.status === 'RED'));
+  return out.sort(
+    (a, b) => Number(b.status === 'RED') - Number(a.status === 'RED'),
+  );
 }
 
 // ── One farm (Rishi, 2 Nov: the Farm view of the mockup) ────────────────────────────────────────────────────
 
-export const WINDOW_KEYS = ['this_week', 'avg_4w', 'this_month', 'prev_month', 'three_month'] as const;
+export const WINDOW_KEYS = [
+  'this_week',
+  'avg_4w',
+  'this_month',
+  'prev_month',
+  'three_month',
+] as const;
 export type WindowKey = (typeof WINDOW_KEYS)[number];
 export const TREND_WEEKS = 6;
 
@@ -289,9 +414,23 @@ export function farmWindows(
     { key: 'avg_4w', startDate: shift(to, -27), endDate: to },
     { key: 'this_month', startDate: period.start_date, endDate: to },
   ];
-  if (prev) out.push({ key: 'prev_month', startDate: prev.start_date, endDate: prev.end_date });
-  out.push({ key: 'three_month', startDate: (prev2 ?? prev ?? period).start_date, endDate: to });
-  for (let i = 0; i < TREND_WEEKS; i++) out.push({ key: `week_${i}`, startDate: shift(to, -7 * i - 6), endDate: shift(to, -7 * i) });
+  if (prev)
+    out.push({
+      key: 'prev_month',
+      startDate: prev.start_date,
+      endDate: prev.end_date,
+    });
+  out.push({
+    key: 'three_month',
+    startDate: (prev2 ?? prev ?? period).start_date,
+    endDate: to,
+  });
+  for (let i = 0; i < TREND_WEEKS; i++)
+    out.push({
+      key: `week_${i}`,
+      startDate: shift(to, -7 * i - 6),
+      endDate: shift(to, -7 * i),
+    });
   return out;
 }
 
@@ -314,13 +453,20 @@ export function farmRow(
   target: Target | null,
   has: (windowKey: string) => boolean,
 ): FarmRow {
-  const values = Object.fromEntries(WINDOW_KEYS.map((k) => [k, has(k) ? valueOf(k) : null])) as Record<WindowKey, number | null>;
+  const values = Object.fromEntries(
+    WINDOW_KEYS.map((k) => [k, has(k) ? valueOf(k) : null]),
+  ) as Record<WindowKey, number | null>;
   return {
-    key: def.key, label: def.label, unit: def.unit, lower_is_better: def.lower,
+    key: def.key,
+    label: def.label,
+    unit: def.unit,
+    lower_is_better: def.lower,
     target: target?.average ?? null,
     status: ragStatus(values.this_week, target, def.lower),
     values,
-    trend: Array.from({ length: TREND_WEEKS }, (_, i) => valueOf(`week_${TREND_WEEKS - 1 - i}`)),
+    trend: Array.from({ length: TREND_WEEKS }, (_, i) =>
+      valueOf(`week_${TREND_WEEKS - 1 - i}`),
+    ),
   };
 }
 
@@ -340,7 +486,10 @@ export function farmAlerts(rows: FarmRow[]): FarmAlert[] {
   return rows
     .filter((r) => r.values.this_week != null && r.status)
     .map((r) => ({
-      metric: r.label, unit: r.unit, value: r.values.this_week as number, target: r.target,
+      metric: r.label,
+      unit: r.unit,
+      value: r.values.this_week as number,
+      target: r.target,
       status: r.status as 'RED' | 'AMBER' | 'GREEN',
       above: r.target != null && (r.values.this_week as number) > r.target,
     }))

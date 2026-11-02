@@ -18,25 +18,46 @@ export class MonthlyOpsController {
   // The report's own farm list, read under its own grant (as R07's is).
   @Get('monthly-ops/farms')
   @RequirePermission('REPORTS', 'MONTHLY_OPS', 'view')
-  @ApiOperation({ summary: 'Farms the Monthly Ops report may offer this caller' })
+  @ApiOperation({
+    summary: 'Farms the Monthly Ops report may offer this caller',
+  })
   async farms(@Req() req: any) {
-    const data = await this.report.listFarms(req.user?.tenantId || req['tenantId'], req.user?.userType);
+    const data = await this.report.listFarms(
+      req.user?.tenantId || req['tenantId'],
+      req.user?.userType,
+    );
     return { success: true, message: 'Farms retrieved successfully.', data };
   }
 
   @Get('monthly-ops/years')
   @RequirePermission('REPORTS', 'MONTHLY_OPS', 'view')
-  @ApiOperation({ summary: 'Fiscal years of the Accounting Period Master, and the current one' })
+  @ApiOperation({
+    summary:
+      'Fiscal years of the Accounting Period Master, and the current one',
+  })
   async years(@Query() query: MonthlyOpsYearsQueryDto, @Req() req: any) {
-    const data = await this.report.years(req.user?.tenantId || req['tenantId'], query.companyId);
-    return { success: true, message: 'Fiscal years retrieved successfully.', data };
+    const data = await this.report.years(
+      req.user?.tenantId || req['tenantId'],
+      query.companyId,
+    );
+    return {
+      success: true,
+      message: 'Fiscal years retrieved successfully.',
+      data,
+    };
   }
 
   @Get('monthly-ops')
   @RequirePermission('REPORTS', 'MONTHLY_OPS', 'view')
-  @ApiOperation({ summary: 'R12 Monthly Ops — per accounting month and sow breed, for one farm and fiscal year' })
+  @ApiOperation({
+    summary:
+      'R12 Monthly Ops — per accounting month and sow breed, for one farm and fiscal year',
+  })
   async monthlyOps(@Query() query: MonthlyOpsQueryDto, @Req() req: any) {
-    const data = await this.report.getReport(req.user?.tenantId || req['tenantId'], query);
+    const data = await this.report.getReport(
+      req.user?.tenantId || req['tenantId'],
+      query,
+    );
     return { success: true, message: 'Monthly Ops report generated.', data };
   }
 }

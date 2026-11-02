@@ -1,4 +1,9 @@
-import type { Alert, FarmAlert, FarmRow, MetricRow } from './gm-dashboard.metrics';
+import type {
+  Alert,
+  FarmAlert,
+  FarmRow,
+  MetricRow,
+} from './gm-dashboard.metrics';
 
 export interface QueryPiggeryGmDashboardDto {
   companyId?: string;

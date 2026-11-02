@@ -47,7 +47,12 @@ import { FeedRequisitionDetail } from './feed-requisition-detail';
 import { FeedRequisitionFromRunDialog } from './feed-requisition-from-run-dialog';
 import type { RequisitionView } from './feed-requisition-document';
 import { setForecastWindow } from './feed-forecast-window';
-import { countedRequisitions, requisitionCover, type OpenRequisitionLine, type ShortSource } from './requisition-cover';
+import {
+  countedRequisitions,
+  requisitionCover,
+  type OpenRequisitionLine,
+  type ShortSource,
+} from './requisition-cover';
 import {
   FeedForecastProvider,
   useFeedForecastContext,
@@ -237,7 +242,9 @@ function FeedForecastPanelContent() {
             ? display.sourceBalances
             : [],
           flags: Array.isArray(display.flags) ? display.flags : [],
-          dietChanges: Array.isArray(display.dietChanges) ? display.dietChanges : [],
+          dietChanges: Array.isArray(display.dietChanges)
+            ? display.dietChanges
+            : [],
         } as ForecastData;
         const runId = run.run_id ?? run.runId;
         let existingRequisitionId: string | null = null;
@@ -251,7 +258,9 @@ function FeedForecastPanelContent() {
               covered_lines?: CoveredLine[];
             }>(await api.get(`/feed-requisition/from-run/${runId}/preview`));
             existingRequisitionId = preview.existingRequisitionId ?? null;
-            coveredLines = Array.isArray(preview.covered_lines) ? preview.covered_lines : [];
+            coveredLines = Array.isArray(preview.covered_lines)
+              ? preview.covered_lines
+              : [];
             canCreateRequisition =
               !!existingRequisitionId ||
               (Array.isArray(preview.lines) && preview.lines.length > 0);
@@ -261,7 +270,12 @@ function FeedForecastPanelContent() {
           }
         }
         if (superseded()) return;
-        setCurrentRun({ ...run, existingRequisitionId, canCreateRequisition, coveredLines });
+        setCurrentRun({
+          ...run,
+          existingRequisitionId,
+          canCreateRequisition,
+          coveredLines,
+        });
         setCalculationState('SAVED');
         setData(resolved);
         hydrateWindow({
@@ -293,7 +307,9 @@ function FeedForecastPanelContent() {
     if (!farmId || calculationState !== 'CALCULATED') return;
     let alive = true;
     api
-      .get(`/feed-requisition/open-lines?${new URLSearchParams({ farmId }).toString()}`)
+      .get(
+        `/feed-requisition/open-lines?${new URLSearchParams({ farmId }).toString()}`,
+      )
       .then((res) => {
         const list = unwrap<OpenRequisitionLine[]>(res);
         if (alive) setOpenLines(Array.isArray(list) ? list : []);
@@ -368,7 +384,9 @@ function FeedForecastPanelContent() {
             covered_lines?: CoveredLine[];
           }>(await api.get(`/feed-requisition/from-run/${savedRunId}/preview`));
           existingRequisitionId = preview.existingRequisitionId ?? null;
-          coveredLines = Array.isArray(preview.covered_lines) ? preview.covered_lines : [];
+          coveredLines = Array.isArray(preview.covered_lines)
+            ? preview.covered_lines
+            : [];
           canCreateRequisition =
             !!existingRequisitionId ||
             (Array.isArray(preview.lines) && preview.lines.length > 0);
@@ -376,9 +394,18 @@ function FeedForecastPanelContent() {
           canCreateRequisition = false;
         }
       }
-      setCurrentRun({ ...saved, existingRequisitionId, canCreateRequisition, coveredLines });
+      setCurrentRun({
+        ...saved,
+        existingRequisitionId,
+        canCreateRequisition,
+        coveredLines,
+      });
       setCalculationState('SAVED');
-      if (thenCreateRequisition && canCreateRequisition && !existingRequisitionId) {
+      if (
+        thenCreateRequisition &&
+        canCreateRequisition &&
+        !existingRequisitionId
+      ) {
         setFromRunOpen(true);
       }
       showToast.success(
@@ -505,15 +532,27 @@ function FeedForecastPanelContent() {
     : [];
   const flags = Array.isArray(data?.flags) ? data!.flags : [];
   // Rishi, 31 Oct: an unsaved calculation's run-downs that open requisitions it did not count already solve.
-  const shortSources = (Array.isArray(data?.sources) ? data!.sources : []).filter((x) => Number(x.shortfallKg) > 0);
+  const shortSources = (
+    Array.isArray(data?.sources) ? data!.sources : []
+  ).filter((x) => Number(x.shortfallKg) > 0);
   const counted = countedRequisitions(sourceBalances);
-  const calculatedCover = shortSources.map((x) => ({ source: x, ...requisitionCover(x, openLines, counted) }));
+  const calculatedCover = shortSources.map((x) => ({
+    source: x,
+    ...requisitionCover(x, openLines, counted),
+  }));
   const uncoveredShortages = calculatedCover.filter((c) => !c.covered).length;
-  const coveredNotes: CoveredLine[] = calculationState === 'SAVED'
-    ? (currentRun?.coveredLines ?? [])
-    : calculationState === 'CALCULATED'
-      ? calculatedCover.filter((c) => c.covered).map((c) => ({ destination_code: c.source.sourceCode ?? '', item_name: c.source.itemName ?? '', covered_by: c.by }))
-      : [];
+  const coveredNotes: CoveredLine[] =
+    calculationState === 'SAVED'
+      ? (currentRun?.coveredLines ?? [])
+      : calculationState === 'CALCULATED'
+        ? calculatedCover
+            .filter((c) => c.covered)
+            .map((c) => ({
+              destination_code: c.source.sourceCode ?? '',
+              item_name: c.source.itemName ?? '',
+              covered_by: c.by,
+            }))
+        : [];
   const dietChanges = Array.isArray(data?.dietChanges) ? data!.dietChanges : [];
   const periodList = Array.isArray(periods) ? periods : [];
   const rangeBeforePlanning = !!data && data.forecastFrom === null;
@@ -534,7 +573,8 @@ function FeedForecastPanelContent() {
       (view === 'PERIOD'
         ? (periodId || data.period?.periodId || '') !==
           (data.period?.periodId ?? '')
-        : shownFrom !== data.from || (view === 'CUSTOM' && shownTo !== data.to)));
+        : shownFrom !== data.from ||
+          (view === 'CUSTOM' && shownTo !== data.to)));
   // Nothing is forecast before the planning date, so a later planning date
   // pulls any earlier From / To forward with it.
   function changePlanningDate(value: string) {
@@ -567,178 +607,186 @@ function FeedForecastPanelContent() {
           "Date To" alone on a second line); the date pair shares a container
           so it never splits. Rishi, 30 Oct: the actions wrap to their own
           row, right-aligned, instead of running off the page's edge. */}
-      <div data-forecast-controls className="flex shrink-0 flex-wrap items-end gap-3">
-        <div data-forecast-filters className="flex min-w-0 flex-wrap items-end gap-3 xl:flex-nowrap">
-        <div className="w-56 shrink-0">
-          <FeedFarmSelect
-            id="ff-farm"
-            label={t('ffFarm')}
-            farms={farm.farms}
-            farmId={farmId}
-            onChange={setFarmId}
-            fixedLabel={fixedLabel}
-          />
-        </div>
-        <div>
-          <label className={labelCls} htmlFor="ff-planning">
-            {t('ffPlanningDate')}
-          </label>
-          <input
-            id="ff-planning"
-            type="date"
-            value={shownPlanning}
-            onChange={(e) => changePlanningDate(e.target.value)}
-            className="nf-input-sm mt-1.5"
-            style={inputStyle}
-            title={
-              data
-                ? data.timeZone
-                  ? t('ffTimeZone', { zone: data.timeZone })
-                  : t('ffServerDay')
-                : undefined
-            }
-          />
-        </div>
-        <div className="w-36 shrink-0">
-          <label className={labelCls} htmlFor="ff-view">
-            {t('ffView')}
-          </label>
-          <div className="relative mt-1.5">
-            <SearchableSelect
-              value={view}
-              onChange={(val) => changeView(val as ForecastView)}
-              options={FORECAST_VIEWS.map((v) => ({
-                value: v,
-                label: t(FORECAST_VIEW_LABEL[v]),
-              }))}
-              columnHeaders={false}
-              searchPlaceholder="Search view…"
-              triggerClassName="nf-input-sm w-full h-9"
+      <div
+        data-forecast-controls
+        className="flex shrink-0 flex-wrap items-end gap-3"
+      >
+        <div
+          data-forecast-filters
+          className="flex min-w-0 flex-wrap items-end gap-3 xl:flex-nowrap"
+        >
+          <div className="w-56 shrink-0">
+            <FeedFarmSelect
+              id="ff-farm"
+              label={t('ffFarm')}
+              farms={farm.farms}
+              farmId={farmId}
+              onChange={setFarmId}
+              fixedLabel={fixedLabel}
             />
-            <select
-              id="ff-view"
-              value={view}
-              onChange={(e) => changeView(e.target.value as ForecastView)}
-              tabIndex={-1}
-              className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
-            >
-              {FORECAST_VIEWS.map((v) => (
-                <option key={v} value={v}>
-                  {t(FORECAST_VIEW_LABEL[v])}
-                </option>
-              ))}
-            </select>
           </div>
-        </div>
-        <div className="flex shrink-0 items-end gap-3">
-          {view === 'PERIOD' ? (
-            <div className="w-56 shrink-0">
-              <label className={labelCls} htmlFor="ff-period">
-                {t('ffReportingPeriod')}
-              </label>
-              <div className="relative mt-1.5">
-                <SearchableSelect
-                  value={periodId}
-                  onChange={setPeriodId}
-                  options={periodList.map((p) => ({
-                    value: p.periodId,
-                    code: p.periodCode,
-                    name: `${formatDateShort(p.startDate)} – ${formatDateShort(p.endDate)}`,
-                    label: t('ffPeriodOption', {
+          <div>
+            <label className={labelCls} htmlFor="ff-planning">
+              {t('ffPlanningDate')}
+            </label>
+            <input
+              id="ff-planning"
+              type="date"
+              value={shownPlanning}
+              onChange={(e) => changePlanningDate(e.target.value)}
+              className="nf-input-sm mt-1.5"
+              style={inputStyle}
+              title={
+                data
+                  ? data.timeZone
+                    ? t('ffTimeZone', { zone: data.timeZone })
+                    : t('ffServerDay')
+                  : undefined
+              }
+            />
+          </div>
+          <div className="w-36 shrink-0">
+            <label className={labelCls} htmlFor="ff-view">
+              {t('ffView')}
+            </label>
+            <div className="relative mt-1.5">
+              <SearchableSelect
+                value={view}
+                onChange={(val) => changeView(val as ForecastView)}
+                options={FORECAST_VIEWS.map((v) => ({
+                  value: v,
+                  label: t(FORECAST_VIEW_LABEL[v]),
+                }))}
+                columnHeaders={false}
+                searchPlaceholder="Search view…"
+                triggerClassName="nf-input-sm w-full h-9"
+              />
+              <select
+                id="ff-view"
+                value={view}
+                onChange={(e) => changeView(e.target.value as ForecastView)}
+                tabIndex={-1}
+                className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+              >
+                {FORECAST_VIEWS.map((v) => (
+                  <option key={v} value={v}>
+                    {t(FORECAST_VIEW_LABEL[v])}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-end gap-3">
+            {view === 'PERIOD' ? (
+              <div className="w-56 shrink-0">
+                <label className={labelCls} htmlFor="ff-period">
+                  {t('ffReportingPeriod')}
+                </label>
+                <div className="relative mt-1.5">
+                  <SearchableSelect
+                    value={periodId}
+                    onChange={setPeriodId}
+                    options={periodList.map((p) => ({
+                      value: p.periodId,
                       code: p.periodCode,
-                      from: formatDateShort(p.startDate),
-                      to: formatDateShort(p.endDate),
-                    }),
-                  }))}
-                  columnHeaders={['Period', 'Dates']}
-                  columns={[
-                    { key: 'code', label: 'Period' },
-                    { key: 'name', label: 'Dates' },
-                  ]}
-                  placeholder={t('ffPeriodCovering')}
-                  searchPlaceholder="Search period…"
-                  triggerClassName="nf-input-sm w-full h-9"
-                />
-                <select
-                  id="ff-period"
-                  value={periodId}
-                  onChange={(e) => setPeriodId(e.target.value)}
-                  tabIndex={-1}
-                  className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
-                >
-                  <option value="">{t('ffPeriodCovering')}</option>
-                  {periodList.map((p) => (
-                    <option key={p.periodId} value={p.periodId}>
-                      {t('ffPeriodOption', {
+                      name: `${formatDateShort(p.startDate)} – ${formatDateShort(p.endDate)}`,
+                      label: t('ffPeriodOption', {
                         code: p.periodCode,
                         from: formatDateShort(p.startDate),
                         to: formatDateShort(p.endDate),
-                      })}
-                    </option>
-                  ))}
-                </select>
+                      }),
+                    }))}
+                    columnHeaders={['Period', 'Dates']}
+                    columns={[
+                      { key: 'code', label: 'Period' },
+                      { key: 'name', label: 'Dates' },
+                    ]}
+                    placeholder={t('ffPeriodCovering')}
+                    searchPlaceholder="Search period…"
+                    triggerClassName="nf-input-sm w-full h-9"
+                  />
+                  <select
+                    id="ff-period"
+                    value={periodId}
+                    onChange={(e) => setPeriodId(e.target.value)}
+                    tabIndex={-1}
+                    className="absolute inset-0 h-full w-full opacity-0 pointer-events-none"
+                  >
+                    <option value="">{t('ffPeriodCovering')}</option>
+                    {periodList.map((p) => (
+                      <option key={p.periodId} value={p.periodId}>
+                        {t('ffPeriodOption', {
+                          code: p.periodCode,
+                          from: formatDateShort(p.startDate),
+                          to: formatDateShort(p.endDate),
+                        })}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            </div>
-          ) : (
-            <div>
-              <label className={labelCls} htmlFor="ff-from">
-                {t(
-                  view === 'DAILY'
-                    ? 'ffStartDate'
-                    : view === 'WEEKLY'
-                      ? 'ffFirstWeekStarts'
-                      : 'ffDateFrom',
-                )}
-              </label>
-              <input
-                id="ff-from"
-                type="date"
-                value={shownFrom}
-                min={shownPlanning || undefined}
-                onChange={(e) =>
-                  setDateFrom(clampToPlanning(e.target.value, shownPlanning))
-                }
-                className="nf-input-sm mt-1.5"
-                style={inputStyle}
-              />
-            </div>
-          )}
-          {view === 'CUSTOM' && (
-            <div>
-              <label className={labelCls} htmlFor="ff-to">
-                {t('ffDateTo')}
-              </label>
-              <input
-                id="ff-to"
-                type="date"
-                value={shownTo}
-                min={shownPlanning || undefined}
-                onChange={(e) =>
-                  setDateTo(clampToPlanning(e.target.value, shownPlanning))
-                }
-                className="nf-input-sm mt-1.5"
-                style={inputStyle}
-              />
-            </div>
-          )}
-        </div>
+            ) : (
+              <div>
+                <label className={labelCls} htmlFor="ff-from">
+                  {t(
+                    view === 'DAILY'
+                      ? 'ffStartDate'
+                      : view === 'WEEKLY'
+                        ? 'ffFirstWeekStarts'
+                        : 'ffDateFrom',
+                  )}
+                </label>
+                <input
+                  id="ff-from"
+                  type="date"
+                  value={shownFrom}
+                  min={shownPlanning || undefined}
+                  onChange={(e) =>
+                    setDateFrom(clampToPlanning(e.target.value, shownPlanning))
+                  }
+                  className="nf-input-sm mt-1.5"
+                  style={inputStyle}
+                />
+              </div>
+            )}
+            {view === 'CUSTOM' && (
+              <div>
+                <label className={labelCls} htmlFor="ff-to">
+                  {t('ffDateTo')}
+                </label>
+                <input
+                  id="ff-to"
+                  type="date"
+                  value={shownTo}
+                  min={shownPlanning || undefined}
+                  onChange={(e) =>
+                    setDateTo(clampToPlanning(e.target.value, shownPlanning))
+                  }
+                  className="nf-input-sm mt-1.5"
+                  style={inputStyle}
+                />
+              </div>
+            )}
+          </div>
         </div>
         {farm.loaded &&
           !farm.failed &&
           !noFarms &&
           (farmId || farm.isFixed) && (
             <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
-              {calculationState === 'EMPTY' && !savedRunFailed && (!loading || calculating) && (
-                <Button
-                  size="sm"
-                  onClick={calculate}
-                  disabled={
-                    !farmId || loading || (view === 'PERIOD' && !periodId)
-                  }
-                >
-                  {calculating ? t('ffCalculating') : t('ffCalculate')}
-                </Button>
-              )}
+              {calculationState === 'EMPTY' &&
+                !savedRunFailed &&
+                (!loading || calculating) && (
+                  <Button
+                    size="sm"
+                    onClick={calculate}
+                    disabled={
+                      !farmId || loading || (view === 'PERIOD' && !periodId)
+                    }
+                  >
+                    {calculating ? t('ffCalculating') : t('ffCalculate')}
+                  </Button>
+                )}
               {calculationState === 'CALCULATED' && filtersChanged && (
                 <Button
                   size="sm"
@@ -750,27 +798,29 @@ function FeedForecastPanelContent() {
                   {calculating ? t('ffCalculating') : t('ffRecalculate')}
                 </Button>
               )}
-              {canSaveRun && calculationState === 'CALCULATED' && !filtersChanged && (
-                <>
-                  <Button
-                    size="sm"
-                    onClick={() => void saveRun()}
-                    disabled={!data || loading || savingRun}
-                  >
-                    {savingRun ? t('ffSavingRun') : t('ffSaveRun')}
-                  </Button>
-                  {uncoveredShortages > 0 && (
+              {canSaveRun &&
+                calculationState === 'CALCULATED' &&
+                !filtersChanged && (
+                  <>
                     <Button
                       size="sm"
-                      variant="outline"
-                      onClick={() => void saveRun(true)}
+                      onClick={() => void saveRun()}
                       disabled={!data || loading || savingRun}
                     >
-                      {t('ffSaveAndCreateRequisition')}
+                      {savingRun ? t('ffSavingRun') : t('ffSaveRun')}
                     </Button>
-                  )}
-                </>
-              )}
+                    {uncoveredShortages > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void saveRun(true)}
+                        disabled={!data || loading || savingRun}
+                      >
+                        {t('ffSaveAndCreateRequisition')}
+                      </Button>
+                    )}
+                  </>
+                )}
               {calculationState === 'SAVED' && !historicalRun && (
                 <>
                   {currentRun?.existingRequisitionId && (
@@ -882,16 +932,31 @@ function FeedForecastPanelContent() {
         <>
           {data ? (
             <>
-              {coveredNotes.length > 0 && !currentRun?.existingRequisitionId && (
-                <InlineAlert variant="info">
-                  {t('ffCoveredByRequisition', {
-                    lines: coveredNotes.map((c) => t('ffCoveredLine', { silo: c.destination_code, item: c.item_name, by: c.covered_by.join(', ') })).join('; '),
-                  })}
-                </InlineAlert>
-              )}
-              {calculationState === 'SAVED' && !historicalRun && data.planningDate < todayIso() && (
-                <InlineAlert variant="info">{t('ffSavedRunPast', { date: formatDateShort(data.planningDate) })}</InlineAlert>
-              )}
+              {coveredNotes.length > 0 &&
+                !currentRun?.existingRequisitionId && (
+                  <InlineAlert variant="info">
+                    {t('ffCoveredByRequisition', {
+                      lines: coveredNotes
+                        .map((c) =>
+                          t('ffCoveredLine', {
+                            silo: c.destination_code,
+                            item: c.item_name,
+                            by: c.covered_by.join(', '),
+                          }),
+                        )
+                        .join('; '),
+                    })}
+                  </InlineAlert>
+                )}
+              {calculationState === 'SAVED' &&
+                !historicalRun &&
+                data.planningDate < todayIso() && (
+                  <InlineAlert variant="info">
+                    {t('ffSavedRunPast', {
+                      date: formatDateShort(data.planningDate),
+                    })}
+                  </InlineAlert>
+                )}
               <FeedForecastGrid
                 rows={rows}
                 sourceBalances={sourceBalances}

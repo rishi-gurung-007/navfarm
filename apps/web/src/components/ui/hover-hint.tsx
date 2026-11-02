@@ -9,7 +9,11 @@ import { createPortal } from 'react-dom';
  * the reason shows in a small box fixed to the viewport, so a scrolling table
  * cannot clip it the way it clips a box placed inside the cell.
  */
-export function HoverHint({ hint, children, focusable = true }: {
+export function HoverHint({
+  hint,
+  children,
+  focusable = true,
+}: {
   hint: string;
   children: ReactNode;
   /** false inside a control that is already focusable (a button), so keyboard users meet one stop, not two. */
@@ -38,23 +42,25 @@ export function HoverHint({ hint, children, focusable = true }: {
       >
         {children}
       </span>
-      {at && typeof document !== 'undefined' && createPortal(
-        <span
-          id={id}
-          role="tooltip"
-          className="pointer-events-none fixed z-[1000] max-w-64 -translate-x-1/2 -translate-y-full rounded-md border px-2.5 py-1.5 text-xs leading-snug shadow-lg"
-          style={{
-            left: at.left,
-            top: at.top - 6,
-            backgroundColor: 'var(--surface-raised)',
-            borderColor: 'var(--border)',
-            color: 'var(--text-primary)',
-          }}
-        >
-          {hint}
-        </span>,
-        document.body,
-      )}
+      {at &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <span
+            id={id}
+            role="tooltip"
+            className="pointer-events-none fixed z-[1000] max-w-64 -translate-x-1/2 -translate-y-full rounded-md border px-2.5 py-1.5 text-xs leading-snug shadow-lg"
+            style={{
+              left: at.left,
+              top: at.top - 6,
+              backgroundColor: 'var(--surface-raised)',
+              borderColor: 'var(--border)',
+              color: 'var(--text-primary)',
+            }}
+          >
+            {hint}
+          </span>,
+          document.body,
+        )}
     </>
   );
 }

@@ -31,24 +31,33 @@ const NUMBER = /^-?\d+(\.\d+)?$/;
 
 /** A plain number becomes a number; anything else (N/A, 12.5%, text) stays as shown. */
 export function excelValue(value: ExcelCell): ExcelCell {
-  if (typeof value === 'string' && NUMBER.test(value.trim())) return Number(value);
+  if (typeof value === 'string' && NUMBER.test(value.trim()))
+    return Number(value);
   return value ?? '';
 }
 
 const safeName = (s: string) => s.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31);
 
-export async function downloadExcel(fileName: string, sheet: ExcelSheet): Promise<void> {
+export async function downloadExcel(
+  fileName: string,
+  sheet: ExcelSheet,
+): Promise<void> {
   const { default: ExcelJS } = await import('exceljs');
   const workbook = new ExcelJS.Workbook();
   const ws = workbook.addWorksheet(safeName(sheet.name));
   const lead = sheet.lead ?? [];
   const width = lead.length + sheet.headers.length;
-  const headFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: 'FFEBEEF2' } };
+  const headFill = {
+    type: 'pattern' as const,
+    pattern: 'solid' as const,
+    fgColor: { argb: 'FFEBEEF2' },
+  };
   const thin = { style: 'thin' as const, color: { argb: 'FFBEC2CA' } };
   const border = { top: thin, left: thin, bottom: thin, right: thin };
 
   ws.addRow([sheet.title]).font = { bold: true, size: 14 };
-  for (const line of sheet.info ?? []) ws.addRow([line]).font = { size: 9, color: { argb: 'FF555555' } };
+  for (const line of sheet.info ?? [])
+    ws.addRow([line]).font = { size: 9, color: { argb: 'FF555555' } };
   ws.addRow([]);
 
   const styleHead = (rowNo: number) => {
@@ -58,19 +67,30 @@ export async function downloadExcel(fileName: string, sheet: ExcelSheet): Promis
       cell.font = { bold: true };
       cell.fill = headFill;
       cell.border = border;
-      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      cell.alignment = {
+        horizontal: 'center',
+        vertical: 'middle',
+        wrapText: true,
+      };
     }
   };
 
   let headerRows = 1;
   if (sheet.groups?.length) {
     headerRows = 2;
-    const top = ws.addRow([...lead, ...sheet.groups.flatMap((g) => [g.label, ...Array(g.span - 1).fill(null)])]);
+    const top = ws.addRow([
+      ...lead,
+      ...sheet.groups.flatMap((g) => [
+        g.label,
+        ...Array(g.span - 1).fill(null),
+      ]),
+    ]);
     const sub = ws.addRow([...lead.map(() => null), ...sheet.headers]);
     lead.forEach((_, i) => ws.mergeCells(top.number, i + 1, sub.number, i + 1));
     let col = lead.length + 1;
     for (const g of sheet.groups) {
-      if (g.span > 1) ws.mergeCells(top.number, col, top.number, col + g.span - 1);
+      if (g.span > 1)
+        ws.mergeCells(top.number, col, top.number, col + g.span - 1);
       col += g.span;
     }
     styleHead(top.number);
@@ -86,11 +106,17 @@ export async function downloadExcel(fileName: string, sheet: ExcelSheet): Promis
     row.eachCell({ includeEmpty: true }, (cell, c) => {
       if (c > width) return;
       cell.border = border;
-      cell.alignment = { vertical: 'top', wrapText: true, horizontal: typeof cell.value === 'number' ? 'right' : 'left' };
+      cell.alignment = {
+        vertical: 'top',
+        wrapText: true,
+        horizontal: typeof cell.value === 'number' ? 'right' : 'left',
+      };
       const tone = sheet.tone?.(r, c - 1, values[c - 1] ?? null);
       cell.font = {
         bold: sheet.boldRows?.has(r) || undefined,
-        color: tone ? { argb: tone === 'good' ? 'FF2F7D5B' : 'FFB7293E' } : undefined,
+        color: tone
+          ? { argb: tone === 'good' ? 'FF2F7D5B' : 'FFB7293E' }
+          : undefined,
       };
     });
   });
@@ -106,13 +132,16 @@ export async function downloadExcel(fileName: string, sheet: ExcelSheet): Promis
     for (let r = lastHead - headerRows + 1; r <= ws.rowCount; r++) {
       const v = ws.getRow(r).getCell(c).value;
       const text = v == null ? '' : String(v);
-      for (const line of text.split('\n')) longest = Math.max(longest, line.length);
+      for (const line of text.split('\n'))
+        longest = Math.max(longest, line.length);
     }
     ws.getColumn(c).width = Math.min(longest + 2, 40);
   }
 
   const buffer = await workbook.xlsx.writeBuffer();
-  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = fileName.endsWith('.xlsx') ? fileName : `${fileName}.xlsx`;

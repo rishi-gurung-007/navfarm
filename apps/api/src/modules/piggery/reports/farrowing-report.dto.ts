@@ -40,7 +40,8 @@ export class FarrowingReportQueryDto {
   batchId?: string;
 
   @ApiPropertyOptional({
-    description: 'Batch Type (Rishi, 2 Nov): only Active or only Closed batches; omitted for all',
+    description:
+      'Batch Type (Rishi, 2 Nov): only Active or only Closed batches; omitted for all',
     enum: ['ACTIVE', 'CLOSED'],
   })
   @IsOptional()

@@ -23,10 +23,20 @@ export interface QuantityLine {
 
 export type QuantityProblem =
   | { kind: 'MULTIPLE'; line: number; multipleKg: number; bagged: boolean }
-  | { kind: 'CAPACITY'; line: number; capacityKg: number; stockKg: number; totalKg: number; fitsKg: number };
+  | {
+      kind: 'CAPACITY';
+      line: number;
+      capacityKg: number;
+      stockKg: number;
+      totalKg: number;
+      fitsKg: number;
+    };
 
 /** The step a line orders in, or 0 when there is none to keep to. */
-export function orderStepKg(feedType: FeedForm | null | undefined, s: { bulkMultipleKg?: number; bagSizeKg?: number }): number {
+export function orderStepKg(
+  feedType: FeedForm | null | undefined,
+  s: { bulkMultipleKg?: number; bagSizeKg?: number },
+): number {
   if (feedType === 'BULK') return s.bulkMultipleKg ?? 0;
   if (feedType === 'BAGGED') return s.bagSizeKg ?? 0;
   return 0;
@@ -47,18 +57,31 @@ export function fitInSteps(freeKg: number, stepKg: number): number {
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
-export function quantityProblems(lines: QuantityLine[], s: { bulkMultipleKg?: number; bagSizeKg?: number }): QuantityProblem[] {
+export function quantityProblems(
+  lines: QuantityLine[],
+  s: { bulkMultipleKg?: number; bagSizeKg?: number },
+): QuantityProblem[] {
   const problems: QuantityProblem[] = [];
   lines.forEach((l, index) => {
     const step = orderStepKg(l.feedType, s);
     if (l.quantityKg > 0 && isOffMultiple(l.quantityKg, step)) {
-      problems.push({ kind: 'MULTIPLE', line: index, multipleKg: step, bagged: l.feedType === 'BAGGED' });
+      problems.push({
+        kind: 'MULTIPLE',
+        line: index,
+        multipleKg: step,
+        bagged: l.feedType === 'BAGGED',
+      });
     }
     if (l.capacityKg == null || !l.deliveryDate) return;
     const stockKg = l.stockOn?.(l.deliveryDate);
     if (stockKg == null) return;
     const delivered = lines
-      .filter((o) => o.destinationId === l.destinationId && o.deliveryDate && o.deliveryDate <= l.deliveryDate)
+      .filter(
+        (o) =>
+          o.destinationId === l.destinationId &&
+          o.deliveryDate &&
+          o.deliveryDate <= l.deliveryDate,
+      )
       .reduce((sum, o) => sum + (o.quantityKg > 0 ? o.quantityKg : 0), 0);
     if (delivered + stockKg > l.capacityKg + 1e-6) {
       problems.push({
@@ -67,7 +90,10 @@ export function quantityProblems(lines: QuantityLine[], s: { bulkMultipleKg?: nu
         capacityKg: l.capacityKg,
         stockKg,
         totalKg: round3(delivered + stockKg),
-        fitsKg: fitInSteps(round3(l.capacityKg - stockKg - (delivered - l.quantityKg)), step),
+        fitsKg: fitInSteps(
+          round3(l.capacityKg - stockKg - (delivered - l.quantityKg)),
+          step,
+        ),
       });
     }
   });

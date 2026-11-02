@@ -273,7 +273,8 @@ export class FarrowingReportService {
     }
 
     const batchNo = query.batchId
-      ? (farmBatches.find((b) => b.batch_id === query.batchId)?.batch_no ?? null)
+      ? (farmBatches.find((b) => b.batch_id === query.batchId)?.batch_no ??
+        null)
       : null;
     return {
       farm: {

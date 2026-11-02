@@ -1,5 +1,5 @@
-import type { ElementType, ReactNode } from "react";
-import { cn } from "@/lib/utils";
+import type { ElementType, ReactNode } from 'react';
+import { cn } from '@/lib/utils';
 
 /**
  * The "KPI strip under the page title" pattern (apple.design.md §21's
@@ -26,14 +26,14 @@ export function StatRow({
   className?: string;
 }) {
   const cols: Record<number, string> = {
-    2: "sm:grid-cols-2",
-    3: "sm:grid-cols-2 lg:grid-cols-3",
-    4: "sm:grid-cols-2 lg:grid-cols-4",
-    5: "sm:grid-cols-2 lg:grid-cols-5",
-    6: "sm:grid-cols-2 lg:grid-cols-6",
+    2: 'sm:grid-cols-2',
+    3: 'sm:grid-cols-2 lg:grid-cols-3',
+    4: 'sm:grid-cols-2 lg:grid-cols-4',
+    5: 'sm:grid-cols-2 lg:grid-cols-5',
+    6: 'sm:grid-cols-2 lg:grid-cols-6',
   };
   return (
-    <div className={cn("grid grid-cols-1 gap-4", cols[columns], className)}>
+    <div className={cn('grid grid-cols-1 gap-4', cols[columns], className)}>
       {children}
     </div>
   );
@@ -47,7 +47,7 @@ export interface StatCardProps {
   icon?: ElementType;
   /** A control in the card's top-right corner, e.g. an info button that opens the detail behind the value. */
   action?: ReactNode;
-  tone?: "default" | "success" | "warning" | "danger";
+  tone?: 'default' | 'success' | 'warning' | 'danger';
   /** Also tint the card's border/background — reserve for a true status card. See file doc. */
   emphasis?: boolean;
   href?: string;
@@ -55,40 +55,73 @@ export interface StatCardProps {
 }
 
 const TONE_TEXT: Record<string, string> = {
-  default: "text-(--text-primary)",
-  success: "text-(--success)",
-  warning: "text-(--warning)",
-  danger: "text-(--danger)",
+  default: 'text-(--text-primary)',
+  success: 'text-(--success)',
+  warning: 'text-(--warning)',
+  danger: 'text-(--danger)',
 };
 
 const TONE_EMPHASIS: Record<string, string> = {
-  success: "border-(--success) bg-(--success-muted)",
-  warning: "border-(--warning) bg-(--warning-muted)",
-  danger: "border-(--danger) bg-(--danger-muted)",
+  success: 'border-(--success) bg-(--success-muted)',
+  warning: 'border-(--warning) bg-(--warning-muted)',
+  danger: 'border-(--danger) bg-(--danger-muted)',
 };
 
-export function StatCard({ label, value, unit, sub, icon: Icon, action, tone = "default", emphasis = false, href, onClick }: StatCardProps) {
+export function StatCard({
+  label,
+  value,
+  unit,
+  sub,
+  icon: Icon,
+  action,
+  tone = 'default',
+  emphasis = false,
+  href,
+  onClick,
+}: StatCardProps) {
   const emphasisClass = emphasis ? TONE_EMPHASIS[tone] : undefined;
-  const Wrapper = href ? "a" : "div";
+  const Wrapper = href ? 'a' : 'div';
   return (
     <Wrapper
       href={href}
       onClick={onClick}
       className={cn(
-        "rounded-md border p-4",
-        emphasisClass || "border-(--border) bg-(--surface)",
-        (href || onClick) && "nf-press cursor-pointer transition-colors hover:bg-(--surface-raised)"
+        'rounded-md border p-4',
+        emphasisClass || 'border-(--border) bg-(--surface)',
+        (href || onClick) &&
+          'nf-press cursor-pointer transition-colors hover:bg-(--surface-raised)',
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)">{label}</p>
-        {action ?? (Icon && <Icon className={cn("h-4 w-4 shrink-0", tone === "default" ? "text-(--text-muted)" : TONE_TEXT[tone])} />)}
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)">
+          {label}
+        </p>
+        {action ??
+          (Icon && (
+            <Icon
+              className={cn(
+                'h-4 w-4 shrink-0',
+                tone === 'default' ? 'text-(--text-muted)' : TONE_TEXT[tone],
+              )}
+            />
+          ))}
       </div>
-      <p className={cn("mt-1.5 text-3xl font-bold leading-none tracking-tight tabular-nums", TONE_TEXT[tone])}>
+      <p
+        className={cn(
+          'mt-1.5 text-3xl font-bold leading-none tracking-tight tabular-nums',
+          TONE_TEXT[tone],
+        )}
+      >
         {value}
-        {unit && <span className="ml-1.5 text-xs font-medium tracking-normal normal-case text-(--text-secondary)">{unit}</span>}
+        {unit && (
+          <span className="ml-1.5 text-xs font-medium tracking-normal normal-case text-(--text-secondary)">
+            {unit}
+          </span>
+        )}
       </p>
-      {sub && <div className="mt-1.5 text-xs text-(--text-secondary)">{sub}</div>}
+      {sub && (
+        <div className="mt-1.5 text-xs text-(--text-secondary)">{sub}</div>
+      )}
     </Wrapper>
   );
 }
