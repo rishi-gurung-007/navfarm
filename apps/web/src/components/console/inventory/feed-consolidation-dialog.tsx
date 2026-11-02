@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { NA as NOT_AVAILABLE } from "@/utils/na";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -119,7 +120,8 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
     finally { setBusy(false); }
   };
 
-  const NA = t("fcdNotAvailable");
+  // Rishi, 2 Nov: N/A, as the rest of the app says it (utils/na); the hover still says why.
+  const NA = NOT_AVAILABLE;
   // Code and name are two columns (Rishi, 14 Oct).
   const siloCode = (row: EligibleLine) => row.destination_silo_code || NA;
   const siloName = (row: EligibleLine) => row.destination_silo_name || NA;

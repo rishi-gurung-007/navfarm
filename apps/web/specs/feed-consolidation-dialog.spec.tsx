@@ -58,7 +58,9 @@ describe('Mill consolidation sheet (Rishi, 30 Oct)', () => {
     expect(short.querySelector('[aria-label="fcdShort"]')).toBeTruthy();
     expect(short.querySelector('[data-hint]')!.getAttribute('data-hint')).toContain('fcdShortHint');
     const notNeeded = first.querySelector('td[data-not-required]')!;
-    expect(notNeeded.textContent).toBe('fcdNotAvailable');
+    // Rishi, 2 Nov: the sheet says N/A, as the rest of the app does, not "Not available".
+    expect(notNeeded.textContent).toBe('N/A');
+    expect(table.textContent).not.toContain('fcdNotAvailable');
     expect(notNeeded.querySelector('[data-hint]')!.getAttribute('data-hint')).toBe('fcdNotRequiredOnDate');
     // A late delivery is outlined on the first day and says so on hover.
     const lateRow = within(table).getAllByRole('row')[3];

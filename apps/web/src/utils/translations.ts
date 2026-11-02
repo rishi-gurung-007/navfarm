@@ -2541,7 +2541,6 @@ export const translations = {
     fcdUrgencyHint: 'Most urgent first: earliest shortage, then fewest days left, then Priority No. The days show each silo without the deliveries on this sheet, counting a transfer only once it has shipped. Ticking a line selects its whole requisition.',
     fcdLine: 'Line',
     fcdSelectToEdit: 'Select the requisition to edit its lines below.',
-    fcdNotAvailable: 'Not available',
     fcdNotConfigured: 'Not configured',
     fcdDiet: 'Diet {{no}}',
     fcdApprovedLabel: 'Mill approved quantity {{req}} {{item}}',
