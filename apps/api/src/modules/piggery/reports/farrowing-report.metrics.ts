@@ -94,6 +94,19 @@ export function weekStart(date: string): string {
 }
 
 /** The same calendar dates one year earlier; 29 Feb falls back to 28 Feb. */
+/** Rishi, 2 Nov: the report's Batch Type filter — every batch, or only those Active or Closed. */
+export type ReportBatchStatus = 'ACTIVE' | 'CLOSED';
+
+/** The batches the report covers: the chosen batch, if any, and of the chosen Batch Type, if any. */
+export function selectReportBatches<T extends { batch_id: string; status: string | null }>(
+  batches: T[],
+  filter: { batchId?: string; batchStatus?: ReportBatchStatus },
+): T[] {
+  return batches.filter(
+    (b) => (!filter.batchId || b.batch_id === filter.batchId) && (!filter.batchStatus || b.status === filter.batchStatus),
+  );
+}
+
 export function minusOneYear(date: string): string {
   const [y, m, d] = date.split('-').map(Number);
   const prior = new Date(Date.UTC(y - 1, m - 1, d));

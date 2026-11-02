@@ -50,6 +50,7 @@ export interface FarrowingReport {
     date_from: string;
     date_to: string;
     batch_no: string | null;
+    batch_status?: 'ACTIVE' | 'CLOSED' | null;
     parity: number | null;
     sow_code: string | null;
   };

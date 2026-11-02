@@ -1,0 +1,91 @@
+import React from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import FarrowingReportPanel from '../src/components/console/reports/farrowing-report-panel';
+import { api } from '../src/services/api-client';
+
+jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn() } }));
+jest.mock('../src/hooks/useAuth', () => ({ getActiveCompanyId: () => 'co-1', getActiveFarmId: () => 'farm-1' }));
+jest.mock('../src/hooks/useLanguage', () => {
+  const t = (key: string, vars?: Record<string, unknown>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
+  return { useLanguage: () => ({ t }) };
+});
+jest.mock('../src/components/console/reports/farrowing-report-pdf', () => ({ exportFarrowingPdf: jest.fn() }));
+
+const get = api.get as jest.Mock;
+const report = {
+  farm: { farm_id: 'farm-1', farm_code: 'GRS', farm_name: 'Grasmere' },
+  filters: { date_from: '2026-10-01', date_to: '2026-10-31', batch_no: null, batch_status: null, parity: null, sow_code: null },
+  generated_at: '2026-11-02T10:00:00Z',
+  rows: [],
+};
+
+beforeEach(() => {
+  get.mockReset().mockImplementation(async (url: string) => {
+    if (url.startsWith('/reports/farrowing/farms')) return { data: [{ farm_id: 'farm-1', farm_code: 'GRS', farm_name: 'Grasmere', company_id: 'co-1' }] };
+    if (url.startsWith('/reports/farrowing/filters')) {
+      return { data: { batches: [
+        { batch_id: 'b-active', batch_no: 'BATCH-A', status: 'ACTIVE' },
+        { batch_id: 'b-closed', batch_no: 'BATCH-C', status: 'CLOSED' },
+      ], sows: [] } };
+    }
+    return { data: report };
+  });
+});
+
+async function pick(label: string, option: string) {
+  const trigger = await screen.findByRole('button', { name: label });
+  await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(trigger);
+  fireEvent.click(await screen.findByRole('option', { name: option }));
+}
+
+async function setDates() {
+  fireEvent.change(screen.getByLabelText(/rptDateFrom/), { target: { value: '2026-10-01' } });
+  fireEvent.change(screen.getByLabelText(/rptDateTo/), { target: { value: '2026-10-31' } });
+}
+
+const reportCalls = () => get.mock.calls.map(([url]) => String(url)).filter((url) => url.startsWith('/reports/farrowing?'));
+
+// Rishi, 2 Nov: a Batch Type filter — All, Active or Closed.
+describe('Farrowing Report — Batch Type', () => {
+  it('sends no batch status for All, and ACTIVE or CLOSED when chosen', async () => {
+    render(<FarrowingReportPanel />);
+    await setDates();
+    fireEvent.click(await screen.findByRole('button', { name: 'rptGenerate' }));
+    await waitFor(() => expect(reportCalls()).toHaveLength(1));
+    expect(reportCalls()[0]).not.toContain('batchStatus');
+    await pick('rptBatchType', 'rptBatchTypeClosed');
+    fireEvent.click(screen.getByRole('button', { name: 'rptRegenerate' }));
+    await waitFor(() => expect(reportCalls()).toHaveLength(2));
+    expect(reportCalls()[1]).toContain('batchStatus=CLOSED');
+  });
+
+  it('offers only batches of the chosen type, and clears a chosen batch of the other type', async () => {
+    render(<FarrowingReportPanel />);
+    await pick('rptBatch', 'BATCH-C');
+    await pick('rptBatchType', 'rptBatchTypeActive');
+    expect(screen.getByRole('button', { name: 'rptBatch' }).textContent).not.toContain('BATCH-C');
+    fireEvent.click(screen.getByRole('button', { name: 'rptBatch' }));
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(expect.arrayContaining(['BATCH-A']));
+    expect(screen.queryByRole('option', { name: 'BATCH-C' })).toBeNull();
+  });
+});
+
+// Rishi, 2 Nov: Generate, then Generated while the filters match the report shown, then Regenerate once one changes.
+describe('Farrowing Report — Generate button', () => {
+  it('reads Generate, then Generated, then Regenerate after a filter changes, and Generated again after it reruns', async () => {
+    render(<FarrowingReportPanel />);
+    await setDates();
+    fireEvent.click(await screen.findByRole('button', { name: 'rptGenerate' }));
+    const generated = await screen.findByRole('button', { name: 'rptGenerated' });
+    expect((generated as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(/rptDateTo/), { target: { value: '2026-10-30' } });
+    const regenerate = screen.getByRole('button', { name: 'rptRegenerate' });
+    expect((regenerate as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(regenerate);
+    expect(await screen.findByRole('button', { name: 'rptGenerated' })).toBeTruthy();
+    // Putting the filter back to what the report shows needs no rerun.
+    fireEvent.change(screen.getByLabelText(/rptDateTo/), { target: { value: '2026-10-31' } });
+    expect(screen.getByRole('button', { name: 'rptRegenerate' })).toBeTruthy();
+  });
+});

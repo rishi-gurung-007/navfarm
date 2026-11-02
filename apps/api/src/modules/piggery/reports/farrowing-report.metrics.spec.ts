@@ -4,6 +4,7 @@ import {
   FarrowingRow,
   isEmptyPeriod,
   minusOneYear,
+  selectReportBatches,
   SowWeightRow,
   targetsFromLifecycle,
   WeanedRow,
@@ -285,5 +286,23 @@ describe('weaning columns', () => {
     expect(
       isEmptyPeriod(computeFarrowingMetrics([], [], [], '2026-03-31')),
     ).toBe(true);
+  });
+});
+
+// Rishi, 2 Nov: Batch Type — All, Active or Closed — narrows the batches the report covers, as the Batch filter does.
+describe('selectReportBatches', () => {
+  const batches = [
+    { batch_id: 'b1', batch_no: 'B-1', status: 'ACTIVE' },
+    { batch_id: 'b2', batch_no: 'B-2', status: 'CLOSED' },
+    { batch_id: 'b3', batch_no: 'B-3', status: 'ACTIVE' },
+  ];
+  it('keeps every batch for All, or only the Active or Closed ones', () => {
+    expect(selectReportBatches(batches, {}).map((b) => b.batch_id)).toEqual(['b1', 'b2', 'b3']);
+    expect(selectReportBatches(batches, { batchStatus: 'ACTIVE' }).map((b) => b.batch_id)).toEqual(['b1', 'b3']);
+    expect(selectReportBatches(batches, { batchStatus: 'CLOSED' }).map((b) => b.batch_id)).toEqual(['b2']);
+  });
+  it('applies both a chosen batch and the type: a batch of the other type leaves nothing', () => {
+    expect(selectReportBatches(batches, { batchId: 'b2', batchStatus: 'CLOSED' }).map((b) => b.batch_id)).toEqual(['b2']);
+    expect(selectReportBatches(batches, { batchId: 'b2', batchStatus: 'ACTIVE' })).toEqual([]);
   });
 });

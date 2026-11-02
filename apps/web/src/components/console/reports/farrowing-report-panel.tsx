@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { FileDown, Loader2, Play } from 'lucide-react';
+import { Check, FileDown, Loader2, Play, RefreshCw } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { getActiveCompanyId, getActiveFarmId } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -70,6 +70,8 @@ export default function FarrowingReportPanel() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [batchId, setBatchId] = useState('');
+  // Rishi, 2 Nov: Batch Type — All, Active or Closed batches.
+  const [batchStatus, setBatchStatus] = useState<'ALL' | 'ACTIVE' | 'CLOSED'>('ALL');
   const [parity, setParity] = useState('');
   const [sowId, setSowId] = useState('');
   const [options, setOptions] = useState<{ batches: Row[]; sows: Row[] }>({
@@ -78,6 +80,8 @@ export default function FarrowingReportPanel() {
   });
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [report, setReport] = useState<FarrowingReport | null>(null);
+  /** The filters the shown report was generated with: the button reads Generated while they still match. */
+  const [generatedKey, setGeneratedKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
@@ -113,6 +117,15 @@ export default function FarrowingReportPanel() {
   }, [farmId, companyId]);
 
   const ready = Boolean(farmId && dateFrom && dateTo);
+  const filtersKey = JSON.stringify([farmId, dateFrom, dateTo, batchStatus, batchId, parity, sowId]);
+  const upToDate = !!report && generatedKey === filtersKey;
+  // The batch picker offers only batches of the chosen type; a chosen batch of the other type is cleared.
+  const batchOptions = batchStatus === 'ALL' ? options.batches : options.batches.filter((b) => b.status === batchStatus);
+  const chooseBatchStatus = (value: string) => {
+    const next = (value || 'ALL') as 'ALL' | 'ACTIVE' | 'CLOSED';
+    setBatchStatus(next);
+    if (next !== 'ALL' && batchId && options.batches.find((b) => b.batch_id === batchId)?.status !== next) setBatchId('');
+  };
 
   const generate = async () => {
     if (!ready) return;
@@ -126,12 +139,15 @@ export default function FarrowingReportPanel() {
       const qs = new URLSearchParams({ farmId, dateFrom, dateTo });
       if (companyId) qs.set('companyId', companyId);
       if (batchId) qs.set('batchId', batchId);
+      if (batchStatus !== 'ALL') qs.set('batchStatus', batchStatus);
       if (parity) qs.set('parity', parity);
       if (sowId) qs.set('sowId', sowId);
       const res = await api.get(`/reports/farrowing?${qs.toString()}`);
       setReport(unwrap<FarrowingReport>(res));
+      setGeneratedKey(filtersKey);
     } catch (err: any) {
       setReport(null);
+      setGeneratedKey(null);
       setError(err?.message || t('rptLoadFailed'));
     } finally {
       setLoading(false);
@@ -193,13 +209,27 @@ export default function FarrowingReportPanel() {
             style={S.input}
           />
         </Field>
+        <Field label={t('rptBatchType')}>
+          <SearchableSelect
+            ariaLabel={t('rptBatchType')}
+            value={batchStatus}
+            onChange={chooseBatchStatus}
+            options={[
+              { value: 'ALL', label: t('rptAll') },
+              { value: 'ACTIVE', label: t('rptBatchTypeActive') },
+              { value: 'CLOSED', label: t('rptBatchTypeClosed') },
+            ]}
+            valueKey="value"
+            labelKey="label"
+          />
+        </Field>
         <Field label={t('rptBatch')}>
           <SearchableSelect
             ariaLabel={t('rptBatch')}
             value={batchId}
             onChange={setBatchId}
             onClear={() => setBatchId('')}
-            options={options.batches}
+            options={batchOptions}
             valueKey="batch_id"
             getLabel={(r) => String(r.batch_no ?? '')}
             placeholder={t('rptAll')}
@@ -234,13 +264,18 @@ export default function FarrowingReportPanel() {
           />
         </Field>
         <div className="flex flex-wrap items-center gap-2 sm:col-span-2 lg:col-span-6">
-          <Button onClick={generate} disabled={!ready || loading} size="sm">
+          {/* Rishi, 2 Nov: Generate; Generated while the filters match the report shown; Regenerate once one changes. */}
+          <Button onClick={generate} disabled={!ready || loading || upToDate} size="sm">
             {loading ? (
               <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : upToDate ? (
+              <Check className="mr-1.5 h-4 w-4" />
+            ) : report ? (
+              <RefreshCw className="mr-1.5 h-4 w-4" />
             ) : (
               <Play className="mr-1.5 h-4 w-4" />
             )}
-            {t('rptGenerate')}
+            {t(upToDate ? 'rptGenerated' : report ? 'rptRegenerate' : 'rptGenerate')}
           </Button>
           <Button
             variant="outline"
@@ -283,6 +318,9 @@ export default function FarrowingReportPanel() {
             <span>
               <strong style={S.primary}>{report.farm.farm_name}</strong> ·{' '}
               {report.filters.date_from} – {report.filters.date_to}
+              {report.filters.batch_status
+                ? ` · ${t(report.filters.batch_status === 'ACTIVE' ? 'rptBatchTypeActive' : 'rptBatchTypeClosed')}`
+                : ''}
               {report.filters.batch_no
                 ? ` · ${t('rptBatch')} ${report.filters.batch_no}`
                 : ''}

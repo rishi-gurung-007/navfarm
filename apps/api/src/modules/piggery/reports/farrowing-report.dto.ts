@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsDateString,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -37,6 +38,14 @@ export class FarrowingReportQueryDto {
   @IsOptional()
   @IsUUID()
   batchId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Batch Type (Rishi, 2 Nov): only Active or only Closed batches; omitted for all',
+    enum: ['ACTIVE', 'CLOSED'],
+  })
+  @IsOptional()
+  @IsIn(['ACTIVE', 'CLOSED'])
+  batchStatus?: 'ACTIVE' | 'CLOSED';
 
   @ApiPropertyOptional({
     description: 'Parity at farrowing — the litter number',
