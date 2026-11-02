@@ -113,7 +113,7 @@ describe('RequisitionNewDialog (D26)', () => {
     await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition', {
       farmId: 'farm-vil',
       requisition_date: todayIso(),
-      lines: [{ destination_location_id: 's1', item_id: 'i1', quantity_kg: 3000, proposed_delivery_date: '2099-10-01' }],
+      lines: [{ destination_location_id: 's1', item_id: 'i1', quantity_kg: 3000, proposed_delivery_date: '2099-10-01', priority_no: 1 }],
     }));
     expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ requisition_id: 'req-9' }));
   });
@@ -396,7 +396,7 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
     expect(headers).toEqual([
       'rqdColLineNo', 'rqdColSilo', 'rqdColItemNo', 'rqdColItemDesc', 'rqdColFeedType', 'rqdColNextDiet',
       'rqdColDaysBefore', 'rqdColLifecycle', 'rqdColSystemBalance', 'rqdColDaily', 'rqdColDaysRemaining',
-      'rqdColRecommended', 'rqdColRequested', 'rqdColBags', 'rqdColDelivery', 'rqnColException', '',
+      'rqdColRecommended', 'rqdColRequested', 'rqdColBags', 'rqdColDelivery', 'rqdColPriorityNo', 'rqnColException', '',
     ]);
     const rows = within(table).getAllByRole('row').slice(1);
     expect(rows).toHaveLength(2);
@@ -454,10 +454,33 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
       requisition_date: todayIso(),
       remarks: 'Urgent',
       lines: [
-        { destination_location_id: 's1', item_id: 'i1', quantity_kg: 3000, proposed_delivery_date: '2099-10-05' },
-        { destination_location_id: 'st', item_id: 'i1', quantity_kg: 500, proposed_delivery_date: '2099-10-02' },
+        { destination_location_id: 's1', item_id: 'i1', quantity_kg: 3000, proposed_delivery_date: '2099-10-05', priority_no: 1 },
+        { destination_location_id: 'st', item_id: 'i1', quantity_kg: 500, proposed_delivery_date: '2099-10-02', priority_no: 2 },
       ],
     }));
+  });
+
+  // Rishi, 2 Nov: a feed line carries the farm's Priority No. for the mill, numbered 1…N as lines are added.
+  it('numbers each new line\'s Priority No., lets the farm change or clear it, and refuses a number below 1', async () => {
+    render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'rqNewAddLine' }));
+    await waitForSearchable('rqNewDestination:{"line":1}');
+    await fillLine(1, 's1', '3000', '2099-10-05');
+    await fillLine(2, 'st', '500', '2099-10-02');
+    const first = screen.getByLabelText('rqNewPriorityNo:{"line":1}') as HTMLInputElement;
+    const second = screen.getByLabelText('rqNewPriorityNo:{"line":2}') as HTMLInputElement;
+    expect([first.value, second.value]).toEqual(['1', '2']);
+    fireEvent.change(first, { target: { value: '0' } });
+    expect((screen.getByRole('button', { name: 'rqNewCreate' }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(first, { target: { value: '3' } });
+    fireEvent.change(second, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'rqNewCreate' }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition', expect.objectContaining({
+      lines: [
+        { destination_location_id: 's1', item_id: 'i1', quantity_kg: 3000, proposed_delivery_date: '2099-10-05', priority_no: 3 },
+        { destination_location_id: 'st', item_id: 'i1', quantity_kg: 500, proposed_delivery_date: '2099-10-02' },
+      ],
+    })));
   });
   // Fix round 1: Feed Type follows the server's feedTypeOf — location_master.feed_in_bags
   // first (true = BAGGED, false = BULK), the location type only when it is null.

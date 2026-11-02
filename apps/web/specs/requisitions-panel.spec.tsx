@@ -389,7 +389,6 @@ describe('RequisitionsPanel (D26)', () => {
       'reqDocItem',
       'reqTypeForecast',
       'reqStatusAutoDraft',
-      'prioCritical',
       '23/09/99',
       '26/09/99',
       '2',
@@ -447,7 +446,7 @@ describe('RequisitionsPanel (D26)', () => {
       within(lines.querySelector('thead') as HTMLElement).getAllByRole(
         'columnheader',
       ),
-    ).toHaveLength(25); // W1 (10 Oct): + Shipped, Received, Outstanding; W2R: + Mill Loading Bin; 28 Oct: + Priority per line; 30 Oct: + Priority No.
+    ).toHaveLength(24); // W1 (10 Oct): + Shipped, Received, Outstanding; W2R: + Mill Loading Bin; 30 Oct: + Priority No.; 2 Nov: − Priority (Rishi)
     expect(within(lines).getAllByText('reqFeedBulk')).toHaveLength(2);
     expect(
       screen.getByRole('table', { name: 'rqdBreakdownLabel:{"line":20000}' }),

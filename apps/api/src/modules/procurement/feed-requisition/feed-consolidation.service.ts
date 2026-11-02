@@ -32,21 +32,18 @@ export function sheetForecastDays(today: string, deliveryDates: Array<string | n
   return Math.min(SHEET_FORECAST_MAX_DAYS, Math.max(SHEET_FORECAST_DAYS, toLatest));
 }
 
-// Requisition §1 row 34's priorities (feed-requisition.rules.ts), most urgent first.
-const PRIORITY_RANK: Record<string, number> = { CRITICAL_FIRST_PRIORITY: 0, CRITICAL: 1, WARNING: 2, INFO: 3 };
 /**
  * Most urgent first: the earliest shortage, then the fewest days left, then the farm's Priority No. (1 first; a line
- * without one after those with one), then priority, then the delivery date asked for.
+ * without one after those with one), then the delivery date asked for. A feed line has no priority level (Rishi, 2 Nov).
  */
 export function byUrgency(
-  a: { first_shortage_date: string | null; days_remaining: number | null; priority_no?: number | null; priority: string | null; proposed_delivery_date: string | null; req_no: string },
-  b: { first_shortage_date: string | null; days_remaining: number | null; priority_no?: number | null; priority: string | null; proposed_delivery_date: string | null; req_no: string },
+  a: { first_shortage_date: string | null; days_remaining: number | null; priority_no?: number | null; proposed_delivery_date: string | null; req_no: string },
+  b: { first_shortage_date: string | null; days_remaining: number | null; priority_no?: number | null; proposed_delivery_date: string | null; req_no: string },
 ): number {
   const last = '9999-12-31';
   return (a.first_shortage_date ?? last).localeCompare(b.first_shortage_date ?? last)
     || (a.days_remaining ?? Number.POSITIVE_INFINITY) - (b.days_remaining ?? Number.POSITIVE_INFINITY)
     || (a.priority_no ?? Number.POSITIVE_INFINITY) - (b.priority_no ?? Number.POSITIVE_INFINITY)
-    || (PRIORITY_RANK[a.priority ?? ''] ?? 9) - (PRIORITY_RANK[b.priority ?? ''] ?? 9)
     || String(a.proposed_delivery_date ?? last).localeCompare(String(b.proposed_delivery_date ?? last))
     || a.req_no.localeCompare(b.req_no);
 }
@@ -249,7 +246,6 @@ export class FeedConsolidationService {
     const lineIds = rows.map((r) => r.line_id);
     const stored = await this.db.select({
       line_id: L.line_id,
-      priority: L.priority,
       priority_no: L.priority_no,
       requisition_type: R.requisition_type,
       system_balance_kg: L.system_balance_kg,
@@ -373,7 +369,7 @@ export class FeedConsolidationService {
         : [];
       const deliveryDayStockKg = today && isSilo && delivery ? stockOf(row, delivery) : null;
       const base = {
-        ...row, priority: s?.priority ?? null, priority_no: s?.priority_no ?? null, silo_capacity_kg: capacityKg, batches: batchesByLine.get(row.line_id) ?? [],
+        ...row, priority_no: s?.priority_no ?? null, silo_capacity_kg: capacityKg, batches: batchesByLine.get(row.line_id) ?? [],
         lifecycle_ref_label: s?.lifecycle_ref_id ? lifecycleLabelOf.get(s.lifecycle_ref_id) ?? null : null,
         days_before_diet_change: s?.days_before_diet_change ?? null,
         forecast_days: forecastDays,

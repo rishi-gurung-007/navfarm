@@ -33,7 +33,7 @@ import { formatDateShort } from "@/utils/date-short";
 import { unwrap } from "./feed-format";
 import { FeedFarmSelect, feedFarmLabel } from "./feed-farm-select";
 import { RequisitionDecision, decisionTargetOf } from "../requisitions/requisition-decision";
-import { DOC_TYPE_LABEL, PRIORITY_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, labelOf, variantOf } from "./requisition-labels";
+import { DOC_TYPE_LABEL, REQ_STATUS_LABEL, REQ_TYPE_LABEL, labelOf, variantOf } from "./requisition-labels";
 import { FeedRequisitionDetail } from "./feed-requisition-detail";
 import { FeedRequisitionFromRunDialog } from "./feed-requisition-from-run-dialog";
 import { FeedConsolidationDialog } from "./feed-consolidation-dialog";
@@ -61,7 +61,6 @@ interface ListRow {
   status: string;
   document_status?: string | null;
   fulfilment_status?: string | null;
-  priority: string | null;
   required_date: string | null;
   submission_deadline: string | null;
   line_count: number;
@@ -75,7 +74,7 @@ interface ListRow {
 // A1/W2R (10 Oct): the API reads RELEASED from document_status and SHIPPED / RECEIVED from fulfilment_status
 // (feedListStatusFilter); every other value from requisition.status.
 const STATUS_FILTER = ["AUTO_DRAFT", "DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED", "IN_CONSOLIDATION", "RELEASED", "SHIPPED", "RECEIVED"];
-const LIST_COLUMNS = ["rqColReqNo", "rhColFarm", "rqColType", "rqColSource", "rqColStatus", "rqColPriority", "rqColRequiredBy", "rqColDeadline", "rqColLines", "rqColKg"] as const;
+const LIST_COLUMNS = ["rqColReqNo", "rhColFarm", "rqColType", "rqColSource", "rqColStatus", "rqColRequiredBy", "rqColDeadline", "rqColLines", "rqColKg"] as const;
 const RIGHT = new Set<string>(["rqColLines", "rqColKg"]);
 
 const num = (v: string | number | null | undefined) => (v === null || v === undefined || v === "" ? null : Number(v));
@@ -327,7 +326,6 @@ export function FeedRequisitionPanel() {
                 <td className={TD}>{labelOf(DOC_TYPE_LABEL, "ITEM", t)}</td>
                 <td className={TD}>{labelOf(REQ_TYPE_LABEL, r.requisition_type, t)}</td>
                 <td className={TD}><StatusDot variant={variantOf(REQ_STATUS_LABEL, workflowStatus(r))}>{labelOf(REQ_STATUS_LABEL, workflowStatus(r), t)}</StatusDot></td>
-                <td className={TD}>{r.priority ? <StatusDot variant={variantOf(PRIORITY_LABEL, r.priority)}>{labelOf(PRIORITY_LABEL, r.priority, t)}</StatusDot> : unavailable}</td>
                 <td className={TD}>{formatDateShort(r.required_date)}</td>
                 <td className={TD}>{formatDateShort(r.submission_deadline)}</td>
                 <td className={cn(TD, NUM)}>{r.line_count}</td>

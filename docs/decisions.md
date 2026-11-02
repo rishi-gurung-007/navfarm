@@ -4475,3 +4475,22 @@ Overrides checkpoint 16 ("any exception requires approved reason") and Requisiti
 - A requisition from a saved calculation stores that run's System Balance, Daily Requirement, Days Remaining,
   first shortage, next-diet figures and Breed Lifecycle Row (`runLineEvidence`; the row is the `lifecycleId` in
   the first day's run-line provenance). Its form also shows each silo's capacity.
+
+## 2 Nov 2026 — A feed requisition line carries Priority No. only, no priority level (Rishi)
+
+Overrides Requisition and Loading Sheet r34 ("Priority — Dropdown, Auto … Yes - can escalate") and the
+A1 (10 Oct) escalation control, by Rishi's ruling on 2 Nov: the priority on a feed line is the farm's own
+order, for the mill manager to see on the Mill Consolidation sheet.
+
+- **Priority No.** (`requisition_line.priority_no`, 0214): 1 first, blank for none. The New feed requisition
+  dialog numbers each line 1…N as it is added and the farm may change or clear it, as the From-calculation form
+  does (that form numbers by delivery date). Stored on create; shown on the requisition and the sheet.
+- **No priority level** on a feed line: nothing sets `requisition_line.priority` any more, the escalate control
+  is gone, and the list, the requisition, the sheet and their APIs no longer show or return it. The column is
+  kept (not dropped) with what earlier lines and migration 0216 stored; nothing reads it.
+- **Sheet order:** earliest shortage, then fewest days left, then Priority No., then the delivery date asked for.
+- **Approval urgency** is worked out when the requisition is submitted (`approvalUrgency`): HIGH when a line's
+  silo is at or below its Below Feed Level KG (its stored System Balance) or its first shortage is under 3 days
+  from the submit date; otherwise MEDIUM. It is never shown or stored as a line field.
+- Feed alerts keep their own priority levels (Alerts and Notifications Master r49); this ruling is about the
+  requisition line only. Common (Item, Fixed Asset, Service) requisitions never used the line priority.

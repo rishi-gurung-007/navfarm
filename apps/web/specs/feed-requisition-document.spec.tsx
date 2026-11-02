@@ -488,34 +488,17 @@ describe("FeedRequisitionDocument silo changeover warning (checkpoint 5)", () =>
   });
 });
 
-// W5C, Req r34: each line's priority can be escalated from the document, never lowered (0212: row 34 is per line).
-describe("FeedRequisitionDocument line priority control (Req r34)", () => {
-  const withPriority = (priority: string, options?: string[]) => ({
+// Rishi, 2 Nov: a feed line has no priority level; only the farm's Priority No. is shown, for the mill.
+describe("FeedRequisitionDocument line priority (Rishi, 2 Nov)", () => {
+  const withPriority = (priority: string) => ({
     ...view,
-    lines: view.lines.map((l: any, i: number) => (i === 0 ? { ...l, priority, priority_options: options } : l)),
-  });
-  const pick = (name: string) => {
-    fireEvent.click(screen.getByRole("button", { name }));
-    return screen.getAllByRole("option");
-  };
-
-  it("offers only the line's saved level and higher ones, and reports the choice for that line", () => {
-    const onLineEdit = jest.fn();
-    render(<FeedRequisitionDocument view={withPriority("WARNING", ["CRITICAL_FIRST_PRIORITY", "CRITICAL", "WARNING"])} editable onLineEdit={onLineEdit} onRemarksChange={jest.fn()} />);
-    const options = pick("Priority, line 10000");
-    expect(options).toHaveLength(3);
-    fireEvent.click(options[1]);
-    expect(onLineEdit).toHaveBeenCalledWith("L1", { priority: "CRITICAL" });
+    lines: view.lines.map((l: any, i: number) => (i === 0 ? { ...l, priority, priority_no: 2 } : l)),
   });
 
-  it("offers exactly the levels the API lists for the line (no copy of the order in the web)", () => {
-    render(<FeedRequisitionDocument view={withPriority("WARNING", ["CRITICAL", "WARNING"])} editable onLineEdit={jest.fn()} onRemarksChange={jest.fn()} />);
-    expect(pick("Priority, line 10000")).toHaveLength(2);
-  });
-
-  it("stays a plain badge when read-only, and the header has no priority", () => {
-    render(<FeedRequisitionDocument view={withPriority("WARNING", ["CRITICAL", "WARNING"])} editable={false} />);
+  it("shows Priority No. and no priority column or control, even for a level stored on an older line", () => {
+    render(<FeedRequisitionDocument view={withPriority("WARNING")} editable onLineEdit={jest.fn()} onRemarksChange={jest.fn()} />);
+    expect(screen.getAllByText(en.rqdColPriorityNo).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Priority, line 10000" })).toBeNull();
-    expect(Array.from(document.querySelectorAll(".nf-text-label")).map((e) => e.textContent)).not.toContain(en.rqdPriority);
+    expect(screen.queryByText(en.prioWarning)).toBeNull();
   });
 });

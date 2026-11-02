@@ -217,8 +217,8 @@ describe('FeedRequisitionService.submit (D25)', () => {
     const { service, as, writes, evaluated } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW], VIEW]],
       [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
-      // linesForCheck, then the lines' priorities (row 34 is per line) the approval's urgency follows.
-      [schema.requisitionLine, [[LINE_6000], [{ priority: 'CRITICAL' }], []]],
+      // linesForCheck, then the lines' stored balance and shortage the approval's urgency is worked out from.
+      [schema.requisitionLine, [[LINE_6000], [{ location_type: 'SILO', low_level_kg: '1500.00', system_balance_kg: '1200.0000', first_shortage_date: null }], []]],
       [schema.approvalRequest, [[]]],
     ]));
     const view = await as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', {}, 'tenant-1', ADMIN));
@@ -430,64 +430,24 @@ describe('A1 (10 Oct) — checkpoint 16 and Requisition row 34 on submit and edi
     expect(writes()).toEqual([]);
   });
 
-  // Row 34 lives on each line (0212): the farm escalates a line, never lowers it.
-  const EDIT_LINE = { line_id: 'line-1', line_seq: 10000, feed_type: 'BULK', quantity: '6000.0000', item_id: 'item-1', destination_location_id: 'silo-1', lifecycle_ref_id: null, description: 'Weaner Diet R1' };
-
-  it('lets the farm escalate the priority of a line it may edit', async () => {
+  // Rishi, 2 Nov: a feed line has no priority level; the approval's urgency is worked out at submit from what the lines stored.
+  const urgencyRow = (over: Record<string, unknown>) => ({ location_type: 'SILO', low_level_kg: '1500.00', system_balance_kg: '5000.0000', first_shortage_date: null, ...over });
+  const submitWith = async (urgencyRows: unknown[]) => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW], VIEW]],
       [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
-      [schema.requisitionLine, [[{ ...EDIT_LINE, priority: 'WARNING' }]]],
-    ]));
-    await as(COMPANY_ADMIN_SCOPE, () => service.update('req-1', { lines: [{ line_id: 'line-1', priority: 'CRITICAL' }] }, 'tenant-1', ADMIN));
-    expect(writes().find((e) => e.op === 'update' && e.table === schema.requisitionLine)!.set).toMatchObject({ priority: 'CRITICAL' });
-    expect(writes().find((e) => e.op === 'update' && e.table === schema.requisition)!.set).not.toHaveProperty('priority');
-  });
-
-  it('refuses to lower a line\'s priority, writing nothing', async () => {
-    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
-      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW]]],
-      [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
-      [schema.requisitionLine, [[{ ...EDIT_LINE, priority: 'CRITICAL' }]]],
-    ]));
-    await expect(as(COMPANY_ADMIN_SCOPE, () => service.update('req-1', { lines: [{ line_id: 'line-1', priority: 'INFO' }] }, 'tenant-1', ADMIN)))
-      .rejects.toThrow('Line 10000: Priority can only be escalated (Requisition row 34): Critical cannot be lowered to Info.');
-    expect(writes()).toEqual([]);
-  });
-
-  it('will not change a line\'s priority on a requisition waiting for approval', async () => {
-    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
-      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [PENDING_ROW]]],
-      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
-    ]));
-    await expect(as(COMPANY_ADMIN_SCOPE, () => service.update('req-1', { lines: [{ line_id: 'line-1', priority: 'CRITICAL_FIRST_PRIORITY' }] }, 'tenant-1', ADMIN)))
-      .rejects.toThrow(/can no longer be changed/);
-    expect(writes()).toEqual([]);
-  });
-
-  it('applies an escalated line priority inside submit, in the same transaction, and the approval urgency follows the most urgent line', async () => {
-    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
-      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW], VIEW]],
-      [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM], [FARM]]],
-      [schema.requisitionLine, [[{ ...EDIT_LINE, priority: 'WARNING' }], [LINE_6000], [{ priority: 'CRITICAL' }, { priority: 'INFO' }], []]],
+      [schema.requisitionLine, [[LINE_6000], urgencyRows, []]],
       [schema.approvalRequest, [[]]],
     ]));
-    await as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', { lines: [{ line_id: 'line-1', priority: 'CRITICAL' }] }, 'tenant-1', ADMIN));
-    const line = writes().find((e) => e.op === 'update' && e.table === schema.requisitionLine)!;
-    expect(line.set).toMatchObject({ priority: 'CRITICAL' });
-    expect(line.inTx).toBe(true);
-    expect(writes().find((e) => e.op === 'update' && e.table === schema.requisition)!.set).toMatchObject({ status: 'PENDING_APPROVAL' });
-    expect(writes().find((e) => e.op === 'insert' && e.table === schema.approvalRequest)!.values).toMatchObject({ urgency: 'HIGH' });
+    await as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', {}, 'tenant-1', ADMIN));
+    return writes().find((e) => e.op === 'insert' && e.table === schema.approvalRequest)!.values.urgency;
+  };
+
+  it('sends HIGH when a line\'s first shortage is under 3 days from submit', async () => {
+    expect(await submitWith([urgencyRow({ first_shortage_date: addDaysIso(TODAY, 2) }), urgencyRow({ first_shortage_date: addDaysIso(TODAY, 20) })])).toBe('HIGH');
   });
 
-  it('refuses a lowering line priority on submit, writing nothing', async () => {
-    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
-      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW]]],
-      [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
-      [schema.requisitionLine, [[{ ...EDIT_LINE, priority: 'CRITICAL' }]]],
-    ]));
-    await expect(as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', { lines: [{ line_id: 'line-1', priority: 'INFO' }] }, 'tenant-1', ADMIN)))
-      .rejects.toThrow('Priority can only be escalated');
-    expect(writes()).toEqual([]);
+  it('sends MEDIUM when every silo is above its low level and the first shortage is 3 days or more away', async () => {
+    expect(await submitWith([urgencyRow({ first_shortage_date: addDaysIso(TODAY, 3) }), urgencyRow({ location_type: 'STORE', system_balance_kg: '0.0000' })])).toBe('MEDIUM');
   });
 });

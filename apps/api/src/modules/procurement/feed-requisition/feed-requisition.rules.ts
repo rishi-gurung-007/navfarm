@@ -425,41 +425,25 @@ export function isOffBulkMultiple(quantityKg: number, bulkMultipleKg: number): b
   return Math.abs(compartments - Math.round(compartments)) > 1e-6;
 }
 
-/** Requisition §1 row 34, highest first. */
-export const PRIORITY_ORDER: readonly Priority[] = ['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO'];
-const PRIORITY_WORDS: Record<Priority, string> = { CRITICAL_FIRST_PRIORITY: 'Critical first priority', CRITICAL: 'Critical', WARNING: 'Warning', INFO: 'Info' };
-
-/** A rerun may raise a stored priority but never lower it: the farm's escalation (row 34) outranks a recomputed one. */
-export function keepHigherPriority(stored: string | null | undefined, computed: Priority): Priority {
-  const s = PRIORITY_ORDER.indexOf(stored as Priority);
-  if (s < 0) return computed;
-  return s < PRIORITY_ORDER.indexOf(computed) ? (stored as Priority) : computed;
-}
-
-/** The most urgent of the lines' priorities (row 34 is per line), or null when none has one. */
-export function mostUrgentPriority(priorities: Array<string | null | undefined>): Priority | null {
-  const ranked = priorities
-    .map((p) => PRIORITY_ORDER.indexOf(p as Priority))
-    .filter((i) => i >= 0)
-    .sort((x, y) => x - y);
-  return ranked.length ? PRIORITY_ORDER[ranked[0]] : null;
-}
-
-/** The levels the farm may choose now: the saved one and every higher one, highest first (what priorityChangeProblem allows). */
-export function priorityEscalations(current: string | null | undefined): Priority[] {
-  const at = PRIORITY_ORDER.indexOf(current as Priority);
-  return at < 0 ? [] : PRIORITY_ORDER.slice(0, at + 1) as Priority[];
+/** One line as approvalUrgency reads it: the figures the requisition stored and its silo's low level. */
+export interface UrgencyLine {
+  isSilo: boolean;
+  systemBalanceKg: number | null;
+  lowLevelKg: number | null;
+  firstShortageDate: string | null;
 }
 
 /**
- * A1 (10 Oct), Requisition §1 row 34 "Yes - can escalate": the farm may raise
- * the priority the forecast set, never lower it. null when the change is allowed.
+ * Rishi, 2 Nov: a feed line has no priority level (only the farm's Priority No.), so the approval's urgency is
+ * worked out when the requisition is submitted, by requisitionPriority's rule against that day: HIGH when a silo
+ * is at or below its low level or the first shortage is under 3 days away, otherwise MEDIUM.
  */
-export function priorityChangeProblem(current: string | null | undefined, requested: Priority): string | null {
-  const from = PRIORITY_ORDER.indexOf(current as Priority);
-  if (from < 0) return null;
-  if (PRIORITY_ORDER.indexOf(requested) <= from) return null;
-  return `Priority can only be escalated (Requisition row 34): ${PRIORITY_WORDS[current as Priority]} cannot be lowered to ${PRIORITY_WORDS[requested]}.`;
+export function approvalUrgency(today: string, lines: UrgencyLine[]): 'HIGH' | 'MEDIUM' {
+  const level = requisitionPriority(today, lines.map((l) => ({
+    belowLowLevel: l.isSilo && l.lowLevelKg !== null && l.systemBalanceKg !== null && l.systemBalanceKg <= l.lowLevelKg,
+    firstShortageDate: l.firstShortageDate,
+  })));
+  return level === 'CRITICAL_FIRST_PRIORITY' || level === 'CRITICAL' ? 'HIGH' : 'MEDIUM';
 }
 
 /**

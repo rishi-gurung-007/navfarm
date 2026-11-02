@@ -231,8 +231,8 @@ describe('FeedRequisitionService.autoDraft', () => {
     expect(header.values).not.toHaveProperty('priority');
     expect(header.values.forecast_run_key).toMatch(/^RUN-GRS-\d{8}-\d{6}$/);
     const lines = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
-    // Task 3 carry: the silo's own low level (1,500 kg, balance 1,500) came through from the DB — first priority, on its line.
-    expect((lines.values as any[])[0]).toMatchObject({ priority: 'CRITICAL_FIRST_PRIORITY' });
+    // Rishi, 2 Nov: a feed line has no priority level; the approval's urgency is worked out at submit.
+    expect((lines.values as any[])[0]).not.toHaveProperty('priority');
     expect(lines.values).toEqual([expect.objectContaining({
       // Requisition §1 row 42: NAV-style 10000-step line numbering (Task 5), not a plain 1, 2, 3...
       line_seq: 10000, item_id: 'item-r1', destination_location_id: 'silo-1', quantity: '6000', recommended_qty_kg: '6000',
@@ -685,7 +685,8 @@ describe('FeedRequisitionService.autoDraft', () => {
     expect(header.values).toMatchObject({ required_date: planningDay });
     expect(header.values).not.toHaveProperty('priority');
     const lines = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
-    expect((lines.values as any[])[0]).toMatchObject({ destination_location_id: 'silo-1', priority: 'CRITICAL_FIRST_PRIORITY' });
+    expect((lines.values as any[])[0]).toMatchObject({ destination_location_id: 'silo-1' });
+    expect((lines.values as any[])[0]).not.toHaveProperty('priority');
     expect(lines.values).toEqual([
       expect.objectContaining({ destination_location_id: 'silo-1', system_balance_kg: '1500', unrounded_need_kg: '4500', proposed_delivery_date: future(2) }),
       expect.objectContaining({ destination_location_id: 'store-1', system_balance_kg: '850', unrounded_need_kg: '100', recommended_qty_kg: '100', proposed_delivery_date: planningDay }),
@@ -1016,7 +1017,7 @@ describe('FeedRequisitionService.createManual — row 9 across the cycle, number
     });
     expect(header.values).not.toHaveProperty('priority');
     const inserted = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
-    expect((inserted.values as any[])[0]).toMatchObject({ priority: 'CRITICAL_FIRST_PRIORITY' });
+    expect((inserted.values as any[])[0]).not.toHaveProperty('priority');
     expect(inserted.values[0]).toMatchObject({
       destination_location_id: 'silo-1', item_id: 'item-r1', quantity: '3000', proposed_delivery_date: '2026-09-30',
       system_balance_kg: '1500', daily_requirement_kg: '2000', days_remaining: '0', lifecycle_ref_id: 'row-r1',
@@ -1029,6 +1030,15 @@ describe('FeedRequisitionService.createManual — row 9 across the cycle, number
     await service.createManual({ lines: [{ ...manualLine, reason_id: 'reason-1' }] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
     const inserted = log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!;
     expect(inserted.values[0]).toMatchObject({ reason_id: 'reason-1' });
+  });
+
+  it("stores the farm's Priority No. on a manual feed line, and none when the farm gives none (Rishi, 2 Nov)", async () => {
+    const numbered = setup([source()], queuesWith([], []));
+    await numbered.service.createManual({ lines: [{ ...manualLine, priority_no: 2 }] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+    expect(numbered.log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!.values[0]).toMatchObject({ priority_no: 2 });
+    const plain = setup([source()], queuesWith([], []));
+    await plain.service.createManual({ lines: [manualLine] } as any, 'tenant-1', { userId: 'u-1', userType: 'COMPANY_ADMIN' });
+    expect(plain.log.find((e) => e.op === 'insert' && e.table === schema.requisitionLine)!.values[0]).toMatchObject({ priority_no: null });
   });
 
   it('accepts past and future requisition_date on manual requisition', async () => {

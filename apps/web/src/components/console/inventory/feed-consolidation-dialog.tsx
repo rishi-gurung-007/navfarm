@@ -12,7 +12,6 @@ import { showToast } from "@/components/ui/toast";
 import { unwrap } from "./feed-format";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { millCapacityText, formatKg, type MillCapacityState, type MillCapacityStatus } from "./mill-capacity-view";
-import { PRIORITY_LABEL, labelOf } from "./requisition-labels";
 import { formatDateShort } from "./feed-format";
 import { HoverHint } from "@/components/ui/hover-hint";
 
@@ -26,7 +25,7 @@ type EligibleLine = {
   /** Engine r42–r43 for the line's diet on its production date (Requisition and Loading Sheet r125). */
   mill_capacity_state?: MillCapacityState; mill_capacity_status?: MillCapacityStatus | null; mill_demand_kg?: number | null;
   /** What the mill ranks by (GET …/consolidations/eligible): stored from the calculation, or live for a manual requisition. */
-  priority?: string | null; priority_no?: number | null; figures_source?: "STORED" | "LIVE" | "NONE";
+  priority_no?: number | null; figures_source?: "STORED" | "LIVE" | "NONE";
   silo_capacity_kg?: number | null; system_balance_kg?: number | null; daily_requirement_kg?: number | null;
   days_remaining?: number | null; first_shortage_date?: string | null; recommended_qty_kg?: number | null;
   is_next_diet?: boolean; needs_silo_changeover?: boolean; exceeds_silo_capacity?: boolean;
@@ -169,7 +168,7 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
           <th scope="col" data-sticky-col="true" style={PIN("3rem")} className={`${TH} w-[3rem] min-w-[3rem] text-right`}>{t("fcdColRank")}</th>
           <th scope="col" data-sticky-col="true" style={PIN("6rem")} className={`${TH} w-[12rem] min-w-[12rem]`}>{t("fcdColReqNo")}</th>
           <th scope="col" data-sticky-col="last" style={PIN("18rem")} className={`${TH} w-[10rem] min-w-[10rem]`}>{t("fcdColFarm")}</th>
-          {th(t("fcdColPriority"))}{th(t("fcdColPriorityNo"), "text-right")}{th(t("fcdColFirstShortage"))}{th(t("fcdColDaysRemaining"), "text-right")}
+          {th(t("fcdColPriorityNo"), "text-right")}{th(t("fcdColFirstShortage"))}{th(t("fcdColDaysRemaining"), "text-right")}
           {th(t("fcdColLifecycle"), "min-w-52")}{th(t("fcdColDaysBeforeDiet"), "text-right")}
           {th(t("fcdColSiloCode"), "min-w-28")}{th(t("fcdColSiloName"), "min-w-40")}{th(t("fcdColSiloCapacity"), "text-right")}
           {th(t("fcdColSystemBalance"), "text-right")}{th(t("fcdColDailyUse"), "text-right")}
@@ -188,7 +187,6 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
             <td data-sticky-col="true" style={PIN("3rem")} className={`${TD} ${NUM} w-[3rem]`}>{index + 1}</td>
             <td data-sticky-col="true" style={PIN("6rem")} className={`${TD} w-[12rem] min-w-[12rem] whitespace-nowrap font-medium`}>{row.req_no}</td>
             <td data-sticky-col="last" style={PIN("18rem")} className={`${TD} w-[10rem] max-w-[10rem] truncate`} title={`${row.farm_code} — ${row.farm_name ?? ""}`}>{row.farm_code}<div className="truncate text-xs text-(--text-secondary)">{row.farm_name}</div></td>
-            <td className={`${TD} whitespace-nowrap`}>{row.priority ? labelOf(PRIORITY_LABEL, row.priority, t) : NA}</td>
             <td className={`${TD} ${NUM}`}>{row.priority_no ?? NA}</td>
             <td className={`${TD} whitespace-nowrap`}>{row.first_shortage_date ? formatDateShort(row.first_shortage_date) : row.figures_source === "NONE" ? NA : t("fcdNoShortage")}</td>
             <td className={`${TD} ${NUM}`}>{row.days_remaining == null ? NA : Number(row.days_remaining).toFixed(1)}</td>

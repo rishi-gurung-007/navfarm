@@ -207,17 +207,13 @@ describe('FeedRequisitionDetail draft document', () => {
     expect(showToast.success).toHaveBeenCalledWith('rqSaved');
   });
 
-  it('Submit sends an escalated line priority with the submit call, not as a separate PUT', async () => {
-    post.mockResolvedValue({ data: draftView });
+  it('shows Priority No. on each line and no priority level, even one stored on an older line (Rishi, 2 Nov)', async () => {
     render(
       <FeedRequisitionDetail
         view={{
           ...draftView,
-          submission_deadline: '2099-01-01',
           lines: draftView.lines.map((l: any, i: number) =>
-            i === 0
-              ? { ...l, priority: 'WARNING', priority_options: ['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING'] }
-              : l,
+            i === 0 ? { ...l, priority: 'WARNING', priority_no: 3 } : l,
           ),
         }}
         onView={jest.fn()}
@@ -225,19 +221,10 @@ describe('FeedRequisitionDetail draft document', () => {
       />,
     );
     await waitFor(() => expect(get).toHaveBeenCalled());
-    await act(async () => {
-      await Promise.resolve();
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'rqdPriorityFor:{"line":10000}' }));
-    fireEvent.click(screen.getAllByRole('option')[1]);
-    fireEvent.click(screen.getByRole('button', { name: 'rqSubmit' }));
-    await waitFor(() =>
-      expect(post).toHaveBeenCalledWith('/feed-requisition/req-1/submit', {
-        remarks: '',
-        lines: [{ line_id: 'L1', priority: 'CRITICAL' }],
-      }),
-    );
-    expect(put).not.toHaveBeenCalled();
+    expect(screen.getAllByText('rqdColPriorityNo').length).toBeGreaterThan(0);
+    expect(screen.queryByText('rqdColPriority')).toBeNull();
+    expect(screen.queryByText('prioWarning')).toBeNull();
+    expect(screen.queryByRole('button', { name: /rqdPriorityFor/ })).toBeNull();
   });
 
   it('renders no Save or Submit buttons once approved', () => {

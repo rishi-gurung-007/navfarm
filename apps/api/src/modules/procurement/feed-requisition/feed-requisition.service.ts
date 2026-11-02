@@ -105,19 +105,16 @@ import {
   projectedSiloStockKg,
   quantityProblems,
   planDraftUpsert,
-  keepHigherPriority,
   productionCycle,
   recommendLines,
   requiredItemForManualLine,
-  requisitionPriority,
   roundOrderKg,
   runKeyFor,
   serverToday,
   wasEdited,
   feedListStatusFilter,
-  priorityChangeProblem,
-  priorityEscalations,
-  mostUrgentPriority,
+  approvalUrgency,
+  type UrgencyLine,
 } from './feed-requisition.rules';
 import {
   AutoDraftFeedRequisitionDto,
@@ -188,6 +185,9 @@ function isDeadlock(error: unknown): boolean {
 
 const dec = (n: number | null | undefined) => (n == null ? null : String(n));
 /** approved_at / deleted_at in the one Plan B timestamp convention: UTC, as utcTimestamp documents in the engine. */
+/** A feed line has no priority level (Rishi, 2 Nov): the column is kept for history but never sent. */
+const withoutPriority = <T extends { priority?: unknown }>({ priority: _priority, ...rest }: T) => rest;
+
 const nowTs = () => utcTimestamp();
 /** A farm code is data, not a pattern: `_` or `%` in it must not widen the req_no LIKE. */
 const likePrefix = (prefix: string) =>
@@ -225,8 +225,6 @@ export function requisitionListFields() {
     status: R.status,
     document_status: R.document_status,
     fulfilment_status: R.fulfilment_status,
-    // The most urgent line's priority (row 34 lives on the lines): CFP, then CRITICAL, WARNING, INFO.
-    priority: sql<string | null>`(SELECT rl.priority FROM requisition_line rl WHERE rl.requisition_id = ${outer} AND rl.priority IS NOT NULL ORDER BY FIELD(rl.priority, 'CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING', 'INFO') LIMIT 1)`,
     required_date: R.required_date,
     submission_deadline: R.submission_deadline,
     created_at: R.created_at,
@@ -524,16 +522,14 @@ export class FeedRequisitionService implements OnModuleInit {
   }
 
   /**
-   * The draft-time snapshot columns of a line (Requisition §2). The line carries its own priority
-   * (row 34), worked out from its own shortage and low level, so the mill can prepare each feed in turn.
+   * The draft-time snapshot columns of a line (Requisition §2). A feed line has no priority level (Rishi,
+   * 2 Nov): the farm's Priority No. orders it for the mill, and approval urgency is worked out at submit.
    */
   private lineValues(
     line: DraftLine,
     forecastRunLineIds: string[] | null | undefined,
-    planningDate: string,
   ) {
     return {
-      priority: requisitionPriority(planningDate, [line]),
       item_id: line.itemId,
       description: line.itemName.slice(0, 200),
       uom: 'KG',
@@ -885,7 +881,6 @@ export class FeedRequisitionService implements OnModuleInit {
             location_name: schema.locationMaster.location_name,
             location_type: schema.locationMaster.location_type,
             feed_in_bags: schema.locationMaster.feed_in_bags,
-            low_level_kg: schema.locationMaster.low_level_kg,
           })
           .from(schema.locationMaster)
           .where(
@@ -978,13 +973,7 @@ export class FeedRequisitionService implements OnModuleInit {
                   .map((line) => ({ ...line, forecast_date: String(line.forecast_date) })),
                 String(run.planning_date),
               );
-              const lowLevelKg = destination?.low_level_kg == null ? null : Number(destination.low_level_kg);
               return {
-                // Requisition row 34, as lineValues gives a drafted line: below the silo's low level, else by shortage.
-                priority: requisitionPriority(String(run.planning_date), [{
-                  belowLowLevel: destination?.location_type !== 'STORE' && lowLevelKg !== null && evidence.systemBalanceKg <= lowLevelKg,
-                  firstShortageDate: evidence.firstShortageDate,
-                }]),
                 system_balance_kg: evidence.systemBalanceKg,
                 daily_requirement_kg: evidence.dailyRequirementKg,
                 days_remaining: evidence.daysRemaining,
@@ -1267,7 +1256,6 @@ export class FeedRequisitionService implements OnModuleInit {
               recommended_qty_kg: String(source.recommended_qty_kg),
               recommended_delivery_date: source.proposed_delivery_date,
               proposed_delivery_date: line.proposed_delivery_date,
-              priority: source.priority,
               priority_no: line.priority_no ?? null,
               // The forecast figures the saved run held for this line (runLineEvidence).
               system_balance_kg: dec(source.system_balance_kg),
@@ -1553,7 +1541,7 @@ export class FeedRequisitionService implements OnModuleInit {
                 line_seq: (i + 1) * 10000,
                 quantity: String(line.recommendedQtyKg),
                 quantity_edited: false,
-                ...this.lineValues(line, runLinesFor(line), forecast.planningDate),
+                ...this.lineValues(line, runLinesFor(line)),
               }));
               await this.db.insert(schema.requisitionLine).values(inserted);
               for (const [i, line] of plan.insert.entries())
@@ -1573,43 +1561,13 @@ export class FeedRequisitionService implements OnModuleInit {
                 .delete(schema.requisitionLine)
                 .where(inArray(schema.requisitionLine.line_id, plan.remove));
             }
-            // A rerun may raise a line's priority but never lower it: the farm's escalation outranks a recomputed one.
-            const priorPriority = new Map(
-              plan.update.length
-                ? (
-                    await this.db
-                      .select({
-                        line_id: schema.requisitionLine.line_id,
-                        priority: schema.requisitionLine.priority,
-                      })
-                      .from(schema.requisitionLine)
-                      .where(
-                        inArray(
-                          schema.requisitionLine.line_id,
-                          plan.update.map((u) => u.lineId),
-                        ),
-                      )
-                  ).map((l) => [l.line_id, l.priority])
-                : [],
-            );
             for (const u of plan.update) {
-              const {
-                proposed_delivery_date: draftedDate,
-                priority: draftedPriority,
-                ...refreshed
-              } = this.lineValues(
-                u.line,
-                runLinesFor(u.line),
-                forecast.planningDate,
-              );
+              const { proposed_delivery_date: draftedDate, ...refreshed } =
+                this.lineValues(u.line, runLinesFor(u.line));
               await this.db
                 .update(schema.requisitionLine)
                 .set({
                   ...refreshed,
-                  priority: keepHigherPriority(
-                    priorPriority.get(u.lineId),
-                    draftedPriority,
-                  ),
                   // Req. row 29: a date the farm moved is not written back; only the recommendation beside it is refreshed.
                   ...(u.keepDeliveryDate
                     ? {}
@@ -1662,7 +1620,7 @@ export class FeedRequisitionService implements OnModuleInit {
                 line_seq: maxSeq + (i + 1) * 10000,
                 quantity: String(line.recommendedQtyKg),
                 quantity_edited: false,
-                ...this.lineValues(line, runLinesFor(line), forecast.planningDate),
+                ...this.lineValues(line, runLinesFor(line)),
               }));
               await this.db.insert(schema.requisitionLine).values(appended);
               for (const [i, line] of plan.insert.entries())
@@ -2127,7 +2085,7 @@ export class FeedRequisitionService implements OnModuleInit {
                 );
                 return {
                   ...(evidence
-                    ? this.lineValues(evidence, null, demand.planningDate)
+                    ? this.lineValues(evidence, null)
                     : {}),
                   requisition_id: id,
                   // Requisition §1 row 42: the same NAV-style 10000-step convention the auto-drafted lines use.
@@ -2152,6 +2110,8 @@ export class FeedRequisitionService implements OnModuleInit {
                     farm.settings,
                   ),
                   proposed_delivery_date: line.proposed_delivery_date,
+                  // The farm's order for the mill (Rishi, 2 Nov), as the from-calculation form stores it.
+                  priority_no: line.priority_no ?? null,
                   quantity_edited: true,
                 };
               }),
@@ -3084,7 +3044,6 @@ export class FeedRequisitionService implements OnModuleInit {
             schema.requisitionLine.destination_location_id,
           lifecycle_ref_id: schema.requisitionLine.lifecycle_ref_id,
           description: schema.requisitionLine.description,
-          priority: schema.requisitionLine.priority,
         })
         .from(schema.requisitionLine)
         .where(
@@ -3098,12 +3057,6 @@ export class FeedRequisitionService implements OnModuleInit {
         throw new BadRequestException(
           `Line ${edit.line_id} is not on this requisition.`,
         );
-      // A1 (10 Oct), Requisition §1 row 34 "can escalate": whoever may edit the line may raise its priority.
-      if (edit.priority !== undefined) {
-        const problem = priorityChangeProblem(line.priority, edit.priority);
-        if (problem)
-          throw new BadRequestException(`Line ${line.line_seq}: ${problem}`);
-      }
       const target = await this.changeLineTarget(
         requisitionId,
         line,
@@ -3132,7 +3085,6 @@ export class FeedRequisitionService implements OnModuleInit {
           ...(edit.proposed_delivery_date
             ? { proposed_delivery_date: edit.proposed_delivery_date }
             : {}),
-          ...(edit.priority !== undefined ? { priority: edit.priority } : {}),
         })
         .where(eq(schema.requisitionLine.line_id, edit.line_id));
     }
@@ -3471,6 +3423,27 @@ export class FeedRequisitionService implements OnModuleInit {
     }));
   }
 
+  /** The lines' stored balance and first shortage, with their silo's low level, as approvalUrgency reads them. */
+  private async urgencyLines(requisitionId: string): Promise<UrgencyLine[]> {
+    const L = schema.locationMaster;
+    const rows = await this.db
+      .select({
+        location_type: L.location_type,
+        low_level_kg: L.low_level_kg,
+        system_balance_kg: schema.requisitionLine.system_balance_kg,
+        first_shortage_date: schema.requisitionLine.first_shortage_date,
+      })
+      .from(schema.requisitionLine)
+      .leftJoin(L, eq(L.location_id, schema.requisitionLine.destination_location_id))
+      .where(eq(schema.requisitionLine.requisition_id, requisitionId));
+    return rows.map((r) => ({
+      isSilo: !!r.location_type && r.location_type !== 'STORE',
+      systemBalanceKg: r.system_balance_kg == null ? null : Number(r.system_balance_kg),
+      lowLevelKg: r.low_level_kg == null ? null : Number(r.low_level_kg),
+      firstShortageDate: r.first_shortage_date ? String(r.first_shortage_date).slice(0, 10) : null,
+    }));
+  }
+
   /** linesForCheck as assertQuantityRules reads them. */
   private quantityLinesOf(lines: ApprovalLine[]) {
     return lines
@@ -3506,15 +3479,6 @@ export class FeedRequisitionService implements OnModuleInit {
         const row = await this.lockOpen(id, tenantId, farmId, companyId);
         await this.applyLineEdits(id, dto.lines, farmId, companyId, tenantId);
         const lines = await this.linesForCheck(id);
-        // The approval's urgency follows the most urgent line (row 34 lives on the lines).
-        const priority = mostUrgentPriority(
-          (
-            await this.db
-              .select({ priority: schema.requisitionLine.priority })
-              .from(schema.requisitionLine)
-              .where(eq(schema.requisitionLine.requisition_id, id))
-          ).map((l) => l.priority),
-        );
         const remarks =
           dto.remarks !== undefined
             ? dto.remarks?.trim() || null
@@ -3537,10 +3501,8 @@ export class FeedRequisitionService implements OnModuleInit {
             farmId,
             companyId,
             title: `Feed requisition ${row.req_no}`,
-            urgency:
-              priority === 'CRITICAL_FIRST_PRIORITY' || priority === 'CRITICAL'
-                ? 'HIGH'
-                : 'MEDIUM',
+            // Rishi, 2 Nov: no line priority; the urgency is worked out now from what the lines stored.
+            urgency: approvalUrgency(today, await this.urgencyLines(id)),
             itemOrStage: 'Feed',
             requestedQty: totalKg.toLocaleString('en-US', {
               maximumFractionDigits: 2,
@@ -4555,8 +4517,6 @@ export class FeedRequisitionService implements OnModuleInit {
       approval_status: approvalStatus,
       document_status: documentStatus,
       fulfilment_status: fulfilmentStatus,
-      // Row 34 is per line now; the header shows the most urgent line's, derived, never stored.
-      priority: mostUrgentPriority(lines.map((l) => l.line.priority)),
       actions: {
         release: { enabled: releaseEnabled, reason: releaseReason },
         shipment: {
@@ -4615,9 +4575,9 @@ export class FeedRequisitionService implements OnModuleInit {
         forecast_run_no:
           row.forecast_run_no ?? row.req.forecast_run_key ?? null, // Engine Step 9 "Preserve run ID"
       },
+      // A feed line has no priority level (Rishi, 2 Nov); the column stays for history and is not shown.
       lines: lines.map((l) => ({
-        ...l.line,
-        priority_options: priorityEscalations(l.line.priority),
+        ...withoutPriority(l.line),
         item_code: l.item_code,
         item_name: l.item_name,
         item_description: l.item_name ?? null,

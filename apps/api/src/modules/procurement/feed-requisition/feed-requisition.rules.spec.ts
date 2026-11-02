@@ -3,7 +3,7 @@ import { buildFeedForecast, type ForecastInput, type ForecastSource } from '../.
 import {
   DEFAULT_FEED_SETTINGS, DestinationInfo, approvalProblems, bagCountFor, buildLineBreakdown, deliveryDateNeedsRemarks, lineChangeProblems, deviationNeedsRemarks, feedTypeOf, planDraftUpsert,
   productionCycle, recommendLines, requiredItemForManualLine, requisitionPriority, roundOrderKg, runKeyFor, serverToday,
-  feedListStatusFilter, isOffBulkMultiple, projectedSiloStockKg, quantityProblems, keepHigherPriority, priorityChangeProblem, priorityEscalations,
+  feedListStatusFilter, isOffBulkMultiple, projectedSiloStockKg, quantityProblems, approvalUrgency,
 } from './feed-requisition.rules';
 
 const S = DEFAULT_FEED_SETTINGS;
@@ -539,26 +539,6 @@ describe('projectedSiloStockKg — what a silo holds on a morning', () => {
   });
 });
 
-describe('A1 (10 Oct) — Requisition row 34: the farm may escalate priority, never lower it', () => {
-  it('accepts the same or a higher priority', () => {
-    expect(priorityChangeProblem('WARNING', 'CRITICAL')).toBeNull();
-    expect(priorityChangeProblem('INFO', 'CRITICAL_FIRST_PRIORITY')).toBeNull();
-    expect(priorityChangeProblem('CRITICAL', 'CRITICAL')).toBeNull();
-    expect(priorityChangeProblem(null, 'INFO')).toBeNull();
-  });
-  it('refuses a lower priority', () => {
-    expect(priorityChangeProblem('CRITICAL', 'WARNING')).toBe('Priority can only be escalated (Requisition row 34): Critical cannot be lowered to Warning.');
-  });
-});
-
-describe('priorityEscalations lists what priorityChangeProblem accepts', () => {
-  it('the saved level and every higher one, highest first; none for an unknown level', () => {
-    expect(priorityEscalations('WARNING')).toEqual(['CRITICAL_FIRST_PRIORITY', 'CRITICAL', 'WARNING']);
-    expect(priorityEscalations('CRITICAL_FIRST_PRIORITY')).toEqual(['CRITICAL_FIRST_PRIORITY']);
-    expect(priorityEscalations(null)).toEqual([]);
-  });
-});
-
 describe('A1 (10 Oct) — the list status filter reads the column each status lives in', () => {
   it('filters approval statuses on requisition.status', () => {
     expect(feedListStatusFilter('APPROVED')).toEqual({ column: 'status', value: 'APPROVED' });
@@ -572,13 +552,20 @@ describe('A1 (10 Oct) — the list status filter reads the column each status li
   });
 });
 
-describe('auto-draft rerun keeps an escalated priority', () => {
-  it('an escalated CRITICAL survives a rerun that computes INFO', () => {
-    expect(keepHigherPriority('CRITICAL', 'INFO')).toBe('CRITICAL');
+describe('approvalUrgency — Rishi, 2 Nov: a feed line has no priority; the approval\'s urgency is worked out at submit', () => {
+  const line = { isSilo: true, systemBalanceKg: 5000, lowLevelKg: 1160, firstShortageDate: '2026-11-20' };
+  it('HIGH when a silo is at or below its low level, whatever the shortage date', () => {
+    expect(approvalUrgency('2026-11-02', [line, { ...line, systemBalanceKg: 1160 }])).toBe('HIGH');
   });
-  it('a higher recomputed priority still wins; null or unknown takes the computed one', () => {
-    expect(keepHigherPriority('INFO', 'CRITICAL')).toBe('CRITICAL');
-    expect(keepHigherPriority(null, 'WARNING')).toBe('WARNING');
+  it('HIGH when the first shortage is under 3 days from submit, or already past', () => {
+    expect(approvalUrgency('2026-11-02', [{ ...line, firstShortageDate: '2026-11-04' }])).toBe('HIGH');
+    expect(approvalUrgency('2026-11-02', [{ ...line, firstShortageDate: '2026-10-30' }])).toBe('HIGH');
+  });
+  it('MEDIUM otherwise: 3 days or more, a store, no low level, or nothing recorded', () => {
+    expect(approvalUrgency('2026-11-02', [{ ...line, firstShortageDate: '2026-11-05' }])).toBe('MEDIUM');
+    expect(approvalUrgency('2026-11-02', [{ ...line, isSilo: false, systemBalanceKg: 0 }])).toBe('MEDIUM');
+    expect(approvalUrgency('2026-11-02', [{ ...line, lowLevelKg: null, systemBalanceKg: 0 }])).toBe('MEDIUM');
+    expect(approvalUrgency('2026-11-02', [{ isSilo: true, systemBalanceKg: null, lowLevelKg: 1160, firstShortageDate: null }])).toBe('MEDIUM');
   });
 });
 
