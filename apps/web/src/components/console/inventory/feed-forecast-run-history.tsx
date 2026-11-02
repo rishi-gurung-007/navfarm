@@ -10,7 +10,7 @@ import { FORECAST_VIEW_LABEL, type ForecastView } from "./feed-forecast-query";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { showToast, Toast } from "@/components/ui/toast";
-import { FeedForecastGrid, type ReportRow, type SourceBalancePoint } from "./feed-forecast-grid";
+import { FeedForecastGrid, type DietChange, type ReportRow, type SourceBalancePoint } from "./feed-forecast-grid";
 import { FeedForecastNotes } from "./feed-forecast-notes";
 
 interface ForecastRunSummary {
@@ -37,7 +37,7 @@ function timestampParts(value: string | undefined): { date: string; time: string
 
 interface ViewedRun {
   run_code: string;
-  display: { rows: ReportRow[]; sourceBalances?: SourceBalancePoint[]; flags?: unknown[]; filters?: { view?: string; from?: string }; view?: string; from?: string };
+  display: { rows: ReportRow[]; sourceBalances?: SourceBalancePoint[]; flags?: unknown[]; dietChanges?: DietChange[]; filters?: { view?: string; from?: string }; view?: string; from?: string };
 }
 
 export function FeedForecastRunHistory({ farmId, reloadToken, compact = false, onViewRun }: { farmId: string; reloadToken: number; compact?: boolean; onViewRun?: (runId: string) => void }) {
@@ -138,6 +138,7 @@ export function FeedForecastRunHistory({ farmId, reloadToken, compact = false, o
                 sourceBalances={viewing.run.display.sourceBalances ?? []}
                 view={viewing.run.display.filters?.view ?? viewing.run.display.view}
                 from={viewing.run.display.filters?.from ?? viewing.run.display.from}
+                dietChanges={viewing.run.display.dietChanges ?? []}
                 loading={false}
                 t={t}
               />

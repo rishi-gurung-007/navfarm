@@ -43,7 +43,7 @@ describe('FeedForecastGrid — Engine row 70', () => {
     const headers = within(screen.getByRole('table')).getAllByRole('columnheader').map((header) => header.textContent);
 
     expect(headers).toEqual([
-      'ffColBatch', 'ffColStage', 'ffColHouse', 'ffColSiloCode', 'ffColSiloName', 'ffColSiloCapacity', 'ffColRequiredFeedItem', 'ffColCurrentSiloItem',
+      'ffColBatch', 'ffColStage', 'ffColHouse', 'ffColSiloCode', 'ffColSiloName', 'ffColSiloCapacity', 'ffColRequiredFeedItem', 'ffColDietChangeDate', 'ffColCurrentSiloItem',
       'ffColHeadCount', 'ffColUom', 'ffColFeedRate', 'ffColOpeningSystemBalance', 'ffColConfirmedReceipts',
       'ffColOpenTransfers', 'ffColPlannedFeedAdded', 'ffColPlannedFeedReference', 'ffColDailyUse',
       '23/09/26', 'ffColFirstShortage', 'ffColRecommendedQty', 'ffColDeliveryDate',
@@ -55,7 +55,7 @@ describe('FeedForecastGrid — Engine row 70', () => {
     render(<FeedForecastGrid rows={[row()]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
     const cells = within(screen.getByRole('table')).getAllByRole('cell').map((cell) => cell.textContent);
 
-    expect(cells.slice(0, 8)).toEqual([
+    expect(cells.slice(0, 9)).toEqual([
       'WG-2026-38',
       'WEANER',
       'GRS/SHED-003',
@@ -63,6 +63,7 @@ describe('FeedForecastGrid — Engine row 70', () => {
       'Weaner silo',
       '8,000.00',
       'Weaner Diet R1',
+      'N/A',
       'Weaner Diet R1',
     ]);
     expect(cells).not.toContain('FEED-R1 — Weaner Diet R1');
@@ -80,8 +81,75 @@ describe('FeedForecastGrid — Engine row 70', () => {
     render(<FeedForecastGrid rows={[grouped, projected]} loading={false} t={t} />);
     const bodyRows = within(screen.getByRole('table')).getAllByRole('row').slice(1);
     const lead = bodyRows.map((r) => within(r).getAllByRole('cell').slice(0, 2).map((c) => c.textContent));
-    expect(lead).toEqual([['BATCH-000001', 'Gestation'], ['BATCH-000001', 'ffStageProjected:{"stage":"LACTATION"}']]);
+    // Rishi, 30 Oct: one batch's lines sit together and only the first shows its number.
+    expect(lead).toEqual([['BATCH-000001', 'Gestation'], ['', 'ffStageProjected:{"stage":"LACTATION"}']]);
     expect(screen.queryByText(/ · /)).toBeNull();
+  });
+
+  it('shows N/A, not blank, on a date the line needs no feed, and says why on hover (Rishi, 30 Oct)', () => {
+    // Line 1 is fed on the 23rd only; line 2 starts on the 24th. Each is N/A on the other's date.
+    const first = row({ date: '2026-09-23', dateTo: '2026-09-23' });
+    const second = row({ key: 'two', itemId: 'r2', itemName: 'Weaner Diet R2', sourceCode: 'GRS/SILO-002', sourceLocationId: 'silo-2', date: '2026-09-24', dateTo: '2026-09-24' });
+    const balances = [
+      point({ date: '2026-09-23' }),
+      point({ date: '2026-09-24', itemId: 'r2', sourceCode: 'GRS/SILO-002', locationId: 'silo-2', projectedClosingBalanceKg: 300 }),
+    ];
+    render(<FeedForecastGrid rows={[first, second]} sourceBalances={balances} view="CUSTOM" from="2026-09-23" loading={false} t={t} />);
+    const notRequired = document.querySelectorAll('td[data-not-required="true"]');
+    expect(notRequired).toHaveLength(2);
+    notRequired.forEach((cell) => {
+      expect(cell.textContent).toBe('N/A');
+      expect(cell.querySelector('button')).toBeNull();
+    });
+    // The reason shows on hover and on keyboard focus, outside the scrolling table.
+    const na = notRequired[0].querySelector('[data-hint]') as HTMLElement;
+    fireEvent.mouseEnter(na);
+    expect(screen.getByRole('tooltip').textContent).toBe('ffFeedNotRequiredOnDate');
+    fireEvent.mouseLeave(na);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    fireEvent.focus(na);
+    expect(na.getAttribute('aria-describedby')).toBe(screen.getByRole('tooltip').id);
+  });
+
+  it('says why Silo Capacity and Diet Change Date read N/A (Rishi, 30 Oct)', () => {
+    render(<FeedForecastGrid rows={[row({ sourceType: 'STORE', sourceCapacityKg: null })]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    const hints = [...document.querySelectorAll('[data-hint]')].map((el) => el.getAttribute('data-hint'));
+    expect(hints).toEqual(expect.arrayContaining(['ffNaStoreNoCapacity', 'ffNaNoDietChange']));
+  });
+
+  it('shows the Diet Change Date on the line the new feed starts, with the change on hover, and N/A elsewhere (Rishi, 30 Oct)', () => {
+    const before = row({ date: '2026-09-23', dateTo: '2026-09-23' });
+    const after = row({ key: 'next', itemId: 'r2', itemName: 'Weaner Diet R2', date: '2026-09-24', dateTo: '2026-09-24' });
+    render(<FeedForecastGrid rows={[before, after]} sourceBalances={[point()]} view="CUSTOM" from="2026-09-23" loading={false} t={t}
+      dietChanges={[{ batchId: 'group-1', fromItemId: 'r1', fromItemName: 'Weaner Diet R1', toItemId: 'r2', toItemName: 'Weaner Diet R2', changeDate: '2026-09-24', nextSourceType: 'SILO', nextSourceCode: 'GRS/SILO-001' }]} />);
+    const column = within(screen.getByRole('table')).getAllByRole('columnheader').findIndex((h) => h.textContent === 'ffColDietChangeDate');
+    const [first, second] = within(screen.getByRole('table')).getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[column]);
+    expect(first.textContent).toBe('N/A');
+    expect(second.textContent).toBe('24/09/26');
+    const hint = second.querySelector('[data-hint]')!.getAttribute('data-hint');
+    expect(hint).toContain('Weaner Diet R1');
+    expect(hint).toContain('Weaner Diet R2');
+  });
+
+  it('words a weekly column and its balance as a week, not a day (Rishi, 30 Oct)', () => {
+    render(<FeedForecastGrid rows={[row()]} sourceBalances={[point()]} view="WEEKLY" from="2026-09-23" loading={false} t={t} />);
+    const dated = within(screen.getByRole('table')).getAllByRole('columnheader').find((h) => h.textContent?.includes('–'))!;
+    expect(dated.getAttribute('title')).toContain('ffProjectedClosingWeek');
+    fireEvent.click(screen.getByRole('button', { name: /ffBalanceExplainAria/ }));
+    expect(screen.getByText(/ffWeekUseShort/)).toBeTruthy();
+  });
+
+  it('says on hover what each figure is, and words what lies ahead as what would happen (Rishi, 31 Oct)', () => {
+    render(<FeedForecastGrid rows={[row()]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
+    const hints = [...document.querySelectorAll('tbody [data-hint]')].map((el) => el.getAttribute('data-hint')!.split(':')[0]);
+    expect(hints).toEqual(expect.arrayContaining([
+      'ffHintStage', 'ffHintCapacity', 'ffHintHeads', 'ffHintRate', 'ffHintConfirmed', 'ffHintOpenTransfer',
+      'ffHintPlanned', 'ffHintDailyUse', 'ffHintClosing', 'ffHintShortage', 'ffHintRecommended', 'ffHintDelivery',
+    ]));
+    expect(hints.some((h) => h === 'ffHintOpening' || h === 'ffHintOpeningFuture')).toBe(true);
+    // The balance button keeps one tab stop: its hover is not a second one.
+    const inButton = document.querySelector('tbody button [data-hint]')!;
+    expect(inButton.getAttribute('tabindex')).toBeNull();
   });
 
   it('uses human descriptions instead of blank or dash placeholders', () => {
@@ -186,7 +254,7 @@ describe('FeedForecastGrid — Engine row 70', () => {
     render(<FeedForecastGrid rows={[row()]} sourceBalances={[point()]} view="DAILY" from="2026-09-23" loading={false} t={t} />);
     const cells = within(screen.getAllByRole('row')[1]).getAllByRole('cell').map((cell) => cell.textContent);
     expect(cells).toEqual([
-      'WG-2026-38', 'WEANER', 'GRS/SHED-003', 'GRS/SILO-001', 'Weaner silo', '8,000.00', 'Weaner Diet R1', 'Weaner Diet R1',
+      'WG-2026-38', 'WEANER', 'GRS/SHED-003', 'GRS/SILO-001', 'Weaner silo', '8,000.00', 'Weaner Diet R1', 'N/A', 'Weaner Diet R1',
       '1,000', 'KG', '2.00', '1,500.00', '0.00', '0.00', '0.00', 'ffNoPlannedFeed', '2,000.00', '0.00', '23/09/26', '4,500.00', '23/09/26',
     ]);
   });

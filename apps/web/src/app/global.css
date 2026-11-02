@@ -500,6 +500,13 @@ body {
   border-top: 1px solid var(--border);
 }
 
+/* Feed Forecast (Rishi, 30 Oct): each batch's lines are one block. The line
+   between two batches is the same 1px as the line between their rows, only
+   darker, so the batches read apart without a heavy rule. */
+[data-table-scroll] tbody tr:has(+ tr[data-batch-start='true']) td {
+  border-bottom-color: color-mix(in srgb, var(--text-secondary) 35%, transparent);
+}
+
 /* Row shading is laid over an opaque cell colour: --row-hover is a
    see-through tint, and a held cell with only the tint let the scrolled
    columns show through it on hover. --surface-raised equals --surface in

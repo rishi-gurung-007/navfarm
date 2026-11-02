@@ -4453,3 +4453,25 @@ only for the animals which were in the batch on those previous days."
 - The next feature priority is Loading Instructions compartment lines: compartment, quantity in kg, loaded by, and loaded at, grouped by truck, while preserving the existing loading-sheet totals.
 - Add regression tests for the compartment-line design before implementing it.
 - Bio-asset GRN migration 0200 requires regression coverage before live verification.
+
+## 30 Oct 2026 — Feed requisition quantities are refused, not warned (Rishi)
+
+Overrides checkpoint 16 ("any exception requires approved reason") and Requisition r52 / Forecast Engine r62
+(silo capacity as a warning), by Rishi's ruling on 30 Oct.
+
+- A **bulk** line's Requested Qty must be a whole multiple of the farm's Bulk Order Multiple; a **bagged** line's
+  a whole number of bags (bag size). Remarks no longer answer it: `approvalProblems` dropped the remark route and
+  `quantityProblems` (feed-requisition.rules.ts) refuses it.
+- A silo's projected stock on the Proposed Delivery Date, plus everything the requisition delivers to that silo
+  by then, may not be more than the silo's `silo_capacity_kg`. A store, or a silo with no capacity set, is not
+  checked. The projection is the live forecast's (`projectedSiloStockKg`): every item the silo holds that
+  morning; after the forecast's last day its last closing; before it, or with no forecast, the stock on hand.
+- Applies to every feed requisition: manual create, create from a saved calculation, line edit, submit and
+  approve. The From-calculation form checks both before Create and fills a quantity that fits; the New form
+  checks the multiple (capacity needs the forecast, so the API answers it and says how much fits).
+- The forecast's own automatic drafts still recommend the full need and flag `exceeds_silo_capacity`; such a
+  line must be cut before it can be submitted or approved (decisions above: free capacity limits one delivery,
+  the rest goes on a later one).
+- A requisition from a saved calculation stores that run's System Balance, Daily Requirement, Days Remaining,
+  first shortage, next-diet figures and Breed Lifecycle Row (`runLineEvidence`; the row is the `lifecycleId` in
+  the first day's run-line provenance). Its form also shows each silo's capacity.

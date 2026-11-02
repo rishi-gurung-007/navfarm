@@ -140,6 +140,14 @@ export class FeedRequisitionController {
     return { success: true, message: 'Feed loading sheet marked dispatched.', data };
   }
 
+  @Get('open-lines')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
+  @ApiOperation({ summary: "A farm's open feed requisition lines: what an unsaved calculation checks its run-downs against" })
+  async openLines(@Query() query: QueryFeedRequisitionDto, @Req() req: any) {
+    const data = await this.feedRequisitions.openLines(query.farmId, req.user?.tenantId || req['tenantId'], req.user);
+    return { success: true, message: 'Open feed requisition lines retrieved.', data };
+  }
+
   @Get('from-run/:runId/preview')
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'view')
   @ApiOperation({ summary: 'Preview an editable feed requisition from one exact saved calculation' })

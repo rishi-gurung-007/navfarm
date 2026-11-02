@@ -418,26 +418,16 @@ describe('Feed requisition decided in the Approvals inbox (D25)', () => {
 });
 
 describe('A1 (10 Oct) — checkpoint 16 and Requisition row 34 on submit and edit', () => {
-  it('refuses a bulk quantity off the 3,000 kg multiple without remarks, writing nothing', async () => {
+  // Rishi, 30 Oct: no longer an exception remarks can answer (checkpoint 16 overruled) — a refusal either way.
+  it.each([[undefined], ['Half compartment']])('refuses a bulk quantity off the 3,000 kg multiple (remarks: %s), writing nothing', async (remarks) => {
     const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
       [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW]]],
-      [schema.locationMaster, [[{ location_id: 'farm-grs' }]]],
-      [schema.requisitionLine, [[{ ...LINE_6000, quantity: '4500.0000', recommended: '4500.0000', feed_type: 'BULK' }]]],
+      [schema.locationMaster, [[{ location_id: 'farm-grs' }], [{ location_id: 'silo-1', location_code: 'GRS/SILO-001', location_type: 'SILO', silo_capacity_kg: null }]]],
+      [schema.requisitionLine, [[{ ...LINE_6000, quantity: '4500.0000', recommended: '4500.0000', feed_type: 'BULK', destination_location_id: 'silo-1', proposed_delivery_date: '2026-11-07' }]]],
     ]));
-    await expect(as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', {}, 'tenant-1', ADMIN)))
-      .rejects.toThrow(new BadRequestException('Line 1 (Weaner Diet R1): 4,500 kg is not a multiple of the 3,000 kg bulk order multiple. Remarks are required (checkpoint 16).'));
+    await expect(as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', remarks ? { remarks } : {}, 'tenant-1', ADMIN)))
+      .rejects.toThrow(new BadRequestException('Line 1 (Weaner Diet R1): 4,500 kg is not a multiple of the 3,000 kg bulk order multiple.'));
     expect(writes()).toEqual([]);
-  });
-
-  it('accepts the same line when remarks give the reason', async () => {
-    const { service, as, writes } = setup(new Map<unknown, unknown[][]>([
-      [schema.requisition, [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW], VIEW]],
-      [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
-      [schema.requisitionLine, [[{ ...LINE_6000, quantity: '4500.0000', recommended: '4500.0000', feed_type: 'BULK' }], []]],
-      [schema.approvalRequest, [[]]],
-    ]));
-    await as(COMPANY_ADMIN_SCOPE, () => service.submit('req-1', { remarks: 'Half compartment' }, 'tenant-1', ADMIN));
-    expect(writes().find((e) => e.table === schema.requisition)!.set).toMatchObject({ status: 'PENDING_APPROVAL' });
   });
 
   // Row 34 lives on each line (0212): the farm escalates a line, never lowers it.

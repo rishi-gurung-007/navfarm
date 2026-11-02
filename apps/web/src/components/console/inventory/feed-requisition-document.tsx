@@ -97,6 +97,8 @@ export interface FeedRequisitionLine {
   priority?: string | null;
   /** The levels this line may be escalated to: its own and every higher one. */
   priority_options?: string[];
+  /** Rishi, 30 Oct: the farm's order for this line, 1 first; null when none was typed. */
+  priority_no?: number | null;
   unrounded_need_kg: string | null;
   recommended_qty_kg: string | null;
   recommended_delivery_date?: string | null;
@@ -409,6 +411,7 @@ const LINE_COLUMNS = [
   'rqdColDaily',
   'rqdColDaysRemaining',
   'rqdColPriority',
+  'rqdColPriorityNo',
   'rqdColRecommended',
   'rqdColRequested',
   'rqdColMillRequested',
@@ -422,6 +425,7 @@ const LINE_COLUMNS = [
 ] as const;
 const RIGHT = new Set<string>([
   'rqdColLineNo',
+  'rqdColPriorityNo',
   'rqdColDaysBefore',
   'rqdColSystemBalance',
   'rqdColDaily',
@@ -992,6 +996,9 @@ export function FeedRequisitionDocument({
                       ) : (
                         notAvailable
                       )}
+                    </td>
+                    <td className={cn(TD, NUM)}>
+                      {line.priority_no ?? notAvailable}
                     </td>
                     <td className={cn(TD, NUM)}>
                       <div>{kg(line.recommended_qty_kg, notAvailable)}</div>

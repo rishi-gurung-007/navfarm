@@ -112,6 +112,8 @@ export interface ForecastRunDisplaySnapshot {
   horizonTo?: string;
   period?: unknown;
   flags?: unknown[];
+  /** The batches whose feed changes in the window; display only, outside the hash. Absent on runs saved before 30 Oct. */
+  dietChanges?: unknown[];
 }
 
 export interface ForecastRunOutputSnapshot {

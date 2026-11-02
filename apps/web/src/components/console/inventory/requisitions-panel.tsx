@@ -354,6 +354,7 @@ export function FeedRequisitionPanel() {
       <FeedRequisitionFromRunDialog
         open={fromRunOpen}
         runId={savedRun?.id ?? null}
+        farm={farm.farms.find((f) => f.farmId === farmId) ?? null}
         onClose={() => setFromRunOpen(false)}
         onView={(view) => {
           setFromRunOpen(false);

@@ -36,6 +36,7 @@ type PersistableRunOutput = Pick<FeedForecastResponse, 'farm' | 'planningDate' |
   horizonTo?: string;
   period?: unknown;
   flags?: unknown[];
+  dietChanges?: unknown[];
 };
 
 @Injectable()
@@ -168,6 +169,7 @@ export class FeedForecastRunService {
         horizonTo: output.horizonTo,
         period: output.period,
         flags: output.flags,
+        dietChanges: output.dietChanges,
       });
 
       await this.db.insert(schema.feedForecastRun).values({

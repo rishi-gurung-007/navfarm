@@ -119,6 +119,47 @@ export function lineKey(destinationLocationId: string, itemId: string): string {
   return `${destinationLocationId}|${itemId}`;
 }
 
+/** One saved-run line as the requisition reads it: one batch, one day, one silo and item. */
+export interface RunEvidenceRow {
+  forecast_date: string;
+  opening_stock_kg: string | number | null;
+  daily_demand_kg: string | number | null;
+  shortage_date: string | null;
+  /** The run line's provenance: its lifecycleId is the breed lifecycle row that set the day's feed. */
+  provenance_snapshot?: unknown;
+}
+
+/**
+ * Rishi, 30 Oct: a requisition drafted from a saved calculation carries the
+ * forecast figures that run held for each silo and item, read the way the
+ * forecast's own draft reads them (draftLines above). Balance and use are those
+ * of the line's first day in the run — the planning date, or the day a next
+ * diet starts; the use is every batch on that silo and item that day.
+ */
+export function runLineEvidence(rows: RunEvidenceRow[], planningDate: string) {
+  const dates = [...new Set(rows.map((r) => r.forecast_date))].sort();
+  const firstDate = dates[0] ?? planningDate;
+  const firstDay = rows.filter((r) => r.forecast_date === firstDate);
+  const systemBalanceKg = Math.max(0, round3(Number(firstDay[0]?.opening_stock_kg ?? 0)));
+  const dailyRequirementKg = round3(firstDay.reduce((sum, r) => sum + Number(r.daily_demand_kg ?? 0), 0));
+  const isNextDiet = firstDate > planningDate;
+  // As draftLines: the lifecycle row of the first day's demand.
+  const lifecycleOf = (r: RunEvidenceRow) => {
+    const p = r.provenance_snapshot as { lifecycleId?: unknown } | null | undefined;
+    return typeof p?.lifecycleId === 'string' && p.lifecycleId ? p.lifecycleId : null;
+  };
+  return {
+    lifecycleRefId: firstDay.map(lifecycleOf).find((id): id is string => !!id) ?? null,
+    systemBalanceKg,
+    dailyRequirementKg,
+    // D1: one decimal; nothing to divide by when the line uses nothing that day.
+    daysRemaining: dailyRequirementKg > 0 ? Math.round((systemBalanceKg / dailyRequirementKg) * 10) / 10 : null,
+    firstShortageDate: rows.map((r) => r.shortage_date).filter((d): d is string => !!d).sort()[0] ?? null,
+    isNextDiet,
+    daysBeforeDietChange: isNextDiet ? diffDaysIso(planningDate, firstDate) : null,
+  };
+}
+
 /** Requisition §1 row 15: Feed Type from Location Master. Nothing is recorded today, so a silo is bulk, a store bags (Q10). */
 export function feedTypeOf(dest: Pick<DestinationInfo, 'locationType' | 'feedInBags'>, itemForm?: FeedType | null): FeedType {
   // Rishi 12 Oct: the item's own Bulk/Bagged (item_master.feed_form, else its type code) is what is rounded and counted.
@@ -338,8 +379,10 @@ export interface ApprovalLine {
    * header-level rule the brief asks for.
    */
   itemException?: boolean;
-  /** A1 (10 Oct), checkpoint 16: the line's Feed Type — only a BULK line is held to the bulk order multiple. */
+  /** A1 (10 Oct), checkpoint 16: the line's Feed Type — a BULK line orders in the bulk multiple, a BAGGED one in bags. */
   feedType?: FeedType | null;
+  /** The silo or store the line delivers to — what quantityProblems checks the capacity of. */
+  destinationLocationId?: string | null;
 }
 
 const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 3 });
@@ -350,7 +393,7 @@ const kg = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 3 }
  * one field on the header (row 36), so one set of remarks covers every line.
  * The deadline day itself is still on time — only a later day is the exception.
  */
-export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string | null | undefined; today: string; submissionDeadline: string | null; bulkMultipleKg?: number }): string[] {
+export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string | null | undefined; today: string; submissionDeadline: string | null }): string[] {
   if (!args.lines.length) return ['A requisition needs at least one line to be approved.'];
   if (args.remarks?.trim()) return [];
   const problems: string[] = [];
@@ -363,9 +406,6 @@ export function approvalProblems(args: { lines: ApprovalLine[]; remarks: string 
     }
     if (l.itemException) {
       problems.push(`Line ${l.lineSeq} (${l.itemName}): feed item differs from the lifecycle requirement (exception). Remarks are required (Requisition row 36).`);
-    }
-    if (l.feedType === 'BULK' && args.bulkMultipleKg && isOffBulkMultiple(l.quantityKg, args.bulkMultipleKg)) {
-      problems.push(`Line ${l.lineSeq} (${l.itemName}): ${kg(l.quantityKg)} kg is not a multiple of the ${kg(args.bulkMultipleKg)} kg bulk order multiple. Remarks are required (checkpoint 16).`);
     }
   }
   if (args.submissionDeadline && args.today > args.submissionDeadline) {
@@ -558,4 +598,150 @@ from: string, to: string): Map<string, LineBreakdownRow[]> {
     out.set(key, [...rows.values()].sort((a, b) => a.batchNo.localeCompare(b.batchNo) || a.shedCode.localeCompare(b.shedCode)));
   }
   return out;
+}
+
+/** A silo's projected stock on one day, per item, as the forecast's source balances give it. */
+export interface SiloBalancePoint {
+  date: string;
+  locationId: string;
+  itemId: string;
+  openingSystemBalanceKg: number;
+  projectedClosingBalanceKg: number;
+}
+
+/**
+ * The feed in a silo on the morning of `date`: every item it holds that day.
+ * After the forecast's last day for the silo the last closing carries; before
+ * its first (or with no forecast for the silo at all) the stock on hand now.
+ */
+export function projectedSiloStockKg(points: SiloBalancePoint[], siloId: string, date: string, onHandKg: number): number {
+  const mine = points.filter((p) => p.locationId === siloId);
+  const onDay = mine.filter((p) => p.date === date);
+  if (onDay.length) return round3(onDay.reduce((sum, p) => sum + Math.max(0, p.openingSystemBalanceKg), 0));
+  const lastByItem = new Map<string, SiloBalancePoint>();
+  for (const p of mine) if (p.date < date && (!lastByItem.get(p.itemId) || lastByItem.get(p.itemId)!.date < p.date)) lastByItem.set(p.itemId, p);
+  if (lastByItem.size) return round3([...lastByItem.values()].reduce((sum, p) => sum + Math.max(0, p.projectedClosingBalanceKg), 0));
+  return Math.max(0, onHandKg);
+}
+
+export interface QuantityCheckLine {
+  label: string;
+  itemName: string;
+  quantityKg: number;
+  feedType: FeedType | null;
+  destinationLocationId: string;
+  destinationCode: string;
+  /** null for a store, or a silo whose capacity is not set — nothing to check against. */
+  capacityKg: number | null;
+  deliveryDate: string;
+}
+
+/**
+ * Rishi, 30 Oct — refusals, not remarks or warnings (overrides checkpoint 16
+ * and Requisition r52 / Engine r62, docs/decisions.md):
+ *  - a BULK line orders whole compartments of the Bulk Order Multiple, a
+ *    BAGGED line whole bags;
+ *  - what a silo holds on the Proposed Delivery Date plus what this
+ *    requisition delivers to it by then may not be more than its capacity.
+ */
+export function quantityProblems(args: {
+  lines: QuantityCheckLine[];
+  bulkMultipleKg: number;
+  bagSizeKg: number;
+  stockOn: (siloId: string, date: string) => number;
+}): string[] {
+  const problems: string[] = [];
+  for (const l of args.lines) {
+    const multiple = l.feedType === 'BAGGED' ? args.bagSizeKg : l.feedType === 'BULK' ? args.bulkMultipleKg : 0;
+    if (multiple > 0 && isOffBulkMultiple(l.quantityKg, multiple)) {
+      problems.push(l.feedType === 'BAGGED'
+        ? `${l.label} (${l.itemName}): ${kg(l.quantityKg)} kg is not a whole number of ${kg(multiple)} kg bags.`
+        : `${l.label} (${l.itemName}): ${kg(l.quantityKg)} kg is not a multiple of the ${kg(multiple)} kg bulk order multiple.`);
+    }
+    if (l.capacityKg === null) continue;
+    const delivered = args.lines
+      .filter((o) => o.destinationLocationId === l.destinationLocationId && o.deliveryDate <= l.deliveryDate)
+      .reduce((sum, o) => sum + o.quantityKg, 0);
+    const stockKg = args.stockOn(l.destinationLocationId, l.deliveryDate);
+    if (delivered + stockKg > l.capacityKg + 1e-6) {
+      // What fits, in whole compartments or bags like the quantity itself.
+      const freeKg = Math.max(0, round3(l.capacityKg - stockKg - (delivered - l.quantityKg)));
+      const fitsKg = multiple > 0 ? Math.floor(freeKg / multiple + 1e-9) * multiple : freeKg;
+      problems.push(`${l.label} (${l.itemName}): ${kg(delivered)} kg into ${l.destinationCode}, which is projected to hold ${kg(stockKg)} kg on ${dayShort(l.deliveryDate)}, comes to ${kg(round3(delivered + stockKg))} kg — more than its ${kg(l.capacityKg)} kg capacity. At most ${kg(fitsKg)} kg fits.`);
+    }
+  }
+  return problems;
+}
+
+/** One day of a silo-and-feed in the forecast, as the mill sheet reads it. */
+export interface FeedDayPoint {
+  openingSystemBalanceKg: number;
+  confirmedReceiptKg?: number;
+  openTransferMovementKg?: number;
+  plannedIncomingKg?: number;
+  otherOutflowKg?: number;
+  dailyUseKg: number;
+}
+
+/**
+ * Rishi, 31 Oct: whether a line's feed is needed that day and whether its silo covers it. No forecast point, or no
+ * use, is "not required" (null). Otherwise the day is covered when the morning stock of that feed and what arrives
+ * that day, less any other outflow, meet the day's use.
+ */
+export function dayCover(point: FeedDayPoint | undefined): { requiredKg: number; covered: boolean } | null {
+  if (!point || !(point.dailyUseKg > 0)) return null;
+  const availableKg = Math.max(0, point.openingSystemBalanceKg)
+    + (point.confirmedReceiptKg ?? 0) + (point.openTransferMovementKg ?? 0) + (point.plannedIncomingKg ?? 0)
+    - (point.otherOutflowKg ?? 0);
+  return { requiredKg: round3(point.dailyUseKg), covered: availableKg + 1e-6 >= point.dailyUseKg };
+}
+
+/** An open feed requisition line: not rejected, cancelled or received yet. */
+export interface OpenRequisitionLine {
+  requisition_id: string;
+  req_no: string;
+  destination_location_id: string | null;
+  item_id: string | null;
+  quantity: number;
+  proposed_delivery_date: string | null;
+}
+
+/**
+ * What a forecast already counted: the requisitions it took as planned feed, and those whose transfer it took as
+ * an open transfer (incomingReferences on its source balances). Their feed is in its projection already.
+ */
+export function countedRequisitions(sourceBalances: unknown[] | undefined): { ids: Set<string>; nos: Set<string> } {
+  const ids = new Set<string>();
+  const nos = new Set<string>();
+  for (const point of sourceBalances ?? []) {
+    for (const ref of ((point as { incomingReferences?: unknown[] }).incomingReferences ?? []) as Array<{ kind?: string; referenceId?: string; referenceNo?: string; relatedReferenceNo?: string }>) {
+      if (ref.kind === 'PLANNED_REQUISITION') {
+        if (ref.referenceId) ids.add(ref.referenceId);
+        if (ref.referenceNo) nos.add(ref.referenceNo);
+      }
+      if (ref.kind === 'OPEN_TRANSFER' && ref.relatedReferenceNo) nos.add(ref.relatedReferenceNo);
+    }
+  }
+  return { ids, nos };
+}
+
+/**
+ * Rishi, 31 Oct: whether open requisitions the forecast did not count would already solve one of its run-downs —
+ * for the same silo and feed, arriving by the first shortage date, together bringing at least the need. Then a
+ * requisition for that line is not offered again. A requisition the forecast counted is left out: its feed already
+ * lowered the need, so counting it here would hide what is still short.
+ */
+export function requisitionCover(
+  line: { destinationLocationId: string; itemId: string; needKg: number; shortageDate: string | null },
+  open: OpenRequisitionLine[],
+  counted: { ids: Set<string>; nos: Set<string> },
+): { covered: boolean; by: string[] } {
+  const by = open.filter((r) =>
+    r.destination_location_id === line.destinationLocationId
+    && r.item_id === line.itemId
+    && !counted.ids.has(r.requisition_id) && !counted.nos.has(r.req_no)
+    && !!r.proposed_delivery_date
+    && (!line.shortageDate || r.proposed_delivery_date.slice(0, 10) <= line.shortageDate));
+  const kgBy = by.reduce((sum, r) => sum + Number(r.quantity), 0);
+  return { covered: line.needKg > 0 && kgBy + 1e-6 >= line.needKg, by: [...new Set(by.map((r) => r.req_no))] };
 }

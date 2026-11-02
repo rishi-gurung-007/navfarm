@@ -184,6 +184,12 @@ export class FeedRequisitionFromRunLineDto {
   @Min(0.001)
   quantity_kg: number;
   @ApiProperty() @IsDateString() proposed_delivery_date: string;
+  @ApiPropertyOptional({ description: "The farm's order for this line, 1 first; the mill ranks by it after shortage date and days left" })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  priority_no?: number;
 }
 
 export class CreateFeedRequisitionFromRunDto {

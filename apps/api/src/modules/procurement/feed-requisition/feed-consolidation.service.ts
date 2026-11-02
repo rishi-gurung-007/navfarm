@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import * as schema from '../../../core/database/schema';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { FeedForecastService, draftForecastRange } from '../../inventory/feed-forecast/feed-forecast.service';
-import { exceedsCapacity } from './feed-requisition.rules';
+import { addDaysIso, dayCover, diffDaysIso, exceedsCapacity, lifecycleRefLabel, projectedSiloStockKg } from './feed-requisition.rules';
 import { isoProductionWeek } from '../../inventory/feed-forecast/feed-plan.rules';
 import type { CreateFeedConsolidationDto, FeedConsolidationQueryDto } from './dto/feed-requisition.dto';
 import { activeBinAssignments } from './feed-bin-assignments.query';
@@ -20,16 +20,32 @@ import { InventoryLedgerService } from '../../inventory/inventory-ledger/invento
 
 type User = { userId?: string; userType?: string };
 
+/** Rishi, 30 Oct: the sheet shows each silo's projected stock for at least this many days from the farm's today… */
+export const SHEET_FORECAST_DAYS = 14;
+/** …and on to the latest delivery on the sheet, so every delivery day is a column — never past the forecast's 45-day horizon. */
+export const SHEET_FORECAST_MAX_DAYS = 46;
+
+/** How many days from `today` the sheet's columns run: 14, or to the latest delivery date. */
+export function sheetForecastDays(today: string, deliveryDates: Array<string | null>): number {
+  const latest = deliveryDates.filter((d): d is string => !!d).map((d) => d.slice(0, 10)).sort().pop();
+  const toLatest = latest ? diffDaysIso(today, latest) + 1 : 0;
+  return Math.min(SHEET_FORECAST_MAX_DAYS, Math.max(SHEET_FORECAST_DAYS, toLatest));
+}
+
 // Requisition §1 row 34's priorities (feed-requisition.rules.ts), most urgent first.
 const PRIORITY_RANK: Record<string, number> = { CRITICAL_FIRST_PRIORITY: 0, CRITICAL: 1, WARNING: 2, INFO: 3 };
-/** Most urgent first: the earliest shortage, then the fewest days left, then priority, then the delivery date asked for. */
+/**
+ * Most urgent first: the earliest shortage, then the fewest days left, then the farm's Priority No. (1 first; a line
+ * without one after those with one), then priority, then the delivery date asked for.
+ */
 export function byUrgency(
-  a: { first_shortage_date: string | null; days_remaining: number | null; priority: string | null; proposed_delivery_date: string | null; req_no: string },
-  b: { first_shortage_date: string | null; days_remaining: number | null; priority: string | null; proposed_delivery_date: string | null; req_no: string },
+  a: { first_shortage_date: string | null; days_remaining: number | null; priority_no?: number | null; priority: string | null; proposed_delivery_date: string | null; req_no: string },
+  b: { first_shortage_date: string | null; days_remaining: number | null; priority_no?: number | null; priority: string | null; proposed_delivery_date: string | null; req_no: string },
 ): number {
   const last = '9999-12-31';
   return (a.first_shortage_date ?? last).localeCompare(b.first_shortage_date ?? last)
     || (a.days_remaining ?? Number.POSITIVE_INFINITY) - (b.days_remaining ?? Number.POSITIVE_INFINITY)
+    || (a.priority_no ?? Number.POSITIVE_INFINITY) - (b.priority_no ?? Number.POSITIVE_INFINITY)
     || (PRIORITY_RANK[a.priority ?? ''] ?? 9) - (PRIORITY_RANK[b.priority ?? ''] ?? 9)
     || String(a.proposed_delivery_date ?? last).localeCompare(String(b.proposed_delivery_date ?? last))
     || a.req_no.localeCompare(b.req_no);
@@ -234,6 +250,7 @@ export class FeedConsolidationService {
     const stored = await this.db.select({
       line_id: L.line_id,
       priority: L.priority,
+      priority_no: L.priority_no,
       requisition_type: R.requisition_type,
       system_balance_kg: L.system_balance_kg,
       daily_requirement_kg: L.daily_requirement_kg,
@@ -242,10 +259,26 @@ export class FeedConsolidationService {
       recommended_qty_kg: L.recommended_qty_kg,
       recommended_delivery_date: L.recommended_delivery_date,
       is_next_diet: L.is_next_diet,
+      days_before_diet_change: L.days_before_diet_change,
+      lifecycle_ref_id: L.lifecycle_ref_id,
       needs_silo_changeover: L.needs_silo_changeover,
       exceeds_silo_capacity: L.exceeds_silo_capacity,
     }).from(L).innerJoin(R, eq(R.requisition_id, L.requisition_id)).where(inArray(L.line_id, lineIds));
     const storedById = new Map(stored.map((s) => [s.line_id, s]));
+
+    // The Breed Lifecycle Row each line was drafted for, worded as the requisition document words it.
+    const lifecycleIds = [...new Set(stored.map((s) => s.lifecycle_ref_id).filter((id): id is string => Boolean(id)))];
+    const lifecycle = schema.breedLifecycleStages;
+    const lifecycleRows = lifecycleIds.length
+      ? await this.db.select({
+        lifecycle_id: lifecycle.lifecycle_id, breed_code: schema.breedMaster.breed_code, stage_code: schema.stageMaster.stage_code,
+        period_from: lifecycle.period_from, period_to: lifecycle.period_to, calc_unit: lifecycle.calc_unit,
+      }).from(lifecycle)
+        .leftJoin(schema.breedMaster, eq(schema.breedMaster.breed_id, lifecycle.breed_id))
+        .leftJoin(schema.stageMaster, eq(schema.stageMaster.stage_id, lifecycle.stage_id))
+        .where(inArray(lifecycle.lifecycle_id, lifecycleIds))
+      : [];
+    const lifecycleLabelOf = new Map(lifecycleRows.map((r) => [r.lifecycle_id, lifecycleRefLabel(r)]));
 
     const siloIds = [...new Set(rows.map((r) => r.destination_silo_id).filter((id): id is string => Boolean(id)))];
     const capacities = siloIds.length
@@ -253,6 +286,7 @@ export class FeedConsolidationService {
         .from(schema.locationMaster).where(inArray(schema.locationMaster.location_id, siloIds))
       : [];
     const capacityById = new Map(capacities.map((c) => [c.location_id, c.location_type === 'SILO' && c.silo_capacity_kg != null ? Number(c.silo_capacity_kg) : null]));
+    const isSiloId = new Set(capacities.filter((c) => c.location_type === 'SILO').map((c) => c.location_id));
 
     const B = schema.requisitionLineBatch;
     const batchRows = await this.db.select({
@@ -271,27 +305,87 @@ export class FeedConsolidationService {
 
     const hasStored = (s: (typeof stored)[number] | undefined) =>
       !!s && (s.first_shortage_date != null || s.days_remaining != null || s.system_balance_kg != null);
-    // One live forecast per farm whose lines carry nothing stored; a farm the forecast cannot read is left N/A.
-    const liveFarms = [...new Map(rows.filter((r) => !hasStored(storedById.get(r.line_id))).map((r) => [r.farm_id, r.company_id])).entries()];
-    const liveByFarm = new Map<string, Awaited<ReturnType<FeedForecastService['computeForFarm']>>['sources']>();
+    // One live forecast per farm on the sheet (Rishi, 30 Oct: every line shows its silo's coming days, not only
+    // a manual one's figures); a farm the forecast cannot read is left N/A. Rishi, 31 Oct: the sheet's own
+    // requisitions are what the mill is about to produce, so their deliveries are left out — each silo's days
+    // show how it runs down without them. Requisitions already on a sheet still count, and so does a transfer once
+    // it has shipped — a DRAFT transfer has not left anywhere (Rishi, 31 Oct; the sheet only, not the Calculation).
+    type Forecast = Awaited<ReturnType<FeedForecastService['computeForFarm']>>;
+    const liveFarms = [...new Map(rows.map((r) => [r.farm_id, r.company_id])).entries()];
+    const liveByFarm = new Map<string, Forecast['sources']>();
+    const balancesByFarm = new Map<string, Forecast['sourceBalances']>();
+    /** The same farm with every approved delivery counted, sheet ones included — what the capacity check reads. */
+    const balancesWithSheetByFarm = new Map<string, Forecast['sourceBalances']>();
+    const todayByFarm = new Map<string, string>();
     for (const [farmId, companyId] of liveFarms) {
       if (!farmId || !companyId) continue;
       try {
         const clock = await this.forecast.farmToday(companyId, tenantId);
         const result = await this.forecast.withFarmScope(farmId, companyId, () =>
-          this.forecast.computeForFarm(farmId, companyId, tenantId, draftForecastRange(clock.today), clock));
+          this.forecast.computeForFarm(farmId, companyId, tenantId, {
+            ...draftForecastRange(clock.today),
+            excludePlannedRequisitionIds: [...new Set(rows.filter((r) => r.farm_id === farmId).map((r) => r.requisition_id))],
+            shippedTransfersOnly: true,
+          }, clock));
         liveByFarm.set(farmId, result.sources);
+        balancesByFarm.set(farmId, result.sourceBalances ?? []);
+        todayByFarm.set(farmId, clock.today);
+        const withSheet = await this.forecast.withFarmScope(farmId, companyId, () =>
+          this.forecast.computeForFarm(farmId, companyId, tenantId, { ...draftForecastRange(clock.today), shippedTransfersOnly: true }, clock));
+        balancesWithSheetByFarm.set(farmId, withSheet.sourceBalances ?? []);
       } catch (err) {
         this.logger.warn(`Live forecast for farm ${farmId} could not be read: ${(err as Error).message}`);
       }
     }
+    // What each silo holds now, for a day the forecast does not reach (projectedSiloStockKg).
+    const onHandBySilo = new Map<string, number>();
+    if (this.siloFeed) {
+      for (const companyId of [...new Set(rows.map((r) => r.company_id).filter((id): id is string => Boolean(id)))]) {
+        const ids = [...new Set(rows.filter((r) => r.company_id === companyId && r.destination_silo_id && isSiloId.has(r.destination_silo_id)).map((r) => r.destination_silo_id!))];
+        if (!ids.length) continue;
+        try {
+          for (const [id, resident] of await this.siloFeed.currentItems(ids, companyId, tenantId)) onHandBySilo.set(id, resident?.on_hand_qty ?? 0);
+        } catch (err) {
+          this.logger.warn(`Silo stock for company ${companyId} could not be read: ${(err as Error).message}`);
+        }
+      }
+    }
+    const stockOf = (row: (typeof rows)[number], date: string, withSheet = false) =>
+      projectedSiloStockKg((withSheet ? balancesWithSheetByFarm : balancesByFarm).get(row.farm_id ?? '') ?? [], row.destination_silo_id!, date, onHandBySilo.get(row.destination_silo_id!) ?? 0);
 
     const balances = await this.ledgerBalances(rows.filter((r) => !hasStored(storedById.get(r.line_id))), tenantId);
     const num = (v: unknown) => (v == null ? null : Number(v));
     const ranked = rows.map((row) => {
       const s = storedById.get(row.line_id);
       const capacityKg = row.destination_silo_id ? capacityById.get(row.destination_silo_id) ?? null : null;
-      const base = { ...row, priority: s?.priority ?? null, silo_capacity_kg: capacityKg, batches: batchesByLine.get(row.line_id) ?? [] };
+      const today = row.farm_id ? todayByFarm.get(row.farm_id) : undefined;
+      const isSilo = !!row.destination_silo_id && isSiloId.has(row.destination_silo_id);
+      const delivery = row.proposed_delivery_date ? String(row.proposed_delivery_date).slice(0, 10) : null;
+      // The silo's projected stock each morning; it already counts every approved, open requisition's delivery.
+      const forecastDays = today && isSilo
+        ? Array.from({ length: sheetForecastDays(today, rows.map((r) => r.proposed_delivery_date)) }, (_, i) => {
+          const date = addDaysIso(today, i);
+          // This line's own feed at its silo that day: needed or not, and covered or short (dayCover).
+          const point = (balancesByFarm.get(row.farm_id ?? '') ?? []).find((p) => p.locationId === row.destination_silo_id && p.itemId === row.item_id && p.date === date);
+          const cover = dayCover(point);
+          return { date, stock_kg: stockOf(row, date), required_kg: cover?.requiredKg ?? null, covered: cover ? cover.covered : null };
+        })
+        : [];
+      const deliveryDayStockKg = today && isSilo && delivery ? stockOf(row, delivery) : null;
+      const base = {
+        ...row, priority: s?.priority ?? null, priority_no: s?.priority_no ?? null, silo_capacity_kg: capacityKg, batches: batchesByLine.get(row.line_id) ?? [],
+        lifecycle_ref_label: s?.lifecycle_ref_id ? lifecycleLabelOf.get(s.lifecycle_ref_id) ?? null : null,
+        days_before_diet_change: s?.days_before_diet_change ?? null,
+        forecast_days: forecastDays,
+        delivery_day_stock_kg: deliveryDayStockKg,
+        // A delivery dated before today is late: the forecast counts it as arriving today (plannedIncomingFromRequisitions).
+        delivery_overdue: !!(today && delivery && delivery < today),
+      };
+      // The 30 Oct quantity rule, read today: this delivery onto the silo's morning stock that day with every approved
+      // delivery before it counted (sheet ones too, as if all were produced; a late one arrives today) past the capacity.
+      const arrivalDate = delivery && today && delivery < today ? today : delivery;
+      const stockWithSheetKg = today && isSilo && arrivalDate ? stockOf(row, arrivalDate, true) : null;
+      const overCapacity = stockWithSheetKg !== null && exceedsCapacity(Number(row.quantity), stockWithSheetKg, capacityKg);
       if (hasStored(s)) {
         return {
           ...base,
@@ -304,7 +398,7 @@ export class FeedConsolidationService {
           recommended_delivery_date: s!.recommended_delivery_date ? String(s!.recommended_delivery_date).slice(0, 10) : null,
           is_next_diet: !!s!.is_next_diet,
           needs_silo_changeover: !!s!.needs_silo_changeover,
-          exceeds_silo_capacity: !!s!.exceeds_silo_capacity,
+          exceeds_silo_capacity: stockWithSheetKg !== null ? overCapacity : !!s!.exceeds_silo_capacity,
         };
       }
       const live = (row.farm_id ? liveByFarm.get(row.farm_id) : undefined)?.find((src) => src.locationId === row.destination_silo_id && src.itemId === row.item_id);
@@ -319,7 +413,7 @@ export class FeedConsolidationService {
         recommended_delivery_date: null,
         is_next_diet: live?.isNextDiet ?? false,
         needs_silo_changeover: live?.noSiloHoldsItem ?? false,
-        exceeds_silo_capacity: live ? exceedsCapacity(Number(row.quantity), live.deliveryDayOpeningKg, capacityKg) : false,
+        exceeds_silo_capacity: stockWithSheetKg !== null ? overCapacity : live ? exceedsCapacity(Number(row.quantity), live.deliveryDayOpeningKg, capacityKg) : false,
       };
     });
     return ranked.sort(byUrgency);

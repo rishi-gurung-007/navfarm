@@ -132,6 +132,22 @@ describe('RequisitionNewDialog (D26)', () => {
     fireEvent.click(create);
     await waitFor(() => expect(showToast.error).toHaveBeenCalledWith('Destination VIL100/SILO-001 has the same feed item on two lines.'));
   });
+
+  it('names a bulk quantity off the Bulk Order Multiple and keeps Create off until it is a multiple (Rishi, 30 Oct)', async () => {
+    // The farm's Bulk Order Multiple is read for its company (GET /feed-settings).
+    mockFarm = { ...mockFarm, farms: [{ farmId: 'farm-vil', code: 'VIL100', name: 'VILLA FRANCA FARM', companyId: 'co-1', companyName: 'Triple C' }] };
+    render(<RequisitionNewDialog open farmId="farm-vil" onClose={jest.fn()} onCreated={jest.fn()} />);
+    const create = await screen.findByRole('button', { name: 'rqNewCreate' }) as HTMLButtonElement;
+    await pickSearchable('rqNewDestination:{"line":1}', destinationLabel.s1);
+    await pickSearchable('rqNewItem:{"line":1}', 'FEED-R1 — Weaner Diet R1');
+    fireEvent.change(screen.getByLabelText('rqNewDate:{"line":1}'), { target: { value: '2099-10-01' } });
+    fireEvent.change(screen.getByLabelText('rqNewKg:{"line":1}'), { target: { value: '4500' } });
+    expect(await screen.findByText(/rqQtyNotBulkMultiple/)).toBeTruthy();
+    expect(create.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('rqNewKg:{"line":1}'), { target: { value: '6000' } });
+    expect(screen.queryByText(/rqQtyNotBulkMultiple/)).toBeNull();
+    expect(create.disabled).toBe(false);
+  });
 });
 
 describe('RequisitionNewDialog — every requisition type (spec §6a)', () => {
