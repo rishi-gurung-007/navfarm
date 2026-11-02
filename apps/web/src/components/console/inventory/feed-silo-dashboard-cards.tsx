@@ -1,8 +1,11 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { Info } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog } from "@/components/ui/dialog";
 import { StatCard, StatRow } from "@/components/ui/stat-row";
+import { Skeleton } from "@/components/ui/states";
 import type { TranslationKeys } from "@/utils/translations";
 import { formatDateShort } from "./feed-format";
 import { REQ_STATUS_LABEL, labelOf } from "./requisition-labels";
@@ -53,6 +56,9 @@ export interface SelectedSiloDashboard {
   requisitionStatus: string | null;
   submissionDeadline: string | null;
   millLoadingBin: MillLoadingBin | null;
+  /** Rishi, 2 Nov: the heads of the batches drawing on this silo on the planning date, and those batches. */
+  animalsFed?: number;
+  animalsFedBatches?: Array<{ batchNo: string; heads: number }>;
 }
 
 type Translate = (key: TranslationKeys) => string;
@@ -147,12 +153,16 @@ export function FeedSiloDashboardCards({
     : silo.daysRemaining < 7 ? { tone: "warning", label: t("fsdStatusLow") }
     : { tone: "success", label: t("fsdStatusOk") };
 
+  const [batchesOpen, setBatchesOpen] = useState(false);
+  const animalsFed = number(silo.animalsFed, unavailable);
+  const animalsFedText = animalsFed === unavailable ? animalsFed : `${animalsFed} ${t("fsdHeadUnit")}`;
   const details: Array<{ label: TranslationKeys; value: ReactNode }> = [
     { label: "fsdCurrentDietFeedItem", value: currentDiet },
     { label: "fsdMillLoadingBin", value: binValue },
     { label: "fsdSiloCapacityKg", value: kg(silo.capacityKg, unavailable) },
     { label: "fsdSystemBalanceKg", value: kg(silo.systemBalanceKg, unavailable) },
     { label: "fsdDailyRequirementKg", value: kg(silo.dailyRequirementKg, unavailable) },
+    { label: "fsdAnimalsFed", value: animalsFedText },
     { label: "fsdDaysFeedRemaining", value: daysRemaining },
     { label: "fsdFirstShortageDate", value: firstShortage },
     { label: "fsdProjectedNeedRangeKg", value: projectedNeed },
@@ -169,7 +179,7 @@ export function FeedSiloDashboardCards({
 
   return (
     <div className="flex min-h-0 flex-col gap-4">
-      <StatRow columns={3}>
+      <StatRow columns={4}>
         <div className="min-w-0 rounded-md border border-(--border) bg-(--surface) p-4">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)">{t("fsdCurrentDietFeedItem")}</p>
           <p className="mt-1.5 break-words text-base font-semibold leading-snug text-(--text-primary)" title={silo.currentDietItemName ?? unavailable}>
@@ -179,9 +189,26 @@ export function FeedSiloDashboardCards({
         <StatCard label={t("fsdSiloCapacityKg")} value={number(silo.capacityKg, unavailable)} unit="kg" />
         <StatCard label={t("fsdSystemBalanceKg")} value={number(silo.systemBalanceKg, unavailable)} unit="kg" />
         <StatCard label={t("fsdDailyRequirementKg")} value={number(silo.dailyRequirementKg, unavailable)} unit="kg" />
+        <StatCard
+          label={t("fsdAnimalsFed")}
+          value={animalsFed}
+          unit={t("fsdHeadUnit")}
+          action={
+            <button
+              type="button"
+              aria-label={t("fsdAnimalsFedBatches")}
+              title={t("fsdAnimalsFedBatches")}
+              onClick={() => setBatchesOpen(true)}
+              className="nf-press -m-1 rounded-full p-1 text-(--text-muted) transition-colors hover:bg-(--surface-raised) hover:text-(--accent)"
+            >
+              <Info className="h-4 w-4" />
+            </button>
+          }
+        />
         <StatCard label={t("fsdDaysFeedRemaining")} value={oneDecimal(silo.daysRemaining, unavailable)} unit={t("fsdDaysUnit")} sub={status || silo.firstShortageDate ? <span className="inline-flex flex-wrap items-center gap-2">{status && <StatusDot tone={status.tone} label={status.label} />}{silo.firstShortageDate && <span className="text-xs text-(--text-secondary)">{t("fsdFirstShortageDate")}: {formatDateShort(silo.firstShortageDate)}</span>}</span> : undefined} />
         <StatCard label={t("fsdRecommendedOrderKg")} value={number(silo.recommendedOrderKg, unavailable)} unit="kg" />
       </StatRow>
+      <AnimalsFedDialog open={batchesOpen} onClose={() => setBatchesOpen(false)} silo={silo} t={t} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card>
@@ -231,4 +258,84 @@ export function FeedSiloDashboardCards({
 
 function Summary({ label, value }: { label: string; value: ReactNode }) {
   return <div className="flex items-start justify-between gap-4"><span className="text-(--text-secondary)">{label}</span><span className="min-w-0 break-words text-right font-medium tabular-nums text-(--text-primary)">{value}</span></div>;
+}
+
+/**
+ * Rishi, 2 Nov: what stands in for the cards and charts while a silo's figures load — their shapes, not a spinner:
+ * the seven stat cards, the two detail panels beside Farm Total Order, and the two charts.
+ */
+export function FeedSiloDashboardSkeleton({ label }: { label: string }) {
+  const block = "rounded-md border border-(--border) bg-(--surface) p-4";
+  return (
+    <div role="status" aria-busy="true" aria-label={label} className="flex min-h-0 flex-col gap-4">
+      <StatRow columns={4}>
+        {Array.from({ length: 7 }, (_, i) => (
+          <div key={i} data-skeleton-card className={block}>
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="mt-3 h-7 w-20" />
+          </div>
+        ))}
+      </StatRow>
+      <div className="grid gap-4 lg:grid-cols-3">
+        {Array.from({ length: 3 }, (_, i) => (
+          <div key={i} className={`${block} space-y-3`}>
+            <Skeleton className="h-4 w-32" />
+            {Array.from({ length: i === 2 ? 1 : 4 }, (_, j) => (
+              <div key={j} className="flex justify-between gap-4"><Skeleton className="h-3 w-28" /><Skeleton className="h-3 w-16" /></div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {Array.from({ length: 2 }, (_, i) => (
+          <div key={i} data-skeleton-chart className={`${block} space-y-3`}>
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-72 w-full" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Rishi, 2 Nov: the batches behind Animals Fed, from the card's info button — each batch, its stage group when it is
+ * fed animal by animal ("BATCH-000380 · GESTATION"), and its heads, with the total.
+ */
+function AnimalsFedDialog({ open, onClose, silo, t }: { open: boolean; onClose: () => void; silo: SelectedSiloDashboard; t: Translate }) {
+  const batches = silo.animalsFedBatches ?? [];
+  return (
+    <Dialog open={open} onClose={onClose} title={t("fsdAnimalsFedBatches")} description={silo.siloName || silo.siloCode} presentation="compact" maxWidth="md">
+      {batches.length ? (
+        <div className="max-h-[60vh] overflow-y-auto rounded-md border border-(--border)">
+          <table className="w-full border-separate border-spacing-0 text-left text-sm">
+            <thead><tr>
+              <th scope="col" className={TH}>{t("fsdColBatch")}</th>
+              <th scope="col" className={TH}>{t("fsdColStage")}</th>
+              <th scope="col" className={`${TH} text-right`}>{t("fsdColHead")}</th>
+            </tr></thead>
+            <tbody>
+              {batches.map((b) => {
+                const [batchNo, ...stage] = b.batchNo.split(" · ");
+                return (
+                  <tr key={b.batchNo}>
+                    <td className={`${TD} font-medium`}>{batchNo}</td>
+                    <td className={`${TD} text-(--text-secondary)`}>{stage.length ? stage.join(" · ") : "—"}</td>
+                    <td className={`${TD} text-right tabular-nums`}>{b.heads.toLocaleString("en-US")}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot><tr>
+              <td className="px-3 py-2 font-semibold">{t("fsdTotal")}</td>
+              <td className="px-3 py-2" />
+              <td className="px-3 py-2 text-right font-semibold tabular-nums">{(silo.animalsFed ?? 0).toLocaleString("en-US")}</td>
+            </tr></tfoot>
+          </table>
+        </div>
+      ) : (
+        <p className="text-sm text-(--text-secondary)">{t("fsdAnimalsFedNone")}</p>
+      )}
+    </Dialog>
+  );
 }

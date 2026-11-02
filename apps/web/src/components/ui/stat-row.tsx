@@ -45,6 +45,8 @@ export interface StatCardProps {
   unit?: string;
   sub?: ReactNode;
   icon?: ElementType;
+  /** A control in the card's top-right corner, e.g. an info button that opens the detail behind the value. */
+  action?: ReactNode;
   tone?: "default" | "success" | "warning" | "danger";
   /** Also tint the card's border/background — reserve for a true status card. See file doc. */
   emphasis?: boolean;
@@ -65,7 +67,7 @@ const TONE_EMPHASIS: Record<string, string> = {
   danger: "border-(--danger) bg-(--danger-muted)",
 };
 
-export function StatCard({ label, value, unit, sub, icon: Icon, tone = "default", emphasis = false, href, onClick }: StatCardProps) {
+export function StatCard({ label, value, unit, sub, icon: Icon, action, tone = "default", emphasis = false, href, onClick }: StatCardProps) {
   const emphasisClass = emphasis ? TONE_EMPHASIS[tone] : undefined;
   const Wrapper = href ? "a" : "div";
   return (
@@ -80,13 +82,13 @@ export function StatCard({ label, value, unit, sub, icon: Icon, tone = "default"
     >
       <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)">{label}</p>
-        {Icon && <Icon className={cn("h-4 w-4 shrink-0", tone === "default" ? "text-(--text-muted)" : TONE_TEXT[tone])} />}
+        {action ?? (Icon && <Icon className={cn("h-4 w-4 shrink-0", tone === "default" ? "text-(--text-muted)" : TONE_TEXT[tone])} />)}
       </div>
       <p className={cn("mt-1.5 text-3xl font-bold leading-none tracking-tight tabular-nums", TONE_TEXT[tone])}>
         {value}
         {unit && <span className="ml-1.5 text-xs font-medium tracking-normal normal-case text-(--text-secondary)">{unit}</span>}
       </p>
-      {sub && <p className="mt-1.5 text-xs text-(--text-secondary)">{sub}</p>}
+      {sub && <div className="mt-1.5 text-xs text-(--text-secondary)">{sub}</div>}
     </Wrapper>
   );
 }

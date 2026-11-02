@@ -108,11 +108,14 @@ export function buildSelectedSiloDashboard(args: {
     currentDietDaysRemaining: number | null;
     nextDietItemName: string | null;
     millLoadingBin: NextBinAssignment | null;
+    /** Rishi, 2 Nov: the heads of the batches drawing on this silo on the planning date. */
+    animalsFed: number;
+    animalsFedBatches: Array<{ batchNo: string; heads: number }>;
   };
   balanceSeries: SiloBalancePoint[];
   demandSeries: SiloDemandPoint[];
 } {
-  const { status, result, nextBinAssignment } = args;
+  const { status, result, nextBinAssignment, planningDate } = args;
   const sources = result.sources.filter((source) => source.sourceType === 'SILO' && source.locationId === status.siloId);
   const currentSources = sources.filter((source) => source.itemId === status.currentDietItemId);
   // Same rule as the demand series: a next stage on the item already fed adds no separate next-diet need.
@@ -159,6 +162,18 @@ export function buildSelectedSiloDashboard(args: {
       closingKg: row.projectedClosingKg ?? Math.max(0, round3(row.currentInventoryKg - row.demandKg)),
     });
   }
+  // Rishi, 2 Nov: the animals fed from the silo — every batch row drawing on it on the planning date, with demand.
+  const headsByBatch = new Map<string, number>();
+  for (const row of result.daily) {
+    if (row.date !== planningDate || row.sourceType !== 'SILO' || row.destinationLocationId !== status.siloId) continue;
+    if (!(row.demandKg > 0)) continue;
+    headsByBatch.set(row.batchNo, (headsByBatch.get(row.batchNo) ?? 0) + row.heads);
+  }
+  const animalsFedBatches = [...headsByBatch.entries()]
+    .map(([batchNo, heads]) => ({ batchNo, heads }))
+    .sort((a, b) => b.heads - a.heads || a.batchNo.localeCompare(b.batchNo));
+  const animalsFed = animalsFedBatches.reduce((sum, batch) => sum + batch.heads, 0);
+
   const balanceSeries = [...byItemDate.values()].sort((a, b) =>
     a.date.localeCompare(b.date) || a.itemName.localeCompare(b.itemName) || a.itemId.localeCompare(b.itemId));
   const demandByDate = new Map<string, SiloDemandPoint>();
@@ -179,6 +194,8 @@ export function buildSelectedSiloDashboard(args: {
       currentDietDaysRemaining: currentDietDaysRemaining,
       nextDietItemName,
       millLoadingBin: nextBinAssignment,
+      animalsFed,
+      animalsFedBatches,
     },
     balanceSeries,
     demandSeries: [...demandByDate.values()].sort((a, b) => a.date.localeCompare(b.date)),

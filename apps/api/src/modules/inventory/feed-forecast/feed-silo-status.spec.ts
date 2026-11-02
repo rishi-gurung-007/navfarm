@@ -638,6 +638,48 @@ describe('buildSelectedSiloDashboard', () => {
 
     expect(shaped.silo.millLoadingBin).toEqual(assignment);
   });
+
+  // Rishi, 2 Nov: the animals fed from the silo — the heads of the batches drawing on it on the planning date.
+  it('counts the heads drawing on this silo on the planning date, batch by batch', () => {
+    const status = {
+      ...fact({}),
+      currentDietItemId: 'r1',
+      nextDietItemId: null,
+      requisitionId: null,
+      requisitionStatus: null,
+      submissionDeadline: null,
+      alert: null,
+    } as unknown as SiloStatusRow;
+    const row = (over: Record<string, unknown>) => ({
+      batchId: 'b1', batchNo: 'B-1', itemId: 'r1', itemName: 'Diet R1', date: '2026-09-23', heads: 100, demandKg: 200,
+      sourceType: 'SILO', destinationLocationId: 's1', currentInventoryKg: 1500, confirmedReceiptKg: 0, ...over,
+    });
+    const shaped = buildSelectedSiloDashboard({
+      status,
+      planningDate: '2026-09-23',
+      nextBinAssignment: null,
+      result: {
+        sources: [],
+        daily: [
+          row({}),
+          row({ batchId: 'b2', batchNo: 'B-2', heads: 40 }),
+          row({ batchId: 'b1', date: '2026-09-24', heads: 99 }), // a later day
+          row({ batchId: 'b3', batchNo: 'B-3', heads: 70, destinationLocationId: 's9' }), // another silo
+          row({ batchId: 'b4', batchNo: 'B-4', heads: 25, demandKg: 0 }), // eats nothing from it that day
+          row({ batchId: 'b5', batchNo: 'B-5', heads: 30, sourceType: 'STORE' }), // fed from a store
+        ] as any,
+      },
+    });
+    expect(shaped.silo.animalsFed).toBe(140);
+    expect(shaped.silo.animalsFedBatches).toEqual([{ batchNo: 'B-1', heads: 100 }, { batchNo: 'B-2', heads: 40 }]);
+  });
+
+  it('says 0 animals when no batch draws on the silo that day', () => {
+    const status = { ...fact({}), currentDietItemId: 'r1', nextDietItemId: null, alert: null } as unknown as SiloStatusRow;
+    const shaped = buildSelectedSiloDashboard({ status, planningDate: '2026-09-23', nextBinAssignment: null, result: { sources: [], daily: [] } });
+    expect(shaped.silo.animalsFed).toBe(0);
+    expect(shaped.silo.animalsFedBatches).toEqual([]);
+  });
 });
 
 /** Rishi, 12 Oct: Next Diet Feed Item / Silo Available come from the breed lifecycle of the stage the Next Stage field names. */

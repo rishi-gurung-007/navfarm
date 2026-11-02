@@ -35,6 +35,7 @@ const selectedSilo = {
   nextDietItemId: 'r2', nextDietItemName: 'Diet R2', nextDietDate: '2026-10-07', siloAvailableForNextDiet: true,
   projectedShortfallKg: 2000, recommendedOrderKg: 3000, requisitionId: 'req-1', requisitionStatus: 'DRAFT',
   submissionDeadline: '2026-10-06', alert: null, millLoadingBin: null,
+  animalsFed: 1240, animalsFedBatches: [{ batchNo: 'GRS-B12', heads: 620 }, { batchNo: 'GRS-B13', heads: 620 }],
 };
 
 function response(shedId: string | null, siloId: string | null) {
@@ -148,6 +149,44 @@ describe('FeedSiloDashboard', () => {
 
     await waitFor(() => expect((screen.getByLabelText('fsdSilo') as HTMLSelectElement).value).toBe('silo-b'));
     expect(screen.queryByText('GRS/SILO-001')).toBeNull();
+  });
+
+  // Rishi, 2 Nov: the animals fed from the silo — a total on the card and in the table, its batches in a dialog
+  // opened from the card's info button.
+  it('shows the Animals Fed total, and lists its batches in a dialog from the info button', async () => {
+    render(<FeedSiloDashboard />);
+    await pickAll();
+    const table = await screen.findByRole('table', { name: 'fsdLabel' });
+    expect(within(table).getByText('fsdAnimalsFed').closest('tr')!.textContent).toContain('1,240 fsdHeadUnit');
+    expect(screen.queryByRole('list', { name: 'fsdAnimalsFedBatches' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'fsdAnimalsFedBatches' }));
+    const dialog = await screen.findByRole('dialog');
+    const rows = within(within(dialog).getByRole('table')).getAllByRole('row').map((r) => r.textContent);
+    expect(rows).toEqual(['fsdColBatchfsdColStagefsdColHead', 'GRS-B12—620', 'GRS-B13—620', 'fsdTotal1,240']);
+  });
+
+  it("splits an animal-wise batch's stage into its own column in the dialog", async () => {
+    (api.get as jest.Mock).mockImplementation((url: string) => route(url).then((res: any) => (res.data.silo
+      ? { ...res, data: { ...res.data, silo: { ...res.data.silo, animalsFed: 16, animalsFedBatches: [{ batchNo: 'BATCH-000380 · GESTATION', heads: 16 }] } } }
+      : res)));
+    render(<FeedSiloDashboard />);
+    await pickAll();
+    fireEvent.click(await screen.findByRole('button', { name: 'fsdAnimalsFedBatches' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getAllByRole('row')[1].textContent).toBe('BATCH-000380GESTATION16');
+  });
+
+  // Rishi, 2 Nov: while a silo's figures load, a skeleton of the cards and charts stands in for them, not a spinner.
+  it('shows a skeleton of the dashboard, not a spinner, while the chosen silo loads', async () => {
+    (api.get as jest.Mock).mockImplementation((url: string) =>
+      new URL(url, 'http://navfarm.local').searchParams.get('siloId') ? new Promise(() => {}) : route(url));
+    render(<FeedSiloDashboard />);
+    await pickAll();
+    const skeleton = await screen.findByRole('status', { name: 'fsdLoading' });
+    expect(skeleton.getAttribute('aria-busy')).toBe('true');
+    expect(skeleton.querySelectorAll('[data-skeleton-card]')).toHaveLength(7);
+    expect(skeleton.querySelectorAll('[data-skeleton-chart]')).toHaveLength(2);
+    expect(screen.queryByText('fsdLoading')).toBeNull();
   });
 
   it('W5B (Silo r9): Days of Feed Remaining is shown to one decimal', async () => {

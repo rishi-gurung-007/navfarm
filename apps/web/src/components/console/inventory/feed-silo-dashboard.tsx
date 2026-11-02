@@ -17,7 +17,7 @@ import {
   useFeedForecastContext,
   useOptionalFeedForecastContext,
 } from "./feed-forecast-context";
-import { FeedSiloDashboardCards, type SelectedSiloDashboard } from "./feed-silo-dashboard-cards";
+import { FeedSiloDashboardCards, FeedSiloDashboardSkeleton, type SelectedSiloDashboard } from "./feed-silo-dashboard-cards";
 import {
   FeedSiloDashboardCharts,
   type BalanceSeriesPoint,
@@ -311,7 +311,7 @@ function FeedSiloDashboardContent() {
           </div>
         </div>
       ) : loading ? (
-        <LoadingState label={t("fsdLoading")} />
+        <FeedSiloDashboardSkeleton label={t("fsdLoading")} />
       ) : null}
     </div>
   );
