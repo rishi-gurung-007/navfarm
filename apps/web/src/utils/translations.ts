@@ -2795,7 +2795,6 @@ export const translations = {
     rptDatesInvalid: 'Date From must be on or before Date To.',
     rptNotAvailable: 'N/A',
     rptNoData: 'N/A',
-    rptPriorBatch: 'Prior YR: {{batch}}',
     rptFarmTotal: 'Farm total',
     rptGeneratedAt: 'Generated {{at}}',
     rptActual: 'Actual',

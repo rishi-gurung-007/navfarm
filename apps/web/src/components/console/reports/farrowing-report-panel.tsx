@@ -409,14 +409,8 @@ export default function FarrowingReportPanel() {
                         : 'var(--surface)',
                     }}
                   >
+                    {/* Rishi, 2 Nov: the prior year's batch number is not shown; its figures stay in the Prior YR columns. */}
                     {row.is_total ? t('rptFarmTotal') : row.batch_no}
-                    {!row.is_total && (
-                      <div className="text-[10px]" style={S.muted}>
-                        {t('rptPriorBatch', {
-                          batch: row.prior_batch_no ?? NA,
-                        })}
-                      </div>
-                    )}
                   </td>
                   {FARROWING_COLUMNS.map((c, i) => {
                     const text = c.cell(row, t);

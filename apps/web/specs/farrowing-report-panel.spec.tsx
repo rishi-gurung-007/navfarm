@@ -89,3 +89,26 @@ describe('Farrowing Report — Generate button', () => {
     expect(screen.getByRole('button', { name: 'rptRegenerate' })).toBeTruthy();
   });
 });
+
+// Rishi, 2 Nov: the prior year's batch number is not shown; its figures stay in the Prior YR columns.
+describe('Farrowing Report — prior year batch', () => {
+  it('shows the batch number without the matched prior-year batch', async () => {
+    const metrics = {
+      sows_served: 24, sows_farrowed: 0, farrowing_rate_pct: null, total_born_per_sow: null, born_alive_per_sow: null,
+      born_dead: 0, mummified: 0, active_week_mortality: 0, pre_wean_mortality_pct: null, avg_weaning_weight_kg: null,
+      litter_mass_total_kg: null, litter_mass_avg_kg: null, gilts_served: 0, second_parity_served: 0, sows_weaned: 0,
+      wean_per_sow: null, gilt_body_loss_pct: null,
+    };
+    get.mockImplementation(async (url: string) => {
+      if (url.startsWith('/reports/farrowing/farms')) return { data: [{ farm_id: 'farm-1', farm_code: 'GRS', farm_name: 'Grasmere', company_id: 'co-1' }] };
+      if (url.startsWith('/reports/farrowing/filters')) return { data: { batches: [], sows: [] } };
+      return { data: { ...report, rows: [{ batch_id: 'b1', batch_no: 'BATCH-000305', is_total: false, metrics, targets: {}, prior_year: metrics, prior_batch_no: 'BATCH-000078' }] } };
+    });
+    render(<FarrowingReportPanel />);
+    await setDates();
+    fireEvent.click(await screen.findByRole('button', { name: 'rptGenerate' }));
+    const cell = await screen.findByText('BATCH-000305');
+    expect(cell.textContent).toBe('BATCH-000305');
+    expect(screen.queryByText(/BATCH-000078/)).toBeNull();
+  });
+});

@@ -4,7 +4,6 @@ import {
   changeTone,
   columnGroups,
   FARROWING_COLUMNS,
-  NA,
   type FarrowingReport,
 } from './farrowing-report-columns';
 
@@ -43,9 +42,7 @@ export async function exportFarrowingExcel(
       groups: columnGroups(FARROWING_COLUMNS).map((g) => ({ label: t(g.group), span: g.span })),
       headers: FARROWING_COLUMNS.map((c) => t(c.sub)),
       rows: report.rows.map((row) => [
-        row.is_total
-          ? t('rptFarmTotal')
-          : `${row.batch_no}\n${t('rptPriorBatch', { batch: row.prior_batch_no ?? NA })}`,
+        row.is_total ? t('rptFarmTotal') : row.batch_no,
         ...FARROWING_COLUMNS.map((c) => c.cell(row, t)),
       ]),
       boldRows: new Set(report.rows.flatMap((row, i) => (row.is_total ? [i] : []))),
