@@ -269,3 +269,15 @@ it("scrolls in an area that reaches the window's edge, so its scrollbar sits on 
   expect(root.className).toMatch(/lg:-mr-7/);
   expect(root.className).toMatch(/lg:pr-7/);
 });
+
+it("lists the batches with no feed row one per line in the hover card", async () => {
+  await renderPanel();
+  await generate();
+  const note = document.querySelector("[data-no-feed-rows]") as HTMLElement;
+  fireEvent.mouseEnter(note.closest("[data-hint]") as HTMLElement);
+  const card = screen.getByRole("tooltip");
+  expect(within(card).getByText("mplNoFeedRowsTitle")).toBeTruthy();
+  const items = within(card).getAllByRole("listitem");
+  expect(items).toHaveLength(1);
+  expect(items[0].textContent).toContain("B-302");
+});

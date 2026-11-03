@@ -380,9 +380,14 @@ export default function MillPlanPanel() {
                             <div className="pl-[1.125rem] text-[11px] font-normal text-(--text-secondary)">{t("mplFarmSub", { sheds: farm.sheds.length, silos: farm.silos.length })}</div>
                             {farm.noFeedRows.length > 0 && (
                               <div className="pl-[1.125rem] text-[11px] font-normal text-(--warning)">
-                                <HoverHint hint={farm.noFeedRows.map((gap) => t("mplNoFeedRowLine", { batch: gap.batchNo.includes(gap.stageCode) ? gap.batchNo : `${gap.batchNo} · ${gap.stageCode}`, day: gap.fromDay, date: formatDateShort(gap.fromDate) })).join(" · ")} focusable={false}>
+                                {(() => {
+                                  const lines = farm.noFeedRows.map((gap) => t("mplNoFeedRowLine", { batch: gap.batchNo.includes(gap.stageCode) ? gap.batchNo : `${gap.batchNo} · ${gap.stageCode}`, day: gap.fromDay, date: formatDateShort(gap.fromDate) }));
+                                  return (
+                                <HoverHint hint={lines.join(" · ")} heading={t("mplNoFeedRowsTitle")} list={lines} focusable={false}>
                                   <span data-no-feed-rows>{t("mplNoFeedRows", { count: farm.noFeedRows.length })}</span>
                                 </HoverHint>
+                                  );
+                                })()}
                               </div>
                             )}
                           </td>

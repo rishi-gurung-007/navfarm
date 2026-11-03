@@ -14,11 +14,17 @@ export function HoverHint({
   children,
   focusable = true,
   plain = false,
+  heading,
+  list,
 }: {
   hint: string;
   children: ReactNode;
   /** No dotted underline: for a figure in a dense grid, where every cell has a hover and underlining them all is noise. */
   plain?: boolean;
+  /** A bold first line for the card, above `list`. */
+  heading?: string;
+  /** The card shows these one per line as a list instead of `hint` (which still names the hint for assistive tech). */
+  list?: string[];
   /** false inside a control that is already focusable (a button), so keyboard users meet one stop, not two. */
   focusable?: boolean;
 }) {
@@ -51,7 +57,7 @@ export function HoverHint({
           <span
             id={id}
             role="tooltip"
-            className="pointer-events-none fixed z-[1000] max-w-64 -translate-x-1/2 -translate-y-full rounded-md border px-2.5 py-1.5 text-xs leading-snug shadow-lg"
+            className={`pointer-events-none fixed z-[1000] -translate-x-1/2 -translate-y-full rounded-md border px-2.5 py-1.5 text-xs leading-snug shadow-lg ${list ? 'max-w-80' : 'max-w-64'}`}
             style={{
               left: at.left,
               top: at.top - 6,
@@ -60,7 +66,18 @@ export function HoverHint({
               color: 'var(--text-primary)',
             }}
           >
-            {hint}
+            {list ? (
+              <>
+                {heading && <span className="mb-1 block font-semibold">{heading}</span>}
+                <ul className="list-disc space-y-0.5 pl-4">
+                  {list.map((line, i) => (
+                    <li key={i}>{line}</li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              hint
+            )}
           </span>,
           document.body,
         )}
