@@ -128,11 +128,21 @@ it("lists only the chosen mill's company's farms once a mill is known", async ()
   expect(screen.getByRole("option", { name: "F1 — Farm One" })).toBeTruthy();
 });
 
-it("shows weights in KG, so a shed eating 313.5 kg a day reads 313.5", async () => {
+it("shows weights in tonnes, with the exact KG on hover", async () => {
   await renderPanel();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
-  expect(screen.getAllByText("313.5").length).toBe(7);
-  expect(document.querySelector(`[data-capacity-day="${dates[1]}"]`)?.textContent).toContain("12,000");
+  const cells = screen.getAllByText("0.31");
+  expect(cells.length).toBe(7);
+  expect(cells[0].closest("td")?.getAttribute("title")).toBe("313.5 KG");
+  expect(document.querySelector(`[data-capacity-day="${dates[1]}"]`)?.textContent).toContain("12.00");
+});
+
+it("explains each section in an info hover instead of a unit in its title", async () => {
+  await renderPanel();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
+  for (const key of ["mplCapacityInfo", "mplProductionInfo", "mplGridInfo", "mplSiloLevelsInfo"]) {
+    expect(document.querySelector(`[data-hint="${key}"]`)).toBeTruthy();
+  }
 });
 
 it("keeps the Farm / Shed and Feed columns in view when the table scrolls sideways", async () => {
@@ -174,22 +184,30 @@ it("ends with a card per silo: stock against capacity on a bar", async () => {
   expect(cards.map((c) => c.getAttribute("data-silo-card"))).toEqual(["farm-1|SL-1", "farm-1|SL-2"]);
   const bar = within(cards[0]).getByRole("progressbar");
   expect(bar.getAttribute("aria-valuenow")).toBe("40");
-  expect(cards[0].textContent).toContain("4,000");
-  expect(cards[0].textContent).toContain("10,000");
+  expect(cards[0].textContent).toContain("4.00");
+  expect(cards[0].textContent).toContain("10.00");
   expect(within(cards[1]).queryByRole("progressbar")).toBeNull();
   expect(cards[1].textContent).toContain("mplCapacityNotSet");
   // A silo named by its code is not named twice.
   expect(cards[1].textContent).not.toContain("SL-2 · SL-2");
 });
 
-it("holds each farm row under the header while its sheds scroll, until the next farm", async () => {
+it("holds each farm row under the header on the page's own scroll, with no scroll area of its own to get stuck in", async () => {
   await renderPanel();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
   const grid = document.querySelector("[data-mill-grid]") as HTMLElement;
-  expect(grid.className).toMatch(/overflow-auto/);
+  expect(grid.className).not.toMatch(/overflow-(auto|scroll|y-auto|x-auto)|max-h-/);
   const farmRow = grid.querySelector("[data-farm-row]") as HTMLElement;
   for (const cell of [...farmRow.children] as HTMLElement[]) {
     expect(cell.className).toMatch(/\bsticky\b/);
     expect(cell.style.top).toBe("var(--mpl-head)");
   }
+});
+
+it("puts Collapse All and Expand All beside the grid they fold", async () => {
+  await renderPanel();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
+  const section = screen.getByRole("region", { name: "mplGrid" });
+  expect(within(section).getByRole("button", { name: "mplCollapseAll" })).toBeTruthy();
+  expect(within(section).getByRole("button", { name: "mplExpandAll" })).toBeTruthy();
 });
