@@ -23,7 +23,7 @@ import { formatDateShort } from "@/utils/date-short";
 import { todayIso, unwrap } from "./feed-format";
 import { useFeedForecastContext } from "./feed-forecast-context";
 import { loadFeedFarms, type FeedFarm } from "./use-feed-farm";
-import { millCapacityText, type MillCapacityState, type MillCapacityStatus } from "./mill-capacity-view";
+import { formatKg, millCapacityText, type MillCapacityState, type MillCapacityStatus } from "./mill-capacity-view";
 import { MultiPick } from "./multi-pick";
 
 type DayStatus = "OK" | "WARN" | "OVER" | "NO_CAPACITY";
@@ -49,23 +49,22 @@ interface MillPlan {
   farms: Array<{
     farmId: string; code: string; name: string; totals: number[];
     sheds: Array<{ key: string; shedCode: string; batchNo: string; heads: number; items: Array<{ itemId: string; itemName: string }>; changeDate: string | null; kg: number[] }>;
-    silos: Array<{ sourceCode: string; sourceName: string | null; sourceType: "SILO" | "STORE"; itemName: string; openingKg: number; closingKg: Array<number | null>; runOutDate: string | null }>;
+    silos: Array<{ sourceCode: string; sourceName: string | null; sourceType: "SILO" | "STORE"; itemId: string; itemName: string; openingKg: number; closingKg: Array<number | null>; runOutDate: string | null }>;
   }>;
   failedFarms: Array<{ farmId: string; code: string; name: string; error: string }>;
 }
 
-const tonnes = (kg: number | null | undefined) => (kg === null || kg === undefined ? "—" : (kg / 1000).toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
+// KG, as every other feed screen shows weights.
+const kgText = (kg: number | null | undefined) => (kg === null || kg === undefined ? "—" : formatKg(Math.round(kg * 10) / 10));
 const weekday = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" });
-const STATUS_TONE: Record<DayStatus, string> = {
-  OK: "border-(--success) text-(--success)",
-  WARN: "border-(--warning) text-(--warning)",
-  OVER: "border-(--danger) text-(--danger)",
-  NO_CAPACITY: "border-(--border) text-(--text-secondary)",
-};
-const CARD_TONE: Record<DayStatus, "success" | "warning" | "danger" | "default"> = { OK: "success", WARN: "warning", OVER: "danger", NO_CAPACITY: "default" };
+const CARD_TONE: Record<DayStatus, "success" | "warning" | "danger" | "default"> = { OK: "default", WARN: "warning", OVER: "danger", NO_CAPACITY: "default" };
 const DOT: Record<MillCapacityStatus, string> = { GREEN: "bg-(--success)", AMBER: "bg-(--warning)", RED: "bg-(--danger)" };
 
-const TH = "sticky top-0 z-10 border-b border-(--border) bg-(--surface-raised) px-3 py-2 text-xs font-semibold text-(--text-secondary)";
+const TH = "sticky top-0 border-b border-(--border) bg-(--surface-raised) px-3 py-2 text-xs font-semibold text-(--text-secondary)";
+const TH_DAY = `${TH} z-10`;
+// The first column stays put while the days scroll sideways: one z-index and one background per cell, so they never clash.
+const TH_FIRST = `${TH} left-0 z-20 border-r text-left`;
+const STICKY = "sticky left-0 z-[1] border-r border-(--border)";
 const TD = "border-b border-(--border) px-3 py-1.5 align-top text-xs";
 const NUM = "whitespace-nowrap text-right tabular-nums";
 const HIGHLIGHT = "bg-[color-mix(in_srgb,var(--warning)_18%,transparent)]";
@@ -178,24 +177,29 @@ export default function MillPlanPanel() {
 
       {!loading && plan && (
         <div className="mt-4 space-y-5">
-          <section aria-label={t("mplCapacity")} className="rounded-lg border border-(--border) bg-(--surface-raised) p-3">
-            <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2 text-xs text-(--text-secondary)">
-              <span className="font-semibold uppercase tracking-wider">{t("mplCapacity")}</span>
-              <span>{plan.mill ? `${plan.mill.millCode} · ${plan.mill.dailyKg ? t("mplCapacityPerDay", { tonnes: tonnes(plan.mill.dailyKg) }) : t("mplCapacityNotSet")}` : t("mplNoMill")}</span>
+          <section aria-label={t("mplCapacity")}>
+            <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="text-sm font-semibold text-(--text-primary)">{t("mplCapacity")}</h2>
+              <span className="text-xs text-(--text-secondary)">{plan.mill ? `${plan.mill.millCode} · ${plan.mill.dailyKg ? t("mplCapacityPerDay", { kg: kgText(plan.mill.dailyKg) }) : t("mplCapacityNotSet")}` : t("mplNoMill")}</span>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7">
               {plan.capacity.map((day) => (
-                <div key={day.date} data-capacity-day={day.date} data-status={day.status} className={`rounded-md border-l-4 bg-(--surface) px-2.5 py-1.5 ${STATUS_TONE[day.status]}`}>
-                  <div className="text-[11px] font-semibold">{weekday(day.date)} {formatDateShort(day.date)}</div>
-                  <div className="text-xs tabular-nums text-(--text-primary)">{tonnes(day.productionKg)} t</div>
-                  <div className="text-[11px]">{day.status === "NO_CAPACITY" ? t("mplCapacityNotSet") : `${day.usedPct}%`}</div>
+                <div key={day.date} data-capacity-day={day.date} data-status={day.status}>
+                  <StatCard
+                    label={`${weekday(day.date)} ${formatDateShort(day.date)}`}
+                    value={kgText(day.productionKg)}
+                    unit="KG"
+                    tone={CARD_TONE[day.status]}
+                    emphasis={day.status === "WARN" || day.status === "OVER"}
+                    sub={day.status === "NO_CAPACITY" ? t("mplCapacityNotSet") : t("mplCapacityUsed", { pct: day.usedPct })}
+                  />
                 </div>
               ))}
             </div>
           </section>
 
           <StatRow columns={6}>
-            <StatCard label={t("mplCardTotal")} value={tonnes(plan.cards.totalKg)} unit="t" />
+            <StatCard label={t("mplCardTotal")} value={kgText(plan.cards.totalKg)} unit="KG" />
             <StatCard label={t("mplCardFarms")} value={plan.cards.farms} sub={t("mplCardFarmsSub", { sheds: plan.cards.sheds, silos: plan.cards.silos })} />
             <StatCard label={t("mplCardFeedTypes")} value={plan.cards.feedTypes} />
             <StatCard label={t("mplCardDietChanges")} value={plan.cards.dietChanges} tone={plan.cards.dietChanges ? "warning" : "default"} />
@@ -220,21 +224,21 @@ export default function MillPlanPanel() {
                 <table className="w-full border-collapse">
                   <thead>
                     <tr>
-                      <th className={`${TH} min-w-[11rem] text-left`}>{t("mplFeed")}</th>
-                      {plan.dates.map((date) => <th key={date} className={`${TH} ${NUM}`}>{weekday(date)} {formatDateShort(date)}</th>)}
-                      <th className={`${TH} ${NUM}`}>{t("mplTotal")}</th>
+                      <th className={`${TH_FIRST} min-w-[11rem]`}>{t("mplFeed")}</th>
+                      {plan.dates.map((date) => <th key={date} className={`${TH_DAY} ${NUM}`}>{weekday(date)} {formatDateShort(date)}</th>)}
+                      <th className={`${TH_DAY} ${NUM}`}>{t("mplTotal")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {plan.production.map((row) => (
                       <tr key={row.itemId}>
-                        <td className={TD}>
+                        <td className={`${TD} ${STICKY} bg-(--surface)`}>
                           <div className="font-medium text-(--text-primary)">{row.itemName}</div>
                           <div className="text-[11px] text-(--text-secondary)">{row.itemCode}{row.feedForm ? ` · ${row.feedForm}` : ""}</div>
                         </td>
                         {row.days.map((day) => (
-                          <td key={day.date} className={`${TD} ${NUM}`} title={t("mplProductionSplit", { approved: tonnes(day.approvedKg), forecast: tonnes(day.forecastKg) })}>
-                            {day.totalKg > 0 ? tonnes(day.totalKg) : "—"}
+                          <td key={day.date} className={`${TD} ${NUM}`} title={t("mplProductionSplit", { approved: kgText(day.approvedKg), forecast: kgText(day.forecastKg) })}>
+                            {day.totalKg > 0 ? kgText(day.totalKg) : "—"}
                             {day.totalKg > 0 && day.capacity && (
                               <div className="mt-0.5 flex items-center justify-end gap-1 text-[10px] text-(--text-secondary)">
                                 {day.capacity.status && <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${DOT[day.capacity.status]}`} />}
@@ -243,7 +247,7 @@ export default function MillPlanPanel() {
                             )}
                           </td>
                         ))}
-                        <td className={`${TD} ${NUM} font-semibold`}>{tonnes(row.totalKg)}</td>
+                        <td className={`${TD} ${NUM} font-semibold`}>{kgText(row.totalKg)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -275,13 +279,13 @@ export default function MillPlanPanel() {
               <table className="w-full border-collapse">
                 <thead>
                   <tr>
-                    <th className={`${TH} min-w-[14rem] text-left`}>{t("mplFarmShed")}</th>
-                    {plan.dates.map((date) => <th key={date} className={`${TH} ${NUM}`}>{weekday(date)} {formatDateShort(date)}</th>)}
+                    <th className={`${TH_FIRST} min-w-[14rem]`}>{t("mplFarmShed")}</th>
+                    {plan.dates.map((date) => <th key={date} className={`${TH_DAY} ${NUM}`}>{weekday(date)} {formatDateShort(date)}</th>)}
                   </tr>
                   <tr>
-                    <th className={`${TD} text-left font-semibold text-(--text-secondary)`}>{t("mplMillTotal")}</th>
+                    <th className={`${TD} ${STICKY} bg-(--surface) text-left font-semibold text-(--text-secondary)`}>{t("mplMillTotal")}</th>
                     {plan.dates.map((date, i) => (
-                      <th key={date} className={`${TD} ${NUM} font-semibold`}>{tonnes(plan.farms.reduce((sum, farm) => sum + farm.totals[i], 0))}</th>
+                      <th key={date} className={`${TD} ${NUM} font-semibold`}>{kgText(plan.farms.reduce((sum, farm) => sum + farm.totals[i], 0))}</th>
                     ))}
                   </tr>
                 </thead>
@@ -291,18 +295,18 @@ export default function MillPlanPanel() {
                     return (
                       <Fragment key={farm.farmId}>
                         <tr className="bg-(--surface-raised)">
-                          <td className={TD}>
+                          <td className={`${TD} ${STICKY} bg-(--surface-raised)`}>
                             <button type="button" className="flex items-center gap-1.5 text-left font-semibold text-(--text-primary)" aria-expanded={open} onClick={() => toggleFarm(farm.farmId)}>
                               <span aria-hidden>{open ? "▾" : "▸"}</span>
                               {farm.code} — {farm.name}
                             </button>
                             <div className="pl-4 text-[11px] text-(--text-secondary)">{t("mplFarmSub", { sheds: farm.sheds.length, silos: farm.silos.length })}</div>
                           </td>
-                          {farm.totals.map((kg, i) => <td key={plan.dates[i]} className={`${TD} ${NUM} font-semibold`}>{tonnes(kg)}</td>)}
+                          {farm.totals.map((kg, i) => <td key={plan.dates[i]} className={`${TD} ${NUM} font-semibold`}>{kgText(kg)}</td>)}
                         </tr>
                         {open && farm.sheds.map((shed) => (
                           <tr key={shed.key}>
-                            <td className={`${TD} pl-7`}>
+                            <td className={`${TD} ${STICKY} bg-(--surface) pl-7`}>
                               <div className="text-(--text-primary)">{shed.shedCode} <span className="text-(--text-secondary)">· {shed.batchNo}</span></div>
                               <div className="mt-0.5 flex flex-wrap items-center gap-1">
                                 {shed.items.map((item, i) => (
@@ -320,24 +324,24 @@ export default function MillPlanPanel() {
                               const change = shed.changeDate === date;
                               return (
                                 <td key={date} className={`${TD} ${NUM} ${change ? HIGHLIGHT : ""}`} {...(change ? { "data-diet-change": "", "data-date": date } : {})}>
-                                  {tonnes(kg)}
+                                  {kgText(kg)}
                                 </td>
                               );
                             })}
                           </tr>
                         ))}
                         {open && farm.silos.map((silo) => (
-                          <tr key={`${farm.farmId}|${silo.sourceCode}`}>
-                            <td className={`${TD} pl-7`}>
+                          <tr key={`${farm.farmId}|${silo.sourceCode}|${silo.itemId}`}>
+                            <td className={`${TD} ${STICKY} bg-(--surface) pl-7`}>
                               <div className="text-(--text-primary)">{silo.sourceType === "SILO" ? t("mplSilo") : t("mplStore")} {silo.sourceCode}{silo.sourceName ? ` · ${silo.sourceName}` : ""}</div>
-                              <div className="text-[11px] text-(--text-secondary)">{silo.itemName} · {t("mplOpening", { tonnes: tonnes(silo.openingKg) })}</div>
+                              <div className="text-[11px] text-(--text-secondary)">{silo.itemName} · {t("mplOpening", { kg: kgText(silo.openingKg) })}</div>
                             </td>
                             {silo.closingKg.map((kg, i) => {
                               const date = plan.dates[i];
                               const out = silo.runOutDate === date;
                               return (
                                 <td key={date} className={`${TD} ${NUM} text-(--text-secondary) ${out ? RUN_OUT : ""}`} {...(out ? { "data-run-out": "", "data-date": date } : {})}>
-                                  {tonnes(kg)}
+                                  {kgText(kg)}
                                 </td>
                               );
                             })}

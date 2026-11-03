@@ -59,6 +59,7 @@ export interface MillPlanSilo {
   sourceCode: string;
   sourceName: string | null;
   sourceType: 'SILO' | 'STORE';
+  itemId: string;
   itemName: string;
   /** Opening balance on the first day the forecast covers. */
   openingKg: number;
@@ -169,7 +170,7 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
       if (i === undefined || !selected(point.itemId)) continue;
       const siloKey = `${point.sourceCode}|${point.itemId}`;
       const silo = silos.get(siloKey) ?? {
-        sourceCode: point.sourceCode, sourceName: point.sourceName, sourceType: point.sourceType, itemName: point.itemName,
+        sourceCode: point.sourceCode, sourceName: point.sourceName, sourceType: point.sourceType, itemId: point.itemId, itemName: point.itemName,
         openingKg: 0, closingKg: dates.map((): number | null => null), runOutDate: null,
       };
       if (silo.closingKg.slice(0, i).every((kg) => kg === null)) silo.openingKg = point.openingSystemBalanceKg;

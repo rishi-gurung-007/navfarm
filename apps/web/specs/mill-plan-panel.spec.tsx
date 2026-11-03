@@ -33,8 +33,11 @@ const plan = {
   dietChanges: [{ farmId: "farm-1", farmName: "Farm One", shedCode: "S1", batchNo: "B-1", changeDate: dates[3], fromItemName: "Starter", toItemName: "Grower", heads: 120 }],
   farms: [{
     farmId: "farm-1", code: "F1", name: "Farm One", totals: zeros(),
-    sheds: [{ key: "S1|B-1", shedCode: "S1", batchNo: "B-1", heads: 120, items: [{ itemId: "i1", itemName: "Grower" }], changeDate: dates[3], kg: zeros() }],
-    silos: [{ sourceCode: "SL-1", sourceName: "Silo 1", sourceType: "SILO", itemName: "Grower", openingKg: 5000, closingKg: [null, 3000, 1000, 0, 0, 0, 0], runOutDate: dates[3] }],
+    sheds: [{ key: "S1|B-1", shedCode: "S1", batchNo: "B-1", heads: 120, items: [{ itemId: "i1", itemName: "Grower" }], changeDate: dates[3], kg: [313.5, 313.5, 313.5, 313.5, 313.5, 313.5, 313.5] }],
+    silos: [
+      { sourceCode: "SL-1", sourceName: "Silo 1", sourceType: "SILO", itemId: "i1", itemName: "Grower", openingKg: 5000, closingKg: [null, 3000, 1000, 0, 0, 0, 0], runOutDate: dates[3] },
+      { sourceCode: "SL-1", sourceName: "Silo 1", sourceType: "SILO", itemId: "i2", itemName: "Starter", openingKg: 200, closingKg: [null, 200, 200, 200, 200, 200, 200], runOutDate: null },
+    ],
   }],
   failedFarms: [{ farmId: "farm-2", code: "F2", name: "Farm Two", error: "No lifecycle" }],
 };
@@ -119,4 +122,27 @@ it("lists only the chosen mill's company's farms once a mill is known", async ()
   fireEvent.click(screen.getByRole("button", { name: /mplFarms/ }));
   expect(screen.queryByRole("checkbox", { name: "F3 — Farm Three" })).toBeNull();
   expect(screen.getByRole("checkbox", { name: "F1 — Farm One" })).toBeTruthy();
+});
+
+it("shows weights in KG, so a shed eating 313.5 kg a day reads 313.5", async () => {
+  await renderPanel();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
+  expect(screen.getAllByText("313.5").length).toBe(7);
+  expect(document.querySelector(`[data-capacity-day="${dates[1]}"]`)?.textContent).toContain("12,000");
+});
+
+it("keeps the Farm / Shed and Feed columns in view when the table scrolls sideways", async () => {
+  await renderPanel();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
+  const firstCells = [...document.querySelectorAll("table tr")].map((row) => row.firstElementChild as HTMLElement);
+  expect(firstCells.length).toBeGreaterThan(0);
+  for (const cell of firstCells) expect(cell.className).toMatch(/\bsticky\b.*\bleft-0\b|\bleft-0\b.*\bsticky\b/);
+});
+
+it("gives each feed of a shared silo its own row without duplicate keys", async () => {
+  const errors = jest.spyOn(console, "error").mockImplementation(() => undefined);
+  await renderPanel();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
+  expect(errors.mock.calls.some(([message]) => String(message).includes("same key"))).toBe(false);
+  errors.mockRestore();
 });

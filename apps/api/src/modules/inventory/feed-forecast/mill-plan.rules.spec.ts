@@ -162,8 +162,8 @@ describe('buildMillPlan', () => {
         balance({ sourceType: 'STORE', sourceCode: 'ST-1', itemId: STARTER, itemName: 'Starter', openingSystemBalanceKg: 300, projectedClosingBalanceKg: 250 }),
       ] })],
     }));
-    const rows = plan.farms[0].silos.map((s) => [s.sourceCode, s.itemName, s.openingKg]);
-    expect(rows).toEqual([['ST-1', 'Grower', 800], ['ST-1', 'Starter', 300]]);
+    const rows = plan.farms[0].silos.map((s) => [s.sourceCode, s.itemId, s.itemName, s.openingKg]);
+    expect(rows).toEqual([['ST-1', GROWER, 'Grower', 800], ['ST-1', STARTER, 'Starter', 300]]);
   });
 
   it('carries failed farms through untouched', () => {
