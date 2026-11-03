@@ -2263,6 +2263,8 @@ export const translations = {
     mplMill: 'Mill',
     mplAll: 'All',
     mplSelected: '{{count}} selected',
+    mplSearch: 'Search…',
+    mplNoMatches: 'No matches found',
     mplGenerate: 'Generate',
     mplCollapseAll: 'Collapse All',
     mplExpandAll: 'Expand All',

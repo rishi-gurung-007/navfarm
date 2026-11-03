@@ -80,7 +80,7 @@ it("sends weekOf, farmIds, itemIds and millId on Generate", async () => {
   expect(millPlanCalls()).toEqual(["/feed-forecast/mill-plan?weekOf=2026-11-02"]);
   // Narrow the farms to one and generate again: the ids go on the query.
   fireEvent.click(screen.getByRole("button", { name: /mplFarms/ }));
-  fireEvent.click(screen.getByRole("checkbox", { name: "F2 — Farm Two" }));
+  fireEvent.click(screen.getByRole("option", { name: "F2 — Farm Two" }));
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
   expect(millPlanCalls()[1]).toBe("/feed-forecast/mill-plan?weekOf=2026-11-02&farmIds=farm-1&millId=mill-1");
 });
@@ -116,12 +116,12 @@ it("lists a failed farm with its error", async () => {
 it("lists only the chosen mill's company's farms once a mill is known", async () => {
   await renderPanel();
   fireEvent.click(screen.getByRole("button", { name: /mplFarms/ }));
-  expect(screen.getByRole("checkbox", { name: "F3 — Farm Three" })).toBeTruthy();
+  expect(screen.getByRole("option", { name: "F3 — Farm Three" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: /mplFarms/ }));
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
   fireEvent.click(screen.getByRole("button", { name: /mplFarms/ }));
-  expect(screen.queryByRole("checkbox", { name: "F3 — Farm Three" })).toBeNull();
-  expect(screen.getByRole("checkbox", { name: "F1 — Farm One" })).toBeTruthy();
+  expect(screen.queryByRole("option", { name: "F3 — Farm Three" })).toBeNull();
+  expect(screen.getByRole("option", { name: "F1 — Farm One" })).toBeTruthy();
 });
 
 it("shows weights in KG, so a shed eating 313.5 kg a day reads 313.5", async () => {
@@ -145,4 +145,20 @@ it("gives each feed of a shared silo its own row without duplicate keys", async 
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
   expect(errors.mock.calls.some(([message]) => String(message).includes("same key"))).toBe(false);
   errors.mockRestore();
+});
+
+it("picks farms in the same searchable list as every other select, ticking several", async () => {
+  await renderPanel();
+  fireEvent.click(screen.getByRole("button", { name: /mplFarms/ }));
+  expect(screen.getByRole("listbox", { name: "mplFarms" })).toBeTruthy();
+  expect(screen.getByRole("option", { name: "mplAll" }).getAttribute("aria-selected")).toBe("true");
+  // The search narrows the list like the custom select does.
+  fireEvent.change(screen.getByRole("combobox", { name: "mplFarms" }), { target: { value: "two" } });
+  expect(screen.queryByRole("option", { name: "F1 — Farm One" })).toBeNull();
+  fireEvent.click(screen.getByRole("option", { name: "F2 — Farm Two" }));
+  // The list stays open for the next pick, and the trigger names the one left.
+  expect(screen.getByRole("listbox", { name: "mplFarms" })).toBeTruthy();
+  fireEvent.change(screen.getByRole("combobox", { name: "mplFarms" }), { target: { value: "" } });
+  expect(screen.getByRole("option", { name: "F2 — Farm Two" }).getAttribute("aria-selected")).toBe("false");
+  expect(screen.getByRole("option", { name: "F1 — Farm One" }).getAttribute("aria-selected")).toBe("true");
 });

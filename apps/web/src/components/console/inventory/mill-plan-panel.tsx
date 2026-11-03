@@ -24,7 +24,7 @@ import { todayIso, unwrap } from "./feed-format";
 import { useFeedForecastContext } from "./feed-forecast-context";
 import { loadFeedFarms, type FeedFarm } from "./use-feed-farm";
 import { formatKg, millCapacityText, type MillCapacityState, type MillCapacityStatus } from "./mill-capacity-view";
-import { MultiPick } from "./multi-pick";
+import { MultiPick, type MultiPickOption } from "./multi-pick";
 
 type DayStatus = "OK" | "WARN" | "OVER" | "NO_CAPACITY";
 
@@ -79,7 +79,7 @@ export default function MillPlanPanel() {
   const [weekOf, setWeekOf] = useState(planningDate || todayIso());
   const [farms, setFarms] = useState<FeedFarm[]>([]);
   const [farmIds, setFarmIds] = useState<string[] | null>(null);
-  const [items, setItems] = useState<Array<{ id: string; label: string }>>([]);
+  const [items, setItems] = useState<MultiPickOption[]>([]);
   const [itemIds, setItemIds] = useState<string[] | null>(null);
   const [millId, setMillId] = useState("");
   const [plan, setPlan] = useState<MillPlan | null>(null);
@@ -97,7 +97,7 @@ export default function MillPlanPanel() {
         const options = unwrap<{ items?: Array<{ item_id: string; item_code: string; item_name: string }> }>(
           await api.get(`/feed-requisition/options?${new URLSearchParams({ farmId: list[0].farmId }).toString()}`),
         );
-        if (alive) setItems((options?.items ?? []).map((item) => ({ id: item.item_id, label: `${item.item_code} — ${item.item_name}` })));
+        if (alive) setItems((options?.items ?? []).map((item) => ({ id: item.item_id, code: item.item_code, name: item.item_name })));
       })
       .catch(() => undefined);
     return () => {
@@ -142,7 +142,7 @@ export default function MillPlanPanel() {
           <input id="mill-plan-week" type="date" className="nf-input-sm" value={weekOf} onChange={(event) => setWeekOf(event.target.value)} />
         </Field>
         <Field label={t("mplFarms")}>
-          <MultiPick label={t("mplFarms")} options={farmOptions.map((farm) => ({ id: farm.farmId, label: `${farm.code} — ${farm.name}` }))} selected={farmIds} onChange={setFarmIds} />
+          <MultiPick label={t("mplFarms")} options={farmOptions.map((farm) => ({ id: farm.farmId, code: farm.code, name: farm.name }))} selected={farmIds} onChange={setFarmIds} />
         </Field>
         <Field label={t("mplFeedTypes")}>
           <MultiPick label={t("mplFeedTypes")} options={items} selected={itemIds} onChange={setItemIds} />
