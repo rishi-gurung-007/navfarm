@@ -88,7 +88,8 @@ function SectionTitle({ title, info, children }: { title: string; info: string; 
     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
       <h2 className="flex items-center gap-1.5 text-sm font-semibold text-(--text-primary)">
         {title}
-        <HoverHint hint={info}>
+        {/* One bullet per point: the info strings separate their points with new lines. */}
+        <HoverHint hint={info} heading={title} list={info.split("\n")} plain>
           <Info aria-label={info} className="h-3.5 w-3.5 text-(--text-muted)" />
         </HoverHint>
       </h2>
@@ -102,6 +103,8 @@ const DOT: Record<MillCapacityStatus, string> = { GREEN: "bg-(--success)", AMBER
 
 const TH = "sticky top-0 border-b border-(--border) bg-(--surface-raised) px-3 py-2 text-xs font-semibold text-(--text-secondary)";
 const TH_DAY = `${TH} z-10`;
+// A small table that never scrolls (Feed Type Changes): its header stays where it is.
+const TH_PLAIN = "border-b border-(--border) bg-(--surface-raised) px-3 py-2 text-xs font-semibold text-(--text-secondary)";
 // The first column stays put while the days scroll sideways: one z-index and one background per cell, so they never clash.
 const TH_FIRST = `${TH} left-0 z-20 border-r text-left`;
 const STICKY = "sticky left-0 z-[1] border-r border-(--border)";
@@ -330,15 +333,41 @@ export default function MillPlanPanel() {
           <section aria-label={t("mplDietChanges")}>
             <SectionTitle title={t("mplDietChanges")} info={t("mplDietChangesInfo")} />
             {(
-              <ul className="space-y-1">
-                {plan.dietChanges.map((change) => (
-                  <li key={`${change.farmId}|${change.shedCode}|${change.batchNo}|${change.changeDate}`} className={`rounded-md border-l-4 border-(--warning) px-3 py-1.5 text-xs text-(--text-primary) ${HIGHLIGHT}`}>
-                    <span className="font-semibold">{change.farmName} / {change.shedCode}</span>
-                    {" — "}
-                    {t("mplDietChangeLine", { batch: change.batchNo, date: `${weekday(change.changeDate)} ${formatDateShort(change.changeDate)}`, from: change.fromItemName, to: change.toItemName, heads: change.heads })}
-                  </li>
-                ))}
-              </ul>
+              <div className="overflow-x-auto rounded-lg border border-(--border)">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr>
+                      <th className={`${TH_PLAIN} w-28 text-left`}>{t("mplColDate")}</th>
+                      <th className={`${TH_PLAIN} text-left`}>{t("mplColFarmShed")}</th>
+                      <th className={`${TH_PLAIN} text-left`}>{t("mplColBatch")}</th>
+                      <th className={`${TH_PLAIN} text-left`}>{t("mplColFeedChange")}</th>
+                      <th className={`${TH_PLAIN} w-24 text-right`}>{t("mplColHead")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {plan.dietChanges.map((change) => (
+                      <tr key={`${change.farmId}|${change.shedCode}|${change.batchNo}|${change.changeDate}`}>
+                        <td className={TD}>
+                          <div className="flex flex-col leading-tight">
+                            <span className="font-medium text-(--text-primary)">{formatDateShort(change.changeDate)}</span>
+                            <span className="text-[10px] text-(--text-muted)">{weekday(change.changeDate)}</span>
+                          </div>
+                        </td>
+                        <td className={`${TD} text-(--text-primary)`}>{change.farmName} / {change.shedCode}</td>
+                        <td className={`${TD} text-(--text-secondary)`}>{change.batchNo}</td>
+                        <td className={TD}>
+                          <span className="inline-flex flex-wrap items-center gap-1.5">
+                            <span className="rounded bg-(--surface-raised) px-1.5 py-0.5 text-[10px] font-semibold uppercase text-(--text-secondary)">{change.fromItemName}</span>
+                            <span aria-hidden className="text-(--warning)">→</span>
+                            <span className="rounded bg-[color-mix(in_srgb,var(--warning)_18%,transparent)] px-1.5 py-0.5 text-[10px] font-semibold uppercase text-(--text-primary)">{change.toItemName}</span>
+                          </span>
+                        </td>
+                        <td className={`${TD} ${NUM}`}>{change.heads.toLocaleString("en-US")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </section>
           )}

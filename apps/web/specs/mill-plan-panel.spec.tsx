@@ -152,7 +152,7 @@ it("explains each section in an info hover instead of a unit in its title", asyn
 it("keeps the Farm / Shed and Feed columns in view when the table scrolls sideways", async () => {
   await renderPanel();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
-  const firstCells = [...document.querySelectorAll("table tr")].map((row) => row.firstElementChild as HTMLElement);
+  const firstCells = [...document.querySelectorAll("[data-mill-grid] table tr")].map((row) => row.firstElementChild as HTMLElement);
   expect(firstCells.length).toBeGreaterThan(0);
   for (const cell of firstCells) expect(cell.className).toMatch(/\bsticky\b.*\bleft-0\b|\bleft-0\b.*\bsticky\b/);
 });
@@ -280,4 +280,24 @@ it("lists the batches with no feed row one per line in the hover card", async ()
   const items = within(card).getAllByRole("listitem");
   expect(items).toHaveLength(1);
   expect(items[0].textContent).toContain("B-302");
+});
+
+it("lists feed type changes in aligned columns, one row per batch", async () => {
+  await renderPanel();
+  await generate();
+  const section = screen.getByRole("region", { name: "mplDietChanges" });
+  const table = within(section).getByRole("table");
+  expect(within(table).getAllByRole("columnheader").map((c) => c.textContent)).toEqual(["mplColDate", "mplColFarmShed", "mplColBatch", "mplColFeedChange", "mplColHead"]);
+  const cells = within(table).getAllByRole("row")[1].querySelectorAll("td");
+  expect([...cells].map((c) => c.textContent)).toEqual([`${dates[3]}Thu`, "Farm One / S1", "B-1", "Starter→Grower", "120"]);
+});
+
+it("shows each section's ⓘ as a heading with one bullet per point", async () => {
+  await renderPanel();
+  await generate();
+  const icon = document.querySelector('[data-hint="mplGridInfo"]') as HTMLElement;
+  fireEvent.mouseEnter(icon);
+  const card = screen.getByRole("tooltip");
+  expect(within(card).getByText("mplGrid")).toBeTruthy();
+  expect(within(card).getAllByRole("listitem").length).toBeGreaterThan(0);
 });
