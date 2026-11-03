@@ -271,60 +271,14 @@ export class FeedRequisitionService implements OnModuleInit {
         this.decideFromApproval(request, decision, remarks, tenantId, user),
       withdraw: (request, tenantId, user) =>
         this.withdrawFromApproval(request, tenantId, user),
-      afterDecide: async (request, tenantId, user, decision) => {
+      afterDecide: async (request, tenantId) => {
         await this.feedAlerts.evaluateFarmSafely(
           request.farm_id,
           request.company_id,
           tenantId,
         );
-        if (decision === 'APPROVED')
-          await this.refreshActualPlanAfterApproval(request, tenantId, user);
       },
     });
-  }
-
-  /** Refresh the retained Actual Feed Plan after approval commits. */
-  private async refreshActualPlanAfterApproval(
-    request: ApprovalRequestRow,
-    tenantId: string,
-    user?: UserCtx,
-  ): Promise<void> {
-    try {
-      const [requisition] = await this.db
-        .select({
-          productionDate: schema.requisition.production_date,
-          feedForecastRunId: schema.requisition.feed_forecast_run_id,
-        })
-        .from(schema.requisition)
-        .where(
-          and(
-            eq(schema.requisition.requisition_id, request.document_id!),
-            eq(schema.requisition.tenant_id, tenantId),
-            eq(schema.requisition.company_id, request.company_id),
-            isNull(schema.requisition.deleted_at),
-          ),
-        )
-        .limit(1);
-      if (
-        !requisition?.productionDate ||
-        !requisition.feedForecastRunId ||
-        !request.farm_id
-      )
-        return;
-      await this.forecast.generateFeedPlanVersion(
-        request.farm_id,
-        requisition.productionDate,
-        tenantId,
-        {
-          userId: user?.userId,
-          userType: user?.userType,
-        },
-      );
-    } catch (error) {
-      this.logger.warn(
-        `Actual Feed Plan refresh skipped after approval ${request.doc_no}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
   }
 
   /** The same farm/LOB bound requisition.service.ts applies. */

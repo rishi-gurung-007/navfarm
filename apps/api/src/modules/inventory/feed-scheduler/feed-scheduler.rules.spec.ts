@@ -1,14 +1,13 @@
 import { localClock } from '../feed-forecast/feed-forecast.engine';
-import { ScheduleSettings, cadenceOf, duePeriod, isFeedJob, runKey } from './feed-scheduler.rules';
+import { FEED_JOBS, ScheduleSettings, cadenceOf, duePeriod, isFeedJob, runKey } from './feed-scheduler.rules';
 
 // Decisions 1 Oct (Triple C starting configuration) and Engine row 69 — configured values, passed in as settings.
 const tripleC: ScheduleSettings = {
-  tentativePlanWeekday: 3, tentativePlanTime: '09:00',
   reminderWeekday: 5, reminderTime: '18:00',
   submissionWeekday: 6, submissionTime: '12:00',
 };
 const unset: ScheduleSettings = {
-  tentativePlanWeekday: null, tentativePlanTime: null, reminderWeekday: null, reminderTime: null, submissionWeekday: null, submissionTime: null,
+  reminderWeekday: null, reminderTime: null, submissionWeekday: null, submissionTime: null,
 };
 // Africa/Harare is UTC+2 all year.
 const harare = (iso: string) => localClock('Africa/Harare', Date.parse(iso));
@@ -21,13 +20,6 @@ describe('localClock — the company time zone', () => {
 });
 
 describe('duePeriod — configured days and times, in the company zone', () => {
-  it('runs the tentative plan on the configured Wednesday from 09:00 local, for that day only', () => {
-    expect(duePeriod('TENTATIVE_PLAN', tripleC, harare('2026-09-23T06:55:00Z'))).toBeNull(); // 08:55 Harare
-    expect(duePeriod('TENTATIVE_PLAN', tripleC, harare('2026-09-23T07:00:00Z'))).toBe('2026-09-23'); // 09:00 Harare
-    expect(duePeriod('TENTATIVE_PLAN', tripleC, harare('2026-09-23T21:55:00Z'))).toBe('2026-09-23'); // 23:55 Harare
-    expect(duePeriod('TENTATIVE_PLAN', tripleC, harare('2026-09-24T07:00:00Z'))).toBeNull(); // Thursday
-  });
-
   it('runs the reminder on Friday from 18:00 and the cutoff on Saturday from 12:00', () => {
     expect(duePeriod('REQ_REMINDER', tripleC, harare('2026-09-25T15:59:00Z'))).toBeNull();
     expect(duePeriod('REQ_REMINDER', tripleC, harare('2026-09-25T16:00:00Z'))).toBe('2026-09-25');
@@ -42,7 +34,7 @@ describe('duePeriod — configured days and times, in the company zone', () => {
   });
 
   it('never schedules a weekly job whose day or time is not configured — no built-in Friday or Wednesday', () => {
-    for (const job of ['TENTATIVE_PLAN', 'REQ_REMINDER', 'REQ_CUTOFF'] as const) {
+    for (const job of ['REQ_REMINDER', 'REQ_CUTOFF'] as const) {
       expect(cadenceOf(job, unset)).toBeNull();
       expect(duePeriod(job, unset, harare('2026-09-25T16:00:00Z'))).toBeNull();
     }
@@ -59,7 +51,10 @@ describe('duePeriod — configured days and times, in the company zone', () => {
 
 describe('isFeedJob', () => {
   it('accepts the five jobs and nothing else', () => {
-    for (const job of ['TENTATIVE_PLAN', 'REQ_REMINDER', 'REQ_CUTOFF', 'DIET_CHANGE', 'ESCALATION']) expect(isFeedJob(job)).toBe(true);
+    expect(FEED_JOBS).toEqual(['REQ_REMINDER', 'REQ_CUTOFF', 'DIET_CHANGE', 'ESCALATION', 'STOCK_TAKE_DUE']);
+    for (const job of FEED_JOBS) expect(isFeedJob(job)).toBe(true);
     expect(isFeedJob('EMAIL')).toBe(false);
+    // Mill Planning replaced Feed Plan (spec 2026-11-03): the tentative-plan job is gone.
+    expect(isFeedJob('TENTATIVE_PLAN')).toBe(false);
   });
 });

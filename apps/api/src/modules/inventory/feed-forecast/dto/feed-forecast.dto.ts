@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, Min } from 'class-validator';
 import { FORECAST_VIEWS } from '../feed-forecast.view';
 import type { ForecastView } from '../feed-forecast.view';
 
@@ -61,10 +61,30 @@ export class QueryFeedPeriodsDto {
 
 export class QueryFeedForecastRunsDto extends QueryFeedPeriodsDto {}
 
-export class GenerateFeedPlanDto extends QueryFeedPeriodsDto {
-  @ApiProperty({ description: 'Production date whose ISO week identifies the retained plan version' })
+// Mill Planning (spec 2026-11-03): one week from weekOf. farmIds and itemIds
+// are comma-separated, absent meaning every farm in scope / every feed.
+const UUID_LIST = /^[0-9a-f-]{36}(,[0-9a-f-]{36})*$/i;
+export class QueryMillPlanDto {
+  @ApiProperty({ description: 'First day of the week (YYYY-MM-DD)' })
   @IsDateString()
-  productionDate!: string;
+  weekOf!: string;
+
+  @ApiProperty({ required: false, description: 'Comma-separated farm ids; absent = every farm in scope' })
+  @IsOptional()
+  @IsString()
+  @Matches(UUID_LIST, { message: 'farmIds must be comma-separated ids.' })
+  farmIds?: string;
+
+  @ApiProperty({ required: false, description: 'Comma-separated feed item ids; absent = every feed' })
+  @IsOptional()
+  @IsString()
+  @Matches(UUID_LIST, { message: 'itemIds must be comma-separated ids.' })
+  itemIds?: string;
+
+  @ApiProperty({ required: false, description: 'MILL location; absent = the first mill of the farms\' companies' })
+  @IsOptional()
+  @IsUUID()
+  millId?: string;
 }
 
 /** Compare Report filters: one MILL (default: the first), a production date, and DAY or its ISO WEEK. */

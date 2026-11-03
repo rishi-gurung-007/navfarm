@@ -1,8 +1,8 @@
 'use client';
 
 /**
- * Inventory -> Feed Forecast is one page with eight tabs: Dashboard, Forecast,
- * Feed Plan, Compare Report, Feed Requisition, Mill Consolidation, Mill Production, Loading Instructions and
+ * Inventory -> Feed Forecast is one page with nine tabs: Dashboard, Forecast,
+ * Mill Planning, Compare Report, Feed Requisition, Mill Consolidation, Mill Production, Loading Instructions and
  * Physical Count — all of them work on the same selected farm.
  *
  * The chosen tab lives in `?tab=`, so a bookmark, a refresh and the redirect
@@ -19,7 +19,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { TranslationKeys } from '@/utils/translations';
 import FeedSiloDashboard from './feed-silo-dashboard';
 import FeedForecastPanel from './feed-forecast-panel';
-import FeedPlanPanel from './feed-plan-panel';
+import MillPlanPanel from './mill-plan-panel';
 import MillComparePanel from './mill-compare-panel';
 import { FeedRequisitionPanel } from './requisitions-panel';
 import FeedStockCountPanel from './feed-stock-count-panel';
@@ -31,7 +31,7 @@ import MillProductionPanel from './mill-production-panel';
 export const FEED_FORECAST_TABS = [
   'dashboard',
   'forecast',
-  'feed-plan',
+  'mill-planning',
   'compare-report',
   'feed-requisition',
   'mill-consolidation',
@@ -44,7 +44,7 @@ export type FeedForecastTab = (typeof FEED_FORECAST_TABS)[number];
 export const TAB_LABEL: Record<FeedForecastTab, TranslationKeys> = {
   dashboard: 'fftTabDashboard',
   forecast: 'fftTabForecast',
-  'feed-plan': 'fftTabFeedPlan',
+  'mill-planning': 'fftTabMillPlanning',
   'compare-report': 'fftTabCompareReport',
   'feed-requisition': 'fftTabFeedRequisition',
   'mill-consolidation': 'fftTabMillConsolidation',
@@ -57,6 +57,8 @@ export const TAB_LABEL: Record<FeedForecastTab, TranslationKeys> = {
 export function readFeedForecastTab(
   value: string | null | undefined,
 ): FeedForecastTab {
+  // Mill Planning replaced Feed Plan (spec 2026-11-03): old links and bookmarks land on it.
+  if (value === 'feed-plan') return 'mill-planning';
   return (FEED_FORECAST_TABS as readonly string[]).includes(String(value ?? ''))
     ? (value as FeedForecastTab)
     : 'forecast';
@@ -69,7 +71,7 @@ export function feedForecastTabQuery(tab: FeedForecastTab): string {
 
 /**
  * Previously rendered horizontal in-page tabs; now removed from the page since
- * all feed forecast tabs (Dashboard, Calculation, Feed Plan, Compare Report, etc.)
+ * all feed forecast tabs (Dashboard, Calculation, Mill Planning, Compare Report, etc.)
  * are navigated directly via the primary sidebar flyout (Farm Master pattern).
  */
 export function FeedForecastSubTabs(_props: FeedForecastTabsProps) {
@@ -79,7 +81,7 @@ export function FeedForecastSubTabs(_props: FeedForecastTabsProps) {
 const PANELS: Partial<Record<FeedForecastTab, () => ReactNode>> = {
   dashboard: () => <FeedSiloDashboard />,
   forecast: () => <FeedForecastPanel />,
-  'feed-plan': () => <FeedPlanPanel />,
+  'mill-planning': () => <MillPlanPanel />,
   'compare-report': () => <MillComparePanel />,
   'feed-requisition': () => <FeedRequisitionPanel />,
   'mill-consolidation': () => <FeedConsolidationsPanel />,

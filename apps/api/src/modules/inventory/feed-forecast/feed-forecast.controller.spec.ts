@@ -76,22 +76,10 @@ describe('FeedForecastController run persistence boundary', () => {
     });
   });
 
-  it('lists, reads and generates retained feed plan versions through explicit scoped routes', async () => {
-    const service = {
-      listFeedPlanVersions: jest.fn(async () => [{ plan_id: 'plan-1' }]),
-      findFeedPlanVersion: jest.fn(async () => ({ plan_id: 'plan-1', lines: [] })),
-      generateFeedPlanVersion: jest.fn(async () => ({ planId: 'plan-1', planCode: 'PLAN-GRA100-202642-R01' })),
-    } as any;
-    const controller = new FeedForecastController(service);
-
-    await expect(controller.feedPlanVersions('farm-1', req)).resolves.toMatchObject({ data: [{ plan_id: 'plan-1' }] });
-    await expect(controller.feedPlanVersion('f4cf8276-17ed-4b46-95df-5234dfb2b48a', req)).resolves.toMatchObject({ data: { plan_id: 'plan-1' } });
-    await expect(controller.generateFeedPlanVersion({ farmId: 'farm-1', productionDate: '2026-10-16' }, req)).resolves.toMatchObject({ data: { planId: 'plan-1' } });
-    expect(service.listFeedPlanVersions).toHaveBeenCalledWith('farm-1', 'tenant-1', 'FARM_MANAGER');
-    expect(service.findFeedPlanVersion).toHaveBeenCalledWith('f4cf8276-17ed-4b46-95df-5234dfb2b48a', 'tenant-1');
-    expect(service.generateFeedPlanVersion).toHaveBeenCalledWith('farm-1', '2026-10-16', 'tenant-1', req.user);
-    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, FeedForecastController.prototype.feedPlanVersions)).toMatchObject({ action: 'view' });
-    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, FeedForecastController.prototype.generateFeedPlanVersion)).toMatchObject({ action: 'create' });
+  // Mill Planning replaced Feed Plan (spec 2026-11-03): its routes are gone.
+  it('no longer serves the Feed Plan routes', () => {
+    const prototype = FeedForecastController.prototype as any;
+    for (const name of ['feedPlan', 'feedPlanVersions', 'feedPlanVersion', 'generateFeedPlanVersion']) expect(prototype[name]).toBeUndefined();
   });
 
   it('serves silo status under the forecast grant, through the scoped service', async () => {
@@ -113,5 +101,24 @@ describe('FeedForecastController run persistence boundary', () => {
     await controller.farmSettings('co-1', req);
 
     expect(service.listFarmSettings).toHaveBeenCalledWith('tenant-1', 'FARM_MANAGER', 'co-1');
+  });
+});
+
+describe('FeedForecastController mill plan', () => {
+  const req = { user: { tenantId: 'tenant-1', userId: 'user-1', userType: 'TENANT_ADMIN' } };
+
+  it('returns the generated mill plan under INVENTORY/LEDGER view', async () => {
+    const plan = { dates: [], farms: [] };
+    const millPlan = { generate: jest.fn(async () => plan) } as any;
+    const controller = new FeedForecastController({} as any, millPlan);
+
+    await expect(controller.millPlan({ weekOf: '2026-11-02' }, req)).resolves.toEqual({
+      success: true,
+      message: 'Mill plan generated.',
+      data: plan,
+    });
+    expect(millPlan.generate).toHaveBeenCalledWith('tenant-1', 'TENANT_ADMIN', { weekOf: '2026-11-02' });
+    expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, FeedForecastController.prototype.millPlan))
+      .toMatchObject({ moduleCode: 'INVENTORY', resource: 'LEDGER', action: 'view' });
   });
 });

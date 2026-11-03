@@ -236,20 +236,15 @@ describe('planAlerts — pushed events (brief B)', () => {
   const planRule: AlertRuleFact = { ...aboveRule, ruleId: 'rule-plan', notificationCode: 'PLAN-AVAILABLE', eventType: 'PLAN_AVAILABLE', thresholdReference: 'FIXED_VALUE', thresholdValue: 0 };
   const open = active({ alertId: 'p1', ruleId: 'rule-plan', eventType: 'PLAN_AVAILABLE', subjectType: 'FEED_PLAN', subjectId: 'plan-1', dedupKey: 'rule-plan|plan-1', observedValue: null });
 
-  it('keeps an open PLAN_AVAILABLE alert while its rule is on and its plan is still the live one', () => {
-    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open] }))).toEqual({ raise: [], renotify: [], escalate: [], resolve: [] });
+  // Mill Planning replaced Feed Plan (spec 2026-11-03): nothing raises PLAN_AVAILABLE any more, so an
+  // open one is closed on the next full evaluation, whether its rule is on or not.
+  it('closes an open PLAN_AVAILABLE alert on a full evaluation', () => {
+    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open] })).resolve).toEqual([{ alertId: 'p1', reason: 'CLOSED' }]);
+    expect(planAlerts(base({ rules: [lowRule], active: [open] })).resolve).toEqual([{ alertId: 'p1', reason: 'CLOSED' }]);
   });
 
-  it('resolves it RULE_OFF when its rule is turned off or deleted', () => {
-    expect(planAlerts(base({ rules: [lowRule, { ...planRule, isActive: false }], active: [open] })).resolve).toEqual([{ alertId: 'p1', reason: 'RULE_OFF' }]);
-    expect(planAlerts(base({ rules: [lowRule], active: [open] })).resolve).toEqual([{ alertId: 'p1', reason: 'RULE_OFF' }]);
-  });
-
-  it('resolves it when its plan became approved or was superseded, and not after a levels-only pass', () => {
-    const closedPlans = { 'plan-1': 'SUPERSEDED' as const };
-    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open], closedPlans })).resolve).toEqual([{ alertId: 'p1', reason: 'SUPERSEDED' }]);
-    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open], closedPlans: { 'plan-1': 'APPROVED' } })).resolve).toEqual([{ alertId: 'p1', reason: 'APPROVED' }]);
-    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open], closedPlans, levelsOnly: true })).resolve).toEqual([]);
+  it('leaves it open on a levels-only pass', () => {
+    expect(planAlerts(base({ rules: [lowRule, planRule], active: [open], levelsOnly: true })).resolve).toEqual([]);
   });
 
   it('leaves an alert of an unknown event type alone, as before', () => {

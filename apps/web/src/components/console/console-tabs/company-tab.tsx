@@ -194,8 +194,6 @@ export default function CompanyTab({
     reminderTime: '',
     physicalCountWeekday: '' as number | '',
     physicalCountTime: '',
-    tentativePlanWeekday: '' as number | '',
-    tentativePlanTime: '',
     truckTargetKg: '' as number | '',
     bulkMultipleKg: '' as number | '',
     capacityWarningPct: 90 as number | '',
@@ -393,8 +391,6 @@ export default function CompanyTab({
           reminderTime: data.reminderTime ?? '',
           physicalCountWeekday: formValue(data.physicalCountWeekday),
           physicalCountTime: data.physicalCountTime ?? '',
-          tentativePlanWeekday: formValue(data.tentativePlanWeekday),
-          tentativePlanTime: data.tentativePlanTime ?? '',
           truckTargetKg: formValue(data.truckTargetKg),
           bulkMultipleKg: formValue(data.bulkMultipleKg),
           capacityWarningPct: data.capacityWarningPct ?? 90,
@@ -546,8 +542,6 @@ export default function CompanyTab({
           reminderTime: feedForm.reminderTime || null,
           physicalCountWeekday: numberOrNull(feedForm.physicalCountWeekday),
           physicalCountTime: feedForm.physicalCountTime || null,
-          tentativePlanWeekday: numberOrNull(feedForm.tentativePlanWeekday),
-          tentativePlanTime: feedForm.tentativePlanTime || null,
           truckTargetKg: numberOrNull(feedForm.truckTargetKg),
           bulkMultipleKg: numberOrNull(feedForm.bulkMultipleKg),
           capacityWarningPct: Number(feedForm.capacityWarningPct),
@@ -2294,10 +2288,6 @@ export default function CompanyTab({
                             'physicalCountWeekday',
                             'ctFeedPhysicalCountWeekday',
                           ],
-                          [
-                            'tentativePlanWeekday',
-                            'ctFeedTentativePlanWeekday',
-                          ],
                         ] as const
                       ).map(([key, label]) => (
                         <Field
@@ -2383,24 +2373,6 @@ export default function CompanyTab({
                             setFeedForm({
                               ...feedForm,
                               physicalCountTime: e.target.value,
-                            })
-                          }
-                        />
-                      </Field>
-                      <Field
-                        className="sm:col-span-3"
-                        label={t('ctFeedTentativePlanTime')}
-                        htmlFor="feed-tentative-plan-time"
-                        hint={t('ctFeedTentativePlanHint')}
-                      >
-                        <Input
-                          id="feed-tentative-plan-time"
-                          type="time"
-                          value={feedForm.tentativePlanTime}
-                          onChange={(e) =>
-                            setFeedForm({
-                              ...feedForm,
-                              tentativePlanTime: e.target.value,
                             })
                           }
                         />

@@ -433,8 +433,8 @@ export default function ConsoleLayout({
       href: '/inventory/feed-forecast?tab=forecast',
     },
     {
-      label: t('fftTabFeedPlan'),
-      href: '/inventory/feed-forecast?tab=feed-plan',
+      label: t('fftTabMillPlanning'),
+      href: '/inventory/feed-forecast?tab=mill-planning',
     },
     {
       label: t('fftTabCompareReport'),

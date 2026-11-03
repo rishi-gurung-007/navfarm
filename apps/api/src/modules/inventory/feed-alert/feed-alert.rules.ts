@@ -124,7 +124,7 @@ export type AlertCandidate = AlertSubject & {
   thresholdValue: number | null;
 };
 
-export type ResolveReason = 'RECOVERED' | 'PASSED' | 'CLOSED' | 'RULE_OFF' | 'SILO_INACTIVE' | 'SUPERSEDED' | 'APPROVED';
+export type ResolveReason = 'RECOVERED' | 'PASSED' | 'CLOSED' | 'RULE_OFF' | 'SILO_INACTIVE';
 
 export interface AlertPlan {
   raise: AlertCandidate[];
@@ -158,8 +158,6 @@ export interface PlanAlertsInput {
   orderFacts?: OrderFacts;
   active: ActiveAlertFact[];
   levelsOnly: boolean;
-  /** PLAN_AVAILABLE subjects (feed_plan ids) whose plan is now approved or superseded, with why. */
-  closedPlans?: Record<string, 'SUPERSEDED' | 'APPROVED'>;
 }
 
 const REASON_BY_EVENT: Record<string, ResolveReason> = {
@@ -352,13 +350,10 @@ export function planAlerts(input: PlanAlertsInput): AlertPlan {
   const liveSiloIds = new Set(input.silos.map((s) => s.siloId));
   for (const open of input.active) {
     if (wanted.has(open.dedupKey)) continue;
-    // A pushed event (PLAN_AVAILABLE) is raised by the feed scheduler, not by these facts, so its absence
-    // from `wanted` means nothing: it closes when its rule goes off or away, or when its plan is approved or superseded.
+    // PLAN_AVAILABLE was pushed by the feed scheduler for a Feed Plan version. Mill Planning replaced Feed Plan
+    // (spec 2026-11-03) and nothing raises it any more, so an open one closes on the next full evaluation.
     if (open.eventType === 'PLAN_AVAILABLE') {
-      if (input.levelsOnly) continue;
-      const closed = open.subjectId === undefined ? undefined : input.closedPlans?.[open.subjectId];
-      if (!liveRuleIds.has(open.ruleId)) plan.resolve.push({ alertId: open.alertId, reason: 'RULE_OFF' });
-      else if (closed) plan.resolve.push({ alertId: open.alertId, reason: closed });
+      if (!input.levelsOnly) plan.resolve.push({ alertId: open.alertId, reason: 'CLOSED' });
       continue;
     }
     if (!(open.eventType in REASON_BY_EVENT)) continue;

@@ -205,7 +205,8 @@ it('accepts API-valid whole and decimal feed quantities and submits them', async
   );
 });
 
-it('shows the scheduler tentative-plan day and time as settings, blank until configured, and saves them', async () => {
+// Mill Planning replaced Feed Plan (spec 2026-11-03): the scheduled tentative plan is gone, and so are its settings.
+it('no longer shows or saves the tentative-plan day and time', async () => {
   render(
     <CompanyTab
       activeCompany={company}
@@ -217,22 +218,12 @@ it('shows the scheduler tentative-plan day and time as settings, blank until con
       section="feed"
     />,
   );
-  const time = (await screen.findByLabelText(
-    'ctFeedTentativePlanTime',
-  )) as HTMLInputElement;
-  expect(time.value).toBe('');
-  expect(screen.getByLabelText('ctFeedTentativePlanWeekday')).toBeTruthy();
-  chooseValue(screen.getByLabelText('ctFeedTentativePlanWeekday'), '3');
-  fireEvent.change(time, { target: { value: '09:00' } });
+  await screen.findByLabelText('ctFeedReminderWeekday');
+  expect(screen.queryByLabelText('ctFeedTentativePlanTime')).toBeNull();
+  expect(screen.queryByLabelText('ctFeedTentativePlanWeekday')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'saveChanges' }));
-  await waitFor(() =>
-    expect(put).toHaveBeenCalledWith(
-      '/feed-settings',
-      expect.objectContaining({
-        companyId: 'co-1',
-        tentativePlanWeekday: 3,
-        tentativePlanTime: '09:00',
-      }),
-    ),
-  );
+  await waitFor(() => expect(put).toHaveBeenCalledWith('/feed-settings', expect.objectContaining({ companyId: 'co-1' })));
+  const body = put.mock.calls.find(([url]: [string]) => url === '/feed-settings')![1];
+  expect(body).not.toHaveProperty('tentativePlanWeekday');
+  expect(body).not.toHaveProperty('tentativePlanTime');
 });
