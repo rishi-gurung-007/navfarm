@@ -1,5 +1,5 @@
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import MillPlanPanel from "../src/components/console/inventory/mill-plan-panel";
 import { api } from "../src/services/api-client";
 
@@ -39,6 +39,10 @@ const plan = {
       { sourceCode: "SL-1", sourceName: "Silo 1", sourceType: "SILO", itemId: "i2", itemName: "Starter", openingKg: 200, closingKg: [null, 200, 200, 200, 200, 200, 200], runOutDate: null },
     ],
   }],
+  siloCards: [
+    { farmId: "farm-1", farmCode: "F1", farmName: "Farm One", sourceCode: "SL-1", sourceName: "Silo 1", items: ["Grower", "Starter"], stockKg: 4000, capacityKg: 10000, fillPct: 40, runOutDate: null },
+    { farmId: "farm-1", farmCode: "F1", farmName: "Farm One", sourceCode: "SL-2", sourceName: "SL-2", items: ["Grower"], stockKg: 900, capacityKg: null, fillPct: null, runOutDate: dates[1] },
+  ],
   failedFarms: [{ farmId: "farm-2", code: "F2", name: "Farm Two", error: "No lifecycle" }],
 };
 
@@ -161,4 +165,31 @@ it("picks farms in the same searchable list as every other select, ticking sever
   fireEvent.change(screen.getByRole("combobox", { name: "mplFarms" }), { target: { value: "" } });
   expect(screen.getByRole("option", { name: "F2 — Farm Two" }).getAttribute("aria-selected")).toBe("false");
   expect(screen.getByRole("option", { name: "F1 — Farm One" }).getAttribute("aria-selected")).toBe("true");
+});
+
+it("ends with a card per silo: stock against capacity on a bar", async () => {
+  await renderPanel();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
+  const cards = [...document.querySelectorAll("[data-silo-card]")] as HTMLElement[];
+  expect(cards.map((c) => c.getAttribute("data-silo-card"))).toEqual(["farm-1|SL-1", "farm-1|SL-2"]);
+  const bar = within(cards[0]).getByRole("progressbar");
+  expect(bar.getAttribute("aria-valuenow")).toBe("40");
+  expect(cards[0].textContent).toContain("4,000");
+  expect(cards[0].textContent).toContain("10,000");
+  expect(within(cards[1]).queryByRole("progressbar")).toBeNull();
+  expect(cards[1].textContent).toContain("mplCapacityNotSet");
+  // A silo named by its code is not named twice.
+  expect(cards[1].textContent).not.toContain("SL-2 · SL-2");
+});
+
+it("holds each farm row under the header while its sheds scroll, until the next farm", async () => {
+  await renderPanel();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
+  const grid = document.querySelector("[data-mill-grid]") as HTMLElement;
+  expect(grid.className).toMatch(/overflow-auto/);
+  const farmRow = grid.querySelector("[data-farm-row]") as HTMLElement;
+  for (const cell of [...farmRow.children] as HTMLElement[]) {
+    expect(cell.className).toMatch(/\bsticky\b/);
+    expect(cell.style.top).toBe("var(--mpl-head)");
+  }
 });

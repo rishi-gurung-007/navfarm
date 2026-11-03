@@ -94,7 +94,8 @@ export class MillPlanService {
 
     const input: MillPlanInput = {
       dates, farms: inputs, failedFarms, itemIds: list(query.itemIds), items,
-      planFarmIds: farms.map((farm) => farm.farmId), approved: demand.lines, producedKg, mill: mill ?? null, capacityByDate: new Map(),
+      planFarmIds: farms.map((farm) => farm.farmId), approved: demand.lines,
+      siloCapacityKg: await this.siloCapacities(tenantId, [...new Set(inputs.flatMap((farm) => farm.sourceBalances.filter((p) => p.sourceType === 'SILO').map((p) => p.locationId)))]), producedKg, mill: mill ?? null, capacityByDate: new Map(),
       warningPct: Number(settings?.capacityWarningPct ?? 90),
     };
     // Two passes: the per-feed capacity is allocated against the totals the first pass works out.
@@ -107,6 +108,15 @@ export class MillPlanService {
       ...buildMillPlan(input),
       mills: mills.map((row) => ({ millId: row.millId, millCode: row.millCode, millName: row.millName, companyId: row.companyId })),
     };
+  }
+
+  /** silo location_id -> silo_capacity_kg, for the silos the forecasts used. */
+  protected async siloCapacities(tenantId: string, locationIds: string[]): Promise<Map<string, number | null>> {
+    if (!locationIds.length) return new Map();
+    const L = schema.locationMaster;
+    const rows = await this.db.select({ id: L.location_id, capacity: L.silo_capacity_kg })
+      .from(L).where(and(eq(L.tenant_id, tenantId), inArray(L.location_id, locationIds)));
+    return new Map(rows.map((row) => [row.id, row.capacity === null || row.capacity === undefined ? null : Number(row.capacity)]));
   }
 
   protected async itemRows(tenantId: string, itemIds: string[]) {

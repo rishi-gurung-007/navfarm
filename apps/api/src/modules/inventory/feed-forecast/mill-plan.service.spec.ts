@@ -30,6 +30,7 @@ function setup(getForecast?: jest.Mock) {
   const service = new MillPlanService({} as any, forecast as any, millCapacity as any, feedSettings as any);
   jest.spyOn(service as any, 'producedKg').mockResolvedValue([]);
   jest.spyOn(service as any, 'itemRows').mockResolvedValue([]);
+  jest.spyOn(service as any, 'siloCapacities').mockResolvedValue(new Map());
   return { service, forecast, millCapacity, feedSettings };
 }
 
@@ -105,5 +106,17 @@ describe('MillPlanService.generate', () => {
     await service.generate('tenant-1', 'TENANT_ADMIN', { weekOf: '2026-11-02', farmIds: 'farm-1' });
     expect(millCapacity.approvedDemand).toHaveBeenCalledWith('tenant-1', { companyIds: ['co-1'] }, '2026-11-02', '2026-11-08');
     expect(produced).toHaveBeenCalledWith('tenant-1', 'co-1', 'mill-1', '2026-11-02', '2026-11-08');
+  });
+
+  it('reads each silo\'s capacity from the location master, by the silo ids the forecast used', async () => {
+    const getForecast = jest.fn(async (q: any) => ({
+      ...report(q.farmId),
+      sourceBalances: [{ date: '2026-11-02', sourceType: 'SILO', sourceCode: 'SL-1', locationId: `loc-${q.farmId}`, itemId: 'item-1', itemNo: 'FD1', itemName: 'Feed 1', feedType: 'BULK', recommendedQtyKg: 0, deliveryDate: null, openingSystemBalanceKg: 2500, projectedClosingBalanceKg: 2400 }],
+    }));
+    const { service } = setup(getForecast);
+    const capacities = jest.spyOn(service as any, 'siloCapacities').mockResolvedValue(new Map([['loc-farm-1', 5000]]));
+    const plan = await service.generate('tenant-1', 'TENANT_ADMIN', { weekOf: '2026-11-02', farmIds: 'farm-1' });
+    expect(capacities).toHaveBeenCalledWith('tenant-1', ['loc-farm-1']);
+    expect(plan.siloCards[0]).toMatchObject({ stockKg: 2500, capacityKg: 5000, fillPct: 50 });
   });
 });

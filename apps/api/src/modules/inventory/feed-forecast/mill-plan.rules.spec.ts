@@ -44,6 +44,7 @@ const input = (over: Partial<MillPlanInput> = {}): MillPlanInput => ({
   producedKg: [],
   mill: { millId: 'mill-1', millCode: 'MILL-1', millName: 'Main Mill', dailyKg: 10_000, hourlyKg: null, bulkKg: null, baggedKg: null },
   capacityByDate: new Map(),
+  siloCapacityKg: new Map(),
   warningPct: 90,
   ...over,
 });
@@ -164,6 +165,23 @@ describe('buildMillPlan', () => {
     }));
     const rows = plan.farms[0].silos.map((s) => [s.sourceCode, s.itemId, s.itemName, s.openingKg]);
     expect(rows).toEqual([['ST-1', GROWER, 'Grower', 800], ['ST-1', STARTER, 'Starter', 300]]);
+  });
+
+  it('makes one card per silo of every farm: stock against capacity, stores left out', () => {
+    const plan = buildMillPlan(input({
+      siloCapacityKg: new Map([['loc-sl1', 10000], ['loc-sl2', null]]),
+      farms: [farm({ sourceBalances: [
+        balance({ date: dates[1], sourceCode: 'SL-1', locationId: 'loc-sl1', openingSystemBalanceKg: 4000, projectedClosingBalanceKg: 3800 }),
+        balance({ date: dates[1], sourceCode: 'SL-1', locationId: 'loc-sl1', itemId: STARTER, itemName: 'Starter', openingSystemBalanceKg: 0, projectedClosingBalanceKg: 0 }),
+        balance({ date: dates[2], sourceCode: 'SL-1', locationId: 'loc-sl1', openingSystemBalanceKg: 3800, projectedClosingBalanceKg: 3600 }),
+        balance({ date: dates[1], sourceCode: 'SL-2', locationId: 'loc-sl2', openingSystemBalanceKg: 900, projectedClosingBalanceKg: 0 }),
+        balance({ date: dates[1], sourceType: 'STORE', sourceCode: 'ST-1', locationId: 'loc-st1', openingSystemBalanceKg: 500, projectedClosingBalanceKg: 500 }),
+      ] })],
+    }));
+    expect(plan.siloCards).toEqual([
+      { farmId: 'farm-1', farmCode: 'F1', farmName: 'Farm One', sourceCode: 'SL-1', sourceName: 'Silo 1', items: ['Grower', 'Starter'], stockKg: 4000, capacityKg: 10000, fillPct: 40, runOutDate: null },
+      { farmId: 'farm-1', farmCode: 'F1', farmName: 'Farm One', sourceCode: 'SL-2', sourceName: 'Silo 1', items: ['Grower'], stockKg: 900, capacityKg: null, fillPct: null, runOutDate: dates[1] },
+    ]);
   });
 
   it('carries failed farms through untouched', () => {

@@ -39,8 +39,24 @@ export interface MillPlanInput {
   mill: (MillCapacitySetup & { millName: string }) | null;
   /** allocateOnDates result for the production totals. */
   capacityByDate: Map<string, Map<string, DietCapacity>>;
+  /** silo location_id -> silo_capacity_kg (null when unset). */
+  siloCapacityKg: Map<string, number | null>;
   /** capacityWarningPct, 0–100. */
   warningPct: number;
+}
+
+/** A silo of a selected farm: its stock on the first day the forecast covers, against its capacity. */
+export interface MillPlanSiloCard {
+  farmId: string;
+  farmCode: string;
+  farmName: string;
+  sourceCode: string;
+  sourceName: string | null;
+  items: string[];
+  stockKg: number;
+  capacityKg: number | null;
+  fillPct: number | null;
+  runOutDate: string | null;
 }
 
 export type DayStatus = 'OK' | 'WARN' | 'OVER' | 'NO_CAPACITY';
@@ -80,6 +96,7 @@ export interface MillPlan {
   }>;
   dietChanges: Array<{ farmId: string; farmName: string; shedCode: string; batchNo: string; changeDate: string; fromItemName: string; toItemName: string; heads: number }>;
   farms: Array<{ farmId: string; code: string; name: string; totals: number[]; sheds: MillPlanShed[]; silos: MillPlanSilo[] }>;
+  siloCards: MillPlanSiloCard[];
   failedFarms: MillPlanInput['failedFarms'];
 }
 
@@ -125,6 +142,7 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
   }
 
   const farms: MillPlan['farms'] = [];
+  const siloCards: MillPlanSiloCard[] = [];
   const dietChanges: MillPlan['dietChanges'] = [];
   for (const f of input.farms) {
     // Net need: once per source and item, on its delivery date (an overdue one on the first day).
@@ -182,6 +200,27 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
       silo.runOutDate = at < 0 ? null : dates[at];
     }
 
+    // Cards: every silo whatever the Feed Types filter — a silo's fill is physical, not per feed. Its stock is the
+    // sum of its feeds' openings on the first day the forecast covers (today, or Week of if later).
+    const bySilo = new Map<string, typeof f.sourceBalances>();
+    for (const point of f.sourceBalances) {
+      if (point.sourceType !== 'SILO' || !dateIndex.has(point.date)) continue;
+      bySilo.set(point.sourceCode, [...(bySilo.get(point.sourceCode) ?? []), point]);
+    }
+    for (const [sourceCode, points] of bySilo) {
+      const covered = [...new Set(points.map((p) => p.date))].sort();
+      const onDay = (date: string) => points.filter((p) => p.date === date);
+      const stockKg = roundKg(onDay(covered[0]).reduce((sum, p) => sum + p.openingSystemBalanceKg, 0));
+      const capacityKg = input.siloCapacityKg.get(points[0].locationId) ?? null;
+      siloCards.push({
+        farmId: f.farm.id, farmCode: f.farm.code, farmName: f.farm.name, sourceCode, sourceName: points[0].sourceName,
+        items: [...new Set(points.map((p) => p.itemName))],
+        stockKg, capacityKg,
+        fillPct: capacityKg && capacityKg > 0 ? Math.round((stockKg / capacityKg) * 100) : null,
+        runOutDate: covered.find((date) => onDay(date).reduce((sum, p) => sum + p.projectedClosingBalanceKg, 0) <= 0) ?? null,
+      });
+    }
+
     const shedList = [...sheds.values()].sort((a, b) => a.shedCode.localeCompare(b.shedCode) || a.batchNo.localeCompare(b.batchNo));
     const totals = dates.map((_, i) => roundKg(shedList.reduce((sum, s) => sum + s.kg[i], 0)));
     farms.push({ farmId: f.farm.id, code: f.farm.code, name: f.farm.name, totals, sheds: shedList, silos: [...silos.values()] });
@@ -230,6 +269,7 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
     production,
     dietChanges,
     farms,
+    siloCards,
     failedFarms: input.failedFarms,
   };
 }

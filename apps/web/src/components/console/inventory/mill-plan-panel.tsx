@@ -9,7 +9,7 @@
  * with each farm's silos. The API does the arithmetic (mill-plan.rules.ts);
  * nothing is fetched until Generate, and changing a filter does not refetch.
  */
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "@/services/api-client";
 import { showToast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
@@ -51,6 +51,7 @@ interface MillPlan {
     sheds: Array<{ key: string; shedCode: string; batchNo: string; heads: number; items: Array<{ itemId: string; itemName: string }>; changeDate: string | null; kg: number[] }>;
     silos: Array<{ sourceCode: string; sourceName: string | null; sourceType: "SILO" | "STORE"; itemId: string; itemName: string; openingKg: number; closingKg: Array<number | null>; runOutDate: string | null }>;
   }>;
+  siloCards: Array<{ farmId: string; farmCode: string; farmName: string; sourceCode: string; sourceName: string | null; items: string[]; stockKg: number; capacityKg: number | null; fillPct: number | null; runOutDate: string | null }>;
   failedFarms: Array<{ farmId: string; code: string; name: string; error: string }>;
 }
 
@@ -65,6 +66,12 @@ const TH_DAY = `${TH} z-10`;
 // The first column stays put while the days scroll sideways: one z-index and one background per cell, so they never clash.
 const TH_FIRST = `${TH} left-0 z-20 border-r text-left`;
 const STICKY = "sticky left-0 z-[1] border-r border-(--border)";
+// Held at the top of the grid's own scroll area, under the day headers: Mill Total under the dates, and each farm's
+// row under both until the next farm's row reaches the same place and covers it.
+const MILL_TOTAL_FIRST = "sticky left-0 z-[9] border-r border-(--border) bg-(--surface)";
+const MILL_TOTAL_DAY = "sticky z-[8] bg-(--surface)";
+const FARM_FIRST = "sticky left-0 z-[4] border-r border-(--border) bg-(--surface-raised)";
+const FARM_DAY = "sticky z-[3] bg-(--surface-raised)";
 const TD = "border-b border-(--border) px-3 py-1.5 align-top text-xs";
 const NUM = "whitespace-nowrap text-right tabular-nums";
 const HIGHLIGHT = "bg-[color-mix(in_srgb,var(--warning)_18%,transparent)]";
@@ -85,6 +92,25 @@ export default function MillPlanPanel() {
   const [plan, setPlan] = useState<MillPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [collapsed, setCollapsed] = useState<string[]>([]);
+  // The grid's header heights, so Mill Total sits under the dates and each farm row under both.
+  const gridRef = useRef<HTMLTableElement>(null);
+  const headRef = useRef<HTMLTableSectionElement>(null);
+  const datesRowRef = useRef<HTMLTableRowElement>(null);
+  useLayoutEffect(() => {
+    const table = gridRef.current;
+    const head = headRef.current;
+    const row = datesRowRef.current;
+    if (!table || !head || !row) return;
+    const measure = () => {
+      table.style.setProperty("--mpl-row1", `${row.offsetHeight}px`);
+      table.style.setProperty("--mpl-head", `${head.offsetHeight}px`);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(head);
+    return () => observer.disconnect();
+  }, [plan]);
 
   // The filter lists only — the plan itself waits for Generate.
   useEffect(() => {
@@ -275,17 +301,17 @@ export default function MillPlanPanel() {
 
           <section aria-label={t("mplGrid")}>
             <h2 className="mb-2 text-sm font-semibold text-(--text-primary)">{t("mplGrid")}</h2>
-            <div className="overflow-x-auto rounded-lg border border-(--border)">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr>
+            <div data-mill-grid className="max-h-[75vh] overflow-auto overscroll-contain rounded-lg border border-(--border)">
+              <table ref={gridRef} className="w-full border-separate border-spacing-0">
+                <thead ref={headRef}>
+                  <tr ref={datesRowRef}>
                     <th className={`${TH_FIRST} min-w-[14rem]`}>{t("mplFarmShed")}</th>
                     {plan.dates.map((date) => <th key={date} className={`${TH_DAY} ${NUM}`}>{weekday(date)} {formatDateShort(date)}</th>)}
                   </tr>
                   <tr>
-                    <th className={`${TD} ${STICKY} bg-(--surface) text-left font-semibold text-(--text-secondary)`}>{t("mplMillTotal")}</th>
+                    <th className={`${TD} ${MILL_TOTAL_FIRST} text-left font-semibold text-(--text-secondary)`} style={{ top: "var(--mpl-row1)" }}>{t("mplMillTotal")}</th>
                     {plan.dates.map((date, i) => (
-                      <th key={date} className={`${TD} ${NUM} font-semibold`}>{kgText(plan.farms.reduce((sum, farm) => sum + farm.totals[i], 0))}</th>
+                      <th key={date} className={`${TD} ${MILL_TOTAL_DAY} ${NUM} font-semibold`} style={{ top: "var(--mpl-row1)" }}>{kgText(plan.farms.reduce((sum, farm) => sum + farm.totals[i], 0))}</th>
                     ))}
                   </tr>
                 </thead>
@@ -294,15 +320,15 @@ export default function MillPlanPanel() {
                     const open = !collapsed.includes(farm.farmId);
                     return (
                       <Fragment key={farm.farmId}>
-                        <tr className="bg-(--surface-raised)">
-                          <td className={`${TD} ${STICKY} bg-(--surface-raised)`}>
+                        <tr data-farm-row className="bg-(--surface-raised)">
+                          <td className={`${TD} ${FARM_FIRST}`} style={{ top: "var(--mpl-head)" }}>
                             <button type="button" className="flex items-center gap-1.5 text-left font-semibold text-(--text-primary)" aria-expanded={open} onClick={() => toggleFarm(farm.farmId)}>
                               <span aria-hidden>{open ? "▾" : "▸"}</span>
                               {farm.code} — {farm.name}
                             </button>
                             <div className="pl-4 text-[11px] text-(--text-secondary)">{t("mplFarmSub", { sheds: farm.sheds.length, silos: farm.silos.length })}</div>
                           </td>
-                          {farm.totals.map((kg, i) => <td key={plan.dates[i]} className={`${TD} ${NUM} font-semibold`}>{kgText(kg)}</td>)}
+                          {farm.totals.map((kg, i) => <td key={plan.dates[i]} className={`${TD} ${FARM_DAY} ${NUM} font-semibold`} style={{ top: "var(--mpl-head)" }}>{kgText(kg)}</td>)}
                         </tr>
                         {open && farm.sheds.map((shed) => (
                           <tr key={shed.key}>
@@ -333,7 +359,7 @@ export default function MillPlanPanel() {
                         {open && farm.silos.map((silo) => (
                           <tr key={`${farm.farmId}|${silo.sourceCode}|${silo.itemId}`}>
                             <td className={`${TD} ${STICKY} bg-(--surface) pl-7`}>
-                              <div className="text-(--text-primary)">{silo.sourceType === "SILO" ? t("mplSilo") : t("mplStore")} {silo.sourceCode}{silo.sourceName ? ` · ${silo.sourceName}` : ""}</div>
+                              <div className="text-(--text-primary)">{silo.sourceType === "SILO" ? t("mplSilo") : t("mplStore")} {silo.sourceCode}{silo.sourceName && silo.sourceName !== silo.sourceCode ? ` · ${silo.sourceName}` : ""}</div>
                               <div className="text-[11px] text-(--text-secondary)">{silo.itemName} · {t("mplOpening", { kg: kgText(silo.openingKg) })}</div>
                             </td>
                             {silo.closingKg.map((kg, i) => {
@@ -355,6 +381,41 @@ export default function MillPlanPanel() {
             </div>
             <p className="mt-1 text-[11px] text-(--text-secondary)">{t("mplGridNote")}</p>
           </section>
+
+          {plan.siloCards.length > 0 && (
+            <section aria-label={t("mplSiloLevels")}>
+              <h2 className="mb-2 text-sm font-semibold text-(--text-primary)">{t("mplSiloLevels")}</h2>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {plan.siloCards.map((card) => {
+                  const pct = card.fillPct === null ? null : Math.max(0, Math.min(100, card.fillPct));
+                  const tone = pct === null ? "" : pct <= 15 ? "bg-(--danger)" : pct <= 35 ? "bg-(--warning)" : "bg-(--success)";
+                  return (
+                    <div key={`${card.farmId}|${card.sourceCode}`} data-silo-card={`${card.farmId}|${card.sourceCode}`} className="rounded-md border border-(--border) bg-(--surface) p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-(--text-primary)">{card.sourceCode}{card.sourceName && card.sourceName !== card.sourceCode ? ` · ${card.sourceName}` : ""}</p>
+                          <p className="truncate text-[11px] text-(--text-secondary)">{card.farmCode} — {card.farmName}</p>
+                        </div>
+                        {pct !== null && <span className="text-sm font-semibold tabular-nums text-(--text-primary)">{card.fillPct}%</span>}
+                      </div>
+                      <p className="mt-1 truncate text-[11px] uppercase tracking-wider text-(--text-muted)">{card.items.join(" · ")}</p>
+                      {pct !== null ? (
+                        <div role="progressbar" aria-label={t("mplSiloFill", { silo: card.sourceCode })} aria-valuemin={0} aria-valuemax={100} aria-valuenow={card.fillPct ?? 0} className="mt-3 h-2 w-full overflow-hidden rounded-full bg-(--surface-secondary)">
+                          <div className={`h-full rounded-full ${tone}`} style={{ width: `${pct}%` }} />
+                        </div>
+                      ) : null}
+                      <p className="mt-2 text-xs tabular-nums text-(--text-secondary)">
+                        {card.capacityKg !== null
+                          ? t("mplSiloStock", { stock: kgText(card.stockKg), capacity: kgText(card.capacityKg) })
+                          : `${t("mplSiloStockOnly", { stock: kgText(card.stockKg) })} · ${t("mplCapacityNotSet")}`}
+                      </p>
+                      {card.runOutDate && <p className="mt-1 text-xs font-medium text-(--danger)">{t("mplSiloRunsOut", { date: `${weekday(card.runOutDate)} ${formatDateShort(card.runOutDate)}` })}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
         </div>
       )}
     </div>
