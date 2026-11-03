@@ -1573,6 +1573,13 @@ export const translations = {
     invFeedForecastDesc:
       'Feed on hand, daily use and refill dates for each batch.',
     navRequisition: 'Requisition',
+    rolLogVehicles: 'Vehicles & Documents',
+    rolLogDrivers: 'Drivers',
+    rolLogDeliveryZones: 'Delivery Zones',
+    rolLogRoutes: 'Routes & Stops',
+    rolLogFreightRates: 'Freight Rates',
+    rolLogServicePlans: 'Service Plans',
+    rolLogSettings: 'Logistics Settings',
     rqFarm: 'Farm',
     rhFarm: 'Farm',
     rhAllFarms: 'All farms',

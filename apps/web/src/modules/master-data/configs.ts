@@ -1,4 +1,5 @@
 import type { MasterDataConfig, MasterDataField } from './types';
+import { LOGISTICS_CONFIGS } from './logistics-configs';
 
 const STATUS_OPTIONS = [
   { value: 'ACTIVE', label: 'Active' },
@@ -5824,6 +5825,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   country,
   currency,
   exchangeRate,
+  ...LOGISTICS_CONFIGS,
 ];
 
 export const MASTER_DATA_GROUPS = [
@@ -5834,6 +5836,7 @@ export const MASTER_DATA_GROUPS = [
   'Livestock & Health',
   'Business Partners',
   'Finance',
+  'Logistics',
 ] as const;
 
 /**

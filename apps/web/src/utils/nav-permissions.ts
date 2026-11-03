@@ -4,6 +4,7 @@
  * own API reads (@RequirePermission on its controller); "any of" where the API accepts any of several.
  */
 import { hasPermission } from '@/hooks/useAuth';
+import { LOGISTICS_GRANTS } from '@/modules/master-data/logistics-configs';
 
 type Grant = readonly [moduleCode: string, resource: string];
 
@@ -80,6 +81,7 @@ const MASTER_DATA_GRANTS: Record<string, Grant> = {
   'number-series': ['SYSTEM', 'NUMBER_SERIES'],
   animal: ['PIGGERY', 'ANIMAL'],
   'alert-rule': ['NOTIFICATION', 'ALERT_RULE'],
+  ...LOGISTICS_GRANTS,
 };
 
 export function grantsFor(href: string): Grant[] | null {
