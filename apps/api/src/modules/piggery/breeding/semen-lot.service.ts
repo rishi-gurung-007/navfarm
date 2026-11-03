@@ -20,6 +20,28 @@ export interface PostedSemenLot {
   warehouse_id: string;
   qr_id: string | null;
   pack_no: string | null;
+  /** What the colorant issued from stock cost, 0 when none was. It is part of the lot's cost, so of each dose's. */
+  colorant_cost: number;
+}
+
+export interface PostCollectionParams {
+  boar: typeof schema.animalRegister.$inferSelect;
+  /** The other boars a pooled lot is mixed from (the collection's `boar` is the first of them). */
+  poolBoars?: (typeof schema.animalRegister.$inferSelect)[];
+  boarBatchId: string | null;
+  semenBatchId: string;
+  collectionDate: string;
+  doses: number;
+  itemId: string;
+  /** What one dose cost to produce (the collection's cost per dose); the doses enter stock at it. */
+  unitCost?: number;
+  /** Quality on the collection (G8), printed on the lot's QR. */
+  quality?: { volume_ml: number | null; motility_pct: number | null; concentration_m_per_ml: number | null };
+  /** What the line's setup puts on the lot (Phase 5): printed on its QR, and the colorant issued from stock when it has an item. */
+  label?: string | null;
+  week?: { no: number; year: number };
+  colorant?: { name: string | null; itemId: string | null; quantity: number | null };
+  destinationFarmId?: string | null;
 }
 
 /**
@@ -53,20 +75,7 @@ export class SemenLotService {
   }
 
   async postCollection(
-    params: {
-      boar: typeof schema.animalRegister.$inferSelect;
-      /** The other boars a pooled lot is mixed from (the collection's `boar` is the first of them). */
-      poolBoars?: (typeof schema.animalRegister.$inferSelect)[];
-      boarBatchId: string | null;
-      semenBatchId: string;
-      collectionDate: string;
-      doses: number;
-      itemId: string;
-      /** What one dose cost to produce (the collection's cost per dose); the doses enter stock at it. */
-      unitCost?: number;
-      /** Quality on the collection (G8), printed on the lot's QR. */
-      quality?: { volume_ml: number | null; motility_pct: number | null; concentration_m_per_ml: number | null };
-    },
+    params: PostCollectionParams,
     tenantId: string,
     userPayload?: { userId?: string },
   ) : Promise<PostedSemenLot> {
@@ -76,19 +85,7 @@ export class SemenLotService {
   }
 
   private async postCollectionRecord(
-    params: {
-      boar: typeof schema.animalRegister.$inferSelect;
-      /** The other boars a pooled lot is mixed from (the collection's `boar` is the first of them). */
-      poolBoars?: (typeof schema.animalRegister.$inferSelect)[];
-      boarBatchId: string | null;
-      semenBatchId: string;
-      collectionDate: string;
-      doses: number;
-      itemId: string;
-      unitCost?: number;
-      /** Quality on the collection (G8), printed on the lot's QR. */
-      quality?: { volume_ml: number | null; motility_pct: number | null; concentration_m_per_ml: number | null };
-    },
+    params: PostCollectionParams,
     tenantId: string,
     userPayload?: { userId?: string },
   ) : Promise<PostedSemenLot> {
@@ -115,6 +112,37 @@ export class SemenLotService {
     }
 
     const lotNo = await this.numberSeriesService.generateNext('ITEM_LOT', tenantId, boar.company_id);
+    // A colorant held as stock (the line's setup names the item and the quantity) is issued from the boar's farm store for this lot.
+    // It is expensed as consumption and its cost is recovered into the lot, so it is part of what each dose cost.
+    let colorantCost = 0;
+    const colorant = params.colorant;
+    if (colorant?.itemId && colorant.quantity && colorant.quantity > 0) {
+      const [cItem] = await this.db
+        .select()
+        .from(schema.itemMaster)
+        .where(and(eq(schema.itemMaster.item_id, colorant.itemId), eq(schema.itemMaster.tenant_id, tenantId)))
+        .limit(1);
+      if (!cItem) throw new NotFoundException(`The colorant item '${colorant.itemId}' was not found.`);
+      if (!cItem.is_active) throw new BadRequestException(`The colorant '${cItem.item_name}' is not active.`);
+      const issued = await this.ledgerService.writeNegativeEntry({
+        tenantId,
+        companyId: boar.company_id,
+        itemId: cItem.item_id,
+        documentType: 'BREEDING',
+        documentNo: lotNo,
+        documentLineId: params.semenBatchId,
+        postingDate: params.collectionDate,
+        transactionType: 'CONSUMPTION',
+        quantity: colorant.quantity,
+        uom: cItem.uom_primary,
+        batchNo: boarBatch?.batch_no,
+        warehouseId,
+        userId: userPayload?.userId,
+      });
+      await this.glPostingService.postInventoryLedgerEntry(issued, userPayload?.userId);
+      colorantCost = Math.abs(Number(issued.amount ?? 0));
+    }
+    const lotUnitCost = (params.unitCost ?? 0) + colorantCost / params.doses;
     let expiry: string | null = null;
     if (item.shelf_life_days) {
       const d = new Date(params.collectionDate);
@@ -124,7 +152,7 @@ export class SemenLotService {
 
     // The doses are stock at the cost of producing them. The boar's costs were booked as expense (or into his own asset), never into work in progress, so the
     // stock is credited to the recovery account (BIO_SEMEN_PRODUCTION), not to WIP; without that mapping it is posted the ordinary way, as an output.
-    const recoveryMapped = (params.unitCost ?? 0) > 0 && (await this.glPostingService.hasMapping(tenantId, boar.company_id, 'BIO_SEMEN_PRODUCTION'));
+    const recoveryMapped = lotUnitCost > 0 && (await this.glPostingService.hasMapping(tenantId, boar.company_id, 'BIO_SEMEN_PRODUCTION'));
     const entry = await this.ledgerService.writePositiveEntry({
       tenantId,
       companyId: boar.company_id,
@@ -137,7 +165,7 @@ export class SemenLotService {
       transactionType: 'OUTPUT',
       quantity: params.doses,
       uom: item.uom_primary,
-      rate: Number((params.unitCost ?? 0).toFixed(6)),
+      rate: Number(lotUnitCost.toFixed(6)),
       lotNo,
       expiryDate: expiry ?? undefined,
       batchNo: boarBatch?.batch_no,
@@ -149,13 +177,16 @@ export class SemenLotService {
     // The QR is a pack of its own, tied to a batch: a boar in no batch has none to print.
     const qr = boarBatch
       ? await this.qrCodeService.createForSemenLot(
-          { boar, poolBoars: params.poolBoars, boarBatch, item, lotNo, collectionDate: params.collectionDate, doses: params.doses, expiryDate: expiry, warehouseId, quality: params.quality },
+          {
+            boar, poolBoars: params.poolBoars, boarBatch, item, lotNo, collectionDate: params.collectionDate, doses: params.doses, expiryDate: expiry, warehouseId, quality: params.quality,
+            label: params.label, week: params.week, colorantName: colorant?.name ?? null, destinationFarmId: params.destinationFarmId,
+          },
           tenantId,
           userPayload,
         )
       : null;
 
-    return { lot_no: lotNo, expiry_date: expiry, warehouse_id: warehouseId, qr_id: qr?.qr_id ?? null, pack_no: qr?.pack_no ?? null };
+    return { lot_no: lotNo, expiry_date: expiry, warehouse_id: warehouseId, qr_id: qr?.qr_id ?? null, pack_no: qr?.pack_no ?? null, colorant_cost: colorantCost };
   }
 
   /**

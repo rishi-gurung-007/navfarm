@@ -236,6 +236,26 @@ const DEFAULT_RESOURCES = [
   },
   {
     module_code: 'MASTER_DATA',
+    resource: 'BREEDING_LINE_SETUP',
+    name: 'Breeding Line Setup',
+  },
+  {
+    module_code: 'MASTER_DATA',
+    resource: 'BCS_SCALE',
+    name: 'Body Condition Scale',
+  },
+  {
+    module_code: 'MASTER_DATA',
+    resource: 'GENETIC_LEVEL_BAND',
+    name: 'Genetic Level Bands',
+  },
+  {
+    module_code: 'MASTER_DATA',
+    resource: 'SEMEN_COLLECTOR',
+    name: 'Semen Collectors',
+  },
+  {
+    module_code: 'MASTER_DATA',
     resource: 'FEED_FORMULA',
     name: 'Feed Formulas',
     nameKey: 'rolFeedFormulas',

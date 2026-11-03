@@ -8,6 +8,7 @@ import * as schema from '../../../core/database/schema';
 import { CreateGlMappingDto, UpdateGlMappingDto, QueryGlMappingDto } from './dto/gl-mapping.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { assertEntryTypeFits, assertMappableTransactionType } from './gl-mapping.rules';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -31,6 +32,11 @@ export class GlMappingService {
   }
 
   async create(dto: CreateGlMappingDto, tenantId: string, userPayload?: any) {
+    // A new mapping is for an Inventory Ledger transaction type, with an entry type that type is written with.
+    assertMappableTransactionType(dto.transaction_type);
+    const entryType = dto.entry_type || null;
+    assertEntryTypeFits(dto.transaction_type, entryType);
+
     // 1. Verify company exists
     if (dto.company_id) {
       const [company] = await this.db
@@ -156,6 +162,11 @@ export class GlMappingService {
     } else {
       queryConditions.push(isNull(schema.glMappingMaster.valuation_method));
     }
+    if (entryType) {
+      queryConditions.push(eq(schema.glMappingMaster.entry_type, entryType));
+    } else {
+      queryConditions.push(isNull(schema.glMappingMaster.entry_type));
+    }
 
     const existing = await this.db
       .select()
@@ -164,7 +175,7 @@ export class GlMappingService {
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException(`G/L Mapping rule for transaction type '${dto.transaction_type}' with these same category/NOB/LOB/stage/valuation-method dimensions already exists.`);
+      throw new ConflictException(`G/L Mapping rule for transaction type '${dto.transaction_type}' with these same category/NOB/LOB/stage/valuation-method/entry-type dimensions already exists.`);
     }
 
 
@@ -183,6 +194,7 @@ export class GlMappingService {
       lob_id: dto.lob_id || null,
       stage_id: dto.stage_id || null,
       valuation_method: dto.valuation_method || null,
+      entry_type: entryType,
       transaction_type: dto.transaction_type.toUpperCase(),
       debit_gl_account_id: dto.debit_gl_account_id || null,
       credit_gl_account_id: dto.credit_gl_account_id || null,
@@ -245,6 +257,9 @@ export class GlMappingService {
     if (query.valuationMethod) {
       conditions.push(eq(schema.glMappingMaster.valuation_method, query.valuationMethod));
     }
+    if (query.entryType) {
+      conditions.push(eq(schema.glMappingMaster.entry_type, query.entryType));
+    }
     if (query.transactionType) {
       conditions.push(eq(schema.glMappingMaster.transaction_type, query.transactionType.toUpperCase()));
     }
@@ -268,6 +283,11 @@ export class GlMappingService {
     const lobId = dto.lob_id !== undefined ? dto.lob_id : mapping.lob_id;
     const stageId = dto.stage_id !== undefined ? dto.stage_id : mapping.stage_id;
     const valuationMethod = dto.valuation_method !== undefined ? dto.valuation_method : mapping.valuation_method;
+    // '' (the form's blank) clears the dimension, like null; undefined leaves it as it is.
+    const entryType = dto.entry_type !== undefined ? dto.entry_type || null : mapping.entry_type;
+
+    if (dto.transaction_type !== undefined) assertMappableTransactionType(dto.transaction_type, mapping.transaction_type);
+    assertEntryTypeFits(transType, entryType);
 
     if (dto.item_category_id && dto.item_category_id !== mapping.item_category_id) {
       const [category] = await this.db
@@ -351,6 +371,7 @@ export class GlMappingService {
       (dto.lob_id !== undefined && dto.lob_id !== mapping.lob_id) ||
       (dto.stage_id !== undefined && dto.stage_id !== mapping.stage_id) ||
       (dto.valuation_method !== undefined && dto.valuation_method !== mapping.valuation_method) ||
+      entryType !== mapping.entry_type ||
       (dto.transaction_type !== undefined && dto.transaction_type.toUpperCase() !== mapping.transaction_type)
     ) {
 
@@ -387,6 +408,11 @@ export class GlMappingService {
       } else {
         queryConditions.push(isNull(schema.glMappingMaster.valuation_method));
       }
+      if (entryType) {
+        queryConditions.push(eq(schema.glMappingMaster.entry_type, entryType));
+      } else {
+        queryConditions.push(isNull(schema.glMappingMaster.entry_type));
+      }
 
       const existing = await this.db
         .select()
@@ -395,7 +421,7 @@ export class GlMappingService {
         .limit(1);
 
       if (existing.length > 0) {
-        throw new ConflictException(`G/L Mapping rule for transaction type '${transType}' with these same category/NOB/LOB/stage/valuation-method dimensions already exists.`);
+        throw new ConflictException(`G/L Mapping rule for transaction type '${transType}' with these same category/NOB/LOB/stage/valuation-method/entry-type dimensions already exists.`);
       }
 
     }
@@ -414,6 +440,7 @@ export class GlMappingService {
     if (dto.lob_id !== undefined) updates.lob_id = dto.lob_id;
     if (dto.stage_id !== undefined) updates.stage_id = dto.stage_id;
     if (dto.valuation_method !== undefined) updates.valuation_method = dto.valuation_method;
+    if (dto.entry_type !== undefined) updates.entry_type = entryType;
     if (dto.transaction_type !== undefined) updates.transaction_type = dto.transaction_type.toUpperCase();
     if (dto.debit_gl_account_id !== undefined) updates.debit_gl_account_id = dto.debit_gl_account_id;
     if (dto.credit_gl_account_id !== undefined) updates.credit_gl_account_id = dto.credit_gl_account_id;

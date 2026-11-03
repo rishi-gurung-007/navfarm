@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AnimalService, resolveAgeAtEntryWeeks } from './animal.service';
 import { BatchService } from '../../production/batch/batch.service';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
-import { BioCostingProfileService } from '../../finance/bio-costing/bio-costing-profile.service';
+import { BioCostingStartService } from '../../finance/bio-costing/bio-costing-start.service';
 import { BioCostingResidualService } from '../../finance/bio-costing/bio-costing-residual.service';
 import { BioCostingExitService } from '../../finance/bio-costing/bio-costing-exit.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
@@ -190,12 +190,14 @@ describe('AnimalService', () => {
           },
         },
         {
-          provide: BioCostingProfileService,
+          provide: BioCostingStartService,
           useValue: {
             assignAnimal: jest.fn().mockResolvedValue({
               assigned: false,
               reason: 'NO_MATCHING_PROFILE',
             }),
+            // A new birth date asks what moves her costing start; nothing costs this animal, so nothing moves.
+            startForNewBirthDate: jest.fn().mockResolvedValue(null),
           },
         },
         {
@@ -203,7 +205,7 @@ describe('AnimalService', () => {
           useValue: {
             forAnimal: jest.fn().mockResolvedValue({
               residual: 0,
-              source: 'COMPANY',
+              source: 'ITEM',
               latest_amortisation: null,
               latest_amortisation_date: null,
             }),
@@ -2126,6 +2128,27 @@ describe('AnimalService', () => {
         .calls[0][0];
       expect(setArg.gain_loss_on_disposal).toBeNull();
       expect(setArg.status).toBe('DEAD');
+    });
+
+    it('refuses a death of a costed breeding asset recorded without her weight at death (TDD row 10)', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({ current_batch_id: 'batch-1' })) // peek
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              for: jest.fn().mockResolvedValue([{ batch_id: 'batch-1' }]),
+            }),
+          }),
+        }) // batch lock
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1', company_id: 'comp-1', is_active: true, current_batch_id: 'batch-1',
+            animal_code: 'PF-SOW-01', costing_start_date: '2025-04-07',
+          }),
+        );
+      await expect(
+        service.dispose('a-1', { disposal_type: 'DIED', disposal_date: '2026-06-01', notes: 'found dead' } as any, 'tenant-123', { userId: 'user-1' }),
+      ).rejects.toThrow(/weight at death/);
     });
 
     it('posts a death inside an ACTIVE batch through the batch mortality path, not a bare register flip', async () => {

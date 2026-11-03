@@ -23,7 +23,7 @@ export function assertSafeRebuildTarget(env: Record<string, string | undefined>,
 }
 
 const VOLUMES = ['full', 'standard', 'light'];
-const PRESETS = ['porta', 'small', 'full', 'lean', 'costing', 'costing-test', 'ledger-check'];
+const PRESETS = ['porta', 'small', 'full', 'lean', 'costing', 'costing-test', 'costing-two', 'costing-fv', 'costing-freq', 'costing-conv', 'project-full', 'ledger-check'];
 
 export function parseRebuildArgs(argv: string[]): { apply: boolean; chaptersOnly: boolean; skipReset: boolean; volume?: string; preset?: string } {
   const known = new Set(['--apply', '--chapters-only', '--skip-reset']);

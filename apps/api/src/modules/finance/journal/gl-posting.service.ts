@@ -28,8 +28,8 @@ export class GlPostingService {
   }
 
   /**
-   * Matches gl_mapping_master on (tenant, company, transaction_type) plus up to 5 optional
-   * dimensions — category, NOB, LOB, stage, valuation_method — where NULL on a mapping means
+   * Matches gl_mapping_master on (tenant, company, transaction_type) plus up to 6 optional
+   * dimensions — category, NOB, LOB, stage, valuation_method, entry_type — where NULL on a mapping means
    * "wildcard" for that dimension. Among all mappings that don't conflict with the given
    * context, the one with the most dimensions actually pinned down wins (most-specific).
    */
@@ -37,7 +37,7 @@ export class GlPostingService {
     tenantId: string,
     companyId: string,
     transactionType: string,
-    context: { categoryId?: string | null; nobId?: string | null; lobId?: string | null; stageId?: string | null; valuationMethod?: string | null } = {}
+    context: { categoryId?: string | null; nobId?: string | null; lobId?: string | null; stageId?: string | null; valuationMethod?: string | null; entryType?: string | null } = {}
   ) {
     const dimensionCol = {
       categoryId: schema.glMappingMaster.item_category_id,
@@ -45,6 +45,7 @@ export class GlPostingService {
       lobId: schema.glMappingMaster.lob_id,
       stageId: schema.glMappingMaster.stage_id,
       valuationMethod: schema.glMappingMaster.valuation_method,
+      entryType: schema.glMappingMaster.entry_type,
     } as const;
 
     const normalizedType = transactionType === 'STOCK_ADJUSTMENT' ? 'VARIANCE_NEGATIVE' : transactionType;
@@ -73,7 +74,7 @@ export class GlPostingService {
     const scored = mappings
       .map((m) => ({
         mapping: m,
-        score: [m.item_category_id, m.nob_id, m.lob_id, m.stage_id, m.valuation_method].filter((v) => v != null).length,
+        score: [m.item_category_id, m.nob_id, m.lob_id, m.stage_id, m.valuation_method, m.entry_type].filter((v) => v != null).length,
       }))
       .sort((a, b) => b.score - a.score);
 
@@ -122,19 +123,19 @@ export class GlPostingService {
   }
 
   /**
-   * The asset account an animal is carried in: the acquisition account of the costing profile she is frozen to. One account per class of animal, so her
-   * purchase, her capitalised feed, her litter's cost, her exit and the clearing of her amortisation all move the same account. Undefined where she has no
-   * profile (the mapping's own account is then used).
+   * The asset account an animal is carried in: the acquisition account on her item's Bio Asset Costing tab. One account per class of animal, so her purchase,
+   * her capitalised feed, her litter's cost, her exit and the clearing of her amortisation all move the same account. Undefined where her item names none
+   * (the mapping's own account is then used).
    */
   async animalAssetAccountIds(animalIds: string[]): Promise<Map<string, string>> {
     const ids = [...new Set(animalIds.filter((x) => !!x))];
     if (!ids.length) return new Map();
     const rows = await this.db
-      .select({ animal_id: schema.animalRegister.animal_id, account: schema.bioCostingProfile.acquisition_gl_id })
+      .select({ animal_id: schema.animalRegister.animal_id, account: schema.itemMaster.bio_acquisition_gl_id })
       .from(schema.animalRegister)
-      .innerJoin(schema.bioCostingProfile, eq(schema.bioCostingProfile.profile_id, schema.animalRegister.costing_profile_id))
+      .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.animalRegister.item_id))
       .where(inArray(schema.animalRegister.animal_id, ids));
-    return new Map(rows.filter((r) => !!r.account).map((r) => [r.animal_id, r.account as string]));
+    return new Map(rows.filter((r): r is { animal_id: string; account: string } => !!r.account).map((r) => [r.animal_id, r.account]));
   }
 
   async animalAssetAccountId(animalId: string): Promise<string | undefined> {
@@ -143,20 +144,15 @@ export class GlPostingService {
 
   /**
    * The asset account animals of this item are carried in, for the moments before an animal exists to ask (a receipt of animals, a registration): the
-   * acquisition account the active profiles that cover the item agree on. Where they disagree, or none covers it, undefined: the mapping's account is used.
+   * item's own acquisition account. Undefined where it names none: the mapping's account is used.
    */
-  async assetAccountForItem(tenantId: string, companyId: string, itemId: string): Promise<string | undefined> {
-    const rows = await this.db
-      .select({ account: schema.bioCostingProfile.acquisition_gl_id })
-      .from(schema.bioCostingProfile)
-      .where(and(
-        eq(schema.bioCostingProfile.tenant_id, tenantId),
-        eq(schema.bioCostingProfile.company_id, companyId),
-        eq(schema.bioCostingProfile.status, 'ACTIVE'),
-        or(eq(schema.bioCostingProfile.item_id, itemId), isNull(schema.bioCostingProfile.item_id)),
-      ));
-    const accounts = [...new Set(rows.map((r) => r.account).filter((a): a is string => !!a))];
-    return accounts.length === 1 ? accounts[0] : undefined;
+  async assetAccountForItem(tenantId: string, _companyId: string, itemId: string): Promise<string | undefined> {
+    const [item] = await this.db
+      .select({ account: schema.itemMaster.bio_acquisition_gl_id })
+      .from(schema.itemMaster)
+      .where(and(eq(schema.itemMaster.item_id, itemId), eq(schema.itemMaster.tenant_id, tenantId)))
+      .limit(1);
+    return item?.account ?? undefined;
   }
 
   /** The account one side of a mapping names, or undefined where there is no mapping: for a posting that needs another stage's account (a pre-mature herd's asset). */
@@ -301,6 +297,7 @@ export class GlPostingService {
         lobId: ledgerEntry.lob_id,
         stageId: (ledgerEntry as any).stage_id ?? null,
         valuationMethod: item?.valuation_method,
+        entryType: ledgerEntry.entry_type,
       }
     );
 

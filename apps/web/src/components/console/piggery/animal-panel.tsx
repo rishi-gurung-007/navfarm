@@ -1,7 +1,7 @@
 'use client';
 
 import { NA } from '@/utils/na';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Search,
   Loader2,
@@ -15,7 +15,7 @@ import { api } from '@/services/api-client';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Toast } from '@/components/ui/toast';
-import { Pagination } from '@/components/ui/pagination';
+import { TablePager } from '@/components/ui/table-pager';
 import { getActiveCompanyId } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
 import type { TranslationKeys } from '@/utils/translations';
@@ -79,6 +79,7 @@ const STATUS_LABEL_KEY: Record<string, TranslationKeys> = {
   LACTATING: 'anpStatusLactating',
   DRY: 'anpStatusDry',
   CULLED: 'anpStatusCulled',
+  CONVERTED_INV: 'anpStatusConverted',
   DEAD: 'anpStatusDead',
   SOLD: 'anpStatusSold',
   SLAUGHTERED: 'anpStatusSlaughtered',
@@ -185,12 +186,17 @@ export default function AnimalPanel() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // What is typed, and what the list is searched for a moment after typing stops: one request per pause, not per key.
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [breedFilter, setBreedFilter] = useState('');
   const [includeDisposed, setIncludeDisposed] = useState(false);
+  // The list is paged by the server: one page is fetched at a time and `total` counts every animal that matches.
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(PAGE_SIZE);
+  const [pageSize, setPageSize] = useState(PAGE_SIZE);
+  const [total, setTotal] = useState(0);
+  const loadSeq = useRef(0);
 
   // ── Reference data ──────────────────────────────────────────────────────────
   // Company-wide breed lookup for the list table, loaded once on mount.
@@ -240,6 +246,33 @@ export default function AnimalPanel() {
     }
   };
 
+  // ── Convert to inventory (TDD row 11: a costed breeding animal is culled by a request Finance approves) ──────────
+  const [convOpen, setConvOpen] = useState(false);
+  const [convForm, setConvForm] = useState<Row>({ exit_weight_kg: '', remarks: '' });
+  const [convError, setConvError] = useState('');
+  const [convSaving, setConvSaving] = useState(false);
+  const [convMessage, setConvMessage] = useState('');
+  const handleConversion = async () => {
+    if (!viewing || convSaving) return;
+    setConvSaving(true);
+    setConvError('');
+    try {
+      const res: any = await api.post('/fa-conversions', {
+        animal_id: viewing.animal_id,
+        ...(convForm.exit_weight_kg ? { exit_weight_kg: Number(convForm.exit_weight_kg) } : {}),
+        ...(convForm.remarks?.trim() ? { remarks: convForm.remarks.trim() } : {}),
+      });
+      const made = res?.data ?? res;
+      setConvOpen(false);
+      setConvMessage(t('anpConvertRequested', { no: made?.conversion_no ?? '' }));
+      load();
+    } catch (err: any) {
+      setConvError(err?.message || 'Could not raise the conversion request.');
+    } finally {
+      setConvSaving(false);
+    }
+  };
+
   // ── Dispose modal ───────────────────────────────────────────────────────────
   const [disposeOpen, setDisposeOpen] = useState(false);
   const [disposeSaving, setDisposeSaving] = useState(false);
@@ -256,6 +289,8 @@ export default function AnimalPanel() {
   // ── Data loading ────────────────────────────────────────────────────────────
 
   const load = async () => {
+    // Several loads can be in flight (a filter changed while a page was loading); only the latest may land.
+    const seq = ++loadSeq.current;
     setLoading(true);
     setError('');
     try {
@@ -265,20 +300,46 @@ export default function AnimalPanel() {
       if (statusFilter) params.set('status', statusFilter);
       if (breedFilter) params.set('breedId', breedFilter);
       if (includeDisposed) params.set('includeDisposed', 'true');
-      params.set('limit', '200');
+      params.set('limit', String(pageSize));
+      params.set('offset', String((page - 1) * pageSize));
       const res = await api.get(`/animal?${params.toString()}`);
-      setRows(unwrap<Row[]>(res) || []);
-      setPage(1);
+      if (seq !== loadSeq.current) return;
+      const list = unwrap<Row[]>(res) || [];
+      // An API that answers a bare list with no total: a full page is taken to have another one behind it, so Next stays reachable.
+      const count =
+        typeof res?.total === 'number'
+          ? res.total
+          : (page - 1) * pageSize +
+            list.length +
+            (list.length === pageSize ? 1 : 0);
+      // The last animal of the last page was removed: step back to the last page that still exists.
+      if (list.length === 0 && count > 0 && page > 1) {
+        setPage(Math.ceil(count / pageSize));
+        return;
+      }
+      setRows(list);
+      setTotal(count);
     } catch (err: any) {
+      if (seq !== loadSeq.current) return;
       setError(err?.message || t('anpErrLoadAnimals'));
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   };
 
+  // A new search or filter starts again from the first page.
+  useEffect(() => {
+    const id = setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => clearTimeout(id);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter, breedFilter, includeDisposed, pageSize]);
+
   useEffect(() => {
     load();
-  }, [search, statusFilter, breedFilter, includeDisposed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search, statusFilter, breedFilter, includeDisposed, page, pageSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reference data — loaded once on mount
   useEffect(() => {
@@ -392,9 +453,6 @@ export default function AnimalPanel() {
     }
   };
 
-  // ── Pagination ───────────────────────────────────────────────────────────────
-  const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
-
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div>
@@ -410,8 +468,8 @@ export default function AnimalPanel() {
             className={inputCls}
             style={{ paddingLeft: '2rem' }}
             placeholder={t('anpSearchPlaceholder')}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
           />
         </div>
 
@@ -476,79 +534,109 @@ export default function AnimalPanel() {
 
       <Toast variant="danger" message={error} onClose={() => setError('')} />
 
-      {/* ── List table ── */}
+      {/* ── List table: a card of one page, with the pager as its footer ── */}
       <div
         className="overflow-hidden rounded-[var(--radius-md)] border"
         style={S.surface}
       >
-        <table className="w-full text-sm">
-          <TableHeader>
-            <TableRow>
-              <TableHead className="text-left">{t('anpColCode')}</TableHead>
-              <TableHead className="text-left">{t('anpColType')}</TableHead>
-              <TableHead className="text-left">{t('anpColGender')}</TableHead>
-              <TableHead className="text-left">{t('anpColBreed')}</TableHead>
-              <TableHead className="text-left">{t('anpColStatus')}</TableHead>
-              <TableHead className="text-left">
-                {t('anpColEntryDate')}
-              </TableHead>
-              <TableHead className="text-left">{t('anpRfidTag')}</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading && (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[46rem] text-sm">
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={8} className="py-12 text-center">
-                  <Loader2
-                    className="mx-auto h-5 w-5 animate-spin"
-                    style={S.muted}
-                  />
-                </TableCell>
+                <TableHead className="whitespace-nowrap text-left">
+                  {t('anpColCode')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-left">
+                  {t('anpColType')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-left">
+                  {t('anpColGender')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-left">
+                  {t('anpColBreed')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-left">
+                  {t('anpColStatus')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-left">
+                  {t('anpColEntryDate')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-left">
+                  {t('anpRfidTag')}
+                </TableHead>
+                <TableHead className="w-12" />
               </TableRow>
-            )}
-            {!loading && pagedRows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={8} className="py-16 text-center">
-                  <Inbox className="mx-auto h-8 w-8 mb-3" style={S.muted} />
-                  <p className="text-sm" style={S.sub}>
-                    {t('anpNoAnimalsFound')}
-                  </p>
-                </TableCell>
-              </TableRow>
-            )}
-            {!loading &&
-              pagedRows.map((row) => (
+            </TableHeader>
+            <TableBody
+              className={
+                loading && rows.length > 0
+                  ? 'opacity-60 transition-opacity'
+                  : undefined
+              }
+            >
+              {loading && rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={8} className="py-12 text-center">
+                    <Loader2
+                      className="mx-auto h-5 w-5 animate-spin"
+                      style={S.muted}
+                    />
+                  </TableCell>
+                </TableRow>
+              )}
+              {!loading && rows.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={8} className="py-16 text-center">
+                    <Inbox className="mx-auto mb-3 h-8 w-8" style={S.muted} />
+                    <p className="text-sm" style={S.sub}>
+                      {t('anpNoAnimalsFound')}
+                    </p>
+                  </TableCell>
+                </TableRow>
+              )}
+              {rows.map((row) => (
                 <TableRow
                   key={row.animal_id}
                   className="cursor-pointer hover:bg-[var(--surface-raised)]"
                   onClick={() => openView(row)}
                 >
                   <TableCell
-                    className="font-mono text-xs font-semibold"
+                    className="whitespace-nowrap font-mono text-xs font-semibold"
                     style={S.accent}
                   >
                     {row.animal_code}
                   </TableCell>
-                  <TableCell style={S.sub}>
+                  <TableCell className="whitespace-nowrap" style={S.sub}>
                     {animalTypeLabel(row.animal_type)}
                   </TableCell>
-                  <TableCell style={S.sub}>{genderLabel(row.gender)}</TableCell>
-                  <TableCell style={S.sub}>{breedName(row.breed_id)}</TableCell>
-                  <TableCell>
+                  <TableCell className="whitespace-nowrap" style={S.sub}>
+                    {genderLabel(row.gender)}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap" style={S.sub}>
+                    {breedName(row.breed_id)}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">
                     <StatusBadge
                       status={row.status || 'ACTIVE'}
                       label={statusLabel(row.status || 'ACTIVE')}
                     />
                   </TableCell>
-                  <TableCell style={S.muted}>
+                  <TableCell
+                    className="whitespace-nowrap tabular-nums"
+                    style={S.muted}
+                  >
                     {formatDate(row.entry_date)}
                   </TableCell>
-                  <TableCell style={S.muted}>{row.rfid_tag || NA}</TableCell>
-                  <TableCell>
+                  <TableCell
+                    className="whitespace-nowrap font-mono"
+                    style={S.muted}
+                  >
+                    {row.rfid_tag || NA}
+                  </TableCell>
+                  <TableCell className="w-12 text-right">
                     <button
                       aria-label={t('anpViewAnimal')}
-                      className="p-1 rounded-[var(--radius-xs)] hover:bg-[var(--surface-secondary)]"
+                      className="rounded-[var(--radius-xs)] p-1 hover:bg-[var(--surface-secondary)]"
                       style={S.muted}
                       onClick={(e) => {
                         e.stopPropagation();
@@ -560,20 +648,18 @@ export default function AnimalPanel() {
                   </TableCell>
                 </TableRow>
               ))}
-          </TableBody>
-        </table>
-      </div>
-
-      {rows.length > pageSize && (
-        <div className="mt-4">
-          <Pagination
-            page={page}
-            pageSize={pageSize}
-            total={rows.length}
-            onPageChange={setPage}
-          />
+            </TableBody>
+          </table>
         </div>
-      )}
+        <TablePager
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          pageSizeOptions={[10, 25, 50, 100]}
+        />
+      </div>
 
       {/* ═══ Animal Details Modal (7-Tab Card: Overview, Lineage, Health, Weight, Breeding [Farrowing & Insemination], Movement, Costing) ═══ */}
       <AnimalDetailsModal
@@ -601,6 +687,12 @@ export default function AnimalPanel() {
           setDisposeIsWithdrawal(false);
           setDisposeOpen(true);
         }}
+        onOpenConversion={(anim) => {
+          setViewing(anim);
+          setConvForm({ exit_weight_kg: '', remarks: '' });
+          setConvError('');
+          setConvOpen(true);
+        }}
         onOpenOutOfProduction={(anim) => {
           setViewing(anim);
           setOopDate(
@@ -612,6 +704,46 @@ export default function AnimalPanel() {
           setOopOpen(true);
         }}
       />
+
+      {/* ═══ Convert to inventory ═════════════════════════════════════════════ */}
+      <Dialog
+        open={convOpen}
+        onClose={() => !convSaving && setConvOpen(false)}
+        title={t('anpConvertTitle', { code: viewing?.animal_code ?? '' })}
+        description={t('anpConvertHelp')}
+        maxWidth="sm"
+        footer={
+          <Button onClick={handleConversion} disabled={convSaving}>
+            {convSaving ? t('anpSaving') : t('anpConvertSend')}
+          </Button>
+        }
+      >
+        <Toast variant="danger" message={convError} onClose={() => setConvError('')} />
+        <label className="nf-label" htmlFor="conv-weight">
+          {t('anpConvertWeight')}
+        </label>
+        <input
+          id="conv-weight"
+          type="number"
+          min="0"
+          step="0.1"
+          className={inputCls}
+          value={convForm.exit_weight_kg}
+          onChange={(e) => setConvForm((f) => ({ ...f, exit_weight_kg: e.target.value }))}
+        />
+        <label className="nf-label mt-3" htmlFor="conv-remarks">
+          {t('anpConvertRemarks')}
+        </label>
+        <input
+          id="conv-remarks"
+          type="text"
+          maxLength={300}
+          className={inputCls}
+          value={convForm.remarks}
+          onChange={(e) => setConvForm((f) => ({ ...f, remarks: e.target.value }))}
+        />
+      </Dialog>
+      <Toast variant="success" message={convMessage} onClose={() => setConvMessage('')} />
 
       {/* ═══ Dispose Modal ═════════════════════════════════════════════════════ */}
       <Dialog
@@ -683,7 +815,9 @@ export default function AnimalPanel() {
                 setDisposeError('');
                 setDisposeIsWithdrawal(false);
               }}
-              options={DISPOSAL_TYPES.map((tp) => ({
+              options={DISPOSAL_TYPES.filter(
+                (tp) => !(tp === 'CULLED' && viewing?.costing_start_date),
+              ).map((tp) => ({
                 value: tp,
                 label: disposalTypeLabel(tp),
               }))}
@@ -691,6 +825,12 @@ export default function AnimalPanel() {
               columnHeaders={false}
             />
           </div>
+
+          {viewing?.costing_start_date && (
+            <p className="text-xs text-[var(--text-secondary)]">
+              {t('anpCullIsConversion')}
+            </p>
+          )}
 
           <div>
             <label className="nf-label" htmlFor="dispose-date">

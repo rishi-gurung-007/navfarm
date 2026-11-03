@@ -1576,6 +1576,83 @@
       "when": 1792000000095,
       "tag": "0227_batch_litter_lot",
       "breakpoints": true
+    },
+    {
+      "idx": 225,
+      "version": "5",
+      "when": 1792000000096,
+      "tag": "0228_item_bio_costing",
+      "breakpoints": true
+    },
+    {
+      "idx": 226,
+      "version": "5",
+      "when": 1792000000097,
+      "tag": "0229_bio_costing_run_item",
+      "breakpoints": true
+    },
+    {
+      "idx": 227,
+      "version": "5",
+      "when": 1792000000098,
+      "tag": "0230_drop_costing_profile",
+      "breakpoints": true
+    },
+    {
+      "idx": 228,
+      "version": "5",
+      "when": 1792000000099,
+      "tag": "0231_fa_inventory_conversion",
+      "breakpoints": true
+    },
+    {
+      "idx": 229,
+      "version": "5",
+      "when": 1792000000100,
+      "tag": "0232_gl_mapping_entry_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 230,
+      "version": "5",
+      "when": 1792000000101,
+      "tag": "0233_breeding_line_setup",
+      "breakpoints": true
+    },
+    {
+      "idx": 231,
+      "version": "5",
+      "when": 1792000000102,
+      "tag": "0234_semen_boar_result",
+      "breakpoints": true
+    },
+    {
+      "idx": 232,
+      "version": "5",
+      "when": 1792000000103,
+      "tag": "0235_boar_ranking",
+      "breakpoints": true
+    },
+    {
+      "idx": 233,
+      "version": "5",
+      "when": 1792000000104,
+      "tag": "0236_semen_collection_plan",
+      "breakpoints": true
+    },
+    {
+      "idx": 234,
+      "version": "5",
+      "when": 1792000000105,
+      "tag": "0237_semen_lot_label",
+      "breakpoints": true
+    },
+    {
+      "idx": 235,
+      "version": "5",
+      "when": 1792000000106,
+      "tag": "0238_boar_body_condition",
+      "breakpoints": true
     }
   ]
 }

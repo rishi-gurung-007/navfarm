@@ -10,6 +10,9 @@ import {
   Inbox,
   Eye,
   CheckCircle2,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { Dialog } from '@/components/ui/dialog';
@@ -72,6 +75,42 @@ const STATUS_VARIANT: Record<string, 'neutral' | 'success' | 'danger'> = {
   CANCELLED: 'danger',
 };
 
+type JournalSort = { key: string; dir: 'asc' | 'desc' };
+
+/** A column heading that sorts the list: the first click sorts that column descending (newest or largest first), the next flips it. */
+function SortHead({
+  field,
+  sort,
+  onSort,
+  right,
+  children,
+}: {
+  field: string;
+  sort: JournalSort;
+  onSort: (next: JournalSort) => void;
+  right?: boolean;
+  children: React.ReactNode;
+}) {
+  const active = sort.key === field;
+  const Icon = !active ? ArrowUpDown : sort.dir === 'asc' ? ArrowUp : ArrowDown;
+  return (
+    <TableHead
+      className={`whitespace-nowrap ${right ? 'text-right' : ''}`}
+      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button
+        type="button"
+        onClick={() => onSort({ key: field, dir: active && sort.dir === 'desc' ? 'asc' : 'desc' })}
+        className={`inline-flex items-center gap-1 uppercase tracking-wider cursor-pointer hover:text-[var(--text-primary)] ${right ? 'flex-row-reverse' : ''}`}
+        style={active ? { color: 'var(--accent)' } : undefined}
+      >
+        {children}
+        <Icon className="h-3 w-3" style={active ? undefined : { opacity: 0.5 }} />
+      </button>
+    </TableHead>
+  );
+}
+
 export default function JournalPanel() {
   const { t } = useLanguage();
   const [rows, setRows] = useState<Row[]>([]);
@@ -85,6 +124,8 @@ export default function JournalPanel() {
   );
   const [search, setSearch] = useState(openNo);
   const [statusFilter, setStatusFilter] = useState('');
+  // Newest first until a column is chosen: the list is cut at 200, so the order is the API's, not the browser's.
+  const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'posting_date', dir: 'desc' });
   const [sourceOf, setSourceOf] = useState<Row | null>(null);
 
   const [glAccounts, setGlAccounts] = useState<Row[]>([]);
@@ -113,6 +154,8 @@ export default function JournalPanel() {
       if (companyId) params.set('companyId', companyId);
       if (search) params.set('search', search);
       if (statusFilter) params.set('status', statusFilter);
+      params.set('sort', sort.key);
+      params.set('dir', sort.dir);
       params.set('limit', '200');
       const res = await api.get(`/journal?${params.toString()}`);
       setRows(unwrap<Row[]>(res) || []);
@@ -126,11 +169,11 @@ export default function JournalPanel() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, statusFilter]);
+  }, [search, statusFilter, sort]);
 
   useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, pageSize]);
+  }, [search, statusFilter, pageSize, sort]);
   const openedByNo = useRef(false);
   useEffect(() => {
     if (!openNo || openedByNo.current) return;
@@ -306,22 +349,24 @@ export default function JournalPanel() {
                 className="border-b"
                 style={{ borderColor: 'var(--row-border)' }}
               >
-                <TableHead className="whitespace-nowrap">
+                <SortHead field="journal_no" sort={sort} onSort={setSort}>
                   {t('jpJournalNo')}
-                </TableHead>
-                <TableHead className="whitespace-nowrap">
+                </SortHead>
+                <SortHead field="posting_date" sort={sort} onSort={setSort}>
                   {t('jpPostingDate')}
-                </TableHead>
-                <TableHead className="whitespace-nowrap">
+                </SortHead>
+                <SortHead field="source" sort={sort} onSort={setSort}>
                   {t('jpSource')}
-                </TableHead>
-                <TableHead className="whitespace-nowrap text-right">
+                </SortHead>
+                <SortHead field="total_debit" sort={sort} onSort={setSort} right>
                   {t('jpDebit')}
-                </TableHead>
-                <TableHead className="whitespace-nowrap text-right">
+                </SortHead>
+                <SortHead field="total_credit" sort={sort} onSort={setSort} right>
                   {t('jpCredit')}
-                </TableHead>
-                <TableHead className="text-right">{t('jpStatus')}</TableHead>
+                </SortHead>
+                <SortHead field="status" sort={sort} onSort={setSort} right>
+                  {t('jpStatus')}
+                </SortHead>
                 <TableHead className="text-right">{t('jpActions')}</TableHead>
               </tr>
             </TableHeader>

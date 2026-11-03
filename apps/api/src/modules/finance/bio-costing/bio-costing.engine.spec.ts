@@ -24,7 +24,7 @@ describe('the client\'s worked example (formula sheet rows 43-66): book value 30
   it('charges (3000 - 307.50) x 30 / 864 = 93.4896 for a 30-day run starting on her start date, under the BBP\'s wording (D11)', () => {
     expect(amortisationAmount(3000, 307.5, 30, 864)).toBeCloseTo(93.4896, 4);
     const thirtyDays = { key: 'x', start: '2026-05-24', end: '2026-06-22' };
-    const line = amortisationLine({ profile: imported, animal: animal(), period: thirtyDays, bookValueBefore: 3000 });
+    const line = amortisationLine({ terms: imported, animal: animal(), period: thirtyDays, bookValueBefore: 3000 });
     expect(line).toMatchObject({ status: 'CHARGED', residual: 307.5, remaining_days: 864, days: 30 });
     expect(line.charge).toBeCloseTo(93.4896, 4);
   });
@@ -57,7 +57,7 @@ describe('periods', () => {
 describe('amortisationLine', () => {
   const period = periodFor('MONTHLY', '2026-07-10'); // 2026-07-01..31, wholly inside her window
   it('charges the frequency days (30) over the days that remain, on the current book value', () => {
-    const l = amortisationLine({ profile: imported, animal: animal(), period, bookValueBefore: 3000 });
+    const l = amortisationLine({ terms: imported, animal: animal(), period, bookValueBefore: 3000 });
     // remaining = life end 2028-10-04 less window start 2026-07-01 = 826 days
     expect(l.remaining_days).toBe(826);
     expect(l.charge).toBeCloseTo(((3000 - 307.5) * 30) / 826, 4);
@@ -65,7 +65,7 @@ describe('amortisationLine', () => {
     expect(l.days).toBe(30);
   });
   it('on the 30-day basis the second month charges a little more than the first, because 30 counted days use up 31 real ones; ACTUAL stays constant', () => {
-    const run = (profile: any, date: string, bv: number) => amortisationLine({ profile, animal: animal(), period: periodFor('MONTHLY', date), bookValueBefore: bv });
+    const run = (profile: any, date: string, bv: number) => amortisationLine({ terms: profile, animal: animal(), period: periodFor('MONTHLY', date), bookValueBefore: bv });
     const first = run(imported, '2026-07-10', 3000);
     const second = run(imported, '2026-08-10', first.book_value_after);
     expect(second.charge).toBeCloseTo(((3000 - first.charge - 307.5) * 30) / 795, 4);
@@ -76,57 +76,57 @@ describe('amortisationLine', () => {
     expect(a2.charge / 31).toBeCloseTo(a1.charge / 31, 3); // the same charge per day
   });
   it('charges nothing before the start age, and says why', () => {
-    const l = amortisationLine({ profile: imported, animal: animal(), period: periodFor('MONTHLY', '2026-04-10'), bookValueBefore: 3000 });
+    const l = amortisationLine({ terms: imported, animal: animal(), period: periodFor('MONTHLY', '2026-04-10'), bookValueBefore: 3000 });
     expect(l).toMatchObject({ status: 'SKIPPED', skip_reason: 'NOT_STARTED', charge: 0 });
   });
   it('charges a part month from the start date: starts 2026-05-24, so 8 of May\'s 31 days', () => {
-    const l = amortisationLine({ profile: imported, animal: animal(), period: periodFor('MONTHLY', '2026-05-10'), bookValueBefore: 3000 });
+    const l = amortisationLine({ terms: imported, animal: animal(), period: periodFor('MONTHLY', '2026-05-10'), bookValueBefore: 3000 });
     expect(l.status).toBe('CHARGED');
     expect(l.days).toBeCloseTo((30 * 8) / 31, 3);
   });
   it('shows no age rather than guessing when there is no birth date and no age at entry', () => {
-    const l = amortisationLine({ profile: imported, animal: animal({ dob: null, costing_start_date: null }), period, bookValueBefore: 3000 });
+    const l = amortisationLine({ terms: imported, animal: animal({ dob: null, costing_start_date: null }), period, bookValueBefore: 3000 });
     expect(l).toMatchObject({ status: 'SKIPPED', skip_reason: 'NO_AGE' });
   });
   it('takes the whole remainder in the last period, landing exactly on the residual, and nothing after it', () => {
-    const last = amortisationLine({ profile: imported, animal: animal(), period: periodFor('MONTHLY', '2028-09-10'), bookValueBefore: 400 });
+    const last = amortisationLine({ terms: imported, animal: animal(), period: periodFor('MONTHLY', '2028-09-10'), bookValueBefore: 400 });
     expect(last.status).toBe('CHARGED');
     expect(last.charge).toBeLessThanOrEqual(400 - 307.5 + 1e-9);
-    const end = amortisationLine({ profile: imported, animal: animal(), period: periodFor('MONTHLY', '2028-10-05'), bookValueBefore: 400 });
+    const end = amortisationLine({ terms: imported, animal: animal(), period: periodFor('MONTHLY', '2028-10-05'), bookValueBefore: 400 });
     expect(end.book_value_after).toBeGreaterThanOrEqual(307.5);
-    expect(amortisationLine({ profile: imported, animal: animal(), period: periodFor('MONTHLY', '2028-11-10'), bookValueBefore: 307.5 })).toMatchObject({ skip_reason: 'LIFE_COMPLETE' });
+    expect(amortisationLine({ terms: imported, animal: animal(), period: periodFor('MONTHLY', '2028-11-10'), bookValueBefore: 307.5 })).toMatchObject({ skip_reason: 'LIFE_COMPLETE' });
   });
   it('never takes the book value below the residual, and calls an animal already at it fully amortised', () => {
     // 45 enforced days would charge far more than the 0.50 above the residual: the charge stops at the residual
-    const near = amortisationLine({ profile: imported, animal: animal(), period, bookValueBefore: 308, daysEnforced: 100000 });
+    const near = amortisationLine({ terms: imported, animal: animal(), period, bookValueBefore: 308, daysEnforced: 100000 });
     expect(near.charge).toBeCloseTo(0.5, 4);
     expect(near.book_value_after).toBeCloseTo(307.5, 4);
-    expect(amortisationLine({ profile: imported, animal: animal(), period, bookValueBefore: 307.5 })).toMatchObject({ skip_reason: 'FULLY_AMORTISED' });
+    expect(amortisationLine({ terms: imported, animal: animal(), period, bookValueBefore: 307.5 })).toMatchObject({ skip_reason: 'FULLY_AMORTISED' });
   });
   it('skips with RESIDUAL_EXCEEDS_COST when the residual is more than the book value', () => {
-    expect(amortisationLine({ profile: imported, animal: animal(), period, bookValueBefore: 200 })).toMatchObject({ skip_reason: 'RESIDUAL_EXCEEDS_COST', charge: 0 });
+    expect(amortisationLine({ terms: imported, animal: animal(), period, bookValueBefore: 200 })).toMatchObject({ skip_reason: 'RESIDUAL_EXCEEDS_COST', charge: 0 });
   });
   it('gives a male no residual: the whole book value is amortised over his life', () => {
     const male = { ...imported, gender: 'M', start_age_weeks: 26, useful_life_months: 18, residual_rule: 'NONE', residual_weight_kg: null, residual_price_per_kg: null, residual_applies_gender: null };
     const m = animal({ gender: 'M', costing_start_date: costingStartDate({ dob: '2025-10-05', entry_date: '2025-11-01' }, 26) });
-    const l = amortisationLine({ profile: male as any, animal: m, period: periodFor('MONTHLY', '2026-05-10'), bookValueBefore: 1000 });
+    const l = amortisationLine({ terms: male as any, animal: m, period: periodFor('MONTHLY', '2026-05-10'), bookValueBefore: 1000 });
     expect(l.residual).toBe(0);
     expect(l.charge).toBeGreaterThan(0);
   });
-  it('counts the actual calendar days when the profile says ACTUAL, and the run\'s own number when it enforces one', () => {
-    const actual = amortisationLine({ profile: { ...imported, day_basis: 'ACTUAL' }, animal: animal(), period, bookValueBefore: 3000 });
+  it('counts the actual calendar days when the item says ACTUAL, and the run\'s own number when it enforces one', () => {
+    const actual = amortisationLine({ terms: { ...imported, day_basis: 'ACTUAL' }, animal: animal(), period, bookValueBefore: 3000 });
     expect(actual.days).toBe(31);
-    const enforced = amortisationLine({ profile: imported, animal: animal(), period, bookValueBefore: 3000, daysEnforced: 45 });
+    const enforced = amortisationLine({ terms: imported, animal: animal(), period, bookValueBefore: 3000, daysEnforced: 45 });
     expect(enforced.days).toBe(45);
   });
   it('skips an animal that has left before the period', () => {
-    expect(amortisationLine({ profile: imported, animal: animal({ is_active: false, disposal_date: '2026-06-15' }), period, bookValueBefore: 3000 })).toMatchObject({ skip_reason: 'NOT_ACTIVE' });
+    expect(amortisationLine({ terms: imported, animal: animal({ is_active: false, disposal_date: '2026-06-15' }), period, bookValueBefore: 3000 })).toMatchObject({ skip_reason: 'NOT_ACTIVE' });
   });
   it('skips an animal whose exit was written after the period: the period is settled in the exit, not charged behind it', () => {
     const gone = animal({ is_active: false, disposal_date: '2026-10-15', exit_date: '2026-10-15' });
-    expect(amortisationLine({ profile: imported, animal: gone, period, bookValueBefore: 3000 })).toMatchObject({ status: 'SKIPPED', skip_reason: 'LEFT_AFTER_PERIOD', charge: 0, book_value_after: 3000 });
+    expect(amortisationLine({ terms: imported, animal: gone, period, bookValueBefore: 3000 })).toMatchObject({ status: 'SKIPPED', skip_reason: 'LEFT_AFTER_PERIOD', charge: 0, book_value_after: 3000 });
     // an exit inside or before the period is not "after" it: her book value as of the period's end already shows it
-    expect(amortisationLine({ profile: imported, animal: animal({ exit_date: period.end }), period, bookValueBefore: 3000 }).skip_reason).toBeNull();
+    expect(amortisationLine({ terms: imported, animal: animal({ exit_date: period.end }), period, bookValueBefore: 3000 }).skip_reason).toBeNull();
   });
 });
 
@@ -169,7 +169,7 @@ describe('pickRate', () => {
 });
 
 describe('runActiveKey', () => {
-  it('names the profile and period, and the batch when there is one, and always fits the column that holds it', () => {
+  it('names the item and period, and the batch when there is one, and always fits the column that holds it', () => {
     const uuid = '0f8fad5b-d9cb-469f-a165-70867728950e';
     expect(runActiveKey(uuid, '2026-09')).toBe(`${uuid}|2026-09`);
     expect(runActiveKey(uuid, '2026-09', uuid)).toBe(`${uuid}|2026-09|${uuid}`);

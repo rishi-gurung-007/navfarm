@@ -354,7 +354,7 @@ describe('ItemService', () => {
         });
 
       await expect(service.findAll({}, 'tenant-123')).resolves.toEqual({
-        data: [{ ...legacyItem, tracking_locked: false }], total: 1, limit: 50, offset: 0,
+        data: [{ ...legacyItem, tracking_locked: false, valuation_locked: false }], total: 1, limit: 50, offset: 0,
       });
     });
   });
@@ -400,6 +400,19 @@ describe('ItemService', () => {
 
       await expect(service.update('item-1', { valuation_method: 'STANDARD' } as any, 'tenant-123'))
         .rejects.toThrow('Valuation Method cannot be changed because this item already has inventory entries.');
+    });
+
+    // TDD Item Card: for a biological asset the normal costing method is un-editable.
+    const bioGuard = (dto: object, bio = true) => (service as any).assertCostingAndTrackingUnlocked({ ...itemRow, is_biological_asset: bio, uom_primary: 'HEAD' }, dto);
+    it('refuses to change the valuation method of a biological asset, with or without inventory, and says why', async () => {
+      await expect(bioGuard({ valuation_method: 'STANDARD' })).rejects.toThrow('ITM-0001 is a biological asset: its normal costing method is fixed');
+      await expect(bioGuard({ valuation_method: null })).rejects.toThrow('is a biological asset');
+    });
+    it('lets a biological asset be saved with the valuation method it already has, and leaves a normal item alone', async () => {
+      await expect(bioGuard({ valuation_method: 'FIFO' })).resolves.toBeUndefined();
+      await expect(bioGuard({ item_name: 'renamed' })).resolves.toBeUndefined();
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }) }) });
+      await expect(bioGuard({ valuation_method: 'STANDARD' }, false)).resolves.toBeUndefined();
     });
 
     // Tracking may change only while nothing carries lot or serial numbers for the item.

@@ -1,8 +1,11 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { ArrowDownUp, ChevronDown, Layers, Loader2 } from 'lucide-react';
+import { ArrowDownUp, ChevronDown, Download, Layers, Loader2 } from 'lucide-react';
 import { Pagination } from '@/components/ui/pagination';
+import { JournalEntryDialog } from '../finance/journal-entry-dialog';
+import { downloadCsvFile } from '@/modules/master-data/utils/master-csv';
+import { buildLedgerCsv } from './animal-ledger-export';
 import { BIO_DOCUMENT_LABEL, BIO_EVENT_LABEL } from '../inventory/bio-asset-ledger-detail';
 import { formatEntryType, formatTransactionType } from '../inventory/inventory-ledger-detail';
 
@@ -16,6 +19,7 @@ interface Formatters {
 
 /** What a posting is called on screen: whatever is consumed reads Consumption; otherwise the event the API read from the row's codes; a manual entry, its document. */
 export function postingLabel(entry: Row): string {
+  if (entry.expensed) return entry.transaction_type === 'OVERHEAD' ? 'Overhead (expensed)' : 'Consumption (expensed)';
   if (entry.transaction_type === 'CONSUMPTION') return 'Consumption';
   if (entry.event) return BIO_EVENT_LABEL[entry.event] ?? entry.event;
   return `${BIO_DOCUMENT_LABEL[entry.document_type] ?? entry.document_type} · ${formatTransactionType(entry.transaction_type)}`;
@@ -28,12 +32,13 @@ const PAGE_SIZES = [10, 25, 50];
  * An animal's Bio-Asset Ledger postings, as a card that folds away to a one-line summary, with the postings filtered by kind, ordered newest or oldest first,
  * and paged. Folded, it still says how many postings there are, what they add up to (her carrying value) and the date of the last.
  */
-export function AnimalLedgerPostings({ entries, loading, format }: { entries: Row[]; loading: boolean; format: Formatters }) {
+export function AnimalLedgerPostings({ entries, loading, format, animalCode = '' }: { entries: Row[]; loading: boolean; format: Formatters; animalCode?: string }) {
   const [open, setOpen] = useState(true);
   const [kind, setKind] = useState<string>('ALL');
   const [newestFirst, setNewestFirst] = useState(true);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [journalId, setJournalId] = useState<string | null>(null);
 
   const kinds = useMemo(() => {
     const counts = new Map<string, number>();
@@ -41,7 +46,9 @@ export function AnimalLedgerPostings({ entries, loading, format }: { entries: Ro
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
   }, [entries]);
 
-  const net = useMemo(() => entries.reduce((sum, entry) => sum + amountOf(entry), 0), [entries]);
+  // Her net is what is in her book value; the feed and overhead charged to expense are posted on her too, but add nothing to it.
+  const net = useMemo(() => entries.filter((entry) => !entry.expensed).reduce((sum, entry) => sum + amountOf(entry), 0), [entries]);
+  const expensedTotal = useMemo(() => entries.filter((entry) => entry.expensed).reduce((sum, entry) => sum + amountOf(entry), 0), [entries]);
   const last = useMemo(() => entries.reduce((latest, entry) => (String(entry.posting_date) > latest ? String(entry.posting_date) : latest), ''), [entries]);
 
   const shown = useMemo(() => {
@@ -53,6 +60,11 @@ export function AnimalLedgerPostings({ entries, loading, format }: { entries: Ro
 
   const pageRows = shown.slice((page - 1) * pageSize, page * pageSize);
   const pickKind = (next: string) => { setKind(next); setPage(1); };
+  // Every posting, whatever the filter or page, in the order on screen.
+  const exportAll = () => {
+    const sorted = [...entries].sort((a, b) => String(a.posting_date).localeCompare(String(b.posting_date)) || Number(a.entry_no ?? 0) - Number(b.entry_no ?? 0));
+    downloadCsvFile(`bio-asset-postings-${animalCode || 'animal'}-${new Date().toISOString().slice(0, 10)}.csv`, buildLedgerCsv(newestFirst ? sorted.reverse() : sorted, postingLabel, animalCode));
+  };
 
   return (
     <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] shadow-2xs">
@@ -70,7 +82,8 @@ export function AnimalLedgerPostings({ entries, loading, format }: { entries: Ro
         </span>
         {entries.length > 0 && (
           <span className="flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
-            <span>Net <span className="font-mono font-bold text-[var(--text-primary)]">{format.money(net)}</span></span>
+            <span>Book value <span className="font-mono font-bold text-[var(--text-primary)]">{format.money(net)}</span></span>
+            {expensedTotal > 0 && <span className="hidden sm:inline">Expensed <span className="font-mono text-[var(--text-secondary)]">{format.money(expensedTotal)}</span></span>}
             {last && <span className="hidden sm:inline">Last posting <span className="font-mono text-[var(--text-secondary)]">{format.date(last)}</span></span>}
             <span className="text-[10px] uppercase tracking-wider">{open ? 'Hide' : 'Show'}</span>
           </span>
@@ -108,6 +121,14 @@ export function AnimalLedgerPostings({ entries, loading, format }: { entries: Ro
                     </button>
                   ))}
                 </div>
+                <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={exportAll}
+                  className="flex items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 py-1 text-[11px] font-semibold text-[var(--text-secondary)] transition hover:bg-[var(--surface-raised)]"
+                >
+                  <Download className="h-3 w-3" /> Export CSV
+                </button>
                 <button
                   type="button"
                   onClick={() => { setNewestFirst((v) => !v); setPage(1); }}
@@ -115,6 +136,7 @@ export function AnimalLedgerPostings({ entries, loading, format }: { entries: Ro
                 >
                   <ArrowDownUp className="h-3 w-3" /> {newestFirst ? 'Newest first' : 'Oldest first'}
                 </button>
+                </div>
               </div>
 
               <div className="overflow-x-auto rounded-[var(--radius-md)] border border-[var(--border)]">
@@ -127,6 +149,7 @@ export function AnimalLedgerPostings({ entries, loading, format }: { entries: Ro
                       <th className="px-3 py-2 text-right">Quantity</th>
                       <th className="px-3 py-2 text-right">Amount</th>
                       <th className="px-3 py-2">Reference</th>
+                      <th className="px-3 py-2">Journal Entry</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]">
@@ -137,16 +160,31 @@ export function AnimalLedgerPostings({ entries, loading, format }: { entries: Ro
                           <td className="px-3 py-2 font-mono text-[var(--text-primary)]">{format.date(entry.posting_date)}</td>
                           <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">
                             {/* The pair of types and the document are the hover text. */}
-                            <span title={`${formatEntryType(entry.entry_type)} · ${formatTransactionType(entry.transaction_type)} · ${BIO_DOCUMENT_LABEL[entry.document_type] ?? entry.document_type}`}>
+                            <span title={entry.expensed ? `${entry.item_name ?? ''} — charged to expense, not part of her book value`.trim() : `${formatEntryType(entry.entry_type)} · ${formatTransactionType(entry.transaction_type)} · ${BIO_DOCUMENT_LABEL[entry.document_type] ?? entry.document_type}`}>
                               {postingLabel(entry)}
                             </span>
+                            {entry.expensed && entry.item_name && <span className="block text-[10px] font-normal text-[var(--text-muted)]">{entry.item_name}</span>}
                           </td>
                           <td className="px-3 py-2 text-right font-mono text-[var(--text-secondary)]">{format.money(entry.cost_amount_each_unit ?? entry.unit_cost)}</td>
                           <td className="px-3 py-2 text-right font-mono text-[var(--text-secondary)]">{format.quantity(entry.quantity ?? 1)}</td>
-                          <td className={`px-3 py-2 text-right font-mono font-bold ${amount < 0 ? 'text-[var(--danger,#dc2626)]' : 'text-[var(--text-primary)]'}`}>
+                          <td className={`px-3 py-2 text-right font-mono font-bold ${amount < 0 ? 'text-[var(--danger,#dc2626)]' : entry.expensed ? 'text-[var(--text-muted)]' : 'text-[var(--text-primary)]'}`}>
                             {format.money(entry.cost_amount ?? (entry.computed_cost || entry.amount))}
                           </td>
                           <td className="px-3 py-2 font-mono text-[var(--text-muted)]">{entry.document_no || entry.posting_reference || entry.reference || '—'}</td>
+                          <td className="px-3 py-2 font-mono">
+                            {entry.journal_id ? (
+                              <button
+                                type="button"
+                                onClick={() => setJournalId(entry.journal_id)}
+                                title="Open this journal entry"
+                                className="font-semibold text-[var(--accent)] underline-offset-2 hover:underline"
+                              >
+                                {entry.journal_no}
+                              </button>
+                            ) : (
+                              <span className="text-[var(--text-muted)]">—</span>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
@@ -166,6 +204,7 @@ export function AnimalLedgerPostings({ entries, loading, format }: { entries: Ro
           )}
         </div>
       )}
+      <JournalEntryDialog journalId={journalId} onClose={() => setJournalId(null)} />
     </div>
   );
 }

@@ -81,6 +81,7 @@ import { EntityLookupDialog, EntityLookupField } from './EntityLookupField';
 import { SearchableEntitySelect } from './SearchableEntitySelect';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ItemTemplateSelectModal } from './ItemTemplateSelectModal';
+import FairValueRatesDialog from './FairValueRatesDialog';
 import { exportMasterRowsToCsv } from './utils/master-csv';
 import MasterDataImportModal from './MasterDataImportModal';
 
@@ -703,6 +704,7 @@ export function MasterDataTable({
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
+  const [ratesOpen, setRatesOpen] = useState(false);
   // A row command that asks for a reason is answered in a dialog (never a browser prompt).
   const [reasonCommand, setReasonCommand] = useState<{
     row: Row;
@@ -960,6 +962,13 @@ export function MasterDataTable({
               ),
           )
           .filter((f) => {
+            if (
+              config.key === 'item' &&
+              Boolean(form.is_biological_asset) &&
+              f.section?.toLowerCase() === 'inventory'
+            ) {
+              return false;
+            }
             if (config.key === 'stage') return true;
             if (isFieldVisible(f, form)) return true;
             if (f.filterOnly || f.booleanColumns || f.hideStoredWhenHidden)
@@ -974,7 +983,16 @@ export function MasterDataTable({
           })
       : formFields
           .filter((f) => !f.editOnly)
-          .filter((f) => config.key === 'stage' || isFieldVisible(f, form))
+          .filter((f) => {
+            if (
+              config.key === 'item' &&
+              Boolean(form.is_biological_asset) &&
+              f.section?.toLowerCase() === 'inventory'
+            ) {
+              return false;
+            }
+            return config.key === 'stage' || isFieldVisible(f, form);
+          })
   )
     .filter((f) => !entityRestrictionState(f, form, entityOptions)?.hidden)
     // Only the "no parent chosen yet" half hides the field; an empty filtered
@@ -2005,6 +2023,31 @@ export function MasterDataTable({
     if (initialValues) {
       Object.assign(initial, initialValues);
     }
+    if (config.key === 'item') {
+      if (initial.item_type) {
+        const valStr = String(initial.item_type).toUpperCase();
+        const types = (entityOptions['/item-type'] as Row[]) || [];
+        const matched = types.find(
+          (t: Row) =>
+            t.type_code === initial.item_type || t.id === initial.item_type,
+        );
+        const nameStr = String(matched?.type_name || '').toUpperCase();
+        if (
+          valStr === 'LIVING_ASSET' ||
+          valStr === 'LIVESTOCK' ||
+          valStr.startsWith('LA-') ||
+          valStr.startsWith('LA_') ||
+          nameStr.includes('LIVING') ||
+          nameStr.includes('LIVESTOCK')
+        ) {
+          initial.is_biological_asset = true;
+          initial.is_inventoriable = false;
+        }
+      }
+      if (initial.is_biological_asset) {
+        initial.is_inventoriable = false;
+      }
+    }
     setForm(initial);
     setActiveFormTab('');
     setChipDrafts({});
@@ -2091,6 +2134,32 @@ export function MasterDataTable({
     initial.item_name = '';
     initial.uom_primary = '';
     initial.withdrawal_days = '';
+
+    if (config.key === 'item') {
+      const typeCode = String(
+        initial.item_type || generatedItem.item_type || '',
+      ).toUpperCase();
+      const types = (entityOptions['/item-type'] as Row[]) || [];
+      const matched = types.find(
+        (t: Row) =>
+          t.type_code === initial.item_type || t.id === initial.item_type,
+      );
+      const nameStr = String(matched?.type_name || '').toUpperCase();
+      if (
+        typeCode === 'LIVING_ASSET' ||
+        typeCode === 'LIVESTOCK' ||
+        typeCode.startsWith('LA-') ||
+        typeCode.startsWith('LA_') ||
+        nameStr.includes('LIVING') ||
+        nameStr.includes('LIVESTOCK')
+      ) {
+        initial.is_biological_asset = true;
+        initial.is_inventoriable = false;
+      }
+      if (initial.is_biological_asset) {
+        initial.is_inventoriable = false;
+      }
+    }
 
     // Build the locked-field set: any key that received a non-empty, non-false
     // value from the template is locked so the user cannot override it.
@@ -2329,6 +2398,29 @@ export function MasterDataTable({
           !allowed.includes(next.resource_sub_type)
         ) {
           next.resource_sub_type = '';
+        }
+      }
+      if (config.key === 'item') {
+        if (key === 'item_type') {
+          const valStr = String(value || '').toUpperCase();
+          const types = (entityOptions['/item-type'] as Row[]) || [];
+          const matched = types.find(
+            (t: Row) => t.type_code === value || t.id === value,
+          );
+          const nameStr = String(matched?.type_name || '').toUpperCase();
+          if (
+            valStr === 'LIVING_ASSET' ||
+            valStr === 'LIVESTOCK' ||
+            valStr.startsWith('LA-') ||
+            valStr.startsWith('LA_') ||
+            nameStr.includes('LIVING') ||
+            nameStr.includes('LIVESTOCK')
+          ) {
+            next.is_biological_asset = true;
+            next.is_inventoriable = false;
+          }
+        } else if (key === 'is_biological_asset' && value === true) {
+          next.is_inventoriable = false;
         }
       }
       config.fields.forEach((f) => {
@@ -5416,6 +5508,20 @@ export function MasterDataTable({
         }
       >
         <div className="flex flex-col gap-4">
+          {config.key === 'item' &&
+            editing &&
+            editing.bio_costing_method === 'FAIR_VALUE' && (
+              <DialogHeaderActions>
+                <button
+                  type="button"
+                  onClick={() => setRatesOpen(true)}
+                  className="rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer"
+                  style={S.surface}
+                >
+                  {t('fvrButton')}
+                </button>
+              </DialogHeaderActions>
+            )}
           {subDialogNames.length > 0 && (
             <DialogHeaderActions>
               {subDialogNames.map((name) => (
@@ -5439,6 +5545,13 @@ export function MasterDataTable({
             for (const f of visibleFields) {
               if (f.subDialog) continue;
               const s = f.section || DEFAULT;
+              if (
+                config.key === 'item' &&
+                Boolean(form.is_biological_asset) &&
+                s.toLowerCase() === 'inventory'
+              ) {
+                continue;
+              }
               if (!bySection.has(s)) {
                 bySection.set(s, []);
                 order.push(s);
@@ -5599,6 +5712,15 @@ export function MasterDataTable({
           })()}
         </div>
       </Dialog>
+
+      {config.key === 'item' && editing && (
+        <FairValueRatesDialog
+          itemId={String(editing[config.idKey])}
+          itemCode={editing.item_code}
+          open={modalOpen && ratesOpen}
+          onClose={() => setRatesOpen(false)}
+        />
+      )}
 
       {subDialogNames.map((name) => (
         <Dialog

@@ -184,7 +184,7 @@ export class BatchTransferService {
           eq(schema.animalRegister.tenant_id, tenantId),
           eq(schema.animalRegister.current_batch_id, batchId),
           eq(schema.animalRegister.is_active, true),
-          sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED')`,
+          sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED','CONVERTED_INV')`,
         ),
       )
       .orderBy(schema.animalRegister.animal_code);
@@ -860,7 +860,7 @@ export class BatchTransferService {
             inArray(schema.animalRegister.animal_id, animalIds),
             eq(schema.animalRegister.current_batch_id, transfer.from_batch_id),
             eq(schema.animalRegister.is_active, true),
-            sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED')`,
+            sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED','CONVERTED_INV')`,
           ),
         )
         .for('update');

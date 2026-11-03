@@ -19,6 +19,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import { extname, resolve } from 'node:path';
 import { ItemService } from './item.service';
+import { missingBioGl } from './item-bio-costing.rules';
 import { CreateItemDto, UpdateItemDto, QueryItemDto, CreateItemFromTemplateDto } from './dto/item.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -120,10 +121,18 @@ export class ItemController {
   @ApiParam({ name: 'id', description: 'Item UUID' })
   async findOne(@Param('id') id: string) {
     const result = await this.itemService.findOne(id, true);
+    const hasInventory = await this.itemService.hasInventory(id);
     return {
       success: true,
       message: 'Item details retrieved.',
-      data: { ...result, has_inventory: await this.itemService.hasInventory(id) },
+      data: {
+        ...result,
+        has_inventory: hasInventory,
+        valuation_locked: !!result.is_biological_asset || hasInventory,
+        // The Bio Asset Costing tab: locked once an animal of the item has been charged; the accounts a run would still need.
+        bio_costing_locked: result.is_biological_asset ? (await this.itemService.costedAnimalCount(id)) > 0 : false,
+        bio_costing_missing_gl: result.is_biological_asset ? missingBioGl(result as never) : [],
+      },
     };
   }
 

@@ -3,23 +3,23 @@
  * 4 sows and 4 boars in 2 animal-wise batches, nothing else: every cost, run, mating and litter on screen comes from them. Everything is posted through the
  * application's own services, dated in order, nothing in the future, and every case is read back from MySQL by `verify-costing-test.ts`.
  *
- *   BATCH A  imported (GRN 5 Jan 2026, profiles IMP-F / IMP-M)             BATCH B  local (GRN 12 Jan 2026, profiles LOC-F / LOC-M)
+ *   BATCH A  imported (GRN 5 Jan 2026)             BATCH B  local (GRN 12 Jan 2026)
  *   CT-A-SOW-1   born 6 Oct 2025   start by age 25 May    (capitalise -> expense; AI mated, farrows 7 Aug, 5 gilts at weaning 4 Sep)
  *   CT-A-SOW-2   born 2 Dec 2024   start = entry 5 Jan    (expensed from day one; DIES 14 Jul: settled in the exit, later runs skip her)
  *   CT-A-BOAR-1  born 4 Aug 2025   start by age 2 Feb     (semen on 10 Apr AFTER two amortisation runs: cost per dose carries them)
  *   CT-A-BOAR-2  born 1 Oct 2024   start = entry 5 Jan    (life ends 1 Apr 2026: the last run takes him to his residual, then LIFE_COMPLETE)
  *   CT-B-SOW-1   born 3 Nov 2025   start by age 22 Jun    (still capitalising when the batch's group feed reaches the others)
- *   CT-B-SOW-2   born 3 Feb 2025   start = entry 12 Jan   (own residual 400 from 25 Jun; AI mated 18 May, farrows 11 Sep, litter still on the sow: week-4 alert)
+ *   CT-B-SOW-2   born 3 Feb 2025   start = entry 12 Jan   (AI mated 18 May, farrows 11 Sep, litter still on the sow: week-4 alert)
  *   CT-B-BOAR-1  born 1 Sep 2025   start by age 2 Mar
  *   CT-B-BOAR-2  born 3 Mar 2025   start = entry 12 Jan   (semen on 11 May)
  *
  * Every Monday each batch's feed is issued as ONE group (postConsumptionGroup), so on 25 May (A) and 22 Jun (B) a single issue holds animals on both sides
  * of their costing start and is split in two entries (capitalised / expensed). A monthly overhead is booked to each animal on the 15th. The company's female
- * residual changes on 1 Jul (150 -> 160 kg x 2.05). One run per batch and profile after every month, in order; the Sep run of batch B is reversed and made again.
+ * One run per batch and item after every month, in order; the Sep run of batch B is reversed and made again.
  * Then the guards (G1-G10, R1): each rule that must refuse is tried and its refusal is recorded (PASS / FAIL), and the chapter fails if one does not.
  *
  * Resume-safe: the receipts by reference, animals by RFID, batches by remarks, transactions by (batch, animal, date, kind, remarks), matings by (sow, date),
- * semen lots by (boar, date), runs by (profile, period, batch). Prices, ages, rations and litter sizes are demo facts, not client data.
+ * semen lots by (boar, date), runs by (item, period, batch). Prices, ages, rations and litter sizes are demo facts, not real data.
  */
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
@@ -30,9 +30,8 @@ import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/go
 import { BreedingService } from '../../../modules/piggery/breeding/breeding.service';
 import { GiltSelectionService } from '../../../modules/piggery/gilt-selection/gilt-selection.service';
 import { AnimalMedicationLogService } from '../../../modules/piggery/animal/animal-medication-log.service';
-import { BioCostingProfileService } from '../../../modules/finance/bio-costing/bio-costing-profile.service';
+import { BioCostingStartService } from '../../../modules/finance/bio-costing/bio-costing-start.service';
 import { BioCostingRunService } from '../../../modules/finance/bio-costing/bio-costing-run.service';
-import { BioCostingResidualService } from '../../../modules/finance/bio-costing/bio-costing-residual.service';
 import { MatingType, PregCheckMethod, ConceptionResult } from '../../../modules/piggery/breeding/dto/breeding.dto';
 import * as schema from '../../../core/database/schema';
 import type { DemoChapter, DemoContext } from '../chapter';
@@ -119,9 +118,8 @@ export const costingTestChapter: DemoChapter = {
     const batches = ctx.app.get(BatchService);
     const receipts = ctx.app.get(GoodsReceiptService);
     const breeding = ctx.app.get(BreedingService);
-    const profiles = ctx.app.get(BioCostingProfileService);
+    const starts = ctx.app.get(BioCostingStartService);
     const runs = ctx.app.get(BioCostingRunService);
-    const residuals = ctx.app.get(BioCostingResidualService);
     const medicines = ctx.app.get(AnimalMedicationLogService);
     const selections = ctx.app.get(GiltSelectionService);
     const db = ctx.app.get(ClsService).get<MySql2Database<typeof schema>>('tenantDb');
@@ -232,7 +230,7 @@ export const costingTestChapter: DemoChapter = {
       });
       await db.update(schema.schedulerHeader).set({ effective_from: b === 'A' ? DATE_A : DATE_B }).where(eq(schema.schedulerHeader.batch_id, batchIds[b]));
     }
-    await profiles.assignAnimals({ animal_ids: [...ids.values()] } as any, ctx.tenantId, ctx.companyId);
+    await starts.assignAnimals({ animal_ids: [...ids.values()] } as any, ctx.tenantId, ctx.companyId);
 
     // ── 4. The timeline.
     const events: Event[] = [];
@@ -306,17 +304,6 @@ export const costingTestChapter: DemoChapter = {
     }
     on('2026-03-25', 'PRRS vaccine', async () => { for (const a of ANIMALS.filter((x) => x.kind === 'SOW' && x.tag !== DEATH.tag)) await treat(a.tag, 'Ingelvac PRRS MLV Swine Vaccine (50 Doses)', '2026-03-25', 2, 'Pre-service PRRS vaccination', 'DOSE'); });
 
-    // the company's female residual changes on 1 Jul; one sow gets her own residual before the July run
-    on('2026-06-25', 'residual changes', async () => {
-      const have = (await residuals.list(ctx.tenantId, ctx.companyId)).filter((r: any) => r.gender === 'F' && String(r.effective_from).slice(0, 10) === '2026-07-01');
-      if (!have.length) {
-        await residuals.add({ gender: 'F', residual_rule: 'WEIGHT_X_PRICE', residual_weight_kg: 160, residual_price_per_kg: 2.05, effective_from: '2026-07-01', note: 'Costing test: heavier end-of-life weight from July' } as any, ctx.tenantId, ctx.companyId, ctx.actor.userId);
-        ctx.log('  company residual (female) from 2026-07-01: 160 kg x 2.05 = 328.00');
-      }
-      await residuals.setForAnimal(idOf('CT-B-SOW-2'), { residual_value: 400, reason: 'Costing test: heavier frame confirmed at weighing' } as any, ctx.tenantId, ctx.actor.userId);
-      ctx.log('  CT-B-SOW-2: own residual 400.00');
-    });
-
     // semen, matings, pregnancy checks
     const semenItem = await item(SEMEN_ITEM);
     const collect = (date: string, boar: string, batch: 'A' | 'B', doses: number, q: { volume_ml: number; motility_pct: number; concentration_m_per_ml: number }) => on(date, `semen ${boar}`, async () => {
@@ -367,7 +354,7 @@ export const costingTestChapter: DemoChapter = {
       const f = await farrowOf('CT-A-SOW-1');
       if (!f || Number(f.weaned) > 0) return;
       await breeding.recordWeaning(f.id, {
-        weaning_date: A_SOW_1_WEANING, piglets_weaned: 12, avg_weaning_weight_kg: 7.2, move_to_stage_code: 'WEANER', gilt_colour_code: 'BLUE',
+        weaning_date: A_SOW_1_WEANING, piglets_weaned: 12, avg_weaning_weight_kg: 7.2, move_to_stage_code: 'WEANER', gilt_colour_code: 'BLUE', gilt_item_id: (await item('Replacement Breeding Gilt')).item_id,
         gilts: GILT_TAGS.map((tag, i) => ({ rfid_tag: tag, no_of_teats: GILT_TEATS[i] })),
       } as any, ctx.tenantId, actor);
       ctx.log(`  CT-A-SOW-1: weaned ${A_SOW_1_WEANING} - 12 piglets (1 lost before weaning), 5 selected as gilts at the weaning`);
@@ -384,7 +371,7 @@ export const costingTestChapter: DemoChapter = {
         if (fed) continue;
         await batches.addTransaction(giltBatch, { transaction_type: 'CONSUMPTION', transaction_date: '2026-09-21', item_id: feed.item_id, quantity: 2, uom: 'KG', animal_id: g.animal_id, source_warehouse_id: store.id, remarks: 'CT first feed of the gilt (capitalised)' } as any, ctx.tenantId, actor);
       }
-      await profiles.assignAnimals({ animal_ids: rows.map((g) => g.animal_id) } as any, ctx.tenantId, ctx.companyId);
+      await starts.assignAnimals({ animal_ids: rows.map((g) => g.animal_id) } as any, ctx.tenantId, ctx.companyId);
       ctx.log(`  gilts ${rows.map((g) => g.code).join(', ')}: joined ${CT_GILT_BATCH}, fed 2 kg each (capitalised)`);
     });
 
@@ -392,15 +379,15 @@ export const costingTestChapter: DemoChapter = {
     on(DEATH.date, `death ${DEATH.tag}`, async () => {
       const [a] = await db.select({ active: schema.animalRegister.is_active }).from(schema.animalRegister).where(eq(schema.animalRegister.animal_id, idOf(DEATH.tag))).limit(1);
       if (!a?.active) return;
-      await batches.recordMortality(batchIds.A, { transaction_date: DEATH.date, animal_ids: [idOf(DEATH.tag)], remarks: 'Costing test: sow found dead', mortality_detail: { cause_of_death: 'Acute mortality' } } as any, ctx.tenantId, actor);
+      await batches.recordMortality(batchIds.A, { transaction_date: DEATH.date, animal_ids: [idOf(DEATH.tag)], animal_weights: [{ animal_id: idOf(DEATH.tag), weight_kg: 180 }], remarks: 'Costing test: sow found dead', mortality_detail: { cause_of_death: 'Acute mortality' } } as any, ctx.tenantId, actor);
       ctx.log(`  ${DEATH.tag}: died ${DEATH.date}`);
     });
 
-    // ── 5. The months in order: the month's events, then the month's runs (one per batch and profile).
+    // ── 5. The months in order: the month's events, then the month's runs (one per batch and item).
     const runLog: string[] = [];
     const runMonth = async (month: string) => {
       for (const b of ['A', 'B'] as const) {
-        let result: { runs: any[]; failed: Array<{ profile_code: string; error: string }> };
+        let result: { runs: any[]; failed: Array<{ item_code: string; error: string }> };
         try {
           result = await runs.calculateBatch({ batch_id: batchIds[b], period_key: month } as any, ctx.tenantId, ctx.companyId, ctx.actor.userId) as any;
         } catch (error) {
@@ -408,7 +395,7 @@ export const costingTestChapter: DemoChapter = {
           ctx.log(`  run ${month} batch ${b}: ${/already been run|already posted after/.test(message) ? 'already posted - skipped' : `NOT MADE - ${message}`}`);
           continue;
         }
-        for (const f of result.failed) ctx.log(`  run ${month} batch ${b} ${f.profile_code}: ${/already been run|already posted after/.test(f.error) ? 'already posted - skipped' : `NOT MADE - ${f.error}`}`);
+        for (const f of result.failed) ctx.log(`  run ${month} batch ${b} ${f.item_code}: ${/already been run|already posted after/.test(f.error) ? 'already posted - skipped' : `NOT MADE - ${f.error}`}`);
         for (const run of result.runs) {
           if (run.status === 'POSTED') continue;
           const posted: any = await runs.post(run.run_id, ctx.tenantId, ctx.actor.userId);

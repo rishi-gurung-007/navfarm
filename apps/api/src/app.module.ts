@@ -40,6 +40,8 @@ import { CustomerModule } from './modules/master-data/customer/customer.module';
 import { ResourceModule } from './modules/master-data/resource/resource.module';
 import { DiseaseModule } from './modules/master-data/disease/disease.module';
 import { ReasonModule } from './modules/master-data/reason/reason.module';
+import { BreedingLineModule } from './modules/master-data/breeding-line/breeding-line.module';
+import { BoarConditionModule } from './modules/piggery/boar-condition/boar-condition.module';
 import { AlertRuleModule } from './modules/system/alert-rule/alert-rule.module';
 import { ReportingPeriodModule } from './modules/master-data/reporting-period/reporting-period.module';
 import { KpiMetricModule } from './modules/master-data/kpi-metric/kpi-metric.module';
@@ -146,6 +148,8 @@ import { SystemController } from './system/system.controller';
     ResourceModule,
     DiseaseModule,
     ReasonModule,
+    BreedingLineModule,
+    BoarConditionModule,
     AlertRuleModule,
     ReportingPeriodModule,
     KpiMetricModule,

@@ -20,6 +20,11 @@
  *   pnpm nx run api:db-rebuild-demo -- --apply --volume=light   # rebuild with the small dataset
  *   pnpm nx run api:db-rebuild-demo -- --apply --preset=small   # two farms, light volume
  *   pnpm nx run api:db-reset-seed                               # the same, as the one-command reset (also `pnpm seed`)
+ *   pnpm nx run api:db-rebuild-demo -- --apply --preset=project-full # the whole project: 12 items, a GRN of stock and 20 animals, a batch, two parities for 14 sows, semen, AI, litters, gilts, monthly runs, checked (pnpm seed:project)
+ *   pnpm nx run api:db-rebuild-demo -- --apply --preset=costing-conv # two culled sows converted to inventory with Finance approval (a loss and a gain), checked (pnpm seed:costing-conv)
+ *   pnpm nx run api:db-rebuild-demo -- --apply --preset=costing-freq # quarterly, monthly (actual days, auto-post) and yearly items driven by the scheduler's own pass, checked (pnpm seed:costing-freq)
+ *   pnpm nx run api:db-rebuild-demo -- --apply --preset=costing-fv # two gilts costed by fair value (loss, gain, reversal), checked (pnpm seed:costing-fv)
+ *   pnpm nx run api:db-rebuild-demo -- --apply --preset=costing-two # the smallest costing seed: a sow and a boar, six months, checked (pnpm seed:costing-two)
  *   pnpm nx run api:db-rebuild-demo -- --apply --preset=costing # the costing seed: 62-day history, imported + local herd, costing profiles (pnpm seed:costing)
  */
 import { execFileSync } from 'node:child_process';
@@ -153,15 +158,20 @@ const SMALL_FARM_STEP: Step = { label: 'Role-structured sheds, silos, breeds and
  * reconciliation at the end.
  */
 const FULL_FARM_STEP: Step = { label: 'Nine-farm demo masters (farms, sheds/pens/silos, stages, breeds, lifecycles, logins)', script: 'seed-nine-farm-demo.ts', args: ['--apply'] };
+const PROJECT_FULL_VERIFY_STEP: Step = { label: 'Check the whole project: every figure read back from MySQL against its own arithmetic', script: 'verify-project-full.ts', args: [] };
+const COSTING_CONV_VERIFY_STEP: Step = { label: 'Check the FA to inventory conversion: every case read back from MySQL against its own arithmetic', script: 'verify-costing-conv.ts', args: [] };
+const COSTING_FREQ_VERIFY_STEP: Step = { label: 'Check the frequencies, day basis, auto-post and scheduler: every case read back from MySQL against its own arithmetic', script: 'verify-costing-freq.ts', args: [] };
+const COSTING_FV_VERIFY_STEP: Step = { label: 'Check the fair value costing: every case read back from MySQL against its own arithmetic', script: 'verify-costing-fv.ts', args: [] };
+const COSTING_TWO_VERIFY_STEP: Step = { label: 'Check the two-animal costing: every case read back from MySQL against its own arithmetic', script: 'verify-costing-two.ts', args: [] };
 const COSTING_TEST_VERIFY_STEP: Step = { label: 'Check the costing test: every case read back from MySQL against its own arithmetic', script: 'verify-costing-test.ts', args: [] };
 const VERIFY_STEP: Step = { label: 'Reconcile batches, inventory, transfers and outputs against each other', script: 'verify-demo-flow.ts', args: [] };
 
 /**
- * The ledger-check preset (`pnpm seed:ledger-check`): the whole lean flow, then the costing test (4 sows and 4 boars lived day by day, the
- * costing profiles assigned), then one posting of every Entry Type / Transaction Type pair, and three read-backs from MySQL. It is what to
+ * The ledger-check preset (`pnpm seed:ledger-check`): the whole lean flow, then the costing test (4 sows and 4 boars lived day by day, their
+ * costing start dates assigned), then one posting of every Entry Type / Transaction Type pair, and three read-backs from MySQL. It is what to
  * seed when the Inventory Ledger, the Bio Asset Ledger and the costing are to be checked by hand: docs/MANUAL-CHECK-LEDGERS-AND-COSTING.md.
  * Chapters 16 and 17 are on-demand chapters that add to a tenant that already has batches, so they run as steps of their own after the
- * lean chapters; `--costing-test` brings the costing prices and the costing profiles chapter 16 assigns to its animals (the lean chapters make none). The costing runs themselves are left for the person checking to calculate and post.
+ * lean chapters; `--costing-test` brings the costing prices and the item costing terms chapter 16 relies on (the lean chapters make none). The costing runs themselves are left for the person checking to calculate and post.
  */
 const COSTING_TEST_CHAPTER_STEP: Step = { label: 'Costing test: 4 sows and 4 boars in 2 batches, lived day by day (chapter 16)', script: 'demo-chapters.ts', args: ['--apply', '--force-on-existing', '--costing-test', '--lean', '--volume=costing'] };
 const LEDGER_TYPES_CHAPTER_STEP: Step = { label: 'One posting of every Entry Type / Transaction Type pair (chapter 17)', script: 'demo-chapters.ts', args: ['--apply', '--force-on-existing', '--chapter=17-ledger-types', '--lean'] };
@@ -197,8 +207,15 @@ export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; vol
     ...(opts.preset === 'lean' || opts.preset === 'ledger-check' ? ['--lean'] : []),
     // The costing preset is the lean layout with the costing volume: batches started 62 days ago and an imported lot, with no daily entry posted (--no-daily-entries): the person testing enters the days. --volume comes last so it wins over --lean's.
     ...(opts.preset === 'costing' ? ['--lean', '--volume=costing', '--no-daily-entries'] : []),
-    // The costing-test preset posts no demo herd at all: the masters, the costing profiles and then ONE chapter (16-costing-test) that buys and lives 4 sows and 4 boars in 2 batches.
+    // The costing-test preset posts no demo herd at all: the masters, the items' costing terms and then ONE chapter (16-costing-test) that buys and lives 4 sows and 4 boars in 2 batches.
     ...(opts.preset === 'costing-test' ? ['--costing-test', '--lean', '--volume=costing'] : []),
+    // The costing-two preset is the smallest: the same masters and ONE chapter (18-costing-two-animals) that buys and lives a sow and a boar.
+    ...(opts.preset === 'costing-two' ? ['--costing-two', '--lean', '--volume=costing'] : []),
+    ...(opts.preset === 'costing-fv' ? ['--costing-fv', '--lean', '--volume=costing'] : []),
+    ...(opts.preset === 'costing-freq' ? ['--costing-freq', '--lean', '--volume=costing'] : []),
+    ...(opts.preset === 'costing-conv' ? ['--costing-conv', '--lean', '--volume=costing'] : []),
+    // The project-full preset: the masters, the 12 items, then ONE chapter (22-project-full) that buys 20 animals and lives them through two parities.
+    ...(opts.preset === 'project-full' ? ['--project-full', '--lean', '--volume=costing'] : []),
   ];
   const chapters: Step = extra.length ? { ...CHAPTERS_STEP, args: [...CHAPTERS_STEP.args, ...extra] } : CHAPTERS_STEP;
   // --chapters-only means exactly that: skip the reset and every master step,
@@ -206,7 +223,7 @@ export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; vol
   if (opts.chaptersOnly) return opts.preset === 'ledger-check' ? [chapters, COSTING_TEST_CHAPTER_STEP, LEDGER_TYPES_CHAPTER_STEP] : [chapters];
   const steps: Step[] = [];
   if (!opts.skipReset) steps.push(RESET_STEP);
-  const farmStep = opts.preset === 'small' || opts.preset === 'lean' || opts.preset === 'costing' || opts.preset === 'costing-test' || opts.preset === 'ledger-check' ? SMALL_FARM_STEP : opts.preset === 'full' ? FULL_FARM_STEP : null;
+  const farmStep = opts.preset === 'small' || opts.preset === 'lean' || opts.preset === 'costing' || opts.preset === 'costing-test' || opts.preset === 'costing-two' || opts.preset === 'costing-fv' || opts.preset === 'costing-freq' || opts.preset === 'costing-conv' || opts.preset === 'project-full' || opts.preset === 'ledger-check' ? SMALL_FARM_STEP : opts.preset === 'full' ? FULL_FARM_STEP : null;
   const masters = farmStep
     ? MASTER_STEPS.map((step) => (step.script === FOUR_FARM_STEP_SCRIPT ? farmStep : step))
     : MASTER_STEPS;
@@ -217,6 +234,11 @@ export function buildPlan(opts: { chaptersOnly: boolean; skipReset: boolean; vol
   if (opts.preset === 'full' || opts.preset === 'lean' || opts.preset === 'costing') steps.push(VERIFY_STEP);
   if (opts.preset === 'ledger-check') steps.push(LEDGER_TYPES_VERIFY_STEP);
   if (opts.preset === 'costing-test') steps.push(COSTING_TEST_VERIFY_STEP);
+  if (opts.preset === 'costing-two') steps.push(COSTING_TWO_VERIFY_STEP);
+  if (opts.preset === 'costing-fv') steps.push(COSTING_FV_VERIFY_STEP);
+  if (opts.preset === 'costing-freq') steps.push(COSTING_FREQ_VERIFY_STEP);
+  if (opts.preset === 'costing-conv') steps.push(COSTING_CONV_VERIFY_STEP);
+  if (opts.preset === 'project-full') steps.push(PROJECT_FULL_VERIFY_STEP);
   return steps;
 }
 
@@ -303,7 +325,7 @@ async function main() {
   const { apply, chaptersOnly, skipReset } = args;
   // The preset implies its volume unless one was given, and scopes every child step to its farms.
   const volume = args.volume ?? (args.preset === 'small' ? SMALL_PRESET.volume : undefined);
-  if (args.preset === 'small' || args.preset === 'lean' || args.preset === 'costing' || args.preset === 'costing-test' || args.preset === 'ledger-check') process.env.DEMO_FARMS = SMALL_PRESET.farms;
+  if (args.preset === 'small' || args.preset === 'lean' || args.preset === 'costing' || args.preset === 'costing-test' || args.preset === 'costing-two' || args.preset === 'costing-fv' || args.preset === 'costing-freq' || args.preset === 'costing-conv' || args.preset === 'project-full' || args.preset === 'ledger-check') process.env.DEMO_FARMS = SMALL_PRESET.farms;
   if (args.preset === 'porta') process.env.SEED_SOURCE_FARM = PORTA_PRESET.farm;
   const plan = buildPlan({ chaptersOnly, skipReset, volume, preset: args.preset });
 

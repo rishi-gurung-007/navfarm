@@ -26,14 +26,14 @@ export class BioCostingRunController {
 
   @Get('due')
   @RequirePermission('FINANCE', 'JOURNAL', 'view')
-  @ApiOperation({ summary: 'What is owed a run, per profile (finished periods not yet run), what is waiting to be posted, and what keeps failing' })
+  @ApiOperation({ summary: 'What is owed a run, per item (finished periods not yet run), what is waiting to be posted, and what keeps failing' })
   async due(@Req() req: any) {
     return { success: true, data: await this.scheduler.dueReport(this.tenant(req), this.company(req)) };
   }
 
   @Post('run-due')
   @RequirePermission('FINANCE', 'JOURNAL', 'create')
-  @ApiOperation({ summary: 'Run the scheduler\'s pass for this company now: calculate (and post, for profiles set to auto-post) whatever is due' })
+  @ApiOperation({ summary: 'Run the scheduler\'s pass for this company now: calculate (and post, for items set to auto-post) whatever is due' })
   async runDue(@Req() req: any) {
     return { success: true, message: 'Due runs processed.', data: await this.scheduler.runDueForTenant(this.tenant(req), { companyId: this.company(req), trigger: 'MANUAL', userId: req.user?.userId }) };
   }
@@ -46,14 +46,14 @@ export class BioCostingRunController {
 
   @Post('calculate')
   @RequirePermission('FINANCE', 'JOURNAL', 'create')
-  @ApiOperation({ summary: 'Calculate a period for a profile: a preview of every animal\'s charge that posts nothing and can be repeated' })
+  @ApiOperation({ summary: 'Calculate a period for an item: a preview of every animal\'s charge that posts nothing and can be repeated' })
   async calculate(@Body() dto: CalculateBioCostingRunDto, @Req() req: any) {
     return { success: true, message: 'Run calculated.', data: await this.runs.calculate(dto, this.tenant(req), req.user?.userId) };
   }
 
   @Post('calculate-batch')
   @RequirePermission('FINANCE', 'JOURNAL', 'create')
-  @ApiOperation({ summary: 'Calculate a period for one batch: a run for each costing profile its animals carry, each restricted to the batch. Left without a batch, one whole-herd run per active profile' })
+  @ApiOperation({ summary: 'Calculate a period for one batch: a run for each item its animals belong to, each restricted to the batch. Left without a batch, one whole-herd run per item' })
   async calculateBatch(@Body() dto: CalculateBatchBioCostingRunDto, @Req() req: any) {
     return { success: true, message: 'Runs calculated.', data: await this.runs.calculateBatch(dto, this.tenant(req), this.company(req), req.user?.userId) };
   }
@@ -67,7 +67,7 @@ export class BioCostingRunController {
 
   @Post(':id/reverse')
   @RequirePermission('FINANCE', 'JOURNAL', 'create')
-  @ApiOperation({ summary: 'Reverse the latest posted run of a profile: mirrored ledger rows and journal; the period can then be run again' })
+  @ApiOperation({ summary: 'Reverse the latest posted run of an item: mirrored ledger rows and journal; the period can then be run again' })
   async reverse(@Param('id') id: string, @Body() dto: ReverseBioCostingRunDto, @Req() req: any) {
     return { success: true, message: 'Run reversed.', data: await this.runs.reverse(id, dto.reason, this.tenant(req), req.user?.userId) };
   }

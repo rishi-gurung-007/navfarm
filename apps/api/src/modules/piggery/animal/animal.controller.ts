@@ -148,6 +148,15 @@ export class AnimalController {
     return { success: true, message: 'Animal activity retrieved.', data: result };
   }
 
+  @Get(':id/parity-expense')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'view')
+  @ApiOperation({ summary: "A sow's cost parity by parity: feed, medicine and semen, overhead and amortisation in each parity's window, split into what went into her book value and what was expensed" })
+  @ApiParam({ name: 'id', description: 'Animal UUID' })
+  async getParityExpense(@Param('id') id: string) {
+    const result = await this.activityService.getParityExpense(id);
+    return { success: true, message: 'Parity expense retrieved.', data: result };
+  }
+
   @Get(':id/bio-asset-ledger')
   @RequirePermission('PIGGERY', 'ANIMAL', 'view')
   @ApiOperation({ summary: 'Get IAS 41 bio-asset ledger history for an animal' })

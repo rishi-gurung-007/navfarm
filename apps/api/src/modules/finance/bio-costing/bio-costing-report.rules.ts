@@ -1,5 +1,5 @@
 /**
- * The bio-asset roll-forward split by costing profile, and the tie of each profile's movements to the GL accounts it posts to
+ * The bio-asset roll-forward split by costed item, and the tie of each item's movements to the GL accounts it posts to
  * (bio-asset costing, Phase 6). Pure: the report service loads the rows and these functions add them up.
  */
 import { BOOK_VALUE_EVENTS } from '../../inventory/bio-asset-ledger/animal-book-value.service';
@@ -11,7 +11,7 @@ const EXITS = new Set<BioEvent>(['MORTALITY', 'TRANSFORMATION', 'COST_ALLOCATION
 const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
 
 export interface LedgerFact {
-  /** The costing profile of the animal the row is on; null for an animal with no profile. */
+  /** The code of the item that costs the animal the row is on; null for an animal no item costs. */
   profile_code: string | null;
   /** False for a batch-level row (no animal on it). */
   has_animal: boolean;

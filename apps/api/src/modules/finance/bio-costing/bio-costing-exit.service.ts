@@ -5,6 +5,7 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { assertPostingPeriodOpen } from '../../../common/period-close';
 import { JournalService } from '../journal/journal.service';
+import { BioCostingSubjectService } from './bio-costing-subject.service';
 import { bioEventCondition, bioEventsCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
@@ -29,7 +30,7 @@ export type ClearResult =
  */
 @Injectable()
 export class BioCostingExitService {
-  constructor(private readonly cls: ClsService, private readonly journals: JournalService) {}
+  constructor(private readonly cls: ClsService, private readonly journals: JournalService, private readonly subjects: BioCostingSubjectService) {}
 
   private get db(): MySql2Database<typeof schema> {
     const db = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -46,9 +47,10 @@ export class BioCostingExitService {
     const deathDate = exitDate;
     const [animal] = await this.db.select().from(schema.animalRegister)
       .where(and(eq(schema.animalRegister.animal_id, animalId), eq(schema.animalRegister.tenant_id, tenantId))).limit(1);
-    if (!animal?.costing_profile_id) return { cleared: 0, reason: 'NO_PROFILE' };
-    const [profile] = await this.db.select().from(schema.bioCostingProfile).where(eq(schema.bioCostingProfile.profile_id, animal.costing_profile_id)).limit(1);
-    if (!profile || profile.costing_method !== 'AMORTIZATION') return { cleared: 0, reason: 'NOT_AMORTISED' };
+    // What costs her: her item when it has costing terms, else the profile she carries (NO_PROFILE then names "nothing costs her").
+    const subject = animal ? await this.subjects.forAnimal(animalId) : null;
+    if (!animal || !subject) return { cleared: 0, reason: 'NO_PROFILE' };
+    if (subject.costing_method !== 'AMORTIZATION') return { cleared: 0, reason: 'NOT_AMORTISED' };
 
     // Once only: a second call (a retry) finds the first journal and does nothing.
     const [done] = await this.db.select({ id: schema.journalHeader.journal_id }).from(schema.journalHeader).where(and(
@@ -60,17 +62,19 @@ export class BioCostingExitService {
       eq(schema.bioAssetLedger.animal_id, animalId), bioEventCondition(schema.bioAssetLedger, 'AMORTIZATION'), lte(schema.bioAssetLedger.posting_date, deathDate)));
     const amortised = r4(-Number(sum?.total ?? 0)); // the ledger holds charges as negatives
     if (amortised < 0.005) return { cleared: 0, reason: 'NOTHING_AMORTISED' };
-    if (!profile.accum_amort_gl_id || !profile.acquisition_gl_id) {
-      throw new BadRequestException(`Profile ${profile.profile_code} has amortised ${animal.animal_code} but lacks the accumulated-amortisation or acquisition-cost GL account to clear it.`);
+    const accumGl = subject.gl.accum_amort_gl_id;
+    const acquisitionGl = subject.gl.acquisition_gl_id;
+    if (!accumGl || !acquisitionGl) {
+      throw new BadRequestException(`Item ${subject.code} has amortised ${animal.animal_code} but lacks the accumulated-amortisation or acquisition-cost GL account to clear it.`);
     }
     await assertPostingPeriodOpen(this.db, { tenantId, companyId: animal.company_id, postingDate: deathDate });
 
     const journal = await this.journals.createAndPostSystemJournal({
       tenantId, companyId: animal.company_id, postingDate: deathDate, sourceDocumentType: EXIT_JOURNAL_TYPE, sourceDocumentNo: animal.animal_code,
-      description: `Accumulated amortization cleared on ${how} - ${animal.animal_code} (${profile.profile_code})`, userId,
+      description: `Accumulated amortization cleared on ${how} - ${animal.animal_code} (${subject.code})`, userId,
       lines: [
-        { glAccountId: profile.accum_amort_gl_id, debitAmount: amortised, creditAmount: 0, nobId: animal.nob_id, lobId: animal.lob_id, description: `Clear accumulated amortization ${animal.animal_code}` },
-        { glAccountId: profile.acquisition_gl_id, debitAmount: 0, creditAmount: amortised, nobId: animal.nob_id, lobId: animal.lob_id, description: `Clear accumulated amortization ${animal.animal_code}` },
+        { glAccountId: accumGl, debitAmount: amortised, creditAmount: 0, nobId: animal.nob_id, lobId: animal.lob_id, description: `Clear accumulated amortization ${animal.animal_code}` },
+        { glAccountId: acquisitionGl, debitAmount: 0, creditAmount: amortised, nobId: animal.nob_id, lobId: animal.lob_id, description: `Clear accumulated amortization ${animal.animal_code}` },
       ],
     }) as { journal_id: string; journal_no: string };
     return { cleared: amortised, journal_no: journal.journal_no, journal_id: journal.journal_id };

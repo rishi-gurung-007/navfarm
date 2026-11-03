@@ -2,28 +2,26 @@
  * Chapters for the costing seed (`--volume=costing`, `pnpm seed:costing`) — bio-asset costing, Phase 6. Both do nothing on any
  * other volume profile, so the standard demo is unchanged.
  *
- *   `02b-bio-costing-profiles` — runs before the animals are registered. Gives the chart its accumulated-amortisation account
- *     (1065: the client's chart has none), then creates the client's four rules (docs: the Fixed Asset sheet) as central costing
- *     profiles through BioCostingProfileService and activates them with their five GL accounts. Because they exist before the herd
- *     is bought, registration assigns each animal her profile and costing start date by itself: the registration hook is exercised,
- *     not bypassed.
- *   `13-bio-costing-assign` — runs last. Assigns whoever the registration hook did not reach (animals created before a profile
- *     existed) and prints what each profile now costs. It runs no costing period: calculating and posting a run is what is being
+ *   `02b-bio-costing-items` — runs before the animals are registered. Gives the chart its accumulated-amortisation account
+ *     (1065: the sheet names none), then puts the sheet's costing terms (docs: the Fixed Asset sheet) on the catalog's sow, gilt
+ *     and boar items, with their five GL accounts. Because the terms exist before the herd is bought, registration dates each animal's
+ *     costing start by itself: the registration hook is exercised, not bypassed.
+ *   `13-bio-costing-assign` — runs last. Dates whoever the registration hook did not reach (animals created before the terms existed) and
+ *     prints what each item now costs. It runs no costing period: calculating and posting a run is what is being
  *     tested (docs/TEST-GUIDE-bio-asset-costing-full-flow.md).
  *
- * [ours], awaiting the client: monthly runs, auto-post off, the profiles' effective date (before the herd's purchase, so every
- * animal resolves one), and the fair-value rate (the sheet's 150 kg x 2.05, "CDM based: No"). The GL accounts are the starter chart's
- * 1060 (acquisition), 5100 (amortisation expense), 4020 (fair value gain/loss) and 5010 (write-off), plus the new 1065.
+ * [ours], awaiting confirmation: monthly runs, auto-post off, the items' Costing From date (before the herd's purchase). The GL accounts are
+ * the starter chart's 1060 (acquisition), 5100 (amortisation expense), 4020 (fair value gain/loss) and 5010 (write-off), plus the new 1065.
  *
- * Resume-safe: an existing account or profile (by code) is left alone.
+ * Resume-safe: an existing account is left alone, and so is an item that already has costing terms.
  */
 import { and, eq, gt, sql } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
-import { BioCostingProfileService } from '../../../modules/finance/bio-costing/bio-costing-profile.service';
-import { BioCostingResidualService } from '../../../modules/finance/bio-costing/bio-costing-residual.service';
+import { BioCostingStartService } from '../../../modules/finance/bio-costing/bio-costing-start.service';
+import { storedBioCosting, validateItemBioCosting } from '../../../modules/master-data/item/item-bio-costing.rules';
 import * as schema from '../../../core/database/schema';
-import { CLIENT_DRAFT_PROFILES, CLIENT_RESIDUALS } from '../../seed-bio-costing-profiles.lib';
+import { SHEET_ITEM_TERMS } from '../../seed-bio-costing-items.lib';
 import type { DemoChapter, DemoContext } from '../chapter';
 import { HERD_BOUGHT_DAYS_BEFORE_WINDOW } from '../register-breeding-stock';
 
@@ -69,16 +67,15 @@ export const costingPricesChapter: DemoChapter = {
   },
 };
 
-export const bioCostingProfilesChapter: DemoChapter = {
-  name: '02b-bio-costing-profiles',
+export const bioCostingItemsChapter: DemoChapter = {
+  name: '02b-bio-costing-items',
 
   async run(ctx: DemoContext) {
     if (ctx.volume !== 'costing') {
-      ctx.log('  not the costing volume — no costing profiles');
+      ctx.log('  not the costing volume — no costing terms on the items');
       return;
     }
-    const db = tenantDbOf(ctx, '02b-bio-costing-profiles');
-    const profiles = ctx.app.get(BioCostingProfileService);
+    const db = tenantDbOf(ctx, '02b-bio-costing-items');
 
     const accountOf = async (code: string) => {
       const [row] = await db.select().from(schema.glAccountMaster).where(and(
@@ -90,7 +87,7 @@ export const bioCostingProfilesChapter: DemoChapter = {
     const fairValue = await accountOf('4020');
     const writeOff = await accountOf('5010');
     for (const [code, row] of [['1060', asset], ['5100', expense], ['4020', fairValue], ['5010', writeOff]] as const) {
-      if (!row) throw new Error(`02b-bio-costing-profiles: the chart has no account ${code}; the starter seed should have created it.`);
+      if (!row) throw new Error(`02b-bio-costing-items: the chart has no account ${code}; the starter seed should have created it.`);
     }
 
     let accumulated = await accountOf(ACCUMULATED.account_code);
@@ -102,43 +99,31 @@ export const bioCostingProfilesChapter: DemoChapter = {
       ctx.log(`  GL ${ACCUMULATED.account_code} ${ACCUMULATED.account_name} created`);
     }
 
-    // Before the herd's purchase (62 days of history + 24 before it), with room to spare, so registration resolves a profile.
-    // ... and before the costing walkthrough's purchase (1 Mar 2026, chapter 14), so its months are costed by the settings and profiles in force.
-    const effectiveFrom = [dateDaysAgo(ctx.demoFarms[0].volume.days + HERD_BOUGHT_DAYS_BEFORE_WINDOW + 60), '2026-01-01'].sort()[0];
-    // The company's residual value: set once here, not on each profile.
-    const residuals = ctx.app.get(BioCostingResidualService);
-    const haveSex = new Set((await residuals.list(ctx.tenantId, ctx.companyId)).map((r: any) => r.gender));
-    for (const r of CLIENT_RESIDUALS) {
-      if (haveSex.has(r.gender)) continue;
-      await residuals.add({
-        gender: r.gender, residual_rule: r.residual_rule, residual_weight_kg: r.residual_weight_kg ?? undefined, residual_price_per_kg: r.residual_price_per_kg ?? undefined,
-        effective_from: effectiveFrom, note: r.note,
-      } as any, ctx.tenantId, ctx.companyId, ctx.actor.userId);
-      ctx.log(`  company residual (${r.gender === 'F' ? 'female' : 'male'}): ${r.residual_rule === 'NONE' ? 'none' : `${r.residual_weight_kg} kg x ${r.residual_price_per_kg}`}, from ${effectiveFrom}`);
-    }
-
-    const existing = await profiles.findAll({ companyId: ctx.companyId } as any, ctx.tenantId, ctx.companyId);
-    const have = new Set((existing as any[]).map((p) => p.profile_code));
-    for (const p of CLIENT_DRAFT_PROFILES) {
-      if (have.has(p.profile_code)) {
-        ctx.log(`  profile ${p.profile_code} already exists — skipped`);
-        continue;
-      }
-      const made: any = await profiles.create({
-        profile_code: p.profile_code, name: p.name, origin: p.origin, gender: p.gender, costing_method: p.costing_method,
-        start_age_weeks: p.start_age_weeks, useful_life_months: p.useful_life_months,
-        residual_rule: p.residual_rule, residual_weight_kg: p.residual_weight_kg ?? undefined, residual_price_per_kg: p.residual_price_per_kg ?? undefined,
-        residual_applies_gender: p.residual_applies_gender ?? undefined,
-        run_frequency: 'MONTHLY', day_basis: 'FREQUENCY_DAYS', tracking: 'INDIVIDUAL', auto_post: false,
-        acquisition_gl_id: asset.gl_account_id, accum_amort_gl_id: accumulated!.gl_account_id, amort_expense_gl_id: expense.gl_account_id,
-        fv_gain_loss_gl_id: fairValue.gl_account_id, writeoff_gl_id: writeOff.gl_account_id,
-        effective_from: effectiveFrom,
-      } as any, ctx.tenantId, ctx.companyId, ctx.actor.userId);
-      if (p.rate) {
-        await profiles.addRate(made.profile_id, { effective_from: effectiveFrom, expected_weight_kg: p.rate.expected_weight_kg, price_per_kg: p.rate.price_per_kg, cdm_based: p.rate.cdm_based } as any, ctx.tenantId, ctx.actor.userId);
-      }
-      await profiles.activate(made.profile_id, ctx.tenantId, ctx.actor.userId);
-      ctx.log(`  profile ${p.profile_code} (${p.costing_method}, ${p.origin} ${p.gender}) created and activated, effective ${effectiveFrom}`);
+    // Before the herd's purchase (62 days of history + 24 before it), with room to spare, so every animal is already inside the item's window,
+    // and before the costing walkthrough's purchase (1 Mar 2026, chapter 14), so its months are costed by the terms in force.
+    const costingFrom = [dateDaysAgo(ctx.demoFarms[0].volume.days + HERD_BOUGHT_DAYS_BEFORE_WINDOW + 60), '2026-01-01'].sort()[0];
+    for (const t of SHEET_ITEM_TERMS) {
+      const [item] = await db.select().from(schema.itemMaster).where(and(
+        eq(schema.itemMaster.company_id, ctx.companyId), eq(schema.itemMaster.item_name, t.item_name), eq(schema.itemMaster.is_biological_asset, true)));
+      if (!item) throw new Error(`02b-bio-costing-items: the catalog has no biological item '${t.item_name}'.`);
+      if (item.bio_costing_method) { ctx.log(`  ${item.item_code} ${t.item_name} already has costing terms — skipped`); continue; }
+      const terms = {
+        is_biological_asset: true, bio_costing_method: 'AMORTIZATION', bio_gender: t.bio_gender, bio_start_age_weeks: t.bio_start_age_weeks, bio_useful_life_months: t.bio_useful_life_months,
+        bio_residual_rule: t.bio_residual_rule, bio_residual_weight_kg: t.bio_residual_weight_kg, bio_residual_price_per_kg: t.bio_residual_price_per_kg,
+        bio_run_frequency: 'MONTHLY', bio_day_basis: 'FREQUENCY_DAYS', bio_effective_from: costingFrom, bio_auto_post: false,
+        bio_acquisition_gl_id: asset.gl_account_id, bio_accum_amort_gl_id: accumulated!.gl_account_id, bio_amort_expense_gl_id: expense.gl_account_id,
+        bio_fv_gain_loss_gl_id: fairValue.gl_account_id, bio_writeoff_gl_id: writeOff.gl_account_id,
+      };
+      const problems = validateItemBioCosting(terms);
+      if (problems.length) throw new Error(`02b-bio-costing-items: ${t.item_name}: ${problems.join(' ')}`);
+      const stored = storedBioCosting(terms);
+      await db.update(schema.itemMaster).set({
+        ...stored,
+        bio_residual_fixed_amount: null,
+        bio_residual_weight_kg: stored.bio_residual_weight_kg == null ? null : String(stored.bio_residual_weight_kg),
+        bio_residual_price_per_kg: stored.bio_residual_price_per_kg == null ? null : String(stored.bio_residual_price_per_kg),
+      } as any).where(eq(schema.itemMaster.item_id, item.item_id));
+      ctx.log(`  ${item.item_code} ${t.item_name}: amortised from week ${t.bio_start_age_weeks} over ${t.bio_useful_life_months} months, residual ${t.bio_residual_rule === 'NONE' ? 'none' : `${t.bio_residual_weight_kg} kg x ${t.bio_residual_price_per_kg}`}, costing from ${costingFrom}`);
     }
   },
 };
@@ -148,25 +133,23 @@ export const bioCostingAssignChapter: DemoChapter = {
 
   async run(ctx: DemoContext) {
     if (ctx.volume !== 'costing') {
-      ctx.log('  not the costing volume — nothing to assign');
+      ctx.log('  not the costing volume — nothing to date');
       return;
     }
     const db = tenantDbOf(ctx, '13-bio-costing-assign');
-    const profiles = ctx.app.get(BioCostingProfileService);
-    const result: any = await profiles.assignAnimals({} as any, ctx.tenantId, ctx.companyId);
-    ctx.log(`  assign sweep: ${result.considered} animal(s) without a profile — ${JSON.stringify(result.by_reason)}`);
+    const starts = ctx.app.get(BioCostingStartService);
+    const result: any = await starts.assignAnimals({} as any, ctx.tenantId, ctx.companyId);
+    ctx.log(`  assign sweep: ${result.considered} animal(s) without a costing start date — ${JSON.stringify(result.by_reason)}`);
 
     const rows = await db.select({
-      code: schema.animalRegister.animal_code, entry: schema.animalRegister.entry_type, gender: schema.animalRegister.gender,
-      profile: schema.animalRegister.costing_profile_id, start: schema.animalRegister.costing_start_date,
-    }).from(schema.animalRegister).where(and(eq(schema.animalRegister.company_id, ctx.companyId), eq(schema.animalRegister.is_active, true)));
-    const all = await profiles.findAll({ companyId: ctx.companyId } as any, ctx.tenantId, ctx.companyId);
-    const codeOf = new Map((all as any[]).map((p) => [p.profile_id, p.profile_code]));
+      item: schema.itemMaster.item_code, start: schema.animalRegister.costing_start_date,
+    }).from(schema.animalRegister).innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.animalRegister.item_id))
+      .where(and(eq(schema.animalRegister.company_id, ctx.companyId), eq(schema.animalRegister.is_active, true)));
     const tally = new Map<string, number>();
     for (const r of rows) {
-      const key = r.profile ? codeOf.get(r.profile) ?? 'unknown profile' : 'NO PROFILE';
+      const key = `${r.item}${r.start ? '' : ' (no start date)'}`;
       tally.set(key, (tally.get(key) ?? 0) + 1);
     }
-    ctx.log(`  animals by costing profile: ${[...tally.entries()].map(([k, n]) => `${k}=${n}`).join(', ')}`);
+    ctx.log(`  live animals by item: ${[...tally.entries()].map(([k, n]) => `${k}=${n}`).join(', ')}`);
   },
 };

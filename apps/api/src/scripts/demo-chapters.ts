@@ -23,7 +23,7 @@
  *   full               — Rishi's full numbers on every sow farm;
  *   light              — the quickest pass that still exercises every write path;
  *   costing            — `--lean --volume=costing` (pnpm seed:costing): the lean farm layout with a 62-day history, a bigger herd, an imported
- *                        lot beside the local one, and the client's four costing profiles in place before the herd is registered;
+ *                        lot beside the local one, and the sheet's costing terms on the sow, gilt and boar items in place before the herd is registered;
  *   lean (`--lean`)    — the smallest set that runs the whole flow: one sow farm, two Animal Wise and two
  *                        Batch Wise batches, a handful of animals. Meant for learning how the flow fits together.
  */
@@ -44,32 +44,38 @@ import { approvalsChapter } from './demo/chapters/06-approvals';
 import { feedPlanningChapter } from './demo/chapters/07-feed-planning';
 import { bioAssetExitChapter } from './demo/chapters/08-bio-asset-exit';
 import { costingScenariosChapter } from './demo/chapters/09-costing-scenarios';
-import { bioCostingAssignChapter, bioCostingProfilesChapter, costingPricesChapter } from './demo/chapters/13-bio-costing';
+import { bioCostingAssignChapter, bioCostingItemsChapter, costingPricesChapter } from './demo/chapters/13-bio-costing';
 import { costingWalkthroughChapter } from './demo/chapters/14-costing-walkthrough';
 import { fullFlowChapter } from './demo/chapters/15-full-flow';
 import { costingTestChapter } from './demo/chapters/16-costing-test';
+import { costingTwoAnimalsChapter } from './demo/chapters/18-costing-two-animals';
+import { costingFairValueChapter } from './demo/chapters/19-costing-fair-value';
+import { costingFrequenciesChapter } from './demo/chapters/20-costing-frequencies';
+import { costingConversionChapter } from './demo/chapters/21-costing-conversion';
+import { projectFullChapter, projectItemsChapter } from './demo/chapters/22-project-full';
 import { ledgerTypesChapter } from './demo/chapters/17-ledger-types';
 import { batchTransfersChapter } from './demo/chapters/10-batch-transfers';
 import { stockTransfersChapter } from './demo/chapters/11-stock-transfers';
 import { mortalityChapter } from './demo/chapters/12-mortality';
 import { VOLUME_PROFILES, type VolumeProfileName } from './demo/farms';
 import type { DemoChapter, DemoContext } from './demo/chapter';
+import { COSTING_SCENARIOS } from './demo/costing-scenarios';
 
 /** Chapters that post against batches — left out by `--no-batches`. */
 const BATCH_CHAPTERS = new Set(['04-daily-entries', '05-breeding', '06-approvals', '08-bio-asset-exit', '10-batch-transfers', '12-mortality']);
 
 /** Chapters that touch no batch and are safe to run again on a tenant that already has its own batches. */
-const RESUME_SAFE_CHAPTERS = new Set(['09-costing-scenarios', '14-costing-walkthrough', '15-full-flow', '16-costing-test', '17-ledger-types']);
+const RESUME_SAFE_CHAPTERS = new Set(['09-costing-scenarios', '14-costing-walkthrough', '15-full-flow', '16-costing-test', '17-ledger-types', '18-costing-two-animals', '19-costing-fair-value', '20-costing-frequencies', '21-costing-conversion', '02c-project-items', '22-project-full']);
 
 /** Chapters that run only when named with --chapter=, never as part of a rebuild or a full run. */
-const ON_DEMAND_CHAPTERS = new Set(['14-costing-walkthrough', '15-full-flow', '16-costing-test', '17-ledger-types']);
+const ON_DEMAND_CHAPTERS = new Set(['14-costing-walkthrough', '15-full-flow', '16-costing-test', '17-ledger-types', '18-costing-two-animals', '19-costing-fair-value', '20-costing-frequencies', '21-costing-conversion', '02c-project-items', '22-project-full']);
 
-const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, costingPricesChapter, inventoryChapter, bioCostingProfilesChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter, feedPlanningChapter, bioAssetExitChapter, batchTransfersChapter, stockTransfersChapter, mortalityChapter, costingScenariosChapter, bioCostingAssignChapter, costingWalkthroughChapter, fullFlowChapter, costingTestChapter, ledgerTypesChapter];
+const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, costingPricesChapter, inventoryChapter, bioCostingItemsChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter, feedPlanningChapter, bioAssetExitChapter, batchTransfersChapter, stockTransfersChapter, mortalityChapter, costingScenariosChapter, bioCostingAssignChapter, costingWalkthroughChapter, fullFlowChapter, costingTestChapter, ledgerTypesChapter, costingTwoAnimalsChapter, costingFairValueChapter, costingFrequenciesChapter, costingConversionChapter, projectItemsChapter, projectFullChapter];
 
-/** `--costing-test`: no demo herd, only what the costing test needs - the identity, stores and items, the costing prices and profiles, then chapter 16. */
-const COSTING_TEST_CHAPTERS = new Set(['identity', '01-stores-and-items', '01b-costing-prices', '02b-bio-costing-profiles', '16-costing-test']);
+/** The costing scenarios' chapter lists (`--costing-test`, `--costing-two`, `--costing-fv`, `--costing-freq`, `--costing-conv`): the masters and one chapter each. See demo/costing-scenarios.ts. */
+const COSTING_CHAPTER_SETS = new Map(COSTING_SCENARIOS.map((sc) => [sc.flag, new Set(sc.chapters)]));
 
-function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnExisting: boolean; volume: VolumeProfileName; noBatches: boolean; noDailyEntries: boolean; lean: boolean; costingTest: boolean } {
+function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnExisting: boolean; volume: VolumeProfileName; noBatches: boolean; noDailyEntries: boolean; lean: boolean; costingTest: boolean; costingTwo: boolean; costingFv: boolean; costingFreq: boolean; costingConv: boolean; projectFull: boolean } {
   let apply = false;
   let chapter: string | undefined;
   let forceOnExisting = false;
@@ -78,11 +84,21 @@ function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnE
   let noDailyEntries = false;
   let lean = false;
   let costingTest = false;
+  let costingTwo = false;
+  let costingFv = false;
+  let costingFreq = false;
+  let costingConv = false;
+  let projectFull = false;
   for (const arg of argv) {
     if (arg === '--apply') apply = true;
     else if (arg === '--no-batches') noBatches = true;
     else if (arg === '--no-daily-entries') noDailyEntries = true;
     else if (arg === '--costing-test') costingTest = true;
+    else if (arg === '--costing-two') costingTwo = true;
+    else if (arg === '--costing-fv') costingFv = true;
+    else if (arg === '--costing-freq') costingFreq = true;
+    else if (arg === '--costing-conv') costingConv = true;
+    else if (arg === '--project-full') projectFull = true;
     else if (arg === '--lean') { lean = true; volume = 'lean'; }
     else if (arg === '--force-on-existing') forceOnExisting = true;
     else if (arg.startsWith('--chapter=')) chapter = arg.slice('--chapter='.length);
@@ -92,9 +108,9 @@ function parseArgs(argv: string[]): { apply: boolean; chapter?: string; forceOnE
         throw new Error(`Unknown volume '${value}'. Use one of: ${VOLUME_PROFILES.join(', ')}.`);
       }
       volume = value;
-    } else throw new Error(`Unknown flag: ${arg}. Use --apply, --chapter=<name>, --costing-test, --force-on-existing, --no-batches, --no-daily-entries, --lean, --volume=<${VOLUME_PROFILES.join('|')}>.`);
+    } else throw new Error(`Unknown flag: ${arg}. Use --apply, --chapter=<name>, --costing-test, --costing-two, --costing-fv, --costing-freq, --costing-conv, --project-full, --force-on-existing, --no-batches, --no-daily-entries, --lean, --volume=<${VOLUME_PROFILES.join('|')}>.`);
   }
-  return { apply, chapter, forceOnExisting, volume, noBatches, noDailyEntries, lean, costingTest };
+  return { apply, chapter, forceOnExisting, volume, noBatches, noDailyEntries, lean, costingTest, costingTwo, costingFv, costingFreq, costingConv, projectFull };
 }
 
 async function resolveTenantDbForGuard(app: Awaited<ReturnType<typeof bootApp>>) {
@@ -115,7 +131,8 @@ const DEMO_TENANT_CODE = 'devco';
 type MySql2MasterDb = MySql2Database<typeof masterSchema>;
 
 async function main() {
-  const { apply, chapter: only, forceOnExisting, volume, noBatches, noDailyEntries, lean, costingTest } = parseArgs(process.argv.slice(2));
+  const { apply, chapter: only, forceOnExisting, volume, noBatches, noDailyEntries, lean, costingTest, costingTwo, costingFv, costingFreq, costingConv, projectFull } = parseArgs(process.argv.slice(2));
+  const scenarioFlag = costingTest ? '--costing-test' : costingTwo ? '--costing-two' : costingFv ? '--costing-fv' : costingFreq ? '--costing-freq' : costingConv ? '--costing-conv' : projectFull ? '--project-full' : null;
 
   const app = await bootApp();
   const log = (line: string) => console.log(line);
@@ -140,7 +157,7 @@ async function main() {
     ctx.lean = lean;
 
     // Without batches there is nothing for daily entries, breeding, approvals or the bio-asset exit to act on.
-    const runnable = CHAPTERS.filter((c) => (only ? c.name === only : costingTest ? COSTING_TEST_CHAPTERS.has(c.name) : !ON_DEMAND_CHAPTERS.has(c.name)) && !(noBatches && BATCH_CHAPTERS.has(c.name)) && !(noDailyEntries && c.name === '04-daily-entries'));
+    const runnable = CHAPTERS.filter((c) => (only ? c.name === only : (scenarioFlag ? COSTING_CHAPTER_SETS.get(scenarioFlag)!.has(c.name) : !ON_DEMAND_CHAPTERS.has(c.name))) && !(noBatches && BATCH_CHAPTERS.has(c.name)) && !(noDailyEntries && c.name === '04-daily-entries'));
     if (only && runnable.length === 0) {
       throw new Error(`No chapter named '${only}'. Available: ${CHAPTERS.map((c) => c.name).join(', ')}.`);
     }

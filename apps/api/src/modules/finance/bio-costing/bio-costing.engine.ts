@@ -6,7 +6,7 @@
  * typed, evaluates to `residual x days / total days` (10.68 for its example, not 93.49) and is decision D11. It is ONE function
  * (amortisationAmount), so the client's answer changes one line.
  */
-import { FREQUENCY_DAYS, residualFor, type ProfileTerms } from './bio-costing.rules';
+import { FREQUENCY_DAYS, residualFor, type CostingTerms } from './bio-costing.rules';
 
 export type Frequency = keyof typeof FREQUENCY_DAYS;
 export interface Period { key: string; start: string; end: string }
@@ -129,18 +129,18 @@ export function amortisationAmount(bookValue: number, residual: number, days: nu
 }
 
 export interface AmortisationInput {
-  profile: ProfileTerms & { life?: never };
+  terms: CostingTerms;
   animal: AnimalFacts;
   period: Period;
   bookValueBefore: number;
   daysEnforced?: number | null;
-  /** The residual to use, already resolved (the animal's own, the company setting, or the profile's). Left out, the profile's. */
+  /** The residual to use, already resolved (the animal's own, else the item's). Left out, the item's terms decide. */
   residual?: number;
 }
 
 /** An amortisation line for one animal and period, with the BBP's controls (no run before the start, none past life or below residual). */
 export function amortisationLine(i: AmortisationInput): RunLine {
-  const { profile, animal: a, period } = i;
+  const { terms, animal: a, period } = i;
   const bv = i.bookValueBefore;
   if (!a.is_active && (!a.disposal_date || a.disposal_date <= period.start)) return skip('NOT_ACTIVE', bv);
   // Her exit is already on the books at the value she had when she left, which has this period's amortisation inside it (the loss is larger by that
@@ -149,12 +149,12 @@ export function amortisationLine(i: AmortisationInput): RunLine {
   const start = a.costing_start_date;
   const birth = birthDate(a);
   if (!start || !birth) return skip('NO_AGE', bv);
-  const lifeEnd = lifeEndDate(birth, Number(profile.useful_life_months));
+  const lifeEnd = lifeEndDate(birth, Number(terms.useful_life_months));
   const common = { costing_start_date: start, life_end_date: lifeEnd };
   if (period.end < start) return skip('NOT_STARTED', bv, common);
   if (period.start >= lifeEnd) return skip('LIFE_COMPLETE', bv, common);
 
-  const residual = i.residual ?? residualFor(profile, a.gender);
+  const residual = i.residual ?? residualFor(terms, a.gender);
   if (bv < residual - TOL) return skip('RESIDUAL_EXCEEDS_COST', bv, { ...common, residual });
   if (bv - residual <= TOL) return skip('FULLY_AMORTISED', bv, { ...common, residual });
 
@@ -169,7 +169,7 @@ export function amortisationLine(i: AmortisationInput): RunLine {
   // of the period inside her window; else the calendar days inside the window.
   const days = i.daysEnforced != null
     ? i.daysEnforced
-    : profile.day_basis === 'ACTUAL' ? windowDays : (FREQUENCY_DAYS[(profile.run_frequency ?? 'MONTHLY') as Frequency] * windowDays) / periodDays;
+    : terms.day_basis === 'ACTUAL' ? windowDays : (FREQUENCY_DAYS[(terms.run_frequency ?? 'MONTHLY') as Frequency] * windowDays) / periodDays;
 
   const reachesEnd = windowEnd === lastDay;
   const raw = reachesEnd ? bv - residual : amortisationAmount(bv, residual, days, remaining);
@@ -215,7 +215,7 @@ export function pickRate<R extends { farm_id: string | null; age_week_from: numb
 }
 
 
-/** The key that claims a period: one live run per profile and period, or per profile, period and batch when the run is made for one batch. */
-export function runActiveKey(profileId: string, periodKey: string, batchId?: string | null): string {
-  return batchId ? `${profileId}|${periodKey}|${batchId}` : `${profileId}|${periodKey}`;
+/** The key that claims a period: one live run per item and period, or per item, period and batch when the run is made for one batch. */
+export function runActiveKey(itemId: string, periodKey: string, batchId?: string | null): string {
+  return batchId ? `${itemId}|${periodKey}|${batchId}` : `${itemId}|${periodKey}`;
 }

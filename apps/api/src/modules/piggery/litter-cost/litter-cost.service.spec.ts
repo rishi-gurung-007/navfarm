@@ -124,6 +124,16 @@ describe('LitterCostService', () => {
       expect(priced.note).not.toContain('opens at 0.00');
     });
 
+    it('keeps the litter\'s cost per piglet at weaning when nothing more moves (the sow\'s feed after her start was expensed): the cost it was born with, over the piglets weaned', async () => {
+      jest.spyOn(service, 'capitalisedLactationCost').mockResolvedValue({ own: 0, shared: 0 });
+      jest.spyOn(service, 'alreadyAllocated').mockImplementation(async (_lot, _t, kind) => (kind === 'BIRTH' ? 90 : 0));
+      const r = await service.allocate(born, sow, { asOf: '2026-10-26', divisor: 10 }, 't');
+      expect(r.moved).toBe(0);
+      expect(Number(r.perPiglet)).toBeCloseTo(9, 6); // 90 at birth / 10 weaned
+      jest.spyOn(service, 'alreadyAllocated').mockResolvedValue(0);
+      expect((await service.allocate(born, sow, { asOf: '2026-10-26', divisor: 10 }, 't')).perPiglet).toBeNull(); // a litter that never carried cost has none
+    });
+
     it('the weaning\'s cost per piglet counts the birth cost too, and the birth cost is not taken again as lactation cost', async () => {
       jest.spyOn(service, 'capitalisedLactationCost').mockResolvedValue({ own: 30, shared: 0 });
       jest.spyOn(service, 'alreadyAllocated').mockImplementation(async (_lot, _t, kind) => (kind === 'BIRTH' ? 90 : 0));

@@ -4,7 +4,7 @@
  * so the whole costing chain can be tested on two animals you can follow by hand (docs/TEST-GUIDE-full-flow.md):
  *
  *   5 Jan 2026   Goods receipt of the sow (850) and the boar (1,200) and of the feed stock; both registered with papers, grouped in one Animal Wise
- *                batch. The sow is 13 weeks old, the boar 22: IMP-F / IMP-M are assigned and their costing start dates follow from their ages
+ *                batch. The sow is 13 weeks old, the boar 22: their costing start dates follow from their ages
  *                (sow 25 May = birth + 33 weeks, boar 2 Feb = birth + 26 weeks).
  *   weekly       Feed per animal, every Monday (boar: gestation mash; sow: gestation mash, then the lactation diet while she nurses) and a monthly
  *                housing/labour overhead. BEFORE an animal's costing start the cost is CAPITALISED into her book value; ON/AFTER it, it is EXPENSED.
@@ -15,11 +15,11 @@
  *   13 Apr       The sow (27 weeks) is inseminated by AI from that lot; pregnancy confirmed 28 days later.
  *   7 Aug        Farrowing (116 days): 13 born alive, 1 stillborn. The litter opens as a piglet lot at the sow's capitalised cost (birth cost,
  *                ledger + journal BIO_LITTER_BIRTH); her feed after 25 May was expensed, so only 13 Apr - 24 May is in the litter.
- *   4 Sep        Weaning (day 28), with the litter's ONE gilt selection (BBP: once, at week 4): 5 gilts (LOC-F, born on farm), then their own batch and a
+ *   4 Sep        Weaning (day 28), with the litter's ONE gilt selection (BBP: once, at week 4): 5 gilts (born on farm), then their own batch and a
  *                first feed (capitalised).
  *
  * Resume-safe: the receipt by its reference, animals by RFID, the batch by its remarks token, each transaction by (batch, animal, date, kind), each
- * mating by (sow, date), the semen lot by (boar, date), a run by (profile, period, batch). Prices, ages, rations and litter sizes are demo facts,
+ * mating by (sow, date), the semen lot by (boar, date), a run by (item, period, batch). Prices, ages, rations and litter sizes are demo facts,
  * not client data.
  */
 import { and, eq, inArray, sql } from 'drizzle-orm';
@@ -31,7 +31,7 @@ import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/go
 import { BreedingService } from '../../../modules/piggery/breeding/breeding.service';
 import { GiltSelectionService } from '../../../modules/piggery/gilt-selection/gilt-selection.service';
 import { AnimalMedicationLogService } from '../../../modules/piggery/animal/animal-medication-log.service';
-import { BioCostingProfileService } from '../../../modules/finance/bio-costing/bio-costing-profile.service';
+import { BioCostingStartService } from '../../../modules/finance/bio-costing/bio-costing-start.service';
 import { BioCostingRunService } from '../../../modules/finance/bio-costing/bio-costing-run.service';
 import { GlMappingService } from '../../../modules/finance/gl-mapping/gl-mapping.service';
 import { MatingType, PregCheckMethod, ConceptionResult } from '../../../modules/piggery/breeding/dto/breeding.dto';
@@ -92,7 +92,7 @@ export const fullFlowChapter: DemoChapter = {
     const batches = ctx.app.get(BatchService);
     const receipts = ctx.app.get(GoodsReceiptService);
     const breeding = ctx.app.get(BreedingService);
-    const profiles = ctx.app.get(BioCostingProfileService);
+    const starts = ctx.app.get(BioCostingStartService);
     const runs = ctx.app.get(BioCostingRunService);
     const medicines = ctx.app.get(AnimalMedicationLogService);
     const selections = ctx.app.get(GiltSelectionService);
@@ -182,7 +182,7 @@ export const fullFlowChapter: DemoChapter = {
       ref: FLOW_BATCH_REMARKS, farm, breedId: breed.breedId, shed: shedForStage(farm, 'INSEMINATION'), startDate: PURCHASE_DATE, animalIds: [...ids.values()],
     });
     await db.update(schema.schedulerHeader).set({ effective_from: PURCHASE_DATE }).where(eq(schema.schedulerHeader.batch_id, batchId));
-    await profiles.assignAnimals({ animal_ids: [...ids.values()] } as any, ctx.tenantId, ctx.companyId);
+    await starts.assignAnimals({ animal_ids: [...ids.values()] } as any, ctx.tenantId, ctx.companyId);
 
     // ── 4. The timeline: every event has a date; the monthly runs are interleaved so each month's run sees exactly what was entered up to its end.
     const events: Event[] = [];
@@ -314,7 +314,7 @@ export const fullFlowChapter: DemoChapter = {
       const farrow = await farrowOf();
       if (!farrow || Number(farrow.weaned) > 0) return;
       const body: any = {
-        weaning_date: WEANING_DATE, piglets_weaned: 12, avg_weaning_weight_kg: 7.2, move_to_stage_code: 'WEANER', gilt_colour_code: 'BLUE',
+        weaning_date: WEANING_DATE, piglets_weaned: 12, avg_weaning_weight_kg: 7.2, move_to_stage_code: 'WEANER', gilt_colour_code: 'BLUE', gilt_item_id: (await item('Replacement Breeding Gilt')).item_id,
         gilts: GILT_TAGS.map((tag, i) => ({ rfid_tag: tag, no_of_teats: GILT_TEATS[i] })),
       };
       if (await haveGilt(GILT_TAGS[0])) delete body.gilts;
@@ -336,7 +336,7 @@ export const fullFlowChapter: DemoChapter = {
         if (fed) continue;
         await batches.addTransaction(giltBatchId, { transaction_type: 'CONSUMPTION', transaction_date: GILT_FEED_DATE, item_id: feed.item_id, quantity: 2, uom: 'KG', animal_id: g.animal_id, source_warehouse_id: store.id, remarks: 'FLOW first feed of the gilt (capitalised)' } as any, ctx.tenantId, actor);
       }
-      await profiles.assignAnimals({ animal_ids: rows.map((g) => g.animal_id) } as any, ctx.tenantId, ctx.companyId);
+      await starts.assignAnimals({ animal_ids: rows.map((g) => g.animal_id) } as any, ctx.tenantId, ctx.companyId);
       ctx.log(`  gilts ${rows.map((g) => g.code).join(', ')}: joined batch ${FLOW_GILT_BATCH_REMARKS}, fed 2 kg each on ${GILT_FEED_DATE} (capitalised)`);
     });
 
@@ -355,7 +355,7 @@ export const fullFlowChapter: DemoChapter = {
     while (next < events.length) await events[next++].run(); // events dated after the last run month (none in the plan; kept for a re-dated chapter)
 
     async function runMonth(month: string) {
-      let calculated: { runs: any[]; failed: Array<{ profile_code: string; error: string }> };
+      let calculated: { runs: any[]; failed: Array<{ item_code: string; error: string }> };
       try {
         calculated = await runs.calculateBatch({ batch_id: batchId, period_key: month } as any, ctx.tenantId, ctx.companyId, ctx.actor.userId) as any;
       } catch (error) {
@@ -363,18 +363,18 @@ export const fullFlowChapter: DemoChapter = {
         ctx.log(`  run ${month}: ${/already been run|already posted after/.test(message) ? 'already posted - skipped' : `NOT MADE - ${message}`}`);
         return;
       }
-      for (const f of calculated.failed) ctx.log(`  run ${month} ${f.profile_code}: ${/already been run|already posted after/.test(f.error) ? 'already posted - skipped' : `NOT MADE - ${f.error}`}`);
+      for (const f of calculated.failed) ctx.log(`  run ${month} ${f.item_code}: ${/already been run|already posted after/.test(f.error) ? 'already posted - skipped' : `NOT MADE - ${f.error}`}`);
       for (const run of calculated.runs) {
         if (run.status === 'POSTED') continue;
         const posted: any = await runs.post(run.run_id, ctx.tenantId, ctx.actor.userId);
-        ctx.log(`  run ${month} ${posted.profile_code ?? ''} ${posted.run_no}: posted, ${posted.charged_count ?? '?'} charged, total ${posted.total_charge ?? '?'}`);
+        ctx.log(`  run ${month} ${posted.item_code ?? ''} ${posted.run_no}: posted, ${posted.charged_count ?? '?'} charged, total ${posted.total_charge ?? '?'}`);
       }
     }
 
     // ── 6. What the two animals and the litter hold now.
-    const rows = await db.select({ code: schema.animalRegister.animal_code, tag: schema.animalRegister.rfid_tag, profile: schema.animalRegister.costing_profile_id, start: schema.animalRegister.costing_start_date, bv: schema.animalRegister.book_value })
+    const rows = await db.select({ code: schema.animalRegister.animal_code, tag: schema.animalRegister.rfid_tag, start: schema.animalRegister.costing_start_date, bv: schema.animalRegister.book_value })
       .from(schema.animalRegister).where(inArray(schema.animalRegister.animal_id, [sowId, boarId]));
-    ctx.log(`  costing: ${rows.map((r) => `${r.code} profile=${r.profile ? 'yes' : 'NO'} start=${r.start} book=${r.bv}`).join(' | ')}`);
+    ctx.log(`  costing: ${rows.map((r) => `${r.code} start=${r.start ?? 'NONE'} book=${r.bv}`).join(' | ')}`);
     void farrowId;
   },
 };

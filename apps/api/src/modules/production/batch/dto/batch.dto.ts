@@ -457,6 +457,26 @@ export class MortalityDetailDto {
   @IsUUID()
   @IsOptional()
   reason_id?: string;
+
+  @ApiProperty({
+    description:
+      'Weight at death (kg). Mandatory for a costed breeding asset; it is kept on the animal as her exit weight.',
+    required: false,
+  })
+  @IsNumber()
+  @IsOptional()
+  weight_kg?: number;
+}
+
+/** One dead animal's weight at death, for a death recorded for several animals at once. */
+export class AnimalDeathWeightDto {
+  @ApiProperty({ description: 'The animal' })
+  @IsUUID()
+  animal_id: string;
+
+  @ApiProperty({ description: 'Weight at death (kg)' })
+  @IsNumber()
+  weight_kg: number;
 }
 
 /**
@@ -695,6 +715,17 @@ export class RecordMortalityDto {
   @Type(() => MortalityDetailDto)
   @IsOptional()
   mortality_detail?: MortalityDetailDto;
+
+  @ApiProperty({
+    description: 'Weight at death of each animal in animal_ids (mandatory for a costed breeding asset)',
+    required: false,
+    type: [AnimalDeathWeightDto],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AnimalDeathWeightDto)
+  @IsOptional()
+  animal_weights?: AnimalDeathWeightDto[];
 }
 
 export class BatchOutputLineInput {

@@ -28,7 +28,7 @@ describe('Finance sections', () => {
       'trial-balance',
       'bio-asset-reconciliation',
       'bio-costing-runs',
-      'bio-costing-setup',
+      'fa-conversions',
       'batch-cost-variance',
       // No exchange-rates entry. It was here on the reading that BBP-1 §1.1,
       // which has Finance entering the USD/ZWL rate by hand, meant the screen

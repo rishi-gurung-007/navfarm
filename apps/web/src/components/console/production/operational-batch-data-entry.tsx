@@ -2564,9 +2564,23 @@ export default function OperationalBatchDataEntry() {
   const animalListStage = animalListStageId
     ? dataEntryProgress.find((p) => p.stage_id === animalListStageId)
     : null;
+  // The badge and this list are who stands in the stage now. Data entry for the posting date acts on who was there that
+  // day, so an animal transferred in after it is listed but marked as not part of that day's entry.
   const animalListRows = animalListStageId
     ? batchAnimalRoster.filter((a) => a.current_stage_id === animalListStageId)
     : [];
+  const animalListDayIds = animalListStageId
+    ? new Set<string>(
+        (
+          dataEntryStages.find((s) => s.stage_id === animalListStageId)
+            ?.animals ?? []
+        ).map((a: Row) => a.animal_id),
+      )
+    : new Set<string>();
+  const animalListJoinedLater = animalListDayIds.size
+    ? animalListRows.filter((a) => !animalListDayIds.has(a.animal_id))
+    : [];
+  const stageHeadCount = (p: Row) => p.current_animal_count ?? p.animal_count;
 
   return (
     <div className="space-y-6 animate-fade-in text-[var(--text-primary)]">
@@ -3367,6 +3381,21 @@ export default function OperationalBatchDataEntry() {
                               value: a.animal_id,
                               label: `${a.animal_code} ${a.is_posted ? '(✓ Posted)' : '(Pending)'}`,
                             })),
+                            // In this stage now but not on the posting date: shown so the transfer is visible, not selectable.
+                            ...batchAnimalRoster
+                              .filter(
+                                (a) =>
+                                  a.current_stage_id ===
+                                    selectedStage.stage_id &&
+                                  !stageAnimals.some(
+                                    (s) => s.animal_id === a.animal_id,
+                                  ),
+                              )
+                              .map((a: Row) => ({
+                                value: a.animal_id,
+                                label: `${a.animal_code} (joined after ${selectedDate} — not part of this date)`,
+                                disabled: true,
+                              })),
                           ]}
                           searchPlaceholder="Search animal code…"
                         />
@@ -3456,7 +3485,7 @@ export default function OperationalBatchDataEntry() {
                     <div className="flex items-start justify-between relative z-10">
                       {dataEntryProgress.map((p) => {
                         const selected = p.stage_id === selectedStageId;
-                        const hasAnimals = p.animal_count > 0;
+                        const hasAnimals = stageHeadCount(p) > 0;
                         const stageLocked =
                           dataEntryStages.find((s) => s.stage_id === p.stage_id)
                             ?.lock_status === 'LOCKED';
@@ -3486,7 +3515,7 @@ export default function OperationalBatchDataEntry() {
                                 hasAnimals ? 'View animal list' : undefined
                               }
                             >
-                              {hasAnimals ? p.animal_count : '•'}
+                              {hasAnimals ? stageHeadCount(p) : '•'}
                             </button>
                             <div className="mt-2.5 text-center flex flex-col items-center w-full px-0.5">
                               <p
@@ -4052,6 +4081,17 @@ export default function OperationalBatchDataEntry() {
                 </TableBody>
               </table>
             </div>
+          )}
+          {animalListJoinedLater.length > 0 && (
+            <p className="mt-3 text-xs" style={S.muted}>
+              {animalListJoinedLater.length === 1
+                ? `${animalListJoinedLater[0].animal_code} joined this batch after ${selectedDate}`
+                : `${animalListJoinedLater.length} animals (${animalListJoinedLater
+                    .map((a) => a.animal_code)
+                    .join(', ')}) joined this batch after ${selectedDate}`}
+              {animalListJoinedLater.length === 1 ? ' and is' : ' and are'} not
+              part of the entry for this date.
+            </p>
           )}
         </Dialog>
       )}

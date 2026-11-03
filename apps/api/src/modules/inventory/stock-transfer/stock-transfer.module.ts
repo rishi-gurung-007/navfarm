@@ -7,9 +7,10 @@ import { UomModule } from '../../master-data/uom/uom.module';
 import { SiloFeedModule } from '../silo-feed/silo-feed.module';
 import { FeedAlertModule } from '../feed-alert/feed-alert.module';
 import { NumberSeriesModule } from '../../system/number-series/number-series.module';
+import { BreedingLineModule } from '../../master-data/breeding-line/breeding-line.module';
 
 @Module({
-  imports: [InventoryLedgerModule, JournalModule, UomModule, SiloFeedModule, FeedAlertModule, NumberSeriesModule],
+  imports: [InventoryLedgerModule, JournalModule, UomModule, SiloFeedModule, FeedAlertModule, NumberSeriesModule, BreedingLineModule],
   controllers: [StockTransferController],
   providers: [StockTransferService],
   exports: [StockTransferService],

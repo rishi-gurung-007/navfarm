@@ -1,9 +1,8 @@
 /**
- * Seeds what a tester needs before exercising bio-asset costing end to end (bio-asset costing, Phase 6): an accumulated-amortisation
- * account (the chart has none) and the two costing profiles the demo herd uses, ACTIVE, with their GL accounts and the local
- * fair-value rate. It writes through the running API, not SQL, so every rule the real screens meet (BBP origin/method, GL accounts,
- * one active profile per scope) applies to the seed too. It does NOT assign animals, run a period or register an animal: those are the
- * steps being tested (docs/TEST-GUIDE-bio-asset-costing-full-flow.md).
+ * Seeds what a tester needs before exercising bio-asset costing end to end: an accumulated-amortisation account (the chart has none) and the
+ * costing terms on the demo catalog's sow item (the TDD Item Card's Bio Asset Costing tab), with its GL accounts. It writes through the running
+ * API, not SQL, so every rule the real item form meets applies to the seed too. It does NOT date animals, run a period or register an animal:
+ * those are the steps being tested (docs/TEST-GUIDE-bio-asset-costing-full-flow.md).
  *
  * Read-only by default (prints the plan); --apply writes. Safe to repeat: whatever already exists is left alone.
  *
@@ -11,9 +10,9 @@
  *   pnpm nx run api:db-seed-bio-costing-test-data -- --apply
  *   env: API_URL (http://127.0.0.1:2877/api/v1), SEED_EMAIL (tenant.admin@triplec.local), SEED_PASSWORD (12345678), SEED_EFFECTIVE_FROM (2026-01-01)
  *
- * [ours] choices, awaiting the client: monthly runs, effective date 2026-01-01 (the documents give none; the scheduler's catch-up
- * starts there), profiles that calculate and wait for a person to post (auto_post off), and no male profile: the demo herd's one boar
- * is deliberately left uncosted so the "no profile fits" path can be tested.
+ * [ours] choices, awaiting confirmation: monthly runs, Costing From 2026-01-01 (the documents give none; the scheduler's catch-up starts there),
+ * a run that calculates and waits for a person to post (auto_post off), and no costing terms on the boar item: the demo herd's one boar is
+ * deliberately left uncosted so the "no costing terms" path can be tested.
  */
 
 const API = (process.env.API_URL || 'http://127.0.0.1:2877/api/v1').replace(/\/$/, '');
@@ -83,46 +82,23 @@ async function run() {
     accum_amort_gl_id: accumulated?.gl_account_id,
   };
 
-  // --- the company's residual value: once per sex, not on each profile ---
-  const haveSex = new Set(((await call(s, 'GET', '/bio-costing/residual-settings')).json.data as any[]).map((r) => r.gender));
-  const residuals = [
-    { gender: 'F', residual_rule: 'WEIGHT_X_PRICE', residual_weight_kg: 150, residual_price_per_kg: 2.05, effective_from: EFFECTIVE_FROM, note: 'Fixed Asset sheet: assumed 150 kg x 2.05' },
-    { gender: 'M', residual_rule: 'NONE', effective_from: EFFECTIVE_FROM, note: 'Fixed Asset sheet: no residual for a male' },
-  ];
-  for (const r of residuals) {
-    if (haveSex.has(r.gender)) { say(`Residual (${r.gender}): exists, left alone`); continue; }
-    if (!APPLY) { say(`Residual (${r.gender}): would be set`); continue; }
-    const made = await call(s, 'POST', '/bio-costing/residual-settings', r);
-    if (made.status >= 300) throw new Error(`Could not set the ${r.gender} residual - ${refusal(made)}`);
-    say(`Residual (${r.gender}): set from ${EFFECTIVE_FROM}`);
-  }
-
-  // --- profiles ---
-  const existing = (await call(s, 'GET', '/bio-costing/profiles')).json.data as any[];
-  const have = new Map<string, any>(existing.map((p) => [p.profile_code, p]));
-  const common = { run_frequency: 'MONTHLY', day_basis: 'FREQUENCY_DAYS', tracking: 'INDIVIDUAL', auto_post: false, effective_from: EFFECTIVE_FROM, ...gl };
-  const profiles = [
-    { terms: { profile_code: 'IMP-F', name: 'Imported female - amortisation', origin: 'IMPORTED', gender: 'F', costing_method: 'AMORTIZATION', start_age_weeks: 33, useful_life_months: 36,
-        residual_rule: 'NONE', ...common }, rate: null as any },
-    // Local animals are amortised too (21 Oct 2026, Arun's instruction; awaiting the client's sign-off).
-    { terms: { profile_code: 'LOC-F', name: 'Local female - amortisation', origin: 'LOCAL', gender: 'F', costing_method: 'AMORTIZATION', start_age_weeks: 33, useful_life_months: 36,
-        residual_rule: 'NONE', ...common }, rate: null as any },
-  ];
-  for (const { terms, rate } of profiles) {
-    const code = terms.profile_code;
-    let p = have.get(code);
-    if (p) { say(`Profile ${code}: exists (${p.status}), left alone`); continue; }
-    if (!APPLY) { say(`Profile ${code} (${terms.costing_method}, ${terms.origin} ${terms.gender}): would be created and activated`); continue; }
-    const made = await call(s, 'POST', '/bio-costing/profiles', terms);
-    if (made.status >= 300) throw new Error(`Could not create ${code} - ${refusal(made)}`);
-    p = made.json.data;
-    if (rate) {
-      const r = await call(s, 'POST', `/bio-costing/profiles/${p.profile_id}/rates`, rate);
-      if (r.status >= 300) throw new Error(`Could not add the rate to ${code} - ${refusal(r)}`);
-    }
-    const act = await call(s, 'POST', `/bio-costing/profiles/${p.profile_id}/activate`);
-    if (act.status >= 300) throw new Error(`Could not activate ${code} - ${refusal(act)}`);
-    say(`Profile ${code}: created and activated${rate ? ' with its rate' : ''}`);
+  // --- the sow item: costing terms on its Bio Asset Costing tab ---
+  const items = (await call(s, 'GET', '/item?limit=200&itemType=LIVING_ASSET')).json.data as any[];
+  const sow = items.find((i) => i.item_name === 'Mature Parity Breeding Sow');
+  if (!sow) throw new Error("The catalog has no item 'Mature Parity Breeding Sow'.");
+  if (sow.bio_costing_method) say(`Item ${sow.item_code}: already has costing terms (${sow.bio_costing_method}), left alone`);
+  else if (!APPLY) say(`Item ${sow.item_code} (${sow.item_name}): would take amortisation from week 33 over 36 months, residual 150 kg x 2.05, from ${EFFECTIVE_FROM}`);
+  else {
+    const terms = {
+      bio_costing_method: 'AMORTIZATION', bio_gender: 'F', bio_start_age_weeks: 33, bio_useful_life_months: 36,
+      bio_residual_rule: 'WEIGHT_X_PRICE', bio_residual_weight_kg: 150, bio_residual_price_per_kg: 2.05,
+      bio_run_frequency: 'MONTHLY', bio_day_basis: 'FREQUENCY_DAYS', bio_effective_from: EFFECTIVE_FROM, bio_auto_post: false,
+      bio_acquisition_gl_id: gl.acquisition_gl_id, bio_accum_amort_gl_id: gl.accum_amort_gl_id, bio_amort_expense_gl_id: gl.amort_expense_gl_id,
+      bio_fv_gain_loss_gl_id: gl.fv_gain_loss_gl_id, bio_writeoff_gl_id: gl.writeoff_gl_id,
+    };
+    const made = await call(s, 'PUT', `/item/${sow.item_id}`, terms);
+    if (made.status >= 300) throw new Error(`Could not set the costing terms on ${sow.item_code} - ${refusal(made)}`);
+    say(`Item ${sow.item_code}: costing terms set from ${EFFECTIVE_FROM}`);
   }
   if (!APPLY) console.log('\nNothing written. Run again with --apply.');
 }

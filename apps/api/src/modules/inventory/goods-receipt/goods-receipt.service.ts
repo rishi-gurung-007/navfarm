@@ -427,7 +427,31 @@ export class GoodsReceiptService {
       .from(schema.goodsReceiptLine)
       .where(eq(schema.goodsReceiptLine.receipt_id, id));
 
-    return { ...receipt, lines };
+    // TDD row 5: animals bought on a receipt must all be registered. The receipt is posted first and the animals registered from it after (each takes one from
+    // the receipt's Bio Asset Ledger entry), so what the receipt still owes is the entry's remaining count. Said per line for a biological asset.
+    const owed = new Map<string, { received: number; awaiting: number }>();
+    if (receipt.status === 'POSTED' && lines.length) {
+      const B = schema.bioAssetLedger;
+      const entries = await this.db
+        .select({ line: B.document_line_id, quantity: B.quantity, remaining: B.remaining_quantity })
+        .from(B)
+        .where(and(bioEventCondition(B, 'PURCHASE'), inArray(B.document_line_id, lines.map((l) => l.line_id))));
+      for (const e of entries) {
+        if (!e.line) continue;
+        const t = owed.get(e.line) ?? { received: 0, awaiting: 0 };
+        t.received += Math.floor(Number(e.quantity ?? 0));
+        t.awaiting += Math.floor(Number(e.remaining ?? 0));
+        owed.set(e.line, t);
+      }
+    }
+    return {
+      ...receipt,
+      lines: lines.map((l) => ({
+        ...l,
+        animals_received: owed.get(l.line_id)?.received ?? null,
+        animals_awaiting_registration: owed.get(l.line_id)?.awaiting ?? null,
+      })),
+    };
   }
 
   /**

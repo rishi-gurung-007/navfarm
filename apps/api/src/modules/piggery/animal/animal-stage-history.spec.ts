@@ -3,7 +3,7 @@ import { ClsService } from 'nestjs-cls';
 import { AnimalService } from './animal.service';
 import { BatchService } from '../../production/batch/batch.service';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
-import { BioCostingProfileService } from '../../finance/bio-costing/bio-costing-profile.service';
+import { BioCostingStartService } from '../../finance/bio-costing/bio-costing-start.service';
 import { BioCostingResidualService } from '../../finance/bio-costing/bio-costing-residual.service';
 import { BioCostingExitService } from '../../finance/bio-costing/bio-costing-exit.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
@@ -178,7 +178,7 @@ describe('AnimalService.transitionStage writes stage history (checklist 6)', () 
           },
         },
         {
-          provide: BioCostingProfileService,
+          provide: BioCostingStartService,
           useValue: {
             assignAnimal: jest.fn().mockResolvedValue({
               assigned: false,
@@ -191,7 +191,7 @@ describe('AnimalService.transitionStage writes stage history (checklist 6)', () 
           useValue: {
             forAnimal: jest.fn().mockResolvedValue({
               residual: 0,
-              source: 'COMPANY',
+              source: 'ITEM',
               latest_amortisation: null,
               latest_amortisation_date: null,
             }),

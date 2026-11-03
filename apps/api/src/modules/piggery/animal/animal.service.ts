@@ -1,5 +1,6 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { masterScopeConditions } from '../../../common/master-data-scope';
+import { assertDeathNotes, assertDeathWeight } from '../../production/batch/mortality.rules';
 import {
   farmScope,
   animalScopeConditions,
@@ -17,7 +18,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, or, like, desc, sql, isNull, inArray } from 'drizzle-orm';
+import { eq, and, or, like, desc, sql, isNull, inArray, gte } from 'drizzle-orm';
 import { aliasedTable } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
@@ -37,8 +38,9 @@ import { AnimalMovementLogService } from '../animal-movement-log/animal-movement
 
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { BatchService } from '../../production/batch/batch.service';
+import { linkLedgerJournals } from './animal-ledger-journal';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
-import { BioCostingProfileService } from '../../finance/bio-costing/bio-costing-profile.service';
+import { BioCostingStartService } from '../../finance/bio-costing/bio-costing-start.service';
 import { BioCostingResidualService } from '../../finance/bio-costing/bio-costing-residual.service';
 import { BioCostingExitService } from '../../finance/bio-costing/bio-costing-exit.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
@@ -69,6 +71,8 @@ const DISPOSAL_STATUS_MAP: Record<string, string | undefined> = {
   DIED: 'DEAD',
   TRANSFERRED: undefined,
   CULLED: 'CULLED',
+  // TDD row 11: a culled breeding animal converted to inventory, only ever by an approved conversion (FaConversionService).
+  CONVERTED: 'CONVERTED_INV',
 };
 
 /**
@@ -243,7 +247,7 @@ export class AnimalService {
     private readonly movementLog: AnimalMovementLogService,
     private readonly batchService: BatchService,
     private readonly animalBookValue: AnimalBookValueService,
-    private readonly bioCosting: BioCostingProfileService,
+    private readonly bioCosting: BioCostingStartService,
     private readonly bioCostingResidual: BioCostingResidualService,
     private readonly bioCostingExit: BioCostingExitService,
     private readonly glPosting: GlPostingService,
@@ -1153,14 +1157,14 @@ export class AnimalService {
         newValues: newAnimal,
       });
 
-      // Frozen to the central costing profile that fits her now, with the date her costing begins. No matching profile leaves her
-      // uncosted (not an error); an ambiguous setup is the costing setup's fault and must not stop a registration, so it is logged.
+      // The date her costing begins, from her item's start period. An item with no costing terms leaves her uncosted (not an error);
+      // a problem with the costing setup must not stop a registration, so it is logged.
       try {
         await this.bioCosting.assignAnimal(animalId, tenantId);
       } catch (error) {
         if (!(error instanceof BadRequestException)) throw error;
         this.logger.warn(
-          `Animal ${animalCode} was registered without a costing profile: ${error.message}`,
+          `Animal ${animalCode} was registered without a costing start date: ${error.message}`,
         );
       }
 
@@ -1276,6 +1280,13 @@ export class AnimalService {
           book_value: value.bookValue.toFixed(4),
           total_amortised: value.amortised.toFixed(4),
           current_bio_asset_value: value.bookValue.toFixed(4),
+          // Where the book value came from, for the costing screens: what she cost to buy, what was capitalised into her before her start,
+          // and what fair value has added or taken off since.
+          bio_acquisition: value.acquisition.toFixed(4),
+          bio_capitalised: value.capitalised.toFixed(4),
+          bio_fair_value_adjusted: value.fairValue.toFixed(4),
+          // What has left her ledger (cost handed to a litter, a write-off), negative; without it the figures above do not add up to her book value.
+          bio_exits: value.exits.toFixed(4),
         };
     // What the costing says about her: the residual in force and whether it is hers or the company's, and her latest month's charge. The
     // register's own residual_value and amortisation_monthly columns are an old place for these and are no longer typed on the card.
@@ -1297,6 +1308,10 @@ export class AnimalService {
         ...sources,
         residual_effective: costing.residual,
         residual_source: costing.source,
+        costing_method: costing.costing_method,
+        last_run_date: costing.last_run_date,
+        next_due_date: costing.next_due_date,
+        costing_item_code: costing.costing_item_code,
         amortisation_monthly:
           costing.latest_amortisation != null
             ? costing.latest_amortisation.toFixed(4)
@@ -1506,10 +1521,10 @@ export class AnimalService {
 
     if (dto.breed_id !== undefined) updates.breed_id = dto.breed_id;
     if (dto.dob !== undefined) updates.dob = dto.dob;
-    // Her birth date moves her costing start (or, once anything is booked on it, is refused).
+    // Her birth date moves her costing start (or, once anything is booked on it, is refused). She is costed by her item's terms or by a profile; with
+    // neither there is nothing to move and the call returns null.
     if (
       dto.dob !== undefined &&
-      animal.costing_profile_id &&
       String(dto.dob).slice(0, 10) !== String(animal.dob ?? '').slice(0, 10)
     ) {
       const start = await this.bioCosting.startForNewBirthDate(
@@ -1601,6 +1616,7 @@ export class AnimalService {
     dto: DisposeAnimalDto,
     tenantId: string,
     userPayload?: any,
+    opts?: { conversion?: boolean },
   ) {
     return withTenantTransaction(this.cls, async () => {
       // Treatment posting locks this same animal after its batch. A death posts
@@ -1644,6 +1660,17 @@ export class AnimalService {
         );
       }
 
+      // TDD row 11: "Culled breeding animal: FA to Inventory conversion in NAVFarm first. Finance approval required." A conversion is the only way a
+      // costed breeding animal is culled, and the only caller of CONVERTED (FaConversionService, after Finance has approved).
+      if (dto.disposal_type === 'CONVERTED' && !opts?.conversion) {
+        throw new BadRequestException('An animal becomes inventory only through an approved FA to Inventory Conversion.');
+      }
+      if (dto.disposal_type === 'CULLED' && animal.costing_start_date) {
+        throw new BadRequestException(
+          `${animal.animal_code} is a costed breeding asset: a cull converts her to inventory. Raise an FA to Inventory Conversion request; Finance approves it and posts it.`,
+        );
+      }
+
       if (dto.disposal_type === 'SLAUGHTERED') {
         await this.assertWithdrawalPeriodsElapsed(id, dto.disposal_date);
       }
@@ -1677,6 +1704,9 @@ export class AnimalService {
           throw new BadRequestException(
             `Reason '${reason.reason_name}' is category ${reason.category}, not MORTALITY — a DIED disposal needs a mortality reason.`,
           );
+        }
+        if (dto.disposal_type === 'DIED') {
+          assertDeathNotes(reason.reason_name, [dto.notes]);
         }
         if (dto.disposal_type === 'CULLED' && reason.category !== 'CULL') {
           throw new BadRequestException(
@@ -1715,6 +1745,9 @@ export class AnimalService {
           );
       }
 
+      // TDD row 10: the weight at death is mandatory for a costed breeding asset, whichever way the death is posted.
+      if (dto.disposal_type === 'DIED') assertDeathWeight(animal, dto.exit_weight_kg);
+
       // A death inside an ACTIVE batch is the batch's mortality posting — the same
       // one data entry and the Mortality panel use — so the batch count, cost
       // write-off, stage headcount, movement log and register flip all happen
@@ -1736,7 +1769,7 @@ export class AnimalService {
               uom: 'HEAD',
               animal_id: id,
               remarks: dto.notes,
-              mortality_detail: { reason_id: dto.disposal_reason_id },
+              mortality_detail: { reason_id: dto.disposal_reason_id, weight_kg: dto.exit_weight_kg },
             } as any,
             tenantId,
             userPayload,
@@ -1989,7 +2022,9 @@ export class AnimalService {
     userPayload?: { userId?: string },
   ) {
     const how = dto.disposal_type;
-    const sells = how === 'SOLD' || how === 'CULLED' || how === 'SLAUGHTERED';
+    const sells = how === 'SOLD' || how === 'CULLED' || how === 'SLAUGHTERED' || how === 'CONVERTED';
+    // What comes in against the asset: for a sale, a receivable; for a conversion, the animal as inventory at her market value.
+    const proceedsType = how === 'CONVERTED' ? 'BIO_FA_CONVERSION' : 'BIO_SALE_PROCEEDS';
     if (!sells && how !== 'DIED') return;
     const book = Math.max(0, bookValue ?? 0);
     const proceeds = sells ? Math.max(0, Number(dto.disposal_value ?? 0)) : 0;
@@ -2003,7 +2038,7 @@ export class AnimalService {
     const needed = sells
       ? [
           'BIO_DISPOSAL_SOLD',
-          ...(proceeds >= 0.005 ? ['BIO_SALE_PROCEEDS'] : []),
+          ...(proceeds >= 0.005 ? [proceedsType] : []),
         ]
       : [mortalityType];
     for (const type of needed) {
@@ -2065,9 +2100,9 @@ export class AnimalService {
     }
     if (proceeds >= 0.005)
       await post(
-        'BIO_SALE_PROCEEDS',
+        proceedsType,
         proceeds,
-        `Sale proceeds (${how.toLowerCase()})`,
+        how === 'CONVERTED' ? 'Converted to inventory at market value' : `Sale proceeds (${how.toLowerCase()})`,
         false,
         'CREDIT',
       );
@@ -2663,7 +2698,8 @@ export class AnimalService {
         .orderBy(schema.bioAssetLedger.posting_date)
     ).map((entry) => ({ ...entry, event: bioEventOf(entry) }));
 
-    if (!animal.disposal_reason_id) return entries;
+    const withJournals = await this.withJournals([...entries, ...(await this.expensedPostings(animal))]);
+    if (!animal.disposal_reason_id) return withJournals;
 
     const [reason] = await this.db
       .select({
@@ -2673,9 +2709,9 @@ export class AnimalService {
       .from(schema.reasonMaster)
       .where(eq(schema.reasonMaster.reason_id, animal.disposal_reason_id))
       .limit(1);
-    if (!reason) return entries;
+    if (!reason) return withJournals;
 
-    return entries.map((entry) =>
+    return withJournals.map((entry) =>
       ['MORTALITY', 'TRANSFORMATION'].includes(bioEventOf(entry) ?? '')
         ? {
             ...entry,
@@ -2684,6 +2720,111 @@ export class AnimalService {
           }
         : entry,
     );
+  }
+
+  /**
+   * The feed and overhead charged to an animal from her costing start: expensed, so the ledger holds no row for them (they add nothing to her book value), but they are
+   * postings on her all the same, each with its journal. Shown beside the ledger rows, marked `expensed`, and left out of her net. Read from the batch's transactions,
+   * reversed ones left out.
+   */
+  private async expensedPostings(animal: { animal_id: string; item_id: string; costing_start_date?: unknown }) {
+    if (!animal.costing_start_date) return [];
+    const T = schema.batchTransaction;
+    const rows = await this.db
+      .select({
+        transaction_id: T.transaction_id,
+        date: T.transaction_date,
+        type: T.transaction_type,
+        quantity: T.quantity,
+        uom: T.uom,
+        rate: T.rate,
+        amount: T.amount,
+        item_code: schema.itemMaster.item_code,
+        item_name: schema.itemMaster.item_name,
+        batch_no: schema.batchHeader.batch_no,
+      })
+      .from(T)
+      .innerJoin(schema.batchHeader, eq(schema.batchHeader.batch_id, T.batch_id))
+      .leftJoin(schema.itemMaster, eq(schema.itemMaster.item_id, T.item_id))
+      .where(
+        and(
+          eq(T.animal_id, animal.animal_id),
+          isNull(T.reversed_at),
+          inArray(T.transaction_type, ['CONSUMPTION', 'OVERHEAD']),
+          gte(T.transaction_date, String(animal.costing_start_date).slice(0, 10)),
+        ),
+      )
+      .orderBy(T.transaction_date);
+    return rows.map((r) => ({
+      entry_id: `tx:${r.transaction_id}`,
+      posting_date: r.date,
+      entry_type: 'NEGATIVE',
+      transaction_type: r.type,
+      document_type: 'BATCH',
+      document_no: r.batch_no,
+      run_id: null as string | null,
+      bio_asset_item_id: animal.item_id,
+      event: r.type === 'OVERHEAD' ? 'EXPENSED_OVERHEAD' : 'EXPENSED_CONSUMPTION',
+      expensed: true,
+      quantity: r.quantity,
+      uom: r.uom,
+      cost_amount_each_unit: r.rate,
+      cost_amount: String(Math.abs(Number(r.amount ?? 0))),
+      item_code: r.item_code,
+      item_name: r.item_name,
+    }));
+  }
+
+  /** Each ledger row with the journal it was posted with (`journal_id`, `journal_no`), or nulls where no journal was written. */
+  private async withJournals<T extends { entry_id: string; document_no: string | null; run_id: string | null; posting_date: unknown; cost_amount: unknown; bio_asset_item_id: string }>(
+    entries: T[],
+  ) {
+    const runIds = [...new Set(entries.map((e) => e.run_id).filter((v): v is string => !!v))];
+    const runNos = new Map<string, string>(
+      runIds.length
+        ? (
+            await this.db
+              .select({ run_id: schema.bioCostingRun.run_id, run_no: schema.bioCostingRun.run_no })
+              .from(schema.bioCostingRun)
+              .where(inArray(schema.bioCostingRun.run_id, runIds))
+          ).map((r) => [r.run_id, r.run_no] as [string, string])
+        : [],
+    );
+    const documents = [...new Set([...entries.filter((e) => !e.run_id).map((e) => e.document_no), ...runNos.values()].filter((v): v is string => !!v))];
+    if (documents.length === 0) return entries.map((e) => ({ ...e, journal_id: null as string | null, journal_no: null as string | null }));
+
+    const journals = await this.db
+      .select({
+        journal_id: schema.journalHeader.journal_id,
+        journal_no: schema.journalHeader.journal_no,
+        posting_date: schema.journalHeader.posting_date,
+        source_document_no: schema.journalHeader.source_document_no,
+      })
+      .from(schema.journalHeader)
+      .where(and(inArray(schema.journalHeader.source_document_no, documents), isNull(schema.journalHeader.deleted_at)));
+    const lines = journals.length
+      ? await this.db
+          .select({ journal_id: schema.journalLine.journal_id, gl_account_id: schema.journalLine.gl_account_id, debit: schema.journalLine.debit_amount })
+          .from(schema.journalLine)
+          .where(inArray(schema.journalLine.journal_id, journals.map((j) => j.journal_id)))
+      : [];
+    const itemIds = [...new Set(entries.map((e) => e.bio_asset_item_id))];
+    const accounts = itemIds.length
+      ? await this.db
+          .select({ item_id: schema.itemMaster.item_id, gl_id: schema.itemMaster.bio_acquisition_gl_id })
+          .from(schema.itemMaster)
+          .where(inArray(schema.itemMaster.item_id, itemIds))
+      : [];
+    const links = linkLedgerJournals(
+      entries,
+      journals.map((j) => ({
+        ...j,
+        debits: lines.filter((l) => l.journal_id === j.journal_id && Number(l.debit) > 0).map((l) => ({ gl_account_id: l.gl_account_id, amount: Number(l.debit) })),
+      })),
+      runNos,
+      new Map(accounts.map((a) => [a.item_id, a.gl_id])),
+    );
+    return entries.map((e) => ({ ...e, journal_id: links.get(e.entry_id)?.journal_id ?? null, journal_no: links.get(e.entry_id)?.journal_no ?? null }));
   }
 
   /**

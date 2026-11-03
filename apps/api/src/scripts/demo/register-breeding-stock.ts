@@ -55,7 +55,7 @@ const ANIMAL_FACTS: Record<AnimalKind, { gender: 'F' | 'M'; itemCode: string; ba
 /**
  * A second lot of breeding stock bought beside the local herd (bio-asset costing): same farm, same sheds and stages, but its own
  * purchase receipt, ear tags and Animal Wise batch, an entry type of its own and its own prices and ages. The imported lot is what
- * the costing profiles' amortisation rules apply to; the local herd takes the fair-value ones.
+ * the items' costing terms apply to, as they do to the local herd (local animals are amortised too).
  */
 export interface StockVariant {
   /** Names the lot in the receipt reference, lot numbers, ear tags and batch reference. */

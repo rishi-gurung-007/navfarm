@@ -21,7 +21,6 @@ import {
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { api } from '@/services/api-client';
-import { getStoredUser, hasPermission } from '@/hooks/useAuth';
 
 type Row = Record<string, any>;
 
@@ -31,6 +30,7 @@ interface AnimalDetailsModalProps {
   onOpenStageTransition?: (animal: Row) => void;
   onOpenDispose?: (animal: Row) => void;
   onOpenOutOfProduction?: (animal: Row) => void;
+  onOpenConversion?: (animal: Row) => void;
 }
 
 type TabKey =
@@ -56,6 +56,7 @@ import {
   ConsumptionSummary,
   DeathRecord,
   SemenLots,
+  ParityExpense,
 } from './animal-card-activity';
 import { AnimalLedgerPostings } from './animal-ledger-postings';
 import { formatQuantity } from '@/lib/utils';
@@ -105,64 +106,9 @@ export default function AnimalDetailsModal({
   onOpenStageTransition,
   onOpenDispose,
   onOpenOutOfProduction,
+  onOpenConversion,
 }: AnimalDetailsModalProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
-
-  // Her own residual (an override of the company's setting), edited in place on the Costing tab.
-  const canEditResidual = hasPermission(
-    getStoredUser(),
-    'PIGGERY',
-    'ANIMAL',
-    'can_edit',
-  );
-  const [residualEdit, setResidualEdit] = useState<{
-    open: boolean;
-    value: string;
-    reason: string;
-    saving: boolean;
-    error: string;
-  }>({ open: false, value: '', reason: '', saving: false, error: '' });
-  const saveResidual = async (clear: boolean) => {
-    if (!animalId) return;
-    if (!residualEdit.reason.trim()) {
-      setResidualEdit((r) => ({
-        ...r,
-        error: 'Give a reason: it is kept in the audit log.',
-      }));
-      return;
-    }
-    if (
-      !clear &&
-      !(Number(residualEdit.value) >= 0 && residualEdit.value !== '')
-    ) {
-      setResidualEdit((r) => ({
-        ...r,
-        error: 'Enter the residual as 0 or more.',
-      }));
-      return;
-    }
-    setResidualEdit((r) => ({ ...r, saving: true, error: '' }));
-    try {
-      await api.put(`/bio-costing/animals/${animalId}/residual`, {
-        residual_value: clear ? null : Number(residualEdit.value),
-        reason: residualEdit.reason.trim(),
-      });
-      setAnimal(unwrap<Row>(await api.get(`/animal/${animalId}`)));
-      setResidualEdit({
-        open: false,
-        value: '',
-        reason: '',
-        saving: false,
-        error: '',
-      });
-    } catch (e: any) {
-      setResidualEdit((r) => ({
-        ...r,
-        saving: false,
-        error: e?.message || 'Could not save the residual.',
-      }));
-    }
-  };
 
   // Animal Register record
   const [animal, setAnimal] = useState<Row | null>(null);
@@ -182,6 +128,9 @@ export default function AnimalDetailsModal({
 
   // What the work done on the animal shows: recorded weights, consumption, death record, a boar's semen.
   const [activity, setActivity] = useState<Row | null>(null);
+  // A sow's cost parity by parity, for the Costing tab.
+  const [parityExpense, setParityExpense] = useState<Row | null>(null);
+  const [loadingParityExpense, setLoadingParityExpense] = useState(false);
   // The append-only movement log — the one source of the animal's moves (assignments, transfers, stage changes, death).
   const [movementLog, setMovementLog] = useState<Row[]>([]);
 
@@ -195,6 +144,7 @@ export default function AnimalDetailsModal({
       setMedications([]);
       setLedgerEntries([]);
       setActivity(null);
+      setParityExpense(null);
       setMovementLog([]);
       setActiveTab('overview');
       return;
@@ -266,6 +216,18 @@ export default function AnimalDetailsModal({
       })
       .catch(() => {
         if (!isCancelled) setActivity(null);
+      });
+    setLoadingParityExpense(true);
+    api
+      .get(`/animal/${animalId}/parity-expense`)
+      .then((res) => {
+        if (!isCancelled) setParityExpense(unwrap<Row>(res));
+      })
+      .catch(() => {
+        if (!isCancelled) setParityExpense(null);
+      })
+      .finally(() => {
+        if (!isCancelled) setLoadingParityExpense(false);
       });
     api
       .get(`/animal/${animalId}/movement-log`)
@@ -658,6 +620,21 @@ export default function AnimalDetailsModal({
                 className="gap-1.5 text-xs font-semibold"
               >
                 Out of Production
+              </Button>
+            )}
+            {onOpenConversion && animal && animal.is_active && animal.costing_start_date && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!animal.out_of_production_date}
+                title={animal.out_of_production_date ? undefined : 'Record her out-of-production date first'}
+                onClick={() => {
+                  onClose();
+                  onOpenConversion(animal);
+                }}
+                className="gap-1.5 text-xs font-semibold"
+              >
+                Convert to Inventory
               </Button>
             )}
             {onOpenDispose && animal && (
@@ -1825,113 +1802,14 @@ export default function AnimalDetailsModal({
                         Residual Value
                       </span>
                       <span className="font-mono text-[var(--text-primary)]">
-                        {formatMoney(
-                          animal?.residual_effective ?? animal?.residual_value,
-                        )}
+                        {formatMoney(animal?.residual_effective)}
                       </span>
                       {animal?.residual_source && (
                         <span className="block text-[10px] text-[var(--text-secondary)]">
-                          {animal.residual_source === 'ANIMAL'
-                            ? 'Her own residual'
-                            : animal.residual_source === 'COMPANY'
-                              ? 'Company setting'
-                              : 'Profile (no company setting yet)'}
+                          {animal.residual_source === 'ITEM'
+                            ? 'From her item'
+                            : 'No item costs her'}
                         </span>
-                      )}
-                      {canEditResidual && !residualEdit.open && (
-                        <button
-                          type="button"
-                          className="mt-1 text-[10px] font-semibold text-[var(--accent)] underline"
-                          onClick={() =>
-                            setResidualEdit((r) => ({
-                              ...r,
-                              open: true,
-                              value:
-                                animal?.residual_source === 'ANIMAL'
-                                  ? String(Number(animal?.residual_value))
-                                  : '',
-                            }))
-                          }
-                        >
-                          Override for this animal
-                        </button>
-                      )}
-                      {residualEdit.open && (
-                        <div className="mt-2 space-y-1.5">
-                          <input
-                            aria-label="Her residual"
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            className="nf-input h-8 w-full text-xs"
-                            placeholder="Residual"
-                            value={residualEdit.value}
-                            onChange={(e) =>
-                              setResidualEdit((r) => ({
-                                ...r,
-                                value: e.target.value,
-                                error: '',
-                              }))
-                            }
-                          />
-                          <input
-                            aria-label="Reason"
-                            className="nf-input h-8 w-full text-xs"
-                            placeholder="Reason (audit log)"
-                            maxLength={300}
-                            value={residualEdit.reason}
-                            onChange={(e) =>
-                              setResidualEdit((r) => ({
-                                ...r,
-                                reason: e.target.value,
-                                error: '',
-                              }))
-                            }
-                          />
-                          {residualEdit.error && (
-                            <span
-                              role="alert"
-                              className="block text-[10px] text-[var(--danger)]"
-                            >
-                              {residualEdit.error}
-                            </span>
-                          )}
-                          <div className="flex flex-wrap gap-1.5">
-                            <Button
-                              size="sm"
-                              onClick={() => saveResidual(false)}
-                              disabled={residualEdit.saving}
-                            >
-                              Save
-                            </Button>
-                            {animal?.residual_source === 'ANIMAL' && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => saveResidual(true)}
-                                disabled={residualEdit.saving}
-                              >
-                                Use company setting
-                              </Button>
-                            )}
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() =>
-                                setResidualEdit({
-                                  open: false,
-                                  value: '',
-                                  reason: '',
-                                  saving: false,
-                                  error: '',
-                                })
-                              }
-                              disabled={residualEdit.saving}
-                            >
-                              Cancel
-                            </Button>
-                          </div>
-                        </div>
                       )}
                     </div>
                     <div>
@@ -1986,12 +1864,21 @@ export default function AnimalDetailsModal({
                 <AnimalLedgerPostings
                   entries={ledgerEntries}
                   loading={loadingLedger}
+                  animalCode={animal?.animal_code ?? ''}
                   format={{
                     date: formatDate,
                     money: formatMoney,
                     quantity: formatQuantity,
                   }}
                 />
+
+                {/* A sow's cost, parity by parity: what she ate and was dosed with, overhead and amortisation, in each parity's window. */}
+                {!isMale && (
+                  <ParityExpense
+                    data={parityExpense}
+                    loading={loadingParityExpense}
+                  />
+                )}
 
                 {/* What she ate. Feed and overhead before her costing start are capitalised into the book value (rows above);
                     from the start they are expensed, so they are not postings here but still belong to her cost. */}

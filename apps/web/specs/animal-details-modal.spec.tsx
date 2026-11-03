@@ -313,7 +313,7 @@ describe('AnimalDetailsModal', () => {
 
   it('shows the residual in force and where it comes from, and the latest month\'s charge', async () => {
     (api.get as jest.Mock).mockImplementation((url: string) => {
-      if (url === '/animal/animal-1') return Promise.resolve({ ...mockAnimal, residual_effective: 307.5, residual_source: 'COMPANY', amortisation_monthly: '19.8603', latest_amortisation_date: '2026-03-31' });
+      if (url === '/animal/animal-1') return Promise.resolve({ ...mockAnimal, residual_effective: 307.5, residual_source: 'ITEM', amortisation_monthly: '19.8603', latest_amortisation_date: '2026-03-31' });
       if (url === '/animal/animal-1/bio-asset-ledger') return Promise.resolve(mockLedger);
       return Promise.resolve([]);
     });
@@ -321,28 +321,24 @@ describe('AnimalDetailsModal', () => {
     await waitFor(() => expect(screen.getAllByText('DEMO-POR100-SOW-01').length).toBeGreaterThan(0));
     fireEvent.click(screen.getByText('Costing & Valuation'));
     expect(await screen.findByText(/307\.50/)).toBeTruthy();
-    expect(screen.getByText('Company setting')).toBeTruthy();
+    expect(screen.getByText('From her item')).toBeTruthy();
     expect(screen.getByText(/Latest charge, /)).toBeTruthy();
   });
 
-  it('gives an animal her own residual only with a reason, and sends both', async () => {
+  it('has no way to give one animal a residual of her own: the residual is the item\'s', async () => {
     (api.get as jest.Mock).mockImplementation((url: string) => {
-      if (url === '/animal/animal-1') return Promise.resolve({ ...mockAnimal, residual_effective: 307.5, residual_source: 'COMPANY' });
+      if (url === '/animal/animal-1') return Promise.resolve({ ...mockAnimal, residual_effective: 307.5, residual_source: 'ITEM', residual_value: '412.3400' });
       if (url === '/animal/animal-1/bio-asset-ledger') return Promise.resolve(mockLedger);
       return Promise.resolve([]);
     });
-    (api.put as jest.Mock).mockResolvedValue({ data: { residual: 250, source: 'ANIMAL' } });
     render(<AnimalDetailsModal animalId="animal-1" onClose={jest.fn()} />);
     await waitFor(() => expect(screen.getAllByText('DEMO-POR100-SOW-01').length).toBeGreaterThan(0));
     fireEvent.click(screen.getByText('Costing & Valuation'));
-    fireEvent.click(await screen.findByText('Override for this animal'));
-    fireEvent.change(screen.getByLabelText('Her residual'), { target: { value: '250' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByRole('alert')).toBeTruthy(); // no reason yet: nothing sent
+    expect(await screen.findByText(/307\.50/)).toBeTruthy(); // the item's figure, not the 412.34 once stored on her
+    expect(screen.queryByText(/412\.34/)).toBeNull();
+    expect(screen.queryByText('Override for this animal')).toBeNull();
+    expect(screen.queryByLabelText('Her residual')).toBeNull();
     expect(api.put).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'Heavier line, weighed at arrival' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(api.put).toHaveBeenCalledWith('/bio-costing/animals/animal-1/residual', { residual_value: 250, reason: 'Heavier line, weighed at arrival' }));
   });
 
   it('shows the cost of a ledger row under the API\'s own column names (unit cost, amount, document)', async () => {

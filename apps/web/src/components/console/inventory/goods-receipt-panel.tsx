@@ -466,6 +466,8 @@ export default function GoodsReceiptPanel() {
   const { formatMoney } = useCompanyCurrency();
 
   const [viewing, setViewing] = useState<Row | null>(null);
+  // A receipt that bought animals says, per line, how many are registered; the column shows only then.
+  const hasAnimalLines = (viewing?.lines || []).some((l: Row) => l.animals_received != null);
   const [posting, setPosting] = useState(false);
   const requestedRecordId =
     typeof window === 'undefined'
@@ -1618,6 +1620,11 @@ export default function GoodsReceiptPanel() {
                     <TableHead className="h-auto px-3 py-2 min-w-[220px]">
                       {t('grpColTracking')}
                     </TableHead>
+                    {hasAnimalLines && (
+                      <TableHead className="h-auto px-3 py-2 w-40 min-w-[140px]">
+                        {t('grpColRegistered')}
+                      </TableHead>
+                    )}
                   </tr>
                 </TableHeader>
                 <TableBody>
@@ -1681,6 +1688,24 @@ export default function GoodsReceiptPanel() {
                           <span style={S.muted}>{NA}</span>
                         )}
                       </TableCell>
+                      {hasAnimalLines && (
+                        <TableCell className="px-3 py-2 text-xs" style={S.primary}>
+                          {l.animals_received == null ? (
+                            <span style={S.muted}>{NA}</span>
+                          ) : l.animals_awaiting_registration > 0 ? (
+                            <span style={{ color: 'var(--warning)' }}>
+                              {t('grpAwaitingRegistration', {
+                                done: l.animals_received - l.animals_awaiting_registration,
+                                total: l.animals_received,
+                              })}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--success)' }}>
+                              {t('grpAllRegistered', { total: l.animals_received })}
+                            </span>
+                          )}
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>

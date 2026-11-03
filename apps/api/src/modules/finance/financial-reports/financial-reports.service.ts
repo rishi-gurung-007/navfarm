@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, lte, between, isNull, sql, inArray, or } from 'drizzle-orm';
+import { eq, and, lte, between, isNull, isNotNull, sql, inArray, or } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { animalOnFarm, animalScopeConditions, batchOnFarm, batchScopeConditions, farmScope, FarmScope } from '../../../common/farm-scope';
@@ -351,8 +351,16 @@ export class FinancialReportsService {
         scope.lobId ?? undefined,
       );
 
+      // Each costed item's own acquisition account (the sheet's "GP-Imp-F Acquisition Cost" and the rest): an animal's cost, capitalised feed and fair value
+      // movement are posted there, so leaving them out reads as a variance as large as the herd.
+      const itemAcquisitionIds = new Set(
+        (await this.db.select({ id: schema.itemMaster.bio_acquisition_gl_id }).from(schema.itemMaster)
+          .where(and(eq(schema.itemMaster.company_id, companyId), eq(schema.itemMaster.is_biological_asset, true), isNotNull(schema.itemMaster.bio_acquisition_gl_id))))
+          .map((r) => r.id as string),
+      );
       // The asset accounts and the accumulated amortisation deducted from them: the ledger's carrying value is net of the amortisation.
       const bioGlAccounts = glRows.filter((r) =>
+        itemAcquisitionIds.has(r.gl_account_id) ||
         r.account_code.startsWith('1050') ||
         r.account_code.startsWith('1060') ||
         r.account_code.startsWith('1065') ||
@@ -376,7 +384,7 @@ export class FinancialReportsService {
       };
     }
 
-    // Bio-asset costing, Phase 6: the same ledger split by costing profile, and each profile's amortisation and fair-value movement
+    // Bio-asset costing, Phase 6: the same ledger split by costed item, and each item's amortisation and fair-value movement
     // tied to the GL accounts it posts to (the journal lines the trial balance reads).
     const { byProfile, costingTieOut } = await this.bioCostingBreakdown(tenantId, companyId, conditions, dateFrom, dateTo, scope);
 
@@ -406,24 +414,35 @@ export class FinancialReportsService {
   }
 
   /**
-   * The roll-forward by costing profile, and the tie-out of the run postings to the GL. The ledger side of each row is built from the
+   * The roll-forward by costed item, and the tie-out of the run postings to the GL. The ledger side of each row is built from the
    * ledger alone; the GL side from posted journal lines of the costing runs and the exits. They are independent, so a difference means
    * something real: a death whose amortisation was never cleared, a run journal reversed on one side only.
    */
   private async bioCostingBreakdown(tenantId: string, companyId: string, conditions: any[], dateFrom: string, dateTo: string, scope: FarmScope) {
-    const L = schema.bioAssetLedger, A = schema.animalRegister, P = schema.bioCostingProfile;
+    const L = schema.bioAssetLedger, A = schema.animalRegister, I = schema.itemMaster;
     const ledgerRows = await this.db
       .select({
         entry_type: L.entry_type, transaction_type: L.transaction_type, document_type: L.document_type, posting_date: L.posting_date, amount: L.cost_amount, run_id: L.run_id, animal_id: L.animal_id,
-        profile_code: P.profile_code, expense_gl: P.amort_expense_gl_id, accum_gl: P.accum_amort_gl_id, fv_gl: P.fv_gain_loss_gl_id,
+        item_method: I.bio_costing_method, item_code: I.item_code, expense_gl: I.bio_amort_expense_gl_id, accum_gl: I.bio_accum_amort_gl_id, fv_gl: I.bio_fv_gain_loss_gl_id,
         died: sql<number>`(${A.is_active} = 0 AND ${A.disposal_type} = 'DIED' AND ${A.disposal_date} <= ${dateTo})`,
       })
       .from(L)
       .leftJoin(A, eq(A.animal_id, L.animal_id))
-      .leftJoin(P, eq(P.profile_id, A.costing_profile_id))
+      .leftJoin(I, eq(I.item_id, A.item_id))
       .where(and(...conditions));
-    // What each row records, worked out once from its codes.
-    const rows = ledgerRows.map((r) => ({ ...r, event: bioEventOf(r) }));
+    // What each row records, worked out once from its codes. An animal whose item has costing terms is grouped under the item (her accounts are the item's);
+    // any other row (an animal no item costs, or batch-level cost) has none. The field is still called profile_code, for the screens that read it.
+    const rows = ledgerRows.map((r) => {
+      const costed = !!r.item_method;
+      return {
+        ...r,
+        profile_code: costed ? r.item_code : null,
+        expense_gl: costed ? r.expense_gl : null,
+        accum_gl: costed ? r.accum_gl : null,
+        fv_gl: costed ? r.fv_gl : null,
+        event: bioEventOf(r),
+      };
+    });
 
     const facts: LedgerFact[] = rows.map((r) => ({
       profile_code: r.profile_code, has_animal: !!r.animal_id, event: r.event, posting_date: r.posting_date, amount: Number(r.amount) || 0,

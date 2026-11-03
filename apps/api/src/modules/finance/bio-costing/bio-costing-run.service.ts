@@ -15,12 +15,13 @@ import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-
 import {
   amortisationLine, birthDate, daysBetween, fairValueLine, periodFor, periodOfKey, pickRate, runActiveKey, type AnimalFacts, type Period, type RunLine,
 } from './bio-costing.engine';
-import { REQUIRED_GL, resolveResidual, type ProfileTerms } from './bio-costing.rules';
-import { BioCostingResidualService } from './bio-costing-residual.service';
+import { REQUIRED_GL, resolveResidual } from './bio-costing.rules';
+import { BioCostingSubjectService } from './bio-costing-subject.service';
+import { itemHasCostingTerms, type CostingSubject } from './bio-costing-subject';
+import { runsOfItem, runsSharingAnimalsWith } from './bio-costing-history';
 import type { CalculateBatchBioCostingRunDto, CalculateBioCostingRunDto, QueryBioCostingRunDto } from './bio-costing-run.dto';
 import { bioCodes, bioEventCondition, reverseBioCodes } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
-type Profile = typeof schema.bioCostingProfile.$inferSelect;
 type Run = typeof schema.bioCostingRun.$inferSelect;
 const today = () => new Date().toISOString().slice(0, 10);
 const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
@@ -39,8 +40,7 @@ interface BuiltLine extends RunLine { animal: Candidate }
 
 /**
  * The bio-asset costing run: Calculate (a preview that posts nothing and can be repeated), Post (one ledger row per charged animal
- * and one journal, reconciled before it commits) and Reverse (the exact mirror). One run per profile and period; one charge per
- * animal, method and period, enforced by unique keys in the database as well as here.
+ * and one journal, reconciled before it commits) and Reverse (the exact mirror). One run per item and period; one charge per animal, method and period, enforced by unique keys in the database as well as here.
  */
 @Injectable()
 export class BioCostingRunService {
@@ -50,7 +50,7 @@ export class BioCostingRunService {
     private readonly journals: JournalService,
     private readonly gl: GlPostingService,
     private readonly animalBookValue: AnimalBookValueService,
-    private readonly residuals: BioCostingResidualService,
+    private readonly subjects: BioCostingSubjectService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -59,12 +59,15 @@ export class BioCostingRunService {
     return db;
   }
 
-  private async loadProfile(id: string, tenantId: string): Promise<Profile> {
-    const [p] = await this.db.select().from(schema.bioCostingProfile)
-      .where(and(eq(schema.bioCostingProfile.profile_id, id), eq(schema.bioCostingProfile.tenant_id, tenantId))).limit(1);
-    if (!p) throw new NotFoundException('Costing profile not found.');
-    assertCompanyInScope(farmScope(this.cls), p.company_id);
-    return p;
+  /** What a new run is made for: the item named by the caller. */
+  private async loadSubject(dto: { item_id?: string }, tenantId: string): Promise<CostingSubject> {
+    if (dto.item_id) return this.subjects.loadItem(dto.item_id, tenantId);
+    throw new BadRequestException('Name the item to run.');
+  }
+
+  /** The runs that say a later period is already posted: the item's own, and the old runs a costing profile made that charged its animals. */
+  private ownRuns(subject: { id: string }) {
+    return runsOfItem(subject.id);
   }
 
   private async loadRun(id: string, tenantId: string): Promise<Run> {
@@ -85,13 +88,13 @@ export class BioCostingRunService {
   }
 
   /** The period to run, and the controls that depend on it alone: it must have ended (V4) and lie in an open reporting period (V5). */
-  private resolvePeriod(profile: Profile, dto: Pick<CalculateBioCostingRunDto, 'period_date' | 'period_key'>): Period {
+  private resolvePeriod(subject: CostingSubject, dto: Pick<CalculateBioCostingRunDto, 'period_date' | 'period_key'>): Period {
     let period: Period | null = null;
     if (dto.period_key) {
-      period = periodOfKey(profile.run_frequency, dto.period_key);
-      if (!period) throw new BadRequestException(`'${dto.period_key}' is not a ${profile.run_frequency.toLowerCase()} period (expected e.g. 2026-10, 2026-W43, 2026-Q4 or 2026).`);
+      period = periodOfKey(subject.run_frequency, dto.period_key);
+      if (!period) throw new BadRequestException(`'${dto.period_key}' is not a ${subject.run_frequency.toLowerCase()} period (expected e.g. 2026-10, 2026-W43, 2026-Q4 or 2026).`);
     } else if (dto.period_date) {
-      period = periodFor(profile.run_frequency, dto.period_date);
+      period = periodFor(subject.run_frequency, dto.period_date);
     } else {
       throw new BadRequestException('Give the period to run: a period_key or any period_date inside it.');
     }
@@ -108,31 +111,41 @@ export class BioCostingRunService {
     return batchId ? or(isNull(R.batch_id), eq(R.batch_id, batchId))! : sql`1 = 1`;
   }
 
-  private async assertRunnable(profile: Profile, period: Period, tenantId: string, ignoreRunId?: string, batchId: string | null = null) {
-    if (!['ACTIVE', 'SUPERSEDED'].includes(profile.status)) throw new BadRequestException(`Profile ${profile.profile_code} is ${profile.status}; only an active (or superseded, for the animals it still costs) profile can be run.`);
-    if (profile.tracking !== 'INDIVIDUAL') throw new BadRequestException(`Profile ${profile.profile_code} is batch-tracked (weaners, growers), and a run costs individually tracked animals only. The rule for amortising a batch's head count has not been given, so a batch is not run here; its cost stays on the batch until its head leave.`);
-    await assertPostingPeriodOpen(this.db, { tenantId, companyId: profile.company_id, postingDate: period.end });
+  private async assertRunnable(subject: CostingSubject, period: Period, tenantId: string, ignoreRunId?: string, batchId: string | null = null) {
+    if (subject.not_runnable) throw new BadRequestException(subject.not_runnable);
+    await assertPostingPeriodOpen(this.db, { tenantId, companyId: subject.company_id, postingDate: period.end });
     // Book values are carried period to period, so a period cannot be run behind a later one that is already posted.
     const [later] = await this.db.select({ no: schema.bioCostingRun.run_no, key: schema.bioCostingRun.period_key }).from(schema.bioCostingRun).where(and(
-      eq(schema.bioCostingRun.profile_id, profile.profile_id), eq(schema.bioCostingRun.status, 'POSTED'), gt(schema.bioCostingRun.period_end, period.end),
+      this.ownRuns(subject), eq(schema.bioCostingRun.status, 'POSTED'), gt(schema.bioCostingRun.period_end, period.end),
       this.sameHerd(batchId),
       ...(ignoreRunId ? [sql`${schema.bioCostingRun.run_id} <> ${ignoreRunId}`] : []))).limit(1);
     if (later) throw new BadRequestException(`Run ${later.no} for ${later.key} is already posted after ${period.key}. Reverse it first; a period cannot be run behind a later one.`);
   }
 
-  /** The lines of a run: every animal costed by the profile, her book value from her own ledger, and what the engine makes of it. */
-  private async buildLines(profile: Profile, period: Period, daysEnforced: number | null, batchId: string | null = null): Promise<BuiltLine[]> {
+  /** The lines of a run: every animal the item costs, her book value from her own ledger, and what the engine makes of it. */
+  private async buildLines(subject: CostingSubject, period: Period, daysEnforced: number | null, batchId: string | null = null): Promise<BuiltLine[]> {
     const A = schema.animalRegister;
+    const I = schema.itemMaster;
+    const ofSubject = and(eq(A.item_id, subject.id), eq(A.company_id, subject.company_id))!;
     const rows = await this.db.select({ a: A, farm_id: schema.locationMaster.farm_id }).from(A)
+      .innerJoin(I, eq(I.item_id, A.item_id))
       .leftJoin(schema.locationMaster, eq(schema.locationMaster.location_id, A.current_location_id))
-      .where(and(eq(A.costing_profile_id, profile.profile_id), ...(batchId ? [eq(A.current_batch_id, batchId)] : []), or(eq(A.is_active, true), gt(A.disposal_date, period.start))))
+      .where(and(ofSubject, ...(batchId ? [eq(A.current_batch_id, batchId)] : []), or(eq(A.is_active, true), gt(A.disposal_date, period.start))))
       .orderBy(A.animal_code);
     // An animal already charged for this period and method by another posted run (a batch run, say, beside a whole-herd one) is left out:
     // the database allows one such charge, and a run that kept her would fail at Post.
     const taken = rows.length ? await this.db.select({ k: schema.bioCostingRunLine.active_key }).from(schema.bioCostingRunLine)
-      .where(inArray(schema.bioCostingRunLine.active_key, rows.map((r) => `${r.a.animal_id}|${profile.costing_method}|${period.key}`))) : [];
+      .where(inArray(schema.bioCostingRunLine.active_key, rows.map((r) => `${r.a.animal_id}|${subject.costing_method}|${period.key}`))) : [];
     const alreadyCosted = new Set(taken.map((t) => t.k));
-    for (let i = rows.length - 1; i >= 0; i--) if (alreadyCosted.has(`${rows[i].a.animal_id}|${profile.costing_method}|${period.key}`)) rows.splice(i, 1);
+    for (let i = rows.length - 1; i >= 0; i--) if (alreadyCosted.has(`${rows[i].a.animal_id}|${subject.costing_method}|${period.key}`)) rows.splice(i, 1);
+    // Nor does a run list an animal that a posted run of this item and period already dealt with, even to skip her (a batch run beside a whole-herd one):
+    // the second run would only repeat that line, and an unposted preview of it blocks the item's next period.
+    const dealtWith = rows.length ? await this.db.selectDistinct({ id: schema.bioCostingRunLine.animal_id }).from(schema.bioCostingRunLine)
+      .innerJoin(schema.bioCostingRun, eq(schema.bioCostingRun.run_id, schema.bioCostingRunLine.run_id))
+      .where(and(eq(schema.bioCostingRun.status, 'POSTED'), eq(schema.bioCostingRun.item_id, subject.id), eq(schema.bioCostingRun.period_key, period.key),
+        inArray(schema.bioCostingRunLine.animal_id, rows.map((r) => r.a.animal_id)))) : [];
+    const dealt = new Set(dealtWith.map((d) => d.id));
+    for (let i = rows.length - 1; i >= 0; i--) if (dealt.has(rows[i].a.animal_id)) rows.splice(i, 1);
     const values = await this.animalBookValue.valuesFor(rows.map((r) => r.a.animal_id), period.end);
     // Animals whose exit (death, write-off) was written after the period: her book value as of the period's end does not show it.
     const exitIds = rows.map((r) => r.a.animal_id);
@@ -142,12 +155,9 @@ export class BioCostingRunService {
           .groupBy(schema.bioAssetLedger.animal_id)
       : [];
     const exitDateOf = new Map(exits.map((e) => [e.animal_id as string, String(e.date).slice(0, 10)]));
-    const rates = profile.costing_method === 'FAIR_VALUE'
-      ? await this.db.select().from(schema.bioCostingProfileRate).where(eq(schema.bioCostingProfileRate.profile_id, profile.profile_id))
-      : [];
-    if (profile.costing_method === 'FAIR_VALUE' && !rates.length) throw new BadRequestException(`Profile ${profile.profile_code} has no fair-value rate; add one before running it.`);
-    const terms = profile as unknown as ProfileTerms;
-    const residualSettings = profile.costing_method === 'AMORTIZATION' ? await this.residuals.settingsOf(profile.tenant_id, profile.company_id) : [];
+    const rates = subject.costing_method === 'FAIR_VALUE' ? await this.subjects.ratesOf(subject) : [];
+    if (subject.costing_method === 'FAIR_VALUE' && !rates.length) throw new BadRequestException(`Item ${subject.code} has no fair-value rate; add one before running it.`);
+    const terms = subject.terms;
 
     return rows.map(({ a, farm_id }) => {
       const v = values.get(a.animal_id);
@@ -157,10 +167,10 @@ export class BioCostingRunService {
         item_id: a.item_id, nob_id: a.nob_id, lob_id: a.lob_id, stage_id: a.current_stage_id, batch_id: a.current_batch_id, farm_id, cache_book_value: Number(a.book_value ?? 0),
       };
       let line: RunLine;
-      if (profile.costing_method === 'AMORTIZATION') {
-        // Her own residual if she has one, else the company's in force at the period's end, else (a tenant with no setting yet) the profile's.
-        const residual = resolveResidual({ animalOverride: a.residual_value, settings: residualSettings, profile: terms, gender: a.gender, onDate: period.end }).value;
-        line = amortisationLine({ profile: terms as any, animal: cand.facts, period, bookValueBefore: bv, daysEnforced, residual });
+      if (subject.costing_method === 'AMORTIZATION') {
+        // The item's residual: it is set on the item, not on the animal.
+        const residual = resolveResidual({ terms, gender: a.gender }).value;
+        line = amortisationLine({ terms, animal: cand.facts, period, bookValueBefore: bv, daysEnforced, residual });
       } else {
         const birth = birthDate(cand.facts);
         const ageWeeks = birth ? Math.floor(daysBetween(birth, period.end) / 7) : 0;
@@ -195,18 +205,22 @@ export class BioCostingRunService {
   }
 
   async calculate(dto: CalculateBioCostingRunDto, tenantId: string, userId?: string, trigger: 'MANUAL' | 'SCHEDULED' = 'MANUAL') {
-    const profile = await this.loadProfile(dto.profile_id, tenantId);
+    const subject = await this.loadSubject(dto, tenantId);
     const batchId = dto.batch_id ?? null;
-    if (batchId) await this.assertBatch(batchId, profile.company_id, tenantId);
-    const period = this.resolvePeriod(profile, dto);
-    await this.assertRunnable(profile, period, tenantId, undefined, batchId);
-    const activeKey = runActiveKey(profile.profile_id, period.key, batchId);
+    if (batchId) await this.assertBatch(batchId, subject.company_id, tenantId);
+    const period = this.resolvePeriod(subject, dto);
+    await this.assertRunnable(subject, period, tenantId, undefined, batchId);
+    const activeKey = runActiveKey(subject.id, period.key, batchId);
 
     const runId = await withTenantTransaction(this.cls, async () => {
       const [existing] = await this.db.select().from(schema.bioCostingRun).where(eq(schema.bioCostingRun.active_key, activeKey)).limit(1);
-      if (existing?.status === 'POSTED') throw new BadRequestException(`Period ${period.key} has already been run for ${profile.profile_code}${batchId ? ' in this batch' : ''} (${existing.run_no}). Reverse that run first to run it again.`);
-      const lines = await this.buildLines(profile, period, dto.days_enforced ?? null, batchId);
-      const t = this.totals(lines, profile.costing_method);
+      if (existing?.status === 'POSTED') throw new BadRequestException(`Period ${period.key} has already been run for ${subject.code}${batchId ? ' in this batch' : ''} (${existing.run_no}). Reverse that run first to run it again.`);
+      const lines = await this.buildLines(subject, period, dto.days_enforced ?? null, batchId);
+      // Nothing left to cost: a preview with no lines would only block the item's next period until someone posts it, so none is made.
+      if (!lines.length && !existing) {
+        throw new BadRequestException(`Nothing to run for ${subject.code} in ${period.key}: every animal of it is already costed by a posted run for this period, or it has no animals${batchId ? ' in this batch' : ''}.`);
+      }
+      const t = this.totals(lines, subject.costing_method);
       const values = {
         animal_count: t.animal_count, charged_count: t.charged_count, skipped_count: t.skipped_count, total_charge: t.total_charge.toString(),
         days_enforced: dto.days_enforced ?? null, description: dto.description ?? null, requested_by: userId ?? null,
@@ -217,15 +231,16 @@ export class BioCostingRunService {
         return existing.run_id;
       }
       const id = randomUUID();
-      const runNo = await this.nextRunNo(tenantId, profile.company_id);
+      const runNo = await this.nextRunNo(tenantId, subject.company_id);
       try {
         await this.db.insert(schema.bioCostingRun).values({
-          run_id: id, tenant_id: tenantId, company_id: profile.company_id, run_no: runNo, profile_id: profile.profile_id, batch_id: batchId, method: profile.costing_method,
-          frequency: profile.run_frequency, period_key: period.key, period_start: period.start, period_end: period.end, trigger, status: 'CALCULATED',
+          run_id: id, tenant_id: tenantId, company_id: subject.company_id, run_no: runNo, batch_id: batchId, method: subject.costing_method,
+          item_id: subject.id,
+          frequency: subject.run_frequency, period_key: period.key, period_start: period.start, period_end: period.end, trigger, status: 'CALCULATED',
           active_key: activeKey, ...values,
         });
       } catch (error) {
-        if (isDuplicateEntry(error)) throw new ConflictException('Another run for this profile and period was created at the same moment; try again.');
+        if (isDuplicateEntry(error)) throw new ConflictException(`Another run for ${subject.code} and this period was created at the same moment; try again.`);
         throw error;
       }
       await this.writeLines(id, lines);
@@ -241,36 +256,45 @@ export class BioCostingRunService {
   }
 
   /**
-   * The run screen's Calculate: cost one batch (or the whole herd). A batch holds animals of several costing profiles, and a profile fixes
-   * the method, life, residual and GL accounts, so one run is made for each profile the batch's animals carry, each restricted to the batch.
-   * Left without a batch, one whole-herd run is made for each active profile that has animals. A run that cannot be made does not stop
-   * the others; it is reported with its reason.
+   * The run screen's Calculate: cost one batch (or the whole herd). A batch holds animals of several items, and an item fixes the method, life, residual
+   * and GL accounts, so one run is made for each item the batch's animals belong to, each restricted to the batch. Left without a batch, one whole-herd run
+   * per item. A run that cannot be made does not stop the others; it is reported with its reason.
    */
   async calculateBatch(dto: CalculateBatchBioCostingRunDto, tenantId: string, companyId: string, userId?: string) {
     const A = schema.animalRegister;
-    const P = schema.bioCostingProfile;
+    const I = schema.itemMaster;
     if (dto.batch_id) await this.assertBatch(dto.batch_id, companyId, tenantId);
-    const profiles = await this.db.selectDistinct({ id: P.profile_id, code: P.profile_code }).from(A)
-      .innerJoin(P, eq(P.profile_id, A.costing_profile_id))
-      .where(and(eq(A.tenant_id, tenantId), eq(A.company_id, companyId), eq(A.is_active, true), inArray(P.status, ['ACTIVE', 'SUPERSEDED']),
-        ...(dto.batch_id ? [eq(A.current_batch_id, dto.batch_id)] : [])))
-      .orderBy(P.profile_code);
-    if (!profiles.length) {
-      throw new BadRequestException(dto.batch_id ? 'No animal of this batch is costed by a costing profile yet.' : 'No animal is costed by a costing profile yet.');
+    const standing = await this.db.selectDistinct({
+      item_id: I.item_id, item_code: I.item_code, is_bio: I.is_biological_asset, method: I.bio_costing_method,
+    }).from(A)
+      .innerJoin(I, eq(I.item_id, A.item_id))
+      .where(and(eq(A.tenant_id, tenantId), eq(A.company_id, companyId), eq(A.is_active, true), ...(dto.batch_id ? [eq(A.current_batch_id, dto.batch_id)] : [])));
+    const targets = standing
+      .filter((s) => itemHasCostingTerms({ is_biological_asset: s.is_bio, bio_costing_method: s.method }))
+      .filter((s) => !dto.item_id || s.item_id === dto.item_id)
+      .sort((a, b) => a.item_code.localeCompare(b.item_code));
+    if (!targets.length) {
+      throw new BadRequestException(dto.batch_id ? 'No animal of this batch belongs to an item with costing terms yet.' : 'No animal belongs to an item with costing terms yet.');
     }
     const runs: unknown[] = [];
-    const failed: Array<{ profile_code: string; error: string }> = [];
-    for (const p of profiles) {
+    const failed: Array<{ item_code: string; error: string }> = [];
+    for (const t of targets) {
       try {
         runs.push(await this.calculate({
-          profile_id: p.id, batch_id: dto.batch_id, period_date: dto.period_date, period_key: dto.period_key, days_enforced: dto.days_enforced, description: dto.description,
+          item_id: t.item_id, batch_id: dto.batch_id, period_date: dto.period_date, period_key: dto.period_key, days_enforced: dto.days_enforced, description: dto.description,
         }, tenantId, userId));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        failed.push({ profile_code: p.code, error: message });
+        failed.push({ item_code: t.item_code, error: message });
       }
     }
-    if (!runs.length) throw new BadRequestException(failed.map((f) => `${f.profile_code}: ${f.error}`).join(' '));
+    if (!runs.length) {
+      // Every item said the same thing (all already costed): say it once, not once for each item.
+      if (failed.every((f) => f.error.startsWith('Nothing to run'))) {
+        throw new BadRequestException(`Nothing to run: every animal of ${failed.map((f) => f.item_code).join(', ')} is already costed by a posted run for this period${dto.batch_id ? ' in this batch' : ''}.`);
+      }
+      throw new BadRequestException(failed.map((f) => `${f.item_code}: ${f.error}`).join(' '));
+    }
     return { runs, failed };
   }
 
@@ -279,13 +303,14 @@ export class BioCostingRunService {
    * the scheduler count its attempts so it stops retrying a period that keeps failing.
    */
   async recordFailure(
-    profile: { profile_id: string; company_id: string; costing_method: string; run_frequency: string },
+    subject: Pick<CostingSubject, 'id' | 'company_id' | 'costing_method' | 'run_frequency'>,
     period: Period, message: string, tenantId: string, trigger: 'MANUAL' | 'SCHEDULED' = 'SCHEDULED',
   ) {
-    const runNo = await this.nextRunNo(tenantId, profile.company_id);
+    const runNo = await this.nextRunNo(tenantId, subject.company_id);
     await this.db.insert(schema.bioCostingRun).values({
-      run_id: randomUUID(), tenant_id: tenantId, company_id: profile.company_id, run_no: runNo, profile_id: profile.profile_id, method: profile.costing_method,
-      frequency: profile.run_frequency, period_key: period.key, period_start: period.start, period_end: period.end, trigger, status: 'FAILED',
+      run_id: randomUUID(), tenant_id: tenantId, company_id: subject.company_id, run_no: runNo, method: subject.costing_method,
+      item_id: subject.id,
+      frequency: subject.run_frequency, period_key: period.key, period_start: period.start, period_end: period.end, trigger, status: 'FAILED',
       error_message: message.slice(0, 500),
     });
     return runNo;
@@ -295,20 +320,21 @@ export class BioCostingRunService {
     const run = await this.loadRun(runId, tenantId);
     if (run.status === 'POSTED') throw new BadRequestException(`Run ${run.run_no} is already posted.`);
     if (run.status !== 'CALCULATED') throw new BadRequestException(`Run ${run.run_no} is ${run.status} and cannot be posted; calculate it again.`);
-    const profile = await this.loadProfile(run.profile_id, tenantId);
+    const subject = await this.subjects.ofRun(run, tenantId);
+    const gl = subject.gl;
     const period = periodOfKey(run.frequency, run.period_key)!;
     if (period.end > today()) throw new BadRequestException(`Period ${period.key} has not ended yet.`);
-    await this.assertRunnable(profile, period, tenantId, run.run_id, run.batch_id);
-    const missing = (REQUIRED_GL[profile.costing_method] ?? []).filter((g) => !(profile as Record<string, unknown>)[g.column]);
-    if (missing.length) throw new BadRequestException(`Profile ${profile.profile_code} is missing GL accounts: ${missing.map((m) => m.label).join(', ')}.`);
+    await this.assertRunnable(subject, period, tenantId, run.run_id, run.batch_id);
+    const missing = (REQUIRED_GL[subject.costing_method] ?? []).filter((g) => !(gl as unknown as Record<string, unknown>)[g.column]);
+    if (missing.length) throw new BadRequestException(`Item ${subject.code} is missing GL accounts: ${missing.map((m) => m.label).join(', ')}.`);
 
     await withTenantTransaction(this.cls, async () => {
       // Re-run the arithmetic now: the numbers posted are the ones from this moment, not from the preview.
-      const lines = await this.buildLines(profile, period, run.days_enforced, run.batch_id);
+      const lines = await this.buildLines(subject, period, run.days_enforced, run.batch_id);
       await this.writeLines(run.run_id, lines);
       const rows = await this.db.select().from(schema.bioCostingRunLine).where(eq(schema.bioCostingRunLine.run_id, run.run_id));
       const byAnimal = new Map(lines.map((l) => [l.animal.facts.animal_id, l]));
-      const isAmort = profile.costing_method === 'AMORTIZATION';
+      const isAmort = subject.costing_method === 'AMORTIZATION';
 
       // one ledger row per charged animal; no batch_id on it - the batch figure and the GL hold capitalised cost only (D8)
       const entryByLine = new Map<string, string>();
@@ -340,17 +366,17 @@ export class BioCostingRunService {
         const gain = r4(g.gain), loss = r4(g.loss);
         if (isAmort) {
           if (gain > 0) journalLines.push(
-            { glAccountId: profile.amort_expense_gl_id!, debitAmount: gain, creditAmount: 0, nobId: g.nob, lobId: g.lob, description: `Amortization ${run.period_key}` },
-            { glAccountId: profile.accum_amort_gl_id!, debitAmount: 0, creditAmount: gain, nobId: g.nob, lobId: g.lob, description: `Amortization ${run.period_key}` },
+            { glAccountId: gl.amort_expense_gl_id!, debitAmount: gain, creditAmount: 0, nobId: g.nob, lobId: g.lob, description: `Amortization ${run.period_key}` },
+            { glAccountId: gl.accum_amort_gl_id!, debitAmount: 0, creditAmount: gain, nobId: g.nob, lobId: g.lob, description: `Amortization ${run.period_key}` },
           );
         } else {
           if (gain > 0) journalLines.push(
-            { glAccountId: profile.acquisition_gl_id!, debitAmount: gain, creditAmount: 0, nobId: g.nob, lobId: g.lob, description: `Fair value gain ${run.period_key}` },
-            { glAccountId: profile.fv_gain_loss_gl_id!, debitAmount: 0, creditAmount: gain, nobId: g.nob, lobId: g.lob, description: `Fair value gain ${run.period_key}` },
+            { glAccountId: gl.acquisition_gl_id!, debitAmount: gain, creditAmount: 0, nobId: g.nob, lobId: g.lob, description: `Fair value gain ${run.period_key}` },
+            { glAccountId: gl.fv_gain_loss_gl_id!, debitAmount: 0, creditAmount: gain, nobId: g.nob, lobId: g.lob, description: `Fair value gain ${run.period_key}` },
           );
           if (loss > 0) journalLines.push(
-            { glAccountId: profile.fv_gain_loss_gl_id!, debitAmount: loss, creditAmount: 0, nobId: g.nob, lobId: g.lob, description: `Fair value loss ${run.period_key}` },
-            { glAccountId: profile.acquisition_gl_id!, debitAmount: 0, creditAmount: loss, nobId: g.nob, lobId: g.lob, description: `Fair value loss ${run.period_key}` },
+            { glAccountId: gl.fv_gain_loss_gl_id!, debitAmount: loss, creditAmount: 0, nobId: g.nob, lobId: g.lob, description: `Fair value loss ${run.period_key}` },
+            { glAccountId: gl.acquisition_gl_id!, debitAmount: 0, creditAmount: loss, nobId: g.nob, lobId: g.lob, description: `Fair value loss ${run.period_key}` },
           );
         }
       }
@@ -358,7 +384,7 @@ export class BioCostingRunService {
       if (journalLines.length) {
         const journal = await this.journals.createAndPostSystemJournal({
           tenantId, companyId: run.company_id, postingDate: run.period_end, sourceDocumentType: 'BIO_COSTING_RUN', sourceDocumentNo: run.run_no,
-          description: `${isAmort ? 'Amortization' : 'Fair value'} ${run.period_key} - ${profile.profile_code}`, lines: journalLines, userId,
+          description: `${isAmort ? 'Amortization' : 'Fair value'} ${run.period_key} - ${subject.code}`, lines: journalLines, userId,
         });
         journalId = (journal as { journal_id: string }).journal_id;
       }
@@ -383,7 +409,7 @@ export class BioCostingRunService {
           throw error;
         }
       }
-      const t = this.totals(lines, profile.costing_method);
+      const t = this.totals(lines, subject.costing_method);
       await this.db.update(schema.bioCostingRun).set({
         status: 'POSTED', journal_id: journalId, posted_by: userId ?? null, posted_at: new Date().toISOString().slice(0, 19).replace('T', ' '),
         animal_count: t.animal_count, charged_count: t.charged_count, skipped_count: t.skipped_count, total_charge: t.total_charge.toString(),
@@ -398,7 +424,8 @@ export class BioCostingRunService {
     const run = await this.loadRun(runId, tenantId);
     if (run.status !== 'POSTED') throw new BadRequestException(`Run ${run.run_no} is ${run.status}; only a posted run can be reversed.`);
     const [later] = await this.db.select({ no: schema.bioCostingRun.run_no }).from(schema.bioCostingRun).where(and(
-      eq(schema.bioCostingRun.profile_id, run.profile_id), eq(schema.bioCostingRun.status, 'POSTED'), gt(schema.bioCostingRun.period_end, run.period_end),
+      run.item_id ? runsOfItem(run.item_id) : runsSharingAnimalsWith(run.run_id),
+      eq(schema.bioCostingRun.status, 'POSTED'), gt(schema.bioCostingRun.period_end, run.period_end),
       this.sameHerd(run.batch_id))).limit(1);
     if (later) throw new BadRequestException(`Run ${later.no} was posted after this one; reverse the latest run first.`);
     // An animal that has left the herd since this period had her exit written off at a value that includes this run's charge: taking
@@ -436,16 +463,39 @@ export class BioCostingRunService {
     return this.findOne(runId, tenantId);
   }
 
+  /**
+   * Each run with the code of what it was made for, so a list can name it without a second lookup: its item's, or, for a run made before items costed
+   * animals (it names no item), the items of the animals on its lines, joined.
+   */
+  private async withSubjectCodes<T extends { run_id: string; item_id: string | null }>(rows: T[]): Promise<Array<T & { subject_code: string | null }>> {
+    const itemIds = [...new Set(rows.map((r) => r.item_id).filter((x): x is string => !!x))];
+    const items = itemIds.length ? await this.db.select({ id: schema.itemMaster.item_id, code: schema.itemMaster.item_code, name: schema.itemMaster.item_name }).from(schema.itemMaster).where(inArray(schema.itemMaster.item_id, itemIds)) : [];
+    const code = new Map(items.map((x) => [x.id, x.code]));
+    const nameOf = new Map(items.map((x) => [x.id, x.name]));
+    const oldIds = rows.filter((r) => !r.item_id).map((r) => r.run_id);
+    const viaLines = oldIds.length
+      ? await this.db.selectDistinct({ run_id: schema.bioCostingRunLine.run_id, code: schema.itemMaster.item_code }).from(schema.bioCostingRunLine)
+          .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.bioCostingRunLine.animal_id))
+          .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.animalRegister.item_id))
+          .where(inArray(schema.bioCostingRunLine.run_id, oldIds))
+      : [];
+    const codesOf = new Map<string, string[]>();
+    for (const v of viaLines) codesOf.set(v.run_id, [...(codesOf.get(v.run_id) ?? []), v.code].sort());
+    return rows.map((r) => ({ ...r, subject_code: r.item_id ? code.get(r.item_id) ?? null : codesOf.get(r.run_id)?.join(', ') ?? null, subject_name: r.item_id ? nameOf.get(r.item_id) ?? null : null }));
+  }
+
   async findAll(query: QueryBioCostingRunDto, tenantId: string, companyId?: string) {
     const co = query.companyId ?? companyId;
-    return this.db.select().from(schema.bioCostingRun).where(and(
+    const found = await this.db.select().from(schema.bioCostingRun).where(and(
       eq(schema.bioCostingRun.tenant_id, tenantId), ...(co ? [eq(schema.bioCostingRun.company_id, co)] : []),
-      ...(query.profile_id ? [eq(schema.bioCostingRun.profile_id, query.profile_id)] : []), ...(query.batch_id ? [eq(schema.bioCostingRun.batch_id, query.batch_id)] : []), ...(query.status ? [eq(schema.bioCostingRun.status, query.status)] : []),
+      ...(query.item_id ? [eq(schema.bioCostingRun.item_id, query.item_id)] : []), ...(query.batch_id ? [eq(schema.bioCostingRun.batch_id, query.batch_id)] : []), ...(query.status ? [eq(schema.bioCostingRun.status, query.status)] : []),
     )).orderBy(desc(schema.bioCostingRun.created_at));
+    return this.withSubjectCodes(found);
   }
 
   async findOne(id: string, tenantId: string) {
-    const run = await this.loadRun(id, tenantId);
+    const loaded = await this.loadRun(id, tenantId);
+    const [run] = await this.withSubjectCodes([loaded]);
     const lines = await this.db.select({ line: schema.bioCostingRunLine, animal_code: schema.animalRegister.animal_code, gender: schema.animalRegister.gender })
       .from(schema.bioCostingRunLine).innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.bioCostingRunLine.animal_id))
       .where(eq(schema.bioCostingRunLine.run_id, id)).orderBy(schema.animalRegister.animal_code);

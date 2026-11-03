@@ -13,6 +13,9 @@ import { AnimalController } from '../modules/piggery/animal/animal.controller';
 import { AnimalMedicationLogController } from '../modules/piggery/animal/animal-medication-log.controller';
 import { AnimalMovementLogController } from '../modules/piggery/animal-movement-log/animal-movement-log.controller';
 import { BreedingController } from '../modules/piggery/breeding/breeding.controller';
+import { BoarSelectionController } from '../modules/piggery/breeding/boar-selection.controller';
+import { CollectionPlanController } from '../modules/piggery/breeding/collection-plan.controller';
+import { BoarConditionController } from '../modules/piggery/boar-condition/boar-condition.controller';
 import { GiltSelectionController } from '../modules/piggery/gilt-selection/gilt-selection.controller';
 import { PiggeryAnalyticsController } from '../modules/piggery/analytics/piggery-analytics.controller';
 import { FarrowingReportController } from '../modules/piggery/reports/farrowing-report.controller';
@@ -73,6 +76,9 @@ const SCOPED = {
   AnimalMedicationLogController,
   AnimalMovementLogController,
   BreedingController,
+  BoarSelectionController,
+  CollectionPlanController,
+  BoarConditionController,
   GiltSelectionController,
   PiggeryAnalyticsController,
   FarrowingReportController,
@@ -142,6 +148,14 @@ const EXEMPT: Record<string, string> = {
   'master-data/no-series/no-series.controller.ts':
     'Master data, not farm-specific.',
   'master-data/reason/reason.controller.ts': 'Master data, not farm-specific.',
+  'master-data/breeding-line/breeding-line-setup.controller.ts':
+    "Company-level AI Station master (the rules of a breeding line), like the reason and breed masters; not a farm's.",
+  'master-data/breeding-line/bcs-scale.controller.ts':
+    "Company-level AI Station master (the body condition scale of a breeding line, SOP 21); not a farm's.",
+  'master-data/breeding-line/genetic-level-band.controller.ts':
+    "Company-level AI Station master (the genetic levels of a breeding line, as bands of TSI); not a farm's.",
+  'master-data/breeding-line/semen-collector.controller.ts':
+    "Company-level AI Station master (the technicians who collect semen); not a farm's.",
   'master-data/reporting-period/reporting-period.controller.ts':
     "Company master (Reporting Period Master, D20); periods are company-wide, not a farm's.",
   'master-data/resource/resource.controller.ts':
@@ -175,8 +189,10 @@ const EXEMPT: Record<string, string> = {
     'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
   'finance/bio-costing/bio-costing-run.controller.ts':
     "Company-level finance posting (bio-asset costing runs), like journals; not a farm's.",
-  'finance/bio-costing/bio-costing-profile.controller.ts':
-    "Company-level finance setup (central bio-asset costing profiles), like the GL mappings it sits beside; not a farm's.",
+  'finance/bio-costing/bio-costing-animal.controller.ts':
+    "Company-level finance setup (an animal's residual, and dating animals' costing start), like the GL mappings it sits beside; not a farm's.",
+  'finance/bio-costing/bio-costing-item.controller.ts':
+    "Company-level finance setup (a biological item's fair-value rates, the item-level home of a costing profile's), like the GL mappings; not a farm's.",
   'finance/gl-mapping/gl-mapping.controller.ts':
     'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
   'finance/journal/journal.controller.ts':

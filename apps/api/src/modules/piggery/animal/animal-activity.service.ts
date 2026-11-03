@@ -5,8 +5,11 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { AnimalService } from './animal.service';
 import { ConsumptionRow, groupConsumption, Reading, summariseWeights } from './animal-activity';
+import { buildParityExpense, type ExpenseEvent, type ParityFacts } from './animal-parity-expense';
+import { bioEventCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 const RECENT_CONSUMPTION = 20;
+const today = () => new Date().toISOString().slice(0, 10);
 
 /**
  * What the animal card shows that comes from the work done on the animal, not from its register row: the
@@ -169,5 +172,80 @@ export class AnimalActivityService {
       mortality,
       semen_lots: semenLotsOut,
     };
+  }
+
+  /**
+   * A sow's cost, parity by parity (see animal-parity-expense.ts for the windows). Read from where the cost was posted: her feed, medicine, semen and
+   * overhead from the batch's transactions against her (reversed ones left out), her amortisation from her own bio-asset ledger, the parities from
+   * her breeding and farrowing records. Nothing is written; what the batch and the ledger say is what shows.
+   */
+  async getParityExpense(animalId: string) {
+    const animal = await this.animals.findOne(animalId);
+
+    const spent = await this.db
+      .select({
+        date: schema.batchTransaction.transaction_date,
+        type: schema.batchTransaction.transaction_type,
+        amount: schema.batchTransaction.amount,
+        item_type: schema.itemMaster.item_type,
+      })
+      .from(schema.batchTransaction)
+      .leftJoin(schema.itemMaster, eq(schema.batchTransaction.item_id, schema.itemMaster.item_id))
+      .where(and(
+        eq(schema.batchTransaction.animal_id, animalId),
+        isNull(schema.batchTransaction.reversed_at),
+        inArray(schema.batchTransaction.transaction_type, ['CONSUMPTION', 'OVERHEAD']),
+      ));
+    const events: ExpenseEvent[] = spent.map((r) => ({
+      date: String(r.date).slice(0, 10),
+      kind: r.type === 'OVERHEAD' ? 'OVERHEAD' : r.item_type === 'FEED' ? 'FEED' : 'OTHER_CONSUMPTION',
+      // A consumption or overhead is stored as a negative amount; the table shows what it cost.
+      amount: Math.abs(Number(r.amount ?? 0)),
+    }));
+
+    // Amortisation is a charge on her ledger (negative) and a reversal puts it back (positive), so the net charge is the sum, negated.
+    const charged = await this.db
+      .select({ date: schema.bioAssetLedger.posting_date, amount: sql<string>`SUM(${schema.bioAssetLedger.cost_amount})` })
+      .from(schema.bioAssetLedger)
+      .where(and(eq(schema.bioAssetLedger.animal_id, animalId), bioEventCondition(schema.bioAssetLedger, 'AMORTIZATION')))
+      .groupBy(schema.bioAssetLedger.posting_date);
+    for (const c of charged) {
+      const net = -Number(c.amount ?? 0);
+      if (net) events.push({ date: String(c.date).slice(0, 10), kind: 'AMORTISATION', amount: net });
+    }
+
+    // A parity is a service that was confirmed or has farrowed; one that failed to take is not.
+    const services = await this.db
+      .select({
+        breeding_parity: schema.breedingRecord.parity_number,
+        mating_date: schema.breedingRecord.mating_date,
+        confirmed: schema.breedingRecord.pregnancy_confirmed,
+        farrowing_date: schema.farrowingRecord.farrowing_date,
+        farrowing_parity: schema.farrowingRecord.parity_number,
+        weaning_date: schema.farrowingRecord.weaning_date,
+        piglets_born_live: schema.farrowingRecord.piglets_born_live,
+        piglets_weaned: schema.farrowingRecord.piglets_weaned,
+      })
+      .from(schema.breedingRecord)
+      .leftJoin(schema.farrowingRecord, eq(schema.farrowingRecord.breeding_id, schema.breedingRecord.breeding_id))
+      .where(eq(schema.breedingRecord.sow_animal_id, animalId))
+      .orderBy(asc(schema.breedingRecord.mating_date));
+    const parities: ParityFacts[] = services
+      .filter((s) => s.farrowing_date || s.confirmed === true)
+      .map((s) => ({
+        parity_number: Number(s.farrowing_parity ?? s.breeding_parity),
+        mating_date: String(s.mating_date).slice(0, 10),
+        farrowing_date: s.farrowing_date ? String(s.farrowing_date).slice(0, 10) : null,
+        weaning_date: s.weaning_date ? String(s.weaning_date).slice(0, 10) : null,
+        piglets_born_live: s.farrowing_date ? Number(s.piglets_born_live ?? 0) : null,
+        piglets_weaned: s.weaning_date ? Number(s.piglets_weaned ?? 0) : null,
+      }));
+
+    return buildParityExpense({
+      parities,
+      events,
+      costingStartDate: animal.costing_start_date ? String(animal.costing_start_date).slice(0, 10) : null,
+      asOf: today(),
+    });
   }
 }

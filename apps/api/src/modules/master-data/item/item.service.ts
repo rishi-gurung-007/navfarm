@@ -18,6 +18,7 @@ import {
   getTableColumns,
   count,
   sql,
+  inArray,
 } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
@@ -38,6 +39,18 @@ import {
 import { assertCodeUnchanged } from '../../../common/master-code';
 import { isFeedTypeCode } from '../../../common/feed-form';
 import { lotBalances } from '../../inventory/inventory-ledger/lot-balance';
+import { recomputeStartsForItem } from '../../finance/bio-costing/bio-costing-start';
+import {
+  BIO_COSTING_COLUMNS,
+  BIO_GL_COLUMNS,
+  changedLockedBioColumns,
+  storedBioCosting,
+  validateItemBioCosting,
+  type BioCostingTerms,
+} from './item-bio-costing.rules';
+
+/** The tab's decimal columns: drizzle writes a decimal as a string. */
+const BIO_DECIMAL_COLUMNS = new Set<string>(['bio_residual_fixed_amount', 'bio_residual_weight_kg', 'bio_residual_price_per_kg']);
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -454,6 +467,10 @@ export class ItemService {
           dto as unknown as Record<string, unknown>,
         );
 
+    const bioTerms: BioCostingTerms = { ...this.bioTermsOf(dto), is_biological_asset: dto.is_biological_asset || false };
+    this.assertBioCosting(bioTerms);
+    await this.assertBioGlAccounts(bioTerms, tenantId, companyId);
+
     const itemId = randomUUID();
     const newItem = {
       item_id: itemId,
@@ -477,6 +494,7 @@ export class ItemService {
       tracking_series_id: dto.tracking_series_id || null,
       is_biological_asset: dto.is_biological_asset || false,
       is_biological_costing_method: dto.is_biological_costing_method || null,
+      ...this.bioColumnsToWrite(bioTerms),
       is_inventoriable: dto.is_inventoriable ?? true,
       min_stock_level: dto.min_stock_level?.toString() || null,
       max_stock_level: dto.max_stock_level?.toString() || null,
@@ -893,6 +911,8 @@ export class ItemService {
     const rows = data.map((row) => ({
       ...row,
       tracking_locked: row.on_hand_qty > 0.0001 || row.open_documents > 0,
+      // The form locks Valuation Method for a biological asset (TDD: un-editable) and once the item has inventory entries.
+      valuation_locked: !!row.is_biological_asset || !!row.has_inventory,
     }));
     return { data: rows, total: Number(counted?.total ?? 0), limit, offset };
   }
@@ -1047,6 +1067,12 @@ export class ItemService {
       (dto.valuation_method || null) !== (item.valuation_method || null);
     if (!trackingChanged && !valuationChanged) return;
 
+    // TDD Item Card: "For Bio Asset = Normal Costing Method should be un-editable". The value it has when the item is (or becomes) a biological asset stays.
+    if (valuationChanged && item.is_biological_asset) {
+      throw new BadRequestException(
+        `Valuation Method cannot be changed because ${item.item_code} is a biological asset: its normal costing method is fixed. Its costing is the Bio Asset Costing tab's.`,
+      );
+    }
     if (valuationChanged && (await this.hasInventory(item.item_id))) {
       throw new BadRequestException(
         'Valuation Method cannot be changed because this item already has inventory entries. Create a new item if you need a different one.',
@@ -1075,6 +1101,61 @@ export class ItemService {
         `Tracking cannot be changed for ${item.item_code} while ${reasons.join('; and ')}.`,
       );
     }
+  }
+
+  /** The tab's terms present in a DTO or a row (a key that was not sent is left out, so "not sent" differs from "cleared"). */
+  private bioTermsOf(src: object): BioCostingTerms {
+    const from = src as Record<string, unknown>;
+    const terms: Record<string, unknown> = {};
+    for (const c of BIO_COSTING_COLUMNS) if (from[c] !== undefined) terms[c] = from[c];
+    return terms as BioCostingTerms;
+  }
+
+  private assertBioCosting(terms: BioCostingTerms): void {
+    const problems = validateItemBioCosting(terms);
+    if (problems.length) throw new BadRequestException(problems.join(' '));
+  }
+
+  /** The tab's columns as they are stored: dropped for a non-biological item, defaulted for a costed one, decimals as strings. */
+  private bioColumnsToWrite(terms: BioCostingTerms): Record<string, unknown> {
+    const stored = storedBioCosting(terms);
+    const out: Record<string, unknown> = {};
+    for (const c of BIO_COSTING_COLUMNS) {
+      const v = stored[c];
+      out[c] = BIO_DECIMAL_COLUMNS.has(c) && v !== null ? String(v) : v;
+    }
+    return out;
+  }
+
+  private async assertBioGlAccounts(terms: BioCostingTerms, tenantId: string, companyId: string | null | undefined): Promise<void> {
+    const ids = BIO_GL_COLUMNS.map((c) => terms[c]).filter((v): v is string => typeof v === 'string' && v !== '');
+    if (!ids.length) return;
+    const found = await this.db
+      .select({ id: schema.glAccountMaster.gl_account_id })
+      .from(schema.glAccountMaster)
+      .where(
+        and(
+          inArray(schema.glAccountMaster.gl_account_id, ids),
+          eq(schema.glAccountMaster.tenant_id, tenantId),
+          eq(schema.glAccountMaster.is_active, true),
+          companyId
+            ? or(eq(schema.glAccountMaster.company_id, companyId), isNull(schema.glAccountMaster.company_id))
+            : isNull(schema.glAccountMaster.company_id),
+        ),
+      );
+    const ok = new Set(found.map((f) => f.id));
+    const missing = ids.find((i) => !ok.has(i));
+    if (missing) throw new BadRequestException(`GL account ${missing} is not an active account of this company.`);
+  }
+
+  /** How many charges animals of this item have had from a costing run. Once any has, the item's costing terms are locked. */
+  async costedAnimalCount(itemId: string): Promise<number> {
+    const [r] = await this.db
+      .select({ n: sql<string>`COUNT(*)` })
+      .from(schema.bioCostingRunLine)
+      .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.bioCostingRunLine.animal_id))
+      .where(and(eq(schema.animalRegister.item_id, itemId), eq(schema.bioCostingRunLine.status, 'CHARGED')));
+    return Number(r?.n ?? 0);
   }
 
   async update(
@@ -1314,6 +1395,49 @@ export class ItemService {
     if (dto.extension_config !== undefined)
       updates.extension_config = JSON.stringify(dto.extension_config);
 
+    // The animals' costing start dates to move when the item's start period is set or changes (an animal with feed or a run booked on the old date keeps hers).
+    let restart: { bio_start_age_weeks: number | null; bio_start_age_days: number | null } | null = null;
+    // TDD Item Card, Bio Asset Costing tab: what is stored overlaid by what was sent, checked as a whole. Once an animal of the item has been
+    // charged by a costing run the terms are locked (as a profile's were), and the item stays a biological asset.
+    if (
+      dto.is_biological_asset !== undefined ||
+      BIO_COSTING_COLUMNS.some((c) => (dto as Record<string, unknown>)[c] !== undefined)
+    ) {
+      const effective: BioCostingTerms = {
+        ...this.bioTermsOf(item),
+        ...this.bioTermsOf(dto),
+        is_biological_asset: dto.is_biological_asset ?? item.is_biological_asset,
+      };
+      this.assertBioCosting(effective);
+      const next = this.bioColumnsToWrite(effective);
+      const locked = changedLockedBioColumns(item as unknown as BioCostingTerms, next as BioCostingTerms);
+      const turnsOff = item.is_biological_asset && effective.is_biological_asset === false;
+      // Terms not yet set on the item (an item whose animals are still costed by a profile) can be set for the first time; only set terms lock.
+      if ((item.bio_costing_method && locked.length) || turnsOff) {
+        const costed = await this.costedAnimalCount(id);
+        if (costed > 0) {
+          throw new BadRequestException(
+            turnsOff
+              ? `${item.item_code} cannot stop being a biological asset: its animals have been charged by a costing run.`
+              : `The costing terms of ${item.item_code} cannot be changed (${locked.join(', ')}): its animals have been charged by a costing run.`,
+          );
+        }
+      }
+      await this.assertBioGlAccounts(effective, tenantId, item.company_id);
+      Object.assign(updates, next);
+      if (
+        next.bio_costing_method &&
+        (!item.bio_costing_method ||
+          item.bio_start_age_weeks !== next.bio_start_age_weeks ||
+          (item.bio_start_age_days ?? 0) !== (next.bio_start_age_days ?? 0))
+      ) {
+        restart = {
+          bio_start_age_weeks: next.bio_start_age_weeks as number | null,
+          bio_start_age_days: next.bio_start_age_days as number | null,
+        };
+      }
+    }
+
     const willBeActive =
       updates.status === 'ACTIVE' ||
       (item.status === 'DRAFT' && dto.status === 'ACTIVE');
@@ -1339,6 +1463,14 @@ export class ItemService {
         .update(schema.itemMaster)
         .set(updates)
         .where(eq(schema.itemMaster.item_id, id));
+
+      if (restart) {
+        await recomputeStartsForItem(tx as unknown as MySql2Database<typeof schema>, {
+          item_id: id,
+          tenant_id: item.tenant_id,
+          ...restart,
+        });
+      }
 
       await this.recordUomConversion(tx, {
         tenantId,

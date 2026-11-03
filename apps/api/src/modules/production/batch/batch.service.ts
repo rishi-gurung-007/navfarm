@@ -79,6 +79,7 @@ import { InventoryLedgerService } from '../../inventory/inventory-ledger/invento
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
+import { assertDeathNotes, assertDeathWeight } from './mortality.rules';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
 // Type-only — BatchDailyDataService itself already depends on BatchService
 // (for addTransaction), so a normal value import here would form a real
@@ -3238,7 +3239,10 @@ export class BatchService {
               uom: 'HEAD',
               animal_id: animalId,
               remarks: dto.remarks,
-              mortality_detail: dto.mortality_detail,
+              mortality_detail: {
+                ...dto.mortality_detail,
+                weight_kg: dto.animal_weights?.find((w) => w.animal_id === animalId)?.weight_kg ?? dto.mortality_detail?.weight_kg,
+              },
             } as any,
             tenantId,
             userPayload,
@@ -3453,6 +3457,7 @@ export class BatchService {
           `Reason '${reason.reason_name}' is category ${reason.category}, not MORTALITY — a death needs a mortality reason.`,
         );
       }
+      assertDeathNotes(reason.reason_name, [dto.remarks, dto.mortality_detail?.post_mortem_notes, dto.mortality_detail?.cause_of_death]);
     }
 
     if (!dto.animal_id) {
@@ -3493,12 +3498,13 @@ export class BatchService {
     }
     if (
       !animal.is_active ||
-      ['DEAD', 'SOLD', 'CULLED', 'SLAUGHTERED'].includes(animal.status)
+      ['DEAD', 'SOLD', 'CULLED', 'SLAUGHTERED', 'CONVERTED_INV'].includes(animal.status)
     ) {
       throw new BadRequestException(
         `Animal '${animal.animal_code}' is already ${animal.status.toLowerCase()} and cannot be recorded as dead again.`,
       );
     }
+    assertDeathWeight(animal, dto.mortality_detail?.weight_kg);
     return { reason, animal };
   }
 
@@ -3527,6 +3533,7 @@ export class BatchService {
           disposal_type: 'DIED',
           disposal_date: dto.transaction_date,
           disposal_reason_id: reason?.reason_id ?? null,
+          ...(Number(dto.mortality_detail?.weight_kg) > 0 ? { exit_weight_kg: String(dto.mortality_detail!.weight_kg) } : {}),
           updated_by: userPayload?.userId || null,
           updated_at: toMysqlTimestamp(),
         })
@@ -5683,6 +5690,42 @@ export class BatchService {
       (a, b) => (a.stage_sequence ?? 0) - (b.stage_sequence ?? 0),
     );
 
+    // Head count standing in each stage NOW, by stage code. animal_count above is who was in the stage on the posting
+    // date, which is what data entry for that date acts on; an animal transferred in after that date (the posting date
+    // trails today while days are unposted) is not on it yet, so the stage badge showed 4 with 5 animals in the batch.
+    const currentRows = await this.db
+      .select({ stage_id: schema.animalRegister.current_stage_id })
+      .from(schema.animalRegister)
+      .where(
+        and(
+          eq(schema.animalRegister.current_batch_id, batch.batch_id),
+          eq(schema.animalRegister.is_active, true),
+          sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED','CONVERTED_INV')`,
+        ),
+      );
+    const currentStageIds = [
+      ...new Set(
+        currentRows.map((r) => r.stage_id).filter((id): id is string => !!id),
+      ),
+    ];
+    const currentStageRows = currentStageIds.length
+      ? await this.db
+          .select({
+            stage_id: schema.stageMaster.stage_id,
+            stage_code: schema.stageMaster.stage_code,
+          })
+          .from(schema.stageMaster)
+          .where(inArray(schema.stageMaster.stage_id, currentStageIds))
+      : [];
+    const currentCodeById = new Map(
+      currentStageRows.map((r) => [r.stage_id, r.stage_code]),
+    );
+    const currentCountByCode = new Map<string, number>();
+    for (const row of currentRows) {
+      const code = row.stage_id ? currentCodeById.get(row.stage_id) : null;
+      if (code) currentCountByCode.set(code, (currentCountByCode.get(code) ?? 0) + 1);
+    }
+
     // Build progress with ONLY scheduled stages, in lifecycle sequence order
     const progress = scheduledStages.map((s) => ({
       stage_id: s.stage_id,
@@ -5690,6 +5733,9 @@ export class BatchService {
       stage_name: s.stage_name,
       stage_sequence: s.stage_sequence,
       animal_count: stageGroups.get(s.stage_id)?.length || 0,
+      current_animal_count: s.stage_code
+        ? (currentCountByCode.get(s.stage_code) ?? 0)
+        : 0,
     }));
 
     // Lock rows for these scheduled stages on this date
@@ -7180,10 +7226,10 @@ export class BatchService {
   }
 
   /**
-   * A herd of registered animals whose animals are costed by central costing profiles is amortised and revalued ONE ANIMAL AT A TIME
+   * A herd of registered animals whose items have costing terms (the TDD Item Card) is amortised and revalued ONE ANIMAL AT A TIME
    * by the costing runs (Finance > Bio-Asset Costing Runs). Doing it here as well would charge the same animals twice, and the batch
    * path credits the mature asset account directly where the runs credit the accumulated-amortisation account. Count-only herds, and
-   * registered herds none of whose animals has a profile, keep using the batch path.
+   * registered herds none of whose animals belongs to an item with costing terms, keep using the batch path.
    */
   private async assertNotCostedPerAnimal(
     batch: { animal_tracking?: string | null; batch_no: string },
@@ -7194,15 +7240,20 @@ export class BatchService {
     const [row] = await this.db
       .select({ n: sql<string>`COUNT(*)` })
       .from(schema.animalRegister)
+      .innerJoin(
+        schema.itemMaster,
+        eq(schema.itemMaster.item_id, schema.animalRegister.item_id),
+      )
       .where(
         and(
           eq(schema.animalRegister.current_batch_id, id),
-          isNotNull(schema.animalRegister.costing_profile_id),
+          // costed one by one: her item has costing terms (TDD Item Card)
+          isNotNull(schema.itemMaster.bio_costing_method),
         ),
       );
     if (Number(row?.n ?? 0) > 0) {
       throw new BadRequestException(
-        `${action} is not done on batch ${batch.batch_no}: its animals are costed one by one by their costing profiles. ` +
+        `${action} is not done on batch ${batch.batch_no}: its animals are costed one by one by their items' costing terms. ` +
           'Use Finance > Bio-Asset Costing Runs, so no animal is charged twice.',
       );
     }

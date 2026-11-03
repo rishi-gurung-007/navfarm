@@ -10,11 +10,14 @@ import { OperationalAreaModule } from '../../core/operational-area/operational-a
 import { AnimalBookValueModule } from '../../inventory/bio-asset-ledger/animal-book-value.module';
 import { BioCostingModule } from '../../finance/bio-costing/bio-costing.module';
 import { JournalModule } from '../../finance/journal/journal.module';
+import { InventoryLedgerModule } from '../../inventory/inventory-ledger/inventory-ledger.module';
+import { FaConversionController } from './fa-conversion/fa-conversion.controller';
+import { FaConversionService } from './fa-conversion/fa-conversion.service';
 
 @Module({
-  imports: [NumberSeriesModule, OperationalAreaModule, BatchModule, AnimalBookValueModule, BioCostingModule, JournalModule],
-  controllers: [AnimalController, AnimalMedicationLogController],
-  providers: [AnimalService, AnimalMedicationLogService, AnimalActivityService],
-  exports: [AnimalService, AnimalMedicationLogService],
+  imports: [NumberSeriesModule, OperationalAreaModule, BatchModule, AnimalBookValueModule, BioCostingModule, JournalModule, InventoryLedgerModule],
+  controllers: [AnimalController, AnimalMedicationLogController, FaConversionController],
+  providers: [AnimalService, AnimalMedicationLogService, AnimalActivityService, FaConversionService],
+  exports: [AnimalService, AnimalMedicationLogService, FaConversionService],
 })
 export class AnimalModule {}

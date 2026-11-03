@@ -43,8 +43,11 @@ describe("item costing and tracking locks", () => {
   const item = MASTER_DATA_CONFIGS.find((c) => c.key === "item")!;
   // Valuation method is fixed by the first ledger entry; tracking only while stock is on hand or a
   // document is open (the API's trackingBlockers, surfaced as `tracking_locked`).
-  it("valuation_method locks on has_inventory", () => {
-    expect(item.fields.find((f) => f.key === "valuation_method")!.lockWhenRowFlag).toBe("has_inventory");
+  it("valuation_method locks on valuation_locked: a biological asset, or an item with inventory", () => {
+    const field = item.fields.find((f) => f.key === "valuation_method")!;
+    expect(field.lockWhenRowFlag).toBe("valuation_locked");
+    expect(field.lockReason!({ is_biological_asset: true })).toContain("biological asset");
+    expect(field.lockReason!({ has_inventory: true })).toContain("inventory entries");
   });
   it.each(["is_tracked", "tracking_type", "tracking_series_id"])("%s locks on tracking_locked and says why", (key) => {
     const field = item.fields.find((f) => f.key === key)!;

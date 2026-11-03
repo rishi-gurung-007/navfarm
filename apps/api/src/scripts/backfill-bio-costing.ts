@@ -3,15 +3,15 @@
  * changes inside a transaction and rolls them back; --apply commits. It changes only two things, both nullable or derived, and
  * never touches history:
  *
- *   1. Assigns the matching active costing profile (and the date costing begins) to every live animal that has none. The same rule
- *      the API uses at registration (resolveProfile, costingStartDate), as of today.
+ *   1. Gives every live animal whose item has costing terms (the TDD Item Card's Bio Asset Costing tab) and that has no costing start date the
+ *      date her costing begins. The same rule the API uses at registration (costingStartDate, from her item's start period).
  *   2. Refreshes the register's cached book value, total amortised and current value from each animal's own bio-asset ledger.
  *
  * It REPORTS, and does not change, what needs a decision or a posting:
  *   - capitalised cost the ledger holds against an animal-wise batch rather than against its animals (written before the cost carried
  *     the animal), with the live head it could be shared over: allocating it is the client's call;
  *   - animals that died with amortisation that was never cleared against the acquisition cost (no BIO_ASSET_EXIT journal);
- *   - animals no profile fits (and why), and animals the ledger has never seen.
+ *   - animals whose item has no costing terms, and animals the ledger has never seen.
  * It runs NO costing run: charging past periods is a backfill the client must ask for.
  *
  *   pnpm nx run api:db-backfill-bio-costing                       # print the plan (nf_devco)
@@ -20,7 +20,7 @@
  *   --database=nf_x to name another tenant database
  */
 import mysql, { RowDataPacket } from 'mysql2/promise';
-import { originOf, resolveProfile, costingStartDate, type ResolvableProfile } from '../modules/finance/bio-costing/bio-costing.rules';
+import { costingStartDate } from '../modules/finance/bio-costing/bio-costing.rules';
 import { BOOK_VALUE_EVENTS, summariseAnimalValue } from '../modules/inventory/bio-asset-ledger/animal-book-value.service';
 import { bioEventOf, bioEventSql } from '../modules/inventory/bio-asset-ledger/bio-asset-ledger.types';
 
@@ -44,22 +44,19 @@ async function run() {
     await db.beginTransaction();
     const bookValueRows = bioEventSql(BOOK_VALUE_EVENTS, 'l');
 
-    // ---- 1. profile assignment -------------------------------------------------------------------------------------------
-    const [profileRows] = await db.query<RowDataPacket[]>(`SELECT * FROM bio_costing_profile WHERE status IN ('ACTIVE','SUPERSEDED')`);
-    const [unassigned] = await db.query<RowDataPacket[]>(
-      `SELECT animal_id, animal_code, company_id, item_id, breed_id, gender, entry_type, dob, entry_date, age_at_entry_weeks
-         FROM animal_register WHERE is_active = 1 AND costing_profile_id IS NULL ORDER BY animal_code FOR UPDATE`);
-    const assigned: Array<{ animal: string; profile: string; costing_start_date: string | null }> = [];
+    // ---- 1. costing start dates ---------------------------------------------------------------------------------------------
+    const [itemRows] = await db.query<RowDataPacket[]>(`SELECT item_id, item_code, bio_start_age_weeks, bio_start_age_days FROM item_master WHERE is_biological_asset = 1 AND bio_costing_method IS NOT NULL`);
+    const [undated] = await db.query<RowDataPacket[]>(
+      `SELECT animal_id, animal_code, item_id, dob, entry_date, age_at_entry_weeks
+         FROM animal_register WHERE is_active = 1 AND costing_start_date IS NULL ORDER BY animal_code FOR UPDATE`);
+    const assigned: Array<{ animal: string; item: string; costing_start_date: string | null }> = [];
     const notAssigned: Array<{ animal: string; reason: string; detail?: string }> = [];
-    for (const a of unassigned) {
-      const mine = profileRows.filter((p) => p.company_id === a.company_id) as unknown as ResolvableProfile[];
-      const origin = originOf(a.entry_type);
-      const { profile, ambiguous } = resolveProfile(mine, { item_id: a.item_id, breed_id: a.breed_id, gender: a.gender, origin }, today);
-      if (ambiguous.length) { notAssigned.push({ animal: a.animal_code, reason: 'AMBIGUOUS_PROFILES', detail: ambiguous.map((x) => x.profile_code).join(', ') }); continue; }
-      if (!profile) { notAssigned.push({ animal: a.animal_code, reason: origin ? 'NO_MATCHING_PROFILE' : 'ORIGIN_UNKNOWN', detail: a.entry_type }); continue; }
-      const start = costingStartDate({ dob: a.dob, entry_date: a.entry_date, age_at_entry_weeks: a.age_at_entry_weeks }, profile.start_age_weeks);
-      assigned.push({ animal: a.animal_code, profile: profile.profile_code, costing_start_date: start });
-      if (mode) await db.execute('UPDATE animal_register SET costing_profile_id = ?, costing_start_date = ? WHERE animal_id = ?', [profile.profile_id, start, a.animal_id]);
+    for (const a of undated) {
+      const item = itemRows.find((i) => i.item_id === a.item_id);
+      if (!item) { notAssigned.push({ animal: a.animal_code, reason: 'ITEM_HAS_NO_COSTING_TERMS' }); continue; }
+      const start = costingStartDate({ dob: a.dob, entry_date: a.entry_date, age_at_entry_weeks: a.age_at_entry_weeks }, item.bio_start_age_weeks ?? 0, item.bio_start_age_days ?? 0);
+      assigned.push({ animal: a.animal_code, item: item.item_code, costing_start_date: start });
+      if (mode) await db.execute('UPDATE animal_register SET costing_start_date = ? WHERE animal_id = ?', [start, a.animal_id]);
     }
 
     // ---- 2. cache refresh ---------------------------------------------------------------------------------------------------
@@ -91,18 +88,18 @@ async function run() {
         WHERE l.animal_id IS NULL AND ${bioEventSql(['CONSUMPTION', 'OVERHEAD_COST'], 'l')} AND b.animal_tracking = 'REGISTERED'
         GROUP BY b.batch_id, b.batch_no HAVING ABS(SUM(l.cost_amount)) > ${TOL}`);
     const [uncleared] = await db.query<RowDataPacket[]>(
-      `SELECT a.animal_code, p.profile_code, ROUND(-SUM(l.cost_amount),4) amortised_not_cleared
-         FROM animal_register a JOIN bio_costing_profile p ON p.profile_id = a.costing_profile_id
+      `SELECT a.animal_code, i.item_code, ROUND(-SUM(l.cost_amount),4) amortised_not_cleared
+         FROM animal_register a JOIN item_master i ON i.item_id = a.item_id AND i.bio_costing_method IS NOT NULL
          JOIN bio_asset_ledger l ON l.animal_id = a.animal_id AND ${bioEventSql('AMORTIZATION', 'l')}
         WHERE a.is_active = 0 AND a.disposal_type = 'DIED'
           AND NOT EXISTS (SELECT 1 FROM journal_header j WHERE j.source_document_type = 'BIO_ASSET_EXIT' AND j.source_document_no = a.animal_code AND j.status = 'POSTED')
-        GROUP BY a.animal_code, p.profile_code HAVING ABS(SUM(l.cost_amount)) > ${TOL}`);
+        GROUP BY a.animal_code, i.item_code HAVING ABS(SUM(l.cost_amount)) > ${TOL}`);
     const [noLedger] = await db.query<RowDataPacket[]>(
       `SELECT animal_code FROM animal_register a WHERE NOT EXISTS (SELECT 1 FROM bio_asset_ledger l WHERE l.animal_id = a.animal_id AND ${bookValueRows})`);
 
     console.log(JSON.stringify({
-      database, mode: mode || 'READ-ONLY', as_of: today, profiles_in_force: profileRows.length,
-      assign_profile: { animals: assigned.length, by_profile: assigned.reduce<Record<string, number>>((m, x) => ({ ...m, [x.profile]: (m[x.profile] ?? 0) + 1 }), {}), detail: assigned },
+      database, mode: mode || 'READ-ONLY', as_of: today, items_with_costing_terms: itemRows.length,
+      assign_start_date: { animals: assigned.length, by_item: assigned.reduce<Record<string, number>>((m, x) => ({ ...m, [x.item]: (m[x.item] ?? 0) + 1 }), {}), detail: assigned },
       not_assigned: notAssigned,
       refresh_cache: { animals: refreshed.length, detail: refreshed },
       report_only: {

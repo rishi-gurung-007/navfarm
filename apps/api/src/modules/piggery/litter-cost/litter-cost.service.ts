@@ -172,7 +172,12 @@ export class LitterCostService {
     if (!sowState || !lotState) return none;
     const wanted = Math.max(0, held.own + held.shared - already);
     const total = Number(Math.min(wanted, Number(sowState.nca_book_value) || 0).toFixed(4));
-    if (!(total >= 0.005)) return none;
+    // Nothing more to move is not the same as no cost: what the lot already carries (the cost at birth, earlier lactation moves) is still its cost per piglet, and
+    // the caller writes this figure over the farrowing record's, so returning null here wiped the cost per piglet a litter was born with.
+    if (!(total >= 0.005)) {
+      const carried = other + already;
+      return { ...none, perPiglet: carried >= 0.005 ? (carried / win.divisor).toFixed(6) : null };
+    }
     // Her own part first; if the batch carries less than the two, both give in proportion.
     const heldTotal = held.own + held.shared;
     const ownPart = heldTotal > 0 ? Number(((total * held.own) / heldTotal).toFixed(4)) : 0;

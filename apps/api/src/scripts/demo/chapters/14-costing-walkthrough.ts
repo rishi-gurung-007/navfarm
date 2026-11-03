@@ -5,7 +5,7 @@
  *
  *   1 Mar 2026   Goods receipt of 2 imported sows and 2 imported boars (the purchase price is each animal's cost). The four are registered
  *                in the Animal Register with their papers, teats, TSI, grading and parents' serial numbers, and grouped in one Animal
- *                Wise batch that starts the same day. The registration hook gives each her costing profile (IMP-F / IMP-M).
+ *                Wise batch that starts the same day. The registration hook dates each one's costing start from her item.
  *   1-15 Mar     Daily entries from the batch's first day: feed consumption per animal (the stock is received first, so the inventory ledger
  *                holds both the receipt and each FIFO draw), body weights; each day posted and locked. Health records on the cards.
  *                The days after the 15th are left for the person testing to enter: a day cannot be posted until the one before it is.
@@ -14,7 +14,7 @@
  *   16 Jul       Sow 1 farrows (116 days): the litter is held as a piglet lot.      6 Aug  Weaned: one full parity.
  *   28 Jul, 1 Aug  Boar 2's semen; sow 2 inseminated; confirmed pregnant (farrowing is still ahead).
  *   6 Aug        (with the weaning) Gilt selection (GS-...): 3 gilts picked from sow 1's litter (RFID WALK-GILT-01..03, 15-17 teats), the one selection
- *                the BBP allows a litter, made in the weaning form; each gilt is a Local asset (LOC-F) whose costing starts at birth + 33 weeks. They join their own
+ *                the BBP allows a litter, made in the weaning form; each gilt's costing, from her item's terms, starts at birth + 33 weeks. They join their own
  *                Animal Wise batch (WALK-GILT-BATCH) and are fed on 20 Oct: that feed is CAPITALISED, because her costing start is far ahead.
  *
  * Resume-safe: the receipt by its reference, animals by RFID, the batch by its remarks token, each mating by (sow, date), each semen lot
@@ -28,7 +28,7 @@ import { BatchService } from '../../../modules/production/batch/batch.service';
 import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/goods-receipt.service';
 import { BreedingService } from '../../../modules/piggery/breeding/breeding.service';
 import { AnimalMedicationLogService } from '../../../modules/piggery/animal/animal-medication-log.service';
-import { BioCostingProfileService } from '../../../modules/finance/bio-costing/bio-costing-profile.service';
+import { BioCostingStartService } from '../../../modules/finance/bio-costing/bio-costing-start.service';
 import { MatingType, PregCheckMethod, ConceptionResult } from '../../../modules/piggery/breeding/dto/breeding.dto';
 import * as schema from '../../../core/database/schema';
 import type { DemoChapter, DemoContext } from '../chapter';
@@ -74,7 +74,7 @@ export const costingWalkthroughChapter: DemoChapter = {
     const batches = ctx.app.get(BatchService);
     const receipts = ctx.app.get(GoodsReceiptService);
     const breeding = ctx.app.get(BreedingService);
-    const profiles = ctx.app.get(BioCostingProfileService);
+    const starts = ctx.app.get(BioCostingStartService);
     const db = ctx.app.get(ClsService).get<MySql2Database<typeof schema>>('tenantDb');
     if (!db) throw new Error('14-costing-walkthrough: tenantDb is not set — run through the harness.');
     const actor = { userId: ctx.actor.userId, userType: ctx.actor.userType, email: ctx.actor.email };
@@ -140,8 +140,8 @@ export const costingWalkthroughChapter: DemoChapter = {
     });
     await db.update(schema.schedulerHeader).set({ effective_from: PURCHASE_DATE }).where(eq(schema.schedulerHeader.batch_id, batchId));
 
-    // Whoever the registration hook did not reach (it dates a profile by the day she arrived) is given hers now.
-    await profiles.assignAnimals({ animal_ids: [...ids.values()] } as any, ctx.tenantId, ctx.companyId);
+    // Whoever the registration hook did not reach (it dates her costing by the day she arrived) is dated now.
+    await starts.assignAnimals({ animal_ids: [...ids.values()] } as any, ctx.tenantId, ctx.companyId);
 
     // Health & Treatments on the cards: a dewormer and a vaccine for all four, and the PRRS vaccine for the sows.
     const medicines = ctx.app.get(AnimalMedicationLogService);
@@ -228,7 +228,7 @@ export const costingWalkthroughChapter: DemoChapter = {
       if (Number(farrow.piglets_weaned) === 0 && weaningDate <= last) {
         // BBP: the gilts of a litter are selected once; here, in the weaning form (the Select gilts button is gone once a litter is weaned).
         await breeding.recordWeaning(farrow.farrow_id, {
-          weaning_date: weaningDate, piglets_weaned: 12, avg_weaning_weight_kg: 7.0, move_to_stage_code: 'WEANER', gilt_colour_code: 'BLUE',
+          weaning_date: weaningDate, piglets_weaned: 12, avg_weaning_weight_kg: 7.0, move_to_stage_code: 'WEANER', gilt_colour_code: 'BLUE', gilt_item_id: (await item('Replacement Breeding Gilt')).item_id,
           gilts: GILT_TAGS.map((tag, i) => ({ rfid_tag: tag, no_of_teats: GILT_TEATS[i] })),
         } as any, ctx.tenantId, actor);
         ctx.log(`  WALK-IMP-SOW-01: weaned ${weaningDate} - 12 piglets at 7.0 kg (one full parity), ${GILT_TAGS.length} selected as gilts at the weaning`);
@@ -255,13 +255,13 @@ export const costingWalkthroughChapter: DemoChapter = {
         if (fed) continue;
         await batches.addTransaction(giltBatchId, { transaction_type: 'CONSUMPTION', transaction_date: FEED_DATE, item_id: feed.item_id, quantity: 2, uom: 'KG', animal_id: g.animal_id, remarks: 'DEMO walkthrough: first feed of the gilt (capitalised)' } as any, ctx.tenantId, actor);
       }
-      await profiles.assignAnimals({ animal_ids: giltRows.map((g) => g.animal_id) } as any, ctx.tenantId, ctx.companyId);
+      await starts.assignAnimals({ animal_ids: giltRows.map((g) => g.animal_id) } as any, ctx.tenantId, ctx.companyId);
       ctx.log(`  gilts ${giltRows.map((g) => g.code).join(', ')}: joined batch ${WALK_GILT_BATCH_REMARKS}, fed 2 kg each on ${FEED_DATE} (capitalised)`);
     }
 
     const where = inArray(schema.animalRegister.animal_id, [...ids.values()]);
-    const rows = await db.select({ code: schema.animalRegister.animal_code, tag: schema.animalRegister.rfid_tag, profile: schema.animalRegister.costing_profile_id, start: schema.animalRegister.costing_start_date, bv: schema.animalRegister.book_value })
+    const rows = await db.select({ code: schema.animalRegister.animal_code, tag: schema.animalRegister.rfid_tag, start: schema.animalRegister.costing_start_date, bv: schema.animalRegister.book_value })
       .from(schema.animalRegister).where(where);
-    ctx.log(`  costing: ${rows.map((r) => `${r.code} profile=${r.profile ? 'yes' : 'NO'} start=${r.start} book=${r.bv}`).join(' | ')}`);
+    ctx.log(`  costing: ${rows.map((r) => `${r.code} start=${r.start ?? 'NONE'} book=${r.bv}`).join(' | ')}`);
   },
 };

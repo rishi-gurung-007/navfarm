@@ -4161,14 +4161,17 @@ describe('BatchService', () => {
       animal_tracking: 'REGISTERED',
       input_lines: [],
     };
+    // the count joins the animal to her item: costed by a profile, or by her item's costing terms
     const countOf = (n: string) =>
       mockDbSelect.mockReturnValueOnce({
-        from: jest
-          .fn()
-          .mockReturnValue({ where: jest.fn().mockResolvedValue([{ n }]) }),
+        from: jest.fn().mockReturnValue({
+          innerJoin: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([{ n }]) }),
+        }),
       });
 
-    it('refuses to amortise it when any of its animals has a costing profile, and writes nothing', async () => {
+    it('refuses to amortise it when any of its animals has a costing profile or an item with costing terms, and writes nothing', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValue(registered as any);
       countOf('3');
       await expect(
@@ -4177,7 +4180,7 @@ describe('BatchService', () => {
           { posting_date: '2026-10-20' },
           'tenant-123',
         ),
-      ).rejects.toThrow(/costed one by one by their costing profiles/);
+      ).rejects.toThrow(/costed one by one by their items' costing terms/);
       expect(mockDbInsert).not.toHaveBeenCalled();
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });

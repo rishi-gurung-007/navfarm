@@ -13,6 +13,7 @@ import {
   isNull,
   isNotNull,
   lt,
+  lte,
   sql,
   aliasedTable,
 } from 'drizzle-orm';
@@ -26,6 +27,13 @@ import { SemenLotService } from './semen-lot.service';
 import { AnimalService } from '../animal/animal.service';
 import { GiltSelectionService } from '../gilt-selection/gilt-selection.service';
 import { LitterCostService } from '../litter-cost/litter-cost.service';
+import { BreedingLineSetupService } from '../../master-data/breeding-line/breeding-line-setup.service';
+import { CollectionPlanService } from './collection-plan.service';
+import { SemenDestinationService } from '../../master-data/breeding-line/semen-destination.service';
+import { isoWeekOf } from './collection-plan.rules';
+import { renderLotLabel } from './semen-lot-label.rules';
+import { collectionRuleResult } from '../../master-data/breeding-line/breeding-line.rules';
+import { boarResultIssues, lotTotals } from './semen-boar-result.rules';
 import { MIN_GILT_TEATS } from '../gilt-selection/gilt-selection.rules';
 import {
   dayAfter,
@@ -73,6 +81,9 @@ export class BreedingService {
     private readonly animals: AnimalService,
     private readonly giltSelection: GiltSelectionService,
     private readonly litterCost: LitterCostService,
+    private readonly lineSetups: BreedingLineSetupService,
+    private readonly plans: CollectionPlanService,
+    private readonly semenDestination: SemenDestinationService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -596,6 +607,12 @@ export class BreedingService {
     const lot = dto.semen_lot_id
       ? await this.assertLotUsable(dto.semen_lot_id, dto.mating_date, tenantId)
       : null;
+    // The lot is for the farms its line's setup (or its plan) names: using it on a sow standing on another is refused or warned
+    // about, as the line says. A sow whose farm cannot be told is not judged.
+    const useCheck = lot
+      ? await this.semenDestination.check(lot, await this.farmOfAnimal(sow), tenantId)
+      : null;
+    if (useCheck?.verdict === 'BLOCK') throw new BadRequestException(useCheck.message!);
 
     const defaults = await this.matingDefaults(
       sow,
@@ -670,6 +687,7 @@ export class BreedingService {
 
     return {
       ...newRecord,
+      warnings: useCheck?.verdict === 'WARN' ? [useCheck.message!] : [],
       message:
         'Mating event recorded successfully with auto-scheduled farrowing and pregnancy check dates.',
     };
@@ -934,6 +952,11 @@ export class BreedingService {
     if (totalBorn === 0) {
       throw new BadRequestException(
         'A farrowing needs at least one piglet born — live, stillborn or mummified.',
+      );
+    }
+    if (dto.piglets_total_born != null && dto.piglets_total_born !== totalBorn) {
+      throw new BadRequestException(
+        `Total born (${dto.piglets_total_born}) must equal born alive ${live} + born dead ${stillborn} + mummified ${mummified} = ${totalBorn}.`,
       );
     }
     const fosterIn = dto.foster_received || 0;
@@ -1961,17 +1984,6 @@ export class BreedingService {
         `${boar.animal_code} entered on ${String(boar.entry_date).slice(0, 10)}; he cannot have been collected before that.`,
       );
     }
-    if (!Number.isInteger(dto.doses_collected)) {
-      throw new BadRequestException('Doses collected must be a whole number.');
-    }
-    if (
-      (dto.doses_used_internal || 0) + (dto.doses_sold || 0) >
-      dto.doses_collected
-    ) {
-      throw new BadRequestException(
-        'Doses used and sold cannot be more than the doses collected.',
-      );
-    }
     // Pooled semen: the lot is mixed from several boars. The first is the lot's primary boar; each of the others must be a
     // live boar of the same company, and counts once however often he is named.
     const poolBoars = await this.loadPoolBoars(
@@ -1982,6 +1994,111 @@ export class BreedingService {
       tenantId,
     );
     const allBoars = [boar, ...poolBoars];
+
+    // What each boar gave (Phase 2). With results, the lot has the doses and volume its accepted boars gave, added up; a boar
+    // tapped whose ejaculate was rejected is named in the results only, and is in none of the lot's doses, boars or costs.
+    const resultInputs = dto.boar_results ?? [];
+    let dosesCollected = dto.doses_collected as number;
+    let lotVolume = dto.volume_ml ?? null;
+    let rejectedBoars: (typeof schema.animalRegister.$inferSelect)[] = [];
+    if (resultInputs.length) {
+      rejectedBoars = await this.loadPoolBoars(
+        boar,
+        resultInputs
+          .filter(
+            (r) =>
+              r.accepted === false &&
+              !allBoars.some((b) => b.animal_id === r.boar_animal_id),
+          )
+          .map((r) => r.boar_animal_id),
+        companyId,
+        boarBatchId,
+        tenantId,
+      );
+      const codeOfBoar = new Map(
+        [...allBoars, ...rejectedBoars].map((b) => [b.animal_id, b.animal_code]),
+      );
+      const issues = boarResultIssues(
+        resultInputs,
+        allBoars.map((b) => b.animal_id),
+        (id) => codeOfBoar.get(id) ?? id,
+      );
+      if (issues.length) throw new BadRequestException(issues.join(' '));
+      const totals = lotTotals(resultInputs);
+      if (dto.doses_collected != null && dto.doses_collected !== totals.doses) {
+        throw new BadRequestException(
+          `The boars' doses add up to ${totals.doses}, not ${dto.doses_collected}.`,
+        );
+      }
+      dosesCollected = totals.doses;
+      lotVolume = dto.volume_ml ?? totals.volume_ml;
+      await this.assertCollectors(
+        resultInputs.map((r) => r.collector_id),
+        companyId,
+        tenantId,
+      );
+    } else if (dto.doses_collected == null) {
+      throw new BadRequestException('Doses collected is required.');
+    }
+    if (!Number.isInteger(dosesCollected)) {
+      throw new BadRequestException('Doses collected must be a whole number.');
+    }
+    if (
+      (dto.doses_used_internal || 0) + (dto.doses_sold || 0) >
+      dosesCollected
+    ) {
+      throw new BadRequestException(
+        'Doses used and sold cannot be more than the doses collected.',
+      );
+    }
+
+    // The boar's breeding line decides how a lot may be made (plan 2026-11-02, Phase 1): the pooling and boar-count rules
+    // always stop the collection; rest and motility stop or only warn as the line says. No setup for the line and none for
+    // the company means nothing is checked.
+    const lineRules = await this.lineSetups.findEffective(
+      boar.breed_id,
+      tenantId,
+      companyId,
+    );
+    const ruleResult = collectionRuleResult({
+      rules: lineRules as any,
+      boarCount: allBoars.length,
+      restDays: lineRules?.min_rest_days != null
+        ? await this.daysSinceLastCollection(
+            [...allBoars, ...rejectedBoars],
+            dto.collection_date,
+            tenantId,
+          )
+        : [],
+      motilityPct: resultInputs.length ? null : (dto.motility_pct ?? null),
+      boarMotilities: resultInputs
+        .filter((r) => r.accepted !== false)
+        .map((r) => ({
+          boar:
+            allBoars.find((b) => b.animal_id === r.boar_animal_id)
+              ?.animal_code ?? r.boar_animal_id,
+          pct: r.motility_pct ?? null,
+        })),
+    });
+    if (ruleResult.errors.length) {
+      throw new BadRequestException(ruleResult.errors.join(' '));
+    }
+
+    // A line that asks for an outside reference (Breeding Web, for Z-Line) is collected against a plan that carries it. Every boar
+    // tapped, whether his ejaculate was used or rejected, must be one the plan still has to collect.
+    if (lineRules?.reference_required && !dto.plan_id) {
+      throw new BadRequestException(
+        `A ${lineRules.reference_label?.trim() || 'reference'} is required for this line: record the collection against a plan that carries it.`,
+      );
+    }
+    const planCheck = dto.plan_id
+      ? await this.plans.assertCollectable(
+          dto.plan_id,
+          [...allBoars, ...rejectedBoars],
+          dto.collection_date,
+          tenantId,
+        )
+      : null;
 
     // The period costs: as typed (for the lot as a whole), else worked out from what was posted for each boar over his own
     // period and added up (G7) — a pooled lot carries what every boar in it cost.
@@ -2040,9 +2157,48 @@ export class BreedingService {
     }
     const runningCost = amort + feed + drug + overhead;
     const unitCostPerDose =
-      dto.doses_collected > 0 ? runningCost / dto.doses_collected : 0;
+      dosesCollected > 0 ? runningCost / dosesCollected : 0;
 
     const semenBatchId = randomUUID();
+
+    // What the line's setup puts on the lot (Phase 5): the label for the sachets, the week it carries, the colorant added, and the
+    // farm it is for (the plan's, or the line's one destination). A line with no setup puts nothing on it.
+    const week = isoWeekOf(dto.collection_date);
+    const [lineBreed] = boar.breed_id
+      ? await this.db.select({ code: schema.breedMaster.breed_code }).from(schema.breedMaster).where(eq(schema.breedMaster.breed_id, boar.breed_id)).limit(1)
+      : [];
+    let label: string | null = null;
+    if (lineRules?.label_template?.trim()) {
+      // {SEQ}: the lots of this line already carrying this week, plus one.
+      const seq = lineRules.label_template.includes('{SEQ}')
+        ? Number(
+            (await this.db
+              .select({ n: sql<number>`count(*)`.mapWith(Number) })
+              .from(schema.semenBatch)
+              .where(and(eq(schema.semenBatch.tenant_id, tenantId), boar.breed_id ? eq(schema.semenBatch.breed_id, boar.breed_id) : isNull(schema.semenBatch.breed_id), eq(schema.semenBatch.week_year, week.year), eq(schema.semenBatch.week_no, week.week))))[0]?.n ?? 0,
+          ) + 1
+        : 1;
+      label = renderLotLabel(
+        lineRules.label_template,
+        {
+          line: lineBreed?.code ?? '',
+          boarTags: allBoars.map((b) => b.rfid_tag || b.animal_code),
+          boarCodes: allBoars.map((b) => b.animal_code),
+          week: week.week,
+          year: week.year,
+          date: dto.collection_date,
+          seq,
+        },
+        !!lineRules.include_year,
+      );
+    }
+    const lineFarms = (lineRules?.destination_farm_ids ?? []) as string[];
+    const destinationFarmId = planCheck?.plan.destination_farm_id ?? (lineRules?.destination_rule === 'ONE' ? (lineFarms[0] ?? null) : null);
+    const colorantQty = lineRules?.colorant_qty_per_lot != null ? Number(lineRules.colorant_qty_per_lot) : null;
+    const colorant = lineRules?.colorant_name || lineRules?.colorant_item_id
+      ? { name: lineRules.colorant_name ?? null, itemId: lineRules.colorant_item_id ?? null, quantity: colorantQty }
+      : undefined;
+
     // Naming an item posts the collection to inventory as a lot of it, with its QR (any item the farm uses for semen).
     const posted = dto.output_item_id
       ? await this.semenLots.postCollection(
@@ -2052,25 +2208,43 @@ export class BreedingService {
             boarBatchId,
             semenBatchId,
             collectionDate: dto.collection_date,
-            doses: dto.doses_collected,
+            doses: dosesCollected,
             itemId: dto.output_item_id,
             unitCost: unitCostPerDose,
             quality: {
-              volume_ml: dto.volume_ml ?? null,
+              volume_ml: lotVolume,
               motility_pct: dto.motility_pct ?? null,
               concentration_m_per_ml: dto.concentration_m_per_ml ?? null,
             },
+            label,
+            week: { no: week.week, year: week.year },
+            colorant,
+            destinationFarmId,
           },
           tenantId,
           userPayload,
         )
       : null;
+    // The colorant issued from stock is part of what the lot cost, so of each dose.
+    const colorantCost = posted?.colorant_cost ?? 0;
+    const lotRunningCost = runningCost + colorantCost;
+    const lotUnitCost = dosesCollected > 0 ? lotRunningCost / dosesCollected : 0;
     const newRecord = {
       semen_batch_id: semenBatchId,
       tenant_id: tenantId,
       company_id: companyId,
       boar_animal_id: dto.boar_animal_id,
       boar_batch_id: boarBatchId,
+      plan_id: dto.plan_id ?? null,
+      breed_id: boar.breed_id ?? null,
+      label,
+      week_no: week.week,
+      week_year: week.year,
+      colorant_name: colorant?.name ?? null,
+      colorant_item_id: posted && colorantCost > 0 ? (colorant?.itemId ?? null) : null,
+      colorant_qty: colorant?.quantity != null ? String(colorant.quantity) : null,
+      colorant_cost: colorantCost > 0 ? colorantCost.toFixed(4) : null,
+      destination_farm_id: destinationFarmId,
       collection_date: dto.collection_date,
       period_from: period.from,
       period_to: period.to,
@@ -2078,9 +2252,9 @@ export class BreedingService {
       feed_cost_period: String(feed.toFixed(4)),
       drug_cost_period: String(drug.toFixed(4)),
       overhead_cost_period: String(overhead.toFixed(4)),
-      running_cost_period: String(runningCost.toFixed(4)),
-      doses_collected: String(dto.doses_collected),
-      unit_cost_per_dose: String(unitCostPerDose.toFixed(6)),
+      running_cost_period: String(lotRunningCost.toFixed(4)),
+      doses_collected: String(dosesCollected),
+      unit_cost_per_dose: String(lotUnitCost.toFixed(6)),
       doses_used_internal: String(dto.doses_used_internal || 0),
       doses_sold: String(dto.doses_sold || 0),
       output_item_id: dto.output_item_id || null,
@@ -2089,7 +2263,7 @@ export class BreedingService {
       expiry_date: posted?.expiry_date ?? null,
       warehouse_id: posted?.warehouse_id ?? null,
       qr_id: posted?.qr_id ?? null,
-      volume_ml: dto.volume_ml != null ? String(dto.volume_ml) : null,
+      volume_ml: lotVolume != null ? String(lotVolume) : null,
       motility_pct: dto.motility_pct != null ? String(dto.motility_pct) : null,
       concentration_m_per_ml:
         dto.concentration_m_per_ml != null
@@ -2113,14 +2287,64 @@ export class BreedingService {
       );
     }
 
+    // One result per boar. A collection recorded without per-boar results still gives a single-boar lot a result of its own
+    // (his doses are the lot's), so his last collection can be read; a pooled lot with none has no per-boar figures to give.
+    const resultRows = resultInputs.length
+      ? resultInputs.map((r, i) => ({
+          semen_batch_id: semenBatchId,
+          boar_animal_id: r.boar_animal_id,
+          tenant_id: tenantId,
+          collector_id: r.collector_id ?? null,
+          volume_ml: r.volume_ml != null ? String(r.volume_ml) : null,
+          doses: r.accepted === false ? null : (r.doses ?? null),
+          morphology_pct: r.morphology_pct != null ? String(r.morphology_pct) : null,
+          motility_pct: r.motility_pct != null ? String(r.motility_pct) : null,
+          concentration_m_per_ml:
+            r.concentration_m_per_ml != null ? String(r.concentration_m_per_ml) : null,
+          accepted: r.accepted !== false,
+          reject_reason:
+            r.accepted === false ? (r.reject_reason?.trim() ?? null) : null,
+          sort_order: i,
+        }))
+      : !poolBoars.length
+        ? [
+            {
+              semen_batch_id: semenBatchId,
+              boar_animal_id: boar.animal_id,
+              tenant_id: tenantId,
+              collector_id: null,
+              volume_ml: lotVolume != null ? String(lotVolume) : null,
+              doses: dosesCollected,
+              morphology_pct: null,
+              motility_pct: dto.motility_pct != null ? String(dto.motility_pct) : null,
+              concentration_m_per_ml:
+                dto.concentration_m_per_ml != null ? String(dto.concentration_m_per_ml) : null,
+              accepted: true,
+              reject_reason: null,
+              sort_order: 0,
+            },
+          ]
+        : [];
+    if (resultRows.length) {
+      await this.db.insert(schema.semenBoarResult).values(resultRows);
+    }
+    if (dto.plan_id) {
+      await this.plans.markCollected(
+        dto.plan_id,
+        [...allBoars, ...rejectedBoars].map((b) => b.animal_id),
+        semenBatchId,
+      );
+    }
+
     return {
       ...newRecord,
       pooled_boars: poolBoars.length
         ? allBoars.map((b) => b.animal_code)
         : undefined,
       qr_pack_no: posted?.pack_no ?? null,
+      warnings: [...ruleResult.warnings, ...(planCheck?.warnings ?? [])],
       message:
-        `Semen collection logged: ${dto.doses_collected} doses collected${poolBoars.length ? ` as one pooled lot from ${allBoars.length} boars (${allBoars.map((b) => b.animal_code).join(', ')})` : ''} at computed unit cost of ${unitCostPerDose.toFixed(4)}/dose` +
+        `Semen collection logged${label ? ` as ${label}` : ''}: ${dosesCollected} doses collected${poolBoars.length ? ` as one pooled lot from ${allBoars.length} boars (${allBoars.map((b) => b.animal_code).join(', ')})` : ''} at computed unit cost of ${lotUnitCost.toFixed(4)}/dose` +
         (derived
           ? ` (worked out from ${poolBoars.length ? 'their' : 'his'} posted costs ${period.from} to ${period.to})`
           : '') +
@@ -2129,6 +2353,96 @@ export class BreedingService {
           ? ` Posted to inventory as lot ${posted.lot_no}${posted.expiry_date ? ` (expires ${posted.expiry_date})` : ''}${posted.pack_no ? `, QR ${posted.pack_no}` : ', no QR — the boar is in no batch'}.`
           : ' Not posted to inventory — choose the semen item to hold the doses as stock.'),
     };
+  }
+
+  /** Every collector named on a collection must be an active collector of the boar's company. */
+  private async assertCollectors(
+    ids: (string | null | undefined)[],
+    companyId: string,
+    tenantId: string,
+  ) {
+    const wanted = [...new Set(ids.filter((id): id is string => !!id))];
+    if (!wanted.length) return;
+    const rows = await this.db
+      .select({ id: schema.semenCollector.collector_id })
+      .from(schema.semenCollector)
+      .where(
+        and(
+          eq(schema.semenCollector.tenant_id, tenantId),
+          eq(schema.semenCollector.company_id, companyId),
+          eq(schema.semenCollector.is_active, true),
+          inArray(schema.semenCollector.collector_id, wanted),
+        ),
+      );
+    if (wanted.some((id) => !rows.some((r) => r.id === id))) {
+      throw new BadRequestException(
+        'Select active collectors of this company.',
+      );
+    }
+  }
+
+  /**
+   * Whole days from each boar's most recent collection on or before `onDate` to `onDate` (null when he has none). A boar's
+   * collection is one he was the primary of, or one he was pooled into.
+   */
+  private async daysSinceLastCollection(
+    boars: (typeof schema.animalRegister.$inferSelect)[],
+    onDate: string,
+    tenantId: string,
+  ): Promise<{ boar: string; days: number | null }[]> {
+    const ids = boars.map((b) => b.animal_id);
+    const last = new Map<string, string>();
+    const note = (boarId: string, date: string | null | undefined) => {
+      const d = date ? String(date).slice(0, 10) : null;
+      if (d && d <= onDate && (!last.has(boarId) || d > last.get(boarId)!)) {
+        last.set(boarId, d);
+      }
+    };
+    const primary = await this.db
+      .select({ boar: schema.semenBatch.boar_animal_id, date: schema.semenBatch.collection_date })
+      .from(schema.semenBatch)
+      .where(
+        and(
+          eq(schema.semenBatch.tenant_id, tenantId),
+          inArray(schema.semenBatch.boar_animal_id, ids),
+          lte(schema.semenBatch.collection_date, onDate),
+        ),
+      );
+    for (const r of primary) if (ids.includes(r.boar)) note(r.boar, r.date);
+    const pooled = await this.db
+      .select({ boar: schema.semenBatchBoar.boar_animal_id, lot: schema.semenBatchBoar.semen_batch_id })
+      .from(schema.semenBatchBoar)
+      .where(
+        and(
+          eq(schema.semenBatchBoar.tenant_id, tenantId),
+          inArray(schema.semenBatchBoar.boar_animal_id, ids),
+        ),
+      );
+    // A boar tapped whose ejaculate was rejected was still collected: his results count for his rest, accepted or not.
+    const results = await this.db
+      .select({ boar: schema.semenBoarResult.boar_animal_id, lot: schema.semenBoarResult.semen_batch_id })
+      .from(schema.semenBoarResult)
+      .where(
+        and(
+          eq(schema.semenBoarResult.tenant_id, tenantId),
+          inArray(schema.semenBoarResult.boar_animal_id, ids),
+        ),
+      );
+    const contributions = [...pooled, ...results];
+    const lotIds = [...new Set(contributions.map((r) => r.lot))];
+    if (lotIds.length) {
+      const lots = await this.db
+        .select({ id: schema.semenBatch.semen_batch_id, date: schema.semenBatch.collection_date })
+        .from(schema.semenBatch)
+        .where(and(inArray(schema.semenBatch.semen_batch_id, lotIds), lte(schema.semenBatch.collection_date, onDate)));
+      const dateOf = new Map(lots.map((l) => [l.id, l.date]));
+      for (const r of contributions) note(r.boar, dateOf.get(r.lot));
+    }
+    const day = (d: string) => Date.parse(`${d}T00:00:00Z`);
+    return boars.map((b) => ({
+      boar: b.animal_code,
+      days: last.has(b.animal_id) ? Math.round((day(onDate) - day(last.get(b.animal_id)!)) / 86_400_000) : null,
+    }));
   }
 
   /**
@@ -2319,6 +2633,14 @@ export class BreedingService {
         expiry_date: schema.semenBatch.expiry_date,
         warehouse_id: schema.semenBatch.warehouse_id,
         qr_id: schema.semenBatch.qr_id,
+        plan_id: schema.semenBatch.plan_id,
+        label: schema.semenBatch.label,
+        week_no: schema.semenBatch.week_no,
+        week_year: schema.semenBatch.week_year,
+        colorant_name: schema.semenBatch.colorant_name,
+        colorant_qty: schema.semenBatch.colorant_qty,
+        colorant_cost: schema.semenBatch.colorant_cost,
+        destination_farm_id: schema.semenBatch.destination_farm_id,
         notes: schema.semenBatch.notes,
         created_at: schema.semenBatch.created_at,
         boar_id: schema.semenBatch.boar_animal_id,
@@ -2364,10 +2686,45 @@ export class BreedingService {
           )
           .orderBy(schema.semenBatchBoar.sort_order)
       : [];
+    // What each boar gave, rejected ejaculates included (lots recorded before Phase 2 have none).
+    const results = lots.length
+      ? await this.db
+          .select({
+            semen_batch_id: schema.semenBoarResult.semen_batch_id,
+            boar_id: schema.semenBoarResult.boar_animal_id,
+            boar_code: schema.animalRegister.animal_code,
+            collector_id: schema.semenBoarResult.collector_id,
+            collector_code: schema.semenCollector.collector_code,
+            volume_ml: schema.semenBoarResult.volume_ml,
+            doses: schema.semenBoarResult.doses,
+            morphology_pct: schema.semenBoarResult.morphology_pct,
+            motility_pct: schema.semenBoarResult.motility_pct,
+            concentration_m_per_ml: schema.semenBoarResult.concentration_m_per_ml,
+            accepted: schema.semenBoarResult.accepted,
+            reject_reason: schema.semenBoarResult.reject_reason,
+          })
+          .from(schema.semenBoarResult)
+          .innerJoin(
+            schema.animalRegister,
+            eq(schema.animalRegister.animal_id, schema.semenBoarResult.boar_animal_id),
+          )
+          .leftJoin(
+            schema.semenCollector,
+            eq(schema.semenCollector.collector_id, schema.semenBoarResult.collector_id),
+          )
+          .where(
+            inArray(
+              schema.semenBoarResult.semen_batch_id,
+              lots.map((l) => l.semen_batch_id),
+            ),
+          )
+          .orderBy(schema.semenBoarResult.sort_order)
+      : [];
     return lots.map((l) => {
       const boars = pooled.filter((p) => p.semen_batch_id === l.semen_batch_id);
       return {
         ...l,
+        results: results.filter((r) => r.semen_batch_id === l.semen_batch_id),
         pooled: boars.length > 0,
         boars: boars.map((b) => ({
           boar_id: b.boar_id,

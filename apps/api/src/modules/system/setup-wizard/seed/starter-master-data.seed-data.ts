@@ -320,6 +320,12 @@ export const STARTER_GL_MAPPINGS: StarterGlMapping[] = [
     debit_account_code: '1200',
     credit_account_code: '1060',
   },
+  // A culled breeding animal converted to inventory (TDD row 11): she comes into Finished Goods at her market value, out of the asset; the gain or loss goes through BIO_DISPOSAL_SOLD.
+  {
+    transaction_type: 'BIO_FA_CONVERSION',
+    debit_account_code: '1030',
+    credit_account_code: '1060',
+  },
   // Semen used by an AI mating: out of the semen stock (Finished Goods), into the sow's pre-mature asset, which hands it on to her litter at the farrowing.
   {
     transaction_type: 'BIO_SEMEN_USE',

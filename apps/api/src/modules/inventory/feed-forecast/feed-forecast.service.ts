@@ -148,7 +148,7 @@ export function locationLobConditions(scope: FarmScope) {
 export { MAX_SPAN_DAYS };
 
 /** Animals that have left the register no longer eat — same list batch-transfer and daily entry use. */
-const GONE_STATUSES = ['DEAD', 'SOLD', 'CULLED', 'SLAUGHTERED'];
+const GONE_STATUSES = ['DEAD', 'SOLD', 'CULLED', 'SLAUGHTERED', 'CONVERTED_INV'];
 
 /**
  * Upper bound on projected stage changes per batch. A 45-day window with

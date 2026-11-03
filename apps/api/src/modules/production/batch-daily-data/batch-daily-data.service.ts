@@ -77,7 +77,7 @@ export interface MortalityEntry {
   notes: string | null;
 }
 
-const TERMINAL_ANIMAL_STATUSES = "('DEAD','SOLD','CULLED','SLAUGHTERED')";
+const TERMINAL_ANIMAL_STATUSES = "('DEAD','SOLD','CULLED','SLAUGHTERED','CONVERTED_INV')";
 
 /**
  * A consumption entry that has passed every check and is waiting to be issued. A day post collects them
@@ -2008,7 +2008,7 @@ export class BatchDailyDataService {
             ? [eq(schema.animalRegister.current_stage_id, stageId)]
             : []),
           eq(schema.animalRegister.is_active, true),
-          sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED')`,
+          sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED','CONVERTED_INV')`,
         ),
       )
       .orderBy(schema.animalRegister.animal_code);

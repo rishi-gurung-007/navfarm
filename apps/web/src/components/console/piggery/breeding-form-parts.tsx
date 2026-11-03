@@ -11,8 +11,8 @@ const surface: CSSProperties = { backgroundColor: "var(--surface)", borderColor:
 const raised: CSSProperties = { backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" };
 
 /**
- * A fresh form is empty, so every required field is "wrong" — showing that in red before anyone has touched anything is
- * noise. Errors appear inline once the user has started (or tried to save); Save stays disabled throughout.
+ * A fresh form is empty, so every required field is "wrong" — showing that in red while the user is still filling it in
+ * is noise. Errors appear inline only once Save has been clicked, and from then on follow every change.
  */
 const EngagedContext = createContext(true);
 
@@ -43,13 +43,20 @@ export function EntryModal({
 }) {
   const blocking = errorsOf(issues);
   const [engaged, setEngaged] = useState(false);
+  // Save is always clickable: with something wrong it shows what, instead of sitting greyed out with no explanation.
+  const submit = (e: React.FormEvent) => {
+    if (blocking.length) {
+      e.preventDefault();
+      setEngaged(true);
+      return;
+    }
+    onSubmit(e);
+  };
   return (
     <EngagedContext.Provider value={engaged}>
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
       <form
-        onSubmit={onSubmit}
-        onClickCapture={() => setEngaged(true)}
-        onInputCapture={() => setEngaged(true)}
+        onSubmit={submit}
         noValidate
         className="rounded-[var(--radius-lg)] border w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl"
         style={{ ...surface, ["--field-error" as string]: engaged ? "var(--danger)" : "var(--border)", ["--field-warn" as string]: "var(--warning)" } as CSSProperties}
@@ -81,14 +88,14 @@ export function EntryModal({
             {blocking.length
               ? engaged
                 ? `${blocking.length} thing${blocking.length === 1 ? "" : "s"} to fix before saving`
-                : "Work down the steps — Save unlocks when they are complete."
+                : "Fill in the steps, then Save — anything missing is shown then."
               : "Everything the system checks is in order."}
           </p>
           <div className="flex gap-2">
             <Button type="button" size="sm" variant="secondary" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" size="sm" disabled={submitting || blocking.length > 0}>
+            <Button type="submit" size="sm" disabled={submitting}>
               {submitting ? savingLabel : submitLabel}
             </Button>
           </div>
@@ -180,7 +187,7 @@ export function ChecksPanel({ issues }: { issues: Issue[] }) {
     <div className="rounded-[var(--radius-md)] border p-3 space-y-2" style={raised} aria-live="polite">
       <p className="text-xs font-bold" style={{ color: "var(--text-primary)" }}>Checks</p>
       {!engaged && issues.some((i) => i.level === "error") && (
-        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Rules show here as you fill the form in.</p>
+        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Anything missing is listed here when you click Save.</p>
       )}
       {!errors.length && !warns.length && !issues.some((i) => i.level === "error") && (
         <p className="text-[11px] flex items-center gap-1.5" style={{ color: "var(--success)" }}>

@@ -13,7 +13,7 @@
  *                      two registered animals (one sold, one slaughtered), and a manual entry.
  *
  * Not seeded, and why (the verify script lists them): SALES in the Inventory Ledger (nothing writes it yet), OVERHEAD in it (no scheduler
- * line of type OVERHEAD is configured), a costing run's fair-value rows (needs a FAIR_VALUE costing profile), and the lactation cost
+ * line of type OVERHEAD is configured), a costing run's fair-value rows (needs an item costed by FAIR_VALUE), and the lactation cost
  * (it is posted when a litter is weaned — wean the pending litter on the Breeding screen).
  *
  *   pnpm nx run api:db-demo-chapters -- --apply --chapter=17-ledger-types

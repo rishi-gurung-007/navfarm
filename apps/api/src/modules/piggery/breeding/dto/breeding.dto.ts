@@ -170,6 +170,13 @@ export class CreateFarrowingDto {
   @Type(() => Number)
   piglets_stillborn?: number;
 
+  /** TDD row 12: when the farm enters Total Born, it must equal born alive + born dead + mummified, or the farrowing is refused. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  piglets_total_born?: number;
+
   @IsOptional()
   @IsInt()
   @Min(0)
@@ -327,6 +334,56 @@ export class UpdateWeaningDto {
   notes?: string;
 }
 
+export class SemenBoarResultDto {
+  @IsUUID()
+  boar_animal_id: string;
+
+  @IsOptional()
+  @IsUUID()
+  collector_id?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  volume_ml?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  doses?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  morphology_pct?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  motility_pct?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  concentration_m_per_ml?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  accepted?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reject_reason?: string;
+}
+
 export class CreateSemenCollectionDto {
   @IsOptional()
   @IsUUID()
@@ -345,6 +402,11 @@ export class CreateSemenCollectionDto {
   @IsOptional()
   @IsUUID()
   boar_batch_id?: string;
+
+  // The planned collection this carries out (Phase 4): the lot's boars, tapped or rejected, are marked done on it.
+  @IsOptional()
+  @IsUUID()
+  plan_id?: string;
 
   @IsDateString()
   collection_date: string;
@@ -381,10 +443,21 @@ export class CreateSemenCollectionDto {
   @Type(() => Number)
   overhead_cost_period?: number;
 
+  // The lot's doses. Left out when `boar_results` is given: the lot then has the doses its accepted boars gave, added up.
+  @IsOptional()
   @IsInt()
   @Min(0.01)
   @Type(() => Number)
-  doses_collected: number;
+  doses_collected?: number;
+
+  // What each boar gave (Phase 2). One entry per boar of the lot; a boar tapped whose ejaculate was rejected may be named
+  // here too (accepted false, with a reason), outside the lot's boars.
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(21)
+  @ValidateNested({ each: true })
+  @Type(() => SemenBoarResultDto)
+  boar_results?: SemenBoarResultDto[];
 
   @IsOptional()
   @IsUUID()

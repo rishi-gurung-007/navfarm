@@ -346,40 +346,30 @@ NX_TASK_TARGET_PROJECT=api NX_TASK_TARGET_TARGET=build
 
 ## 9. Bio-asset costing — state and rules for future agents
 
-Plan: `docs/superpowers/plans/2026-10-20-central-bio-asset-costing.md`. Proof, phase by phase:
-`docs/VERIFICATION-2026-10-20-bio-costing-phase-{0..6}.md`. Read the 21 Oct 2026 entries at the end of `docs/decisions.md` first.
+Plan: `docs/superpowers/plans/2026-10-28-item-level-bio-costing.md` (items replaced the costing profile, 28 Oct 2026). Read the 28 Oct entries at the end of `docs/decisions.md` first; the older plan `docs/superpowers/plans/2026-10-20-central-bio-asset-costing.md` describes the profile design, which no longer exists.
 
-- **The ledger is the record, the register columns are a cache.** An animal's book value is derived from her
-  `bio_asset_ledger` rows (`AnimalBookValueService`). `book_value`, `total_amortised` and `current_bio_asset_value` are
-  not editable and are refreshed in the request that writes a ledger row. Do not read them for a decision without
-  refreshing.
-- **Costing is by profile.** `bio_costing_profile` (method, start age, life, residual, GL accounts, scope) resolves
-  most-specific-wins. Terms lock once an animal is costed; change them with `new-version`. The client's four breeding
-  rules are seeded only as DRAFT (`db-seed-bio-costing-profiles`); they cannot go live until Finance gives an
-  accumulated-amortisation and an impairment account.
-- **A run is claimed once per period** (`bio_costing_run.active_key`). Calculate → Post → Reverse; Post recalculates on
-  current books. The scheduler is off unless `BIO_COSTING_SCHEDULER_ENABLED=true`. Never switch it on for a tenant before
-  its profile's effective date is the date costing should start: catch-up walks from that date.
-- **The batch path and the engine do not overlap.** A herd whose animals are costed by profile is refused by the batch
-  amortise / fair-value endpoints (`assertNotCostedPerAnimal`).
-- **Existing tenants:** `pnpm nx run api:db-backfill-bio-costing` (read-only), `-- --verify` (rolls back), `-- --apply`.
-  It assigns profiles and refreshes caches only. It never runs a period and never edits history.
-  `db-check-bio-asset-reconciliation` is the read-only consistency report.
-- **Reports:** *Finance > Bio-Asset Reconciliation* shows the roll-forward by profile and a tie-out of the engine's
-  ledger rows to its `BIO_COSTING_RUN` journal lines. A difference there is a defect, not rounding.
-- **Capitalise or expense is decided per animal (21 Oct).** For a batch of registered animals, a feed or overhead line is capitalised while the date is before the
-  animal's `costing_start_date` (or she has none) and expensed on or after it (`BatchService.animalsPastCostingStart`). There is no herd-wide Mature step for such a
-  batch: the button is gone and `matureBioAsset` refuses it. A mature sow's lactation feed is therefore expensed and **nothing passes to her litter** by the ledger
-  move at weaning (`allocateLactationCost`, which writes against the sow's own ledger and reads only what is capitalised); that needs Finance (decisions.md, Phase 3 / 4).
-- **Gilt selection** (`modules/piggery/gilt-selection`; the screen is a dialog on *Livestock > Breeding > Farrowing & Litters*, `gilt-selection-dialog.tsx`, with the history on the Gilt Selections tab; the old `/livestock/gilt-selection` address redirects there): one transaction takes head out of a headcount batch
-  (`BatchService.releaseHeadToAnimals`), registers each gilt BORN_ON_FARM (Local, profile LOC-F) at the batch's average value per head, and refuses under 15 teats.
-  Ledger-only, no journal (D8). `BORN_ON_FARM` is now Local for costing (`originOf`).
-- **The walkthrough** (`pnpm nx run api:db-costing-walkthrough`, guide `docs/TEST-GUIDE-costing-walkthrough.md`) now ends with a gilt selection and the gilts' first feed. Run it on a
-  clean `pnpm seed:costing` database; the costing seed dates the residual setting and profiles from 1 Jan 2026 so the walkthrough's March is costed.
-- **Exits and runs:** a costing line is skipped (`LEFT_AFTER_PERIOD`) for an animal whose exit is dated after the period, and a posted run cannot be reversed once an animal in it has left
-  after the period. Run months in order; the exit holds the last period.
-- **Not built, and the client's to answer:** sale / cull / slaughter / transfer entries (three treatments in the BBP, and a
-  sale posts no journal today), registration posting to the GL and the loss legs on a death (D8), the formula wording
-  (D11), costs to sell (D5), origin of `TRANSFERRED_IN` animals (D2), batch-tracked profiles.
-- **Proving it:** post a run through the API, read `bio_asset_ledger` and `journal_line`, compare with the trial
-  balance. A green suite did not catch the double death write, the 28 000 default or the missing mapping.
+- **Costing terms live on the biological Item** (the TDD Item Card's *Bio Asset Costing* tab: method, gender, start weeks and days, life, residual, frequency, Costing From, five GL accounts, fair-value rates in `item_fair_value_rate`). There is **no costing profile** (dropped by migration 0230, which refuses to run until `db-move-profiles-to-items` has moved a database's terms onto its items). Terms lock once an animal of the item has been charged by a run. The items are created by the user (GGP/GP/P × Imp/Loc × F/M, PIGLETS, Finisher) with their own figures: **never seed the sheet's figures**.
+- **The ledger is the record, the register columns are a cache.** An animal's book value is derived from her `bio_asset_ledger` rows (`AnimalBookValueService`). `book_value`, `total_amortised` and `current_bio_asset_value` are not editable and are refreshed in the request that writes a ledger row.
+- **An animal is costed by her item** (`bio-costing-subject.ts` turns the item's `bio_*` columns into the terms the engine takes). The only thing stored on her is her costing start date (birth + the item's start period, never before arrival), set at registration (`BioCostingStartService`) or by `POST /bio-costing/assign-animals`. Her residual is her own override (set on her card with a reason) or her item's. **A gilt is costed by the item she is registered with**, so gilt selection must name the gilt item.
+- **A run is one item and one period** (`bio_costing_run.item_id`; `active_key` item|period[|batch]). Calculate → Post → Reverse; Post recalculates on current books; an animal is charged once per method and period. A run made before items costed animals has no item and is read through its lines (it can be reversed, not recalculated or posted). The scheduler is off unless `BIO_COSTING_SCHEDULER_ENABLED=true`; an item is scheduled only from its Costing From date and from the first of its animals' start dates, and never before one exists. Never switch it on for a tenant before that date is the date costing should start.
+- **The batch path and the engine do not overlap.** A herd whose animals belong to items with costing terms is refused by the batch amortise / fair-value endpoints (`assertNotCostedPerAnimal`).
+- **Existing tenants:** `pnpm nx run api:db-move-profiles-to-items` (read-only), `-- --verify` (rolls back), `-- --apply`; then migrate. `db-backfill-bio-costing` dates animals from their items and refreshes caches (never runs a period, never edits history). `db-check-bio-asset-reconciliation` is the read-only consistency report.
+- **Reports:** *Finance > Bio-Asset Reconciliation* shows the roll-forward by costed item and a tie-out of the engine's ledger rows to its `BIO_COSTING_RUN` journal lines. A difference there is a defect, not rounding.
+- **Capitalise or expense is decided per animal (21 Oct).** For a batch of registered animals, a feed or overhead line is capitalised while the date is before the animal's `costing_start_date` (or she has none) and expensed on or after it (`BatchService.animalsPastCostingStart`). There is no herd-wide Mature step for such a batch. A mature sow's lactation feed is therefore expensed and nothing passes to her litter by the ledger move at weaning; that needs Finance (decisions.md).
+- **Gilt selection** (`modules/piggery/gilt-selection`; a dialog on *Livestock > Breeding > Farrowing & Litters*): one transaction takes head out of a headcount batch (`BatchService.releaseHeadToAnimals`), registers each gilt BORN_ON_FARM at the lot's cost per head, and refuses under 15 teats. Ledger-only, no journal (D8).
+- **Exits and runs:** a costing line is skipped (`LEFT_AFTER_PERIOD`) for an animal whose exit is dated after the period, and a posted run cannot be reversed once an animal in it has left after the period. Run months in order; the exit holds the last period.
+- **Not built, and still to be answered:** sale / cull / slaughter / transfer entries (three treatments in the BBP), registration posting to the GL and the loss legs on a death (D8), the formula wording (D11), costs to sell (D5), origin of `TRANSFERRED_IN` animals (D2), batch-tracked items (PIGLETS, Finisher are not run).
+- **Proving it:** post a run through the API, read `bio_asset_ledger` and `journal_line`, compare with the trial balance. `pnpm seed:costing-test` rebuilds the databases (it drops nf_devco): to run it without touching yours, start a second MySQL server on another port and pass `DATABASE_PORT`. A run's reversal is a real write: never call it to "see if it refuses".
+
+## 10. AI Station — boar selection, semen collection by line, body condition (2 Nov 2026)
+
+Plan and questions for the client: `docs/superpowers/plans/2026-11-02-ai-station-semen-collection.md`. Interpretations: the 2 Nov entry at the end of `docs/decisions.md`. Phases 1 to 7 are built and proved; **none of it is committed or confirmed by Rishi.**
+
+- **Nothing the client gave is a constant.** The rules of a line live on `breeding_line_setup` (one row per breed; a row with no breed is the company default), the genetic-level bands in `genetic_level_band`, the body condition scale in `bcs_scale`, collectors in `semen_collector`. Add a field to a master config, not a number to code. `pnpm nx run api:db-seed-ai-station-fixture` prints, and with `--apply` writes, the client's documented set-up as an optional named fixture; farms are passed in by code, never guessed.
+- **Where things are:** masters `apps/api/src/modules/master-data/breeding-line/` (pure rules in `breeding-line.rules.ts`); collection, plans, ranking, labels in `apps/api/src/modules/piggery/breeding/` (`boar-ranking.rules.ts`, `collection-plan.rules.ts`, `semen-lot-label.rules.ts`, `semen-boar-result.rules.ts`); body condition in `piggery/boar-condition/`; the screens are the **Boar Selection** and **Boar Condition** tabs of `/livestock/breeding`, and the masters under Piggery. Migrations `0233` to `0238`.
+- **The rules are pure functions with tests; the sheets are the tests.** `boar-ranking.rules.spec.ts` reproduces the client's Tempo and L-Line sheets row for row. Keep it green before changing the ranking.
+- **A unit test is not proof here.** Four defects passed every unit test and showed only in the running (bundled) API: implicit conversion turns the text `'false'` into `true` (an `isActive=false` filter returned active rows, also on the existing `reason` master, not fixed there); a derived update DTO (`PartialType(OmitType(...))`) loses a nested `@Type`, so declare it on the update class; a validated DTO carries every omitted field as an own `undefined` key, so never `{...defaults, ...dto}`: use `definedOnly`; and MySQL foreign key names are unique **per database** (a reused name stopped a migration halfway and left two tenants half-migrated, since DDL does not roll back). `foreign-key-names-unique.spec.ts` guards the last.
+- **Prove a change on the running app, then undo exactly what you wrote.** Take a dump and per-table checksums first; delete only rows you tagged. **Do not restore whole tables on a development database in use**: the owner scores boars in the app while you work, and a table restore once removed their test assessment. If you must restore, check the binary log for writes that are not yours first (`mysqlbinlog -v`), and set `TIME_ZONE='+00:00'` (a dump holds UTC).
+- **Feed:** a boar's feed level from his condition score is recorded and shown; the feed forecast does not read it (plan question 9).
+- **Still the client's to answer** (plan, "Questions for Triple C"): the A to F columns, the TSI bands per line, whether the line is the breed, the Z-Line "boar tag", whether the Sunday and Wednesday lots of a week share a label, whether the colorant is stock, who may override a feed level, and what monthly means.
+

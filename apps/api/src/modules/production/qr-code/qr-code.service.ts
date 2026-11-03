@@ -232,6 +232,11 @@ export class QrCodeService {
       expiryDate: string | null;
       warehouseId: string | null;
       quality?: { volume_ml: number | null; motility_pct: number | null; concentration_m_per_ml: number | null };
+      /** What the line's setup put on the lot (Phase 5): the label on the sachets, the week, the colorant and where it is for. */
+      label?: string | null;
+      week?: { no: number; year: number };
+      colorantName?: string | null;
+      destinationFarmId?: string | null;
     },
     tenantId: string,
     userPayload?: any,
@@ -254,6 +259,11 @@ export class QrCodeService {
       expiryDate: string | null;
       warehouseId: string | null;
       quality?: { volume_ml: number | null; motility_pct: number | null; concentration_m_per_ml: number | null };
+      /** What the line's setup put on the lot (Phase 5): the label on the sachets, the week, the colorant and where it is for. */
+      label?: string | null;
+      week?: { no: number; year: number };
+      colorantName?: string | null;
+      destinationFarmId?: string | null;
     },
     tenantId: string,
     userPayload?: any,
@@ -267,12 +277,22 @@ export class QrCodeService {
       const [wh] = await this.db.select().from(schema.locationMaster).where(eq(schema.locationMaster.location_id, params.warehouseId)).limit(1);
       facilityCode = wh?.location_code || null;
     }
+    let destination: { code: string | null; name: string | null } | null = null;
+    if (params.destinationFarmId) {
+      const [farm] = await this.db.select().from(schema.locationMaster).where(eq(schema.locationMaster.location_id, params.destinationFarmId)).limit(1);
+      destination = farm ? { code: farm.location_code, name: farm.location_name } : null;
+    }
     const packNo = await this.generatePackNo(tenantId, boarBatch.company_id);
     const originChain = await this.buildOriginChain(boarBatch.batch_id);
     const qrData = {
       type: 'SEMEN_LOT',
       pack_no: packNo,
       lot_no: params.lotNo,
+      // What is printed on the sachets, and what was added to the semen, as the line's setup says.
+      ...(params.label ? { label: params.label } : {}),
+      ...(params.week ? { week: params.week.no, week_year: params.week.year } : {}),
+      ...(params.colorantName ? { colorant: params.colorantName } : {}),
+      ...(destination ? { destination_farm: destination } : {}),
       item_code: item.item_code,
       item_name: item.item_name,
       boar: { animal_code: boar.animal_code, rfid_tag: boar.rfid_tag || null, breed: breed?.breed_name || null },

@@ -33,9 +33,9 @@ async function main() {
   const q = async <T = any>(sql: string, params: unknown[] = []) => (await c.query(sql, params))[0] as T[];
 
   // ---- the herd -------------------------------------------------------------------------------------------------------
-  const herd = await q(`select a.animal_id, a.animal_code, a.rfid_tag tag, a.animal_type kind, a.gender, a.entry_type, a.entry_date, a.dob, a.costing_start_date start, a.costing_profile_id,
-      a.is_active, a.disposal_date, a.book_value cache_bv, a.residual_value own_residual, p.profile_code, p.start_age_weeks, p.useful_life_months, p.origin, b.remarks batch
-    from animal_register a left join bio_costing_profile p on p.profile_id = a.costing_profile_id left join batch_header b on b.batch_id = a.current_batch_id
+  const herd = await q(`select a.animal_id, a.animal_code, a.rfid_tag tag, a.animal_type kind, a.gender, a.entry_type, a.entry_date, a.dob, a.costing_start_date start,
+      a.is_active, a.disposal_date, a.book_value cache_bv, i.item_code, i.bio_costing_method item_method, i.bio_start_age_weeks start_age_weeks, i.bio_useful_life_months useful_life_months, b.remarks batch
+    from animal_register a join item_master i on i.item_id = a.item_id left join batch_header b on b.batch_id = a.current_batch_id
     where a.rfid_tag like 'CT-%' order by a.rfid_tag`);
   const core = herd.filter((a) => /^CT-[AB]-/.test(a.tag));
   const gilts = herd.filter((a) => /^CT-GILT-/.test(a.tag));
@@ -52,13 +52,12 @@ async function main() {
   const ledgerOf = (id: string) => ledger.filter((l) => l.animal_id === id);
   const sumTo = (id: string, asOf?: string, types = book) => ledgerOf(id).filter((l) => types.includes(l.event) && (!asOf || d(l.posting_date) <= asOf)).reduce((n, l) => n + num(l.amt), 0);
 
-  // ---- purchase and profile -------------------------------------------------------------------------------------------
+  // ---- purchase and item -------------------------------------------------------------------------------------------
   const price = (a: any) => (a.batch === 'CT-BATCH-A' ? (a.kind === 'SOW' ? 850 : 1200) : a.kind === 'SOW' ? 700 : 900);
   for (const a of core) {
     const acq = ledgerOf(a.animal_id).filter((l) => l.event === 'ACQUISITION');
     check(`P1 ${a.tag}`, `one ACQUISITION row at the GRN price ${price(a)}`, acq.length === 1 && near(num(acq[0].amt), price(a)), acq.map((l) => l.amt).join(','));
-    const want = a.batch === 'CT-BATCH-A' ? (a.kind === 'SOW' ? 'IMP-F' : 'IMP-M') : a.kind === 'SOW' ? 'LOC-F' : 'LOC-M';
-    check(`P2 ${a.tag}`, `costing profile ${want} from origin and sex`, a.profile_code === want, String(a.profile_code));
+    check(`P2 ${a.tag}`, 'her item carries the costing terms (amortisation), so her costing start was dated at registration', a.item_method === 'AMORTIZATION' && !!a.start, `${a.item_code} ${a.item_method} start ${a.start}`);
     const byAge = addDays(d(a.dob), 7 * Number(a.start_age_weeks));
     const expectStart = byAge > d(a.entry_date) ? byAge : d(a.entry_date);
     check(`P3 ${a.tag}`, 'costing start = later of (birth + start weeks) and the entry date', d(a.start) === expectStart, `${d(a.start)} expected ${expectStart}`);
@@ -87,8 +86,8 @@ async function main() {
   check('C6', 'overhead on or after the start is expensed: account 5090 = those overhead entries', near(net5090, expensedOf('OVERHEAD'), 0.01), `5090 ${net5090.toFixed(4)}, entries ${expensedOf('OVERHEAD').toFixed(4)}`);
 
   // ---- the runs: every line recomputed ----------------------------------------------------------------------------------
-  const lines = await q(`select r.run_no, r.period_key, r.period_end, r.status run_status, r.profile_id, r.batch_id, rl.*, a.rfid_tag tag, a.gender, p.profile_code, p.useful_life_months, p.run_frequency
-    from bio_costing_run_line rl join bio_costing_run r on r.run_id = rl.run_id join animal_register a on a.animal_id = rl.animal_id join bio_costing_profile p on p.profile_id = r.profile_id
+  const lines = await q(`select r.run_no, r.period_key, r.period_end, r.status run_status, r.item_id, r.batch_id, rl.*, a.rfid_tag tag, a.gender, i.item_code, i.bio_useful_life_months useful_life_months, i.bio_run_frequency run_frequency
+    from bio_costing_run_line rl join bio_costing_run r on r.run_id = rl.run_id join animal_register a on a.animal_id = rl.animal_id join item_master i on i.item_id = r.item_id
     where a.rfid_tag like 'CT-%' order by r.period_end, a.rfid_tag`);
   const posted = lines.filter((l) => l.run_status === 'POSTED');
   const charged = posted.filter((l) => l.status === 'CHARGED');
@@ -118,9 +117,9 @@ async function main() {
     }
   }
   check('R4', 'months chain: each book value before = the last period\'s after + the cost booked in between', gaps === 0, `${gaps} breaks`);
-  const residualOf = (l: any) => (l.gender === 'M' ? 0 : l.tag === 'CT-B-SOW-2' && d(l.period_end) >= '2026-06-30' ? 400 : d(l.period_end) >= '2026-07-01' ? 328 : 307.5);
+  const residualOf = (l: any) => (l.gender === 'M' ? 0 : 307.5);
   const wrongResidual = charged.filter((l) => !near(num(l.residual), residualOf(l)));
-  check('R5', 'residual: female 150 kg x 2.05 = 307.50 to June, 160 kg x 2.05 = 328.00 from 1 July, CT-B-SOW-2 her own 400 from her override, male none', wrongResidual.length === 0, wrongResidual.slice(0, 3).map((l) => `${l.run_no} ${l.tag} ${l.residual}`).join('; ') || 'all as expected');
+  check('R5', 'residual: female 150 kg x 2.05 = 307.50 (her item\'s, for every sow), male none', wrongResidual.length === 0, wrongResidual.slice(0, 3).map((l) => `${l.run_no} ${l.tag} ${l.residual}`).join('; ') || 'all as expected');
   const wrongLife = posted.filter((l) => l.life_end_date && d(l.life_end_date) !== addDays(d(herd.find((h) => h.animal_id === l.animal_id)!.dob), Math.round((Number(l.useful_life_months) * 365) / 12)));
   check('R6', 'life end = birth + useful life (months x 365 / 12 days)', wrongLife.length === 0, `${wrongLife.length} wrong`);
   const notStartedBad = posted.filter((l) => l.skip_reason === 'NOT_STARTED' && !(d(l.period_end) < d(herd.find((h) => h.animal_id === l.animal_id)!.start)));
@@ -223,8 +222,8 @@ async function main() {
   for (const g of gilts) {
     const sowA = herd.find((a) => a.tag === 'CT-A-SOW-1')!;
     const parents = (await q('select sire_animal_id, dam_animal_id, no_of_teats, entry_type, acquisition_cost from animal_register where animal_id = ?', [g.animal_id]))[0];
-    check(`G2 ${g.tag}`, 'born on farm, Local female (LOC-F), the sow as dam, a boar as sire, 15 teats or more, costing start = birth + 33 weeks', g.entry_type === 'BORN_ON_FARM' && g.profile_code === 'LOC-F' && parents.dam_animal_id === sowA.animal_id && !!parents.sire_animal_id && Number(parents.no_of_teats) >= 15
-      && d(g.start) === addDays(d(g.dob), 231), `${g.entry_type} ${g.profile_code} teats ${parents.no_of_teats} start ${d(g.start)}`);
+    check(`G2 ${g.tag}`, 'born on farm, a gilt item with costing terms, the sow as dam, a boar as sire, 15 teats or more, costing start = birth + 33 weeks', g.entry_type === 'BORN_ON_FARM' && g.item_method === 'AMORTIZATION' && parents.dam_animal_id === sowA.animal_id && !!parents.sire_animal_id && Number(parents.no_of_teats) >= 15
+      && d(g.start) === addDays(d(g.dob), 231), `${g.entry_type} ${g.item_code} teats ${parents.no_of_teats} start ${d(g.start)}`);
     check(`G3 ${g.tag}`, 'carries the litter\'s cost per piglet as her acquisition cost', near(num(parents.acquisition_cost), birthWindow / 13, 0.0006) && birthWindow > 0, `${parents.acquisition_cost} vs ${(birthWindow / 13).toFixed(6)}`);
   }
 
@@ -246,8 +245,8 @@ async function main() {
   check('I5', 'no live animal has a negative book value', neg.length === 0, neg.map((a) => a.tag).join(','));
   const belowRes = charged.filter((l) => num(l.book_value_after) < num(l.residual) - 0.0006);
   check('I6', 'no charge takes an animal below her residual', belowRes.length === 0, `${belowRes.length}`);
-  const dup = await q(`select profile_id, period_key, batch_id, count(*) n from bio_costing_run where status = 'POSTED' group by 1,2,3 having count(*) > 1`);
-  check('I7', 'one posted run per profile, period and batch', dup.length === 0, `${dup.length} duplicates`);
+  const dup = await q(`select item_id, period_key, batch_id, count(*) n from bio_costing_run where status = 'POSTED' group by 1,2,3 having count(*) > 1`);
+  check('I7', 'one posted run per item, period and batch', dup.length === 0, `${dup.length} duplicates`);
   const left = await q(`select count(*) n from bio_costing_run where status = 'CALCULATED'`);
   check('I8', 'no calculated-but-unposted run is left lying about', Number(left[0].n) === 0, `${left[0].n}`);
   const rev = await q(`select r.run_id, r.run_no from bio_costing_run r where r.status = 'REVERSED'`);
@@ -263,8 +262,9 @@ async function main() {
   const clearedOnDeath = num(clearing[0]?.total_debit);
   check('I10', 'amortisation expense 5100 = all amortisation in the ledger (net of reversals)', near(num(expense[0].x), amortAll, 0.003), `5100 ${num(expense[0].x).toFixed(4)}, ledger ${amortAll.toFixed(4)}`);
   check('I11', 'accumulated amortisation 1065 = that less what the death cleared', near(num(accum[0].x), amortAll - clearedOnDeath, 0.003), `1065 ${num(accum[0].x).toFixed(4)}, expected ${(amortAll - clearedOnDeath).toFixed(4)}`);
-  const resid = await q(`select gender, residual_rule, residual_weight_kg, effective_from from bio_costing_residual_setting order by gender, effective_from`);
-  check('I12', 'the company residuals: female 150 kg x 2.05 from the start, then 160 kg x 2.05 from 1 Jul 2026; male none; CT-B-SOW-2 has her own 400', resid.filter((r) => r.gender === 'F').length === 2 && num(herd.find((a) => a.tag === 'CT-B-SOW-2')!.own_residual) === 400, resid.map((r) => `${r.gender} ${r.residual_weight_kg ?? '-'} ${d(r.effective_from)}`).join(' | '));
+  const termsSet = await q(`select item_code, bio_residual_rule, bio_residual_weight_kg, bio_residual_price_per_kg from item_master where bio_costing_method is not null order by item_code`);
+  check('I12', 'the costing terms are on the items: the female items 150 kg x 2.05, the male none', termsSet.length >= 3 && termsSet.some((r) => r.bio_residual_rule === 'WEIGHT_X_PRICE' && num(r.bio_residual_weight_kg) === 150 && num(r.bio_residual_price_per_kg) === 2.05)
+    && termsSet.some((r) => r.bio_residual_rule === 'NONE'), termsSet.map((r) => `${r.item_code} ${r.bio_residual_rule} ${r.bio_residual_weight_kg ?? '-'}`).join(' | '));
   const healthRows = await q(`select count(*) n from animal_medication_log m join animal_register a on a.animal_id = m.animal_id where a.rfid_tag like 'CT-%'`);
   check('H1', 'health records: dewormer and vaccine on all 8 animals, PRRS on the 3 sows that were alive', Number(healthRows[0].n) === 8 * 2 + 3, `${healthRows[0].n} records`);
 

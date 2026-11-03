@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateJournalDto, UpdateJournalDto, QueryJournalDto } from './dto/journal.dto';
+import { journalOrderBy } from './journal-order';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 
@@ -353,6 +354,7 @@ export class JournalService {
       .select()
       .from(schema.journalHeader)
       .where(and(...conditions))
+      .orderBy(...journalOrderBy(query.sort, query.dir))
       .limit(limit)
       .offset(offset);
   }

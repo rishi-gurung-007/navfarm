@@ -218,7 +218,7 @@ const MINIMAL: FarmVolume = { sows: 6, boars: 1, gilts: 3, countOnlyBatches: 1, 
  */
 const LEAN: FarmVolume = { sows: 6, boars: 1, gilts: 2, countOnlyBatches: 1, herdScale: 0.25, days: 14, breedingSows: 3 };
 /**
- * The costing profile (`pnpm seed:costing`): a herd big enough to cost and a history long enough for costing runs to mean
+ * The costing volume (`pnpm seed:costing`): a herd big enough to cost and a history long enough for costing runs to mean
  * something. The batches start 62 days ago (two months), the breeding herd was bought 24 days before that, and the daily
  * entries run over the same 62 days. Same shape as LIGHT; only the history is longer.
  */

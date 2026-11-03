@@ -19,7 +19,7 @@ const INVENTORY_KNOWN_GAPS: Record<string, string> = {
 };
 const BIO_KNOWN_GAPS: Record<string, string> = {
   'LITTER_COST': 'the lactation cost is posted when a litter is weaned — wean the pending litter on the Breeding screen',
-  'BIO_FAIR_VALUE_RUN': 'a costing run posts fair value only for a FAIR_VALUE costing profile, and none is set up',
+  'BIO_FAIR_VALUE_RUN': 'a costing run posts fair value only for an item costed by FAIR_VALUE, and none is set up',
 };
 
 const database = process.argv.find((a) => a.startsWith('--database='))?.slice('--database='.length) || process.env.DEMO_TENANT_DATABASE || 'nf_devco';

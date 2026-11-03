@@ -1,9 +1,9 @@
 /**
- * Which periods a costing profile owes a run for (bio-asset costing, Phase 5). Pure: the scheduler loads the rows and this decides.
+ * Which periods an item owes a run for (bio-asset costing, Phase 5). Pure: the scheduler loads the rows and this decides.
  *
  * The rules, and what is ours:
  *  - A period is due once it has finished (its last day is on or before today). Only finished periods are ever run (V4).
- *  - The first period is the one that holds the profile's effective date. Charging for periods before the profile existed is a
+ *  - The first period is the one that holds the item's Costing From date. Charging for periods before the item was set up is a
  *    backfill decision for the client (Phase 6), not something a timer does on its own [ours].
  *  - After that, the period after the latest POSTED run. Book values carry forward, so a period is never run behind a posted later one.
  *  - A run that is CALCULATED but not posted blocks the profile: the next period's book values would be wrong without it. The

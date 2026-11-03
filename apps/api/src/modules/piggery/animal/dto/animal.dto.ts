@@ -54,6 +54,7 @@ const STATUSES = [
   'DEAD',
   'SOLD',
   'SLAUGHTERED',
+  'CONVERTED_INV',
 ] as const;
 export const DISPOSAL_TYPES = [
   'SOLD',
@@ -420,7 +421,7 @@ export class UpdateAnimalDto {
 
   // current_bio_asset_value, total_amortised and book_value are not accepted here: they are derived from the
   // animal's bio-asset ledger (AnimalBookValueService), and a typed value would part them from it.
-  // Neither is residual_value (her own residual: PUT /bio-costing/animals/:id/residual, with a reason) or amortisation_monthly (her latest charge).
+  // Neither is residual_value (an old column: her residual is her item's) or amortisation_monthly (her latest charge).
 
   @ApiProperty({ required: false })
   @IsDateString()

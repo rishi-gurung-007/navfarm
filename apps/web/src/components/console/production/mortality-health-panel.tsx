@@ -202,6 +202,8 @@ export default function MortalityHealthPanel() {
   const [mortalityAnimalIds, setMortalityAnimalIds] = useState<Set<string>>(
     new Set(),
   );
+  // Weight at death (kg) typed for each animal ticked; a costed breeding asset cannot be recorded dead without it (TDD row 10).
+  const [deathWeights, setDeathWeights] = useState<Record<string, string>>({});
   const [treatmentAnimalIds, setTreatmentAnimalIds] = useState<Set<string>>(
     new Set(),
   );
@@ -583,7 +585,12 @@ export default function MortalityHealthPanel() {
         transaction_date:
           newMortality.record_date || new Date().toISOString().slice(0, 10),
         ...(selectedAnimals.length > 0
-          ? { animal_ids: selectedAnimals }
+          ? {
+              animal_ids: selectedAnimals,
+              animal_weights: selectedAnimals
+                .filter((id) => Number(deathWeights[id]) > 0)
+                .map((id) => ({ animal_id: id, weight_kg: Number(deathWeights[id]) })),
+            }
           : { quantity: qty }),
         remarks: penNote ? `Recorded in ${penNote}` : undefined,
         // Cause, findings and disposal go to batch_mortality_detail as real fields;
@@ -605,6 +612,7 @@ export default function MortalityHealthPanel() {
     }
     setSavingMortality(false);
     setMortalityAnimalIds(new Set());
+    setDeathWeights({});
     setMortalityReasonId('');
     setMortalityDialogOpen(false);
     // Read the recorded deaths back from the batch instead of showing a local copy.
@@ -1323,6 +1331,20 @@ export default function MortalityHealthPanel() {
                     >
                       {a.label}
                     </span>
+                    {mortalityAnimalIds.has(a.animal_id) && (
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.1"
+                        inputMode="decimal"
+                        aria-label={`${t('mhWeightAtDeath')} ${a.label}`}
+                        placeholder={t('mhWeightAtDeath')}
+                        value={deathWeights[a.animal_id] ?? ''}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setDeathWeights((w) => ({ ...w, [a.animal_id]: e.target.value }))}
+                        className="nf-input ml-auto h-7 w-32 text-[12px]"
+                      />
+                    )}
                   </label>
                 ))}
               </div>

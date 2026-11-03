@@ -6,10 +6,13 @@ import {
   IsUUID,
   IsBoolean,
   IsInt,
+  IsIn,
+  ValidateIf,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
+import { INVENTORY_ENTRY_TYPES, INVENTORY_TRANSACTION_TYPES } from '../../../inventory/inventory-ledger/inventory-ledger.types';
 
 export class CreateGlMappingDto {
   @ApiProperty({
@@ -77,48 +80,19 @@ export class CreateGlMappingDto {
 
   @ApiProperty({
     description:
-      'The inventory_ledger transaction type this mapping resolves GL accounts for — must match a value GlPostingService actually posts (see inventory-ledger.service.ts / batch.service.ts / *.service.ts callers of postInventoryLedgerEntry / postBatchCostEntry)',
+      'Optional Inventory Ledger entry type (POSITIVE, NEGATIVE, TRANSFER, OVERHEAD, DESCRIPTIVE) — narrows this mapping to ledger rows written with it, omit for any entry type',
+    required: false,
+    enum: INVENTORY_ENTRY_TYPES,
+  })
+  @ValidateIf((_o, value) => value !== '' && value != null)
+  @IsIn(INVENTORY_ENTRY_TYPES as unknown as string[])
+  entry_type?: string;
+
+  @ApiProperty({
+    description:
+      'The Inventory Ledger transaction type this mapping resolves GL accounts for. A new mapping must use one of these; GlPostingService looks the mapping up by this exact value. A mapping created earlier for another type (BIO_*, MORTALITY ...) keeps its type and can still be edited.',
     example: 'PURCHASE',
-    enum: [
-      'PURCHASE',
-      'CONSUMPTION',
-      'TRANSFER_SHIPMENT',
-      'TRANSFER_RECEIPT',
-      'VARIANCE_POSITIVE',
-      'VARIANCE_NEGATIVE',
-      'MILL_OUTPUT',
-      'BATCH_INPUT',
-      'BATCH_CONSUMPTION',
-      'BATCH_OUTPUT',
-      'OUTPUT',
-      'BATCH_IMPAIRMENT',
-      'MORTALITY',
-      'OVERHEAD',
-      'PRICE_VARIANCE',
-      'USAGE_VARIANCE',
-      'OUTPUT_VARIANCE',
-      'OVERHEAD_VARIANCE',
-      'BIO_ACQUISITION',
-      'BIO_CONSUMPTION_PREMATURE',
-      'BIO_CONSUMPTION_MATURE',
-      'BIO_OUTPUT',
-      'BIO_MORTALITY_PREMATURE',
-      'BIO_MORTALITY_MATURE',
-      'BIO_OVERHEAD_PREMATURE',
-      'BIO_OVERHEAD_MATURE',
-      'BIO_TRANSFORMATION',
-      'BIO_AMORTIZATION',
-      'BIO_FAIR_VALUE',
-      'BIO_FAIR_VALUE_PREMATURE',
-      'BIO_HARVEST',
-      'BIO_DISPOSAL_SOLD',
-      'BIO_SALE_PROCEEDS',
-      'BIO_LITTER_BIRTH',
-      'BIO_SEMEN_USE',
-      'BIO_SEMEN_EXPENSE',
-      'BIO_SEMEN_PRODUCTION',
-      'BIO_GILT_ACQUISITION',
-    ],
+    enum: INVENTORY_TRANSACTION_TYPES,
   })
   @IsString()
   @IsNotEmpty()
@@ -180,6 +154,15 @@ export class UpdateGlMappingDto {
   @IsString()
   @IsOptional()
   valuation_method?: string;
+
+  @ApiProperty({
+    description: 'Set/clear the entry-type dimension. Pass an empty value to remove (any entry type).',
+    required: false,
+    enum: INVENTORY_ENTRY_TYPES,
+  })
+  @ValidateIf((_o, value) => value !== '' && value != null)
+  @IsIn(INVENTORY_ENTRY_TYPES as unknown as string[])
+  entry_type?: string;
 
   @ApiProperty({ required: false })
   @IsString()
@@ -257,6 +240,11 @@ export class QueryGlMappingDto extends MasterListQueryDto {
   @IsOptional()
   @IsString()
   valuationMethod?: string;
+
+  @ApiProperty({ description: 'Filter by Inventory Ledger entry type', required: false })
+  @IsOptional()
+  @IsString()
+  entryType?: string;
 
   @ApiProperty({
     description: 'Filter by inventory transaction type',

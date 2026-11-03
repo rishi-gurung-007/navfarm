@@ -45,6 +45,7 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
+import { SemenDestinationService } from '../../master-data/breeding-line/semen-destination.service';
 import { grossDoaRef, parseReceiptDoa, receiptSplit } from './receipt-doa';
 import {
   OPEN_TRANSFER_STATUSES,
@@ -124,6 +125,8 @@ export class StockTransferService {
     private readonly siloFeedService: SiloFeedService,
     // Re-check feed thresholds only after the stock posting commits.
     @Optional() private readonly feedAlerts?: FeedAlertService,
+    // A semen lot may only go where its line's setup says (Phase 5 of the AI Station plan).
+    @Optional() private readonly semenDestination?: SemenDestinationService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -207,8 +210,13 @@ export class StockTransferService {
         'Destination location',
       );
 
+      // A semen lot is only sent where its line's setup says: refused, or warned about, as the setup says.
+      const semenWarnings =
+        (await this.semenDestination?.assertTransferAllowed(dto.to_warehouse_id, dto.lines.map((l) => l.lot_no), tenantId)) ?? [];
+
       const created = await this.createRecord(dto, tenantId, userPayload);
-      return this.findOne(created.transfer_id);
+      const transfer = await this.findOne(created.transfer_id);
+      return semenWarnings.length ? { ...transfer, warnings: semenWarnings } : transfer;
     });
   }
 
@@ -1541,6 +1549,13 @@ export class StockTransferService {
       await this.assertNotShipped(transfer, tenantId, 'edited');
       this.assertDraft(transfer);
       await this.assertWarehouses(fromWarehouseId, toWarehouseId);
+      // Changing the destination or the lines is checked again: a semen lot may only go where its line's setup says.
+      if (dto.lines || dto.to_warehouse_id !== undefined) {
+        const lotNos = dto.lines
+          ? dto.lines.map((l) => l.lot_no)
+          : (await this.db.select({ lot_no: schema.stockTransferLine.lot_no }).from(schema.stockTransferLine).where(eq(schema.stockTransferLine.transfer_id, id))).map((l) => l.lot_no);
+        await this.semenDestination?.assertTransferAllowed(toWarehouseId, lotNos, tenantId);
+      }
 
       const updates: any = {
         updated_by: userPayload?.userId || null,
