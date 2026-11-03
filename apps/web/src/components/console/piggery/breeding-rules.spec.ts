@@ -256,4 +256,72 @@ describe("checkSemen", () => {
       expect(runWith({ min_boars_per_lot: 2, max_boars_per_lot: 2, min_rest_days: null }, both)).toEqual([]);
     });
   });
+
+  describe("the line's own collection rules (its Breeding Line Setup)", () => {
+    const base = { pooling_allowed: true, min_boars_per_lot: null, max_boars_per_lot: null, min_rest_days: null, min_motility_pct: null, rule_enforcement: "WARN" };
+    const check = (r: object, over: object = {}, lots: object[] = [], lineBoarIds?: string[]) =>
+      checkSemen({ form: form(over), boars: [boar], lots, rules: { ...base, ...r }, lineBoarIds });
+    // 2026-10-14 is a Wednesday, 2026-10-13 a Tuesday.
+    const sunWed = { collection_mode: "SCHEDULED", collection_weekdays: ["SUN", "WED"] };
+
+    it("asks for the outside reference unless the collection is from a plan, which carries it", () => {
+      const z = { reference_required: true, reference_label: "Breeding Web reference" };
+      const issues = check(z);
+      expect(fields(issues)).toEqual(["plan_id"]);
+      expect(issues[0]).toMatchObject({ level: "error" });
+      expect(issues[0].text).toContain("Breeding Web reference");
+      expect(check(z, { plan_id: "p1" })).toEqual([]);
+      expect(check({ reference_required: false })).toEqual([]);
+    });
+
+    it("says when the day is not one of the line's collection days, as a warning or a stop as the line enforces", () => {
+      expect(check(sunWed)).toEqual([]);
+      const tuesday = check(sunWed, { collection_date: "2026-10-13" });
+      expect(tuesday).toEqual([expect.objectContaining({ level: "warn", field: "collection_date" })]);
+      expect(tuesday[0].text).toContain("Sunday and Wednesday");
+      expect(tuesday[0].text).toContain("Tuesday");
+      expect(check({ ...sunWed, rule_enforcement: "BLOCK" }, { collection_date: "2026-10-13" })).toEqual([expect.objectContaining({ level: "error", field: "collection_date" })]);
+    });
+
+    it("does not ask a line that is collected on request, or a collection from a plan made for that day, about the weekday", () => {
+      expect(check({ collection_mode: "ON_REQUEST", collection_weekdays: null }, { collection_date: "2026-10-13" })).toEqual([]);
+      expect(check(sunWed, { collection_date: "2026-10-13", plan_id: "p1", plan_info: { collection_date: "2026-10-13" } })).toEqual([]);
+      expect(check(sunWed, { collection_date: "2026-10-13", plan_id: "p1", plan_info: { collection_date: "2026-10-14" } }).map((i) => i.field)).toEqual(["collection_date", "collection_date"]); // another day than the plan, and not one of the line's days
+    });
+
+    it("warns when a collection from a plan is dated another day than the plan", () => {
+      const planned = { plan_id: "p1", plan_info: { plan_no: "CP-1", collection_date: "2026-10-14" } };
+      expect(check({}, planned)).toEqual([]);
+      const issues = check({}, { ...planned, collection_date: "2026-10-12" });
+      expect(issues).toEqual([expect.objectContaining({ level: "warn", field: "collection_date" })]);
+      expect(issues[0].text).toContain("14/10/26");
+      expect(issues[0].text).toContain("12/10/26");
+    });
+
+    it("holds a line to the boars it taps a day, counting those already collected that day", () => {
+      const two = { boars_per_collection_day: 2 };
+      const others = ["b2", "b3"];
+      const tapped = (id: string) => ({ collection_date: "2026-10-14", boar_id: id, boars: [], results: [] });
+      // one boar chosen, none yet today: short of 2
+      expect(check(two, {}, [], ["b1", ...others])).toEqual([expect.objectContaining({ level: "warn", field: "boar_animal_ids" })]);
+      // one chosen and one already collected today: exactly 2
+      expect(check(two, {}, [tapped("b2")], ["b1", ...others])).toEqual([]);
+      // one chosen and two already collected today: over
+      const over = check(two, {}, [tapped("b2"), tapped("b3")], ["b1", ...others]);
+      expect(over).toEqual([expect.objectContaining({ level: "error", field: "boar_animal_ids" })]);
+      expect(over[0].text).toContain("at most 0 more");
+      // another day, or another line's boar, does not count
+      expect(check(two, {}, [{ ...tapped("b2"), collection_date: "2026-10-13" }], ["b1", ...others]).map((i) => i.field)).toEqual(["boar_animal_ids"]);
+      expect(check(two, {}, [tapped("x9")], ["b1", ...others]).map((i) => i.field)).toEqual(["boar_animal_ids"]);
+      // no limit set: nothing said
+      expect(check({ boars_per_collection_day: null }, {}, [], ["b1"])).toEqual([]);
+    });
+
+    it("warns that a line whose semen goes to a list of farms has no destination without a plan naming it", () => {
+      const issues = check({ destination_rule: "LIST" });
+      expect(issues).toEqual([expect.objectContaining({ level: "warn", field: "plan_id" })]);
+      expect(check({ destination_rule: "LIST" }, { plan_id: "p1" })).toEqual([]);
+      expect(check({ destination_rule: "ONE" })).toEqual([]);
+    });
+  });
 });

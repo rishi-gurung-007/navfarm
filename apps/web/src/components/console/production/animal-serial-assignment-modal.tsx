@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -410,7 +411,7 @@ export default function AnimalSerialAssignmentModal({
                     (s) => s.serial_no === assignedSerial,
                   );
                   const expiryText = selectedOption?.expiry_date
-                    ? String(selectedOption.expiry_date).slice(0, 10)
+                    ? formatDate(selectedOption.expiry_date)
                     : NA;
 
                   return (
@@ -478,7 +479,7 @@ export default function AnimalSerialAssignmentModal({
                                 assignedSerialsSet.has(s.serial_no) &&
                                 s.serial_no !== assignedSerial;
                               const exp = s.expiry_date
-                                ? ` (Exp: ${String(s.expiry_date).slice(0, 10)})`
+                                ? ` (Exp: ${formatDate(s.expiry_date)})`
                                 : '';
                               return (
                                 <option

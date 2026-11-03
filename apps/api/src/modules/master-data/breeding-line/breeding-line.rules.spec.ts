@@ -64,17 +64,14 @@ describe('lineSetupIssues', () => {
   });
 });
 
-describe('lineSetupIssues: the selection table', () => {
-  it('accepts weights, a tie rule and a column layout', () => {
-    expect(lineSetupIssues({ ...base, grading_genetic_weight: 1, grading_dose_weight: 0, grading_morphology_weight: 1, rank_tie_break: 'GENETIC_RANK', selection_columns: [{ key: 'boar', label: 'A', visible: true }, { key: 'tsi', label: '', visible: false }] })).toEqual([]);
+describe('lineSetupIssues: the overall grading weights', () => {
+  it('accepts weights, including 0 and none', () => {
+    expect(lineSetupIssues({ ...base, grading_genetic_weight: 1, grading_dose_weight: 0, grading_morphology_weight: 1 })).toEqual([]);
+    expect(lineSetupIssues({ ...base })).toEqual([]);
   });
 
-  it('refuses a negative weight, an unknown tie rule, and a bad column layout', () => {
+  it('refuses a negative weight', () => {
     expect(lineSetupIssues({ ...base, grading_dose_weight: -1 })).toContain('The dose rank weight cannot be negative.');
-    expect(lineSetupIssues({ ...base, rank_tie_break: 'RANDOM' })).toHaveLength(1);
-    expect(lineSetupIssues({ ...base, selection_columns: [{ key: 'colour', label: '', visible: true }] })[0]).toContain('Unknown selection table column(s): colour');
-    expect(lineSetupIssues({ ...base, selection_columns: [{ key: 'boar', label: '', visible: true }, { key: 'boar', label: '', visible: true }] })).toContain('A selection table column is listed twice.');
-    expect(lineSetupIssues({ ...base, selection_columns: [{ key: 'boar', label: '', visible: false }] })).toContain('The selection table needs at least one visible column.');
   });
 });
 

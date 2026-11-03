@@ -21,6 +21,7 @@
  * tenant templates in a tenant-wide workspace and refuse a farm login
  * outright, on a screen that lists the farm quite happily.
  */
+import { DateInput } from '@/components/ui/date-input';
 import { showToast } from '@/components/ui/toast';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -515,10 +516,9 @@ export function RequisitionNewDialog({
                   ? formatDateShort(requisitionDate)
                   : null,
                 reqDateControl: (
-                  <input
+                  <DateInput
                     id="rqn-date"
                     aria-label={t('rqdReqDate')}
-                    type="date"
                     className="nf-input"
                     style={inputStyle}
                     value={requisitionDate}
@@ -722,9 +722,8 @@ export function RequisitionNewDialog({
                             : t('rqNotApplicable')}
                         </td>
                         <td className={TD}>
-                          <input
+                          <DateInput
                             aria-label={t('rqNewDate', { line: i + 1 })}
-                            type="date"
                             className="nf-input-sm"
                             style={inputStyle}
                             value={line.date}

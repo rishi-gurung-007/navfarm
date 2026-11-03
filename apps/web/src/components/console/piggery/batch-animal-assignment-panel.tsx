@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import React, { useState, useEffect, useMemo } from 'react';
 import {
@@ -114,7 +116,7 @@ export default function BatchAnimalAssignmentPanel() {
           breed: b.breed_name || b.breed_code || NA,
           stage: b.current_stage_code || 'ACTIVE',
           period: b.start_date
-            ? `${b.start_date} to ${b.expected_end_date || 'ongoing'}`
+            ? `${formatDate(b.start_date)} to ${b.expected_end_date || 'ongoing'}`
             : '',
           lobId: b.lob_id || undefined,
           nobId: b.nob_id || undefined,
@@ -1114,7 +1116,7 @@ export default function BatchAnimalAssignmentPanel() {
                           </span>
                         </td>
                         <td className="px-4 py-2.5 text-[var(--text-secondary)]">
-                          <span>{animal.dob}</span>
+                          <span>{formatDate(animal.dob)}</span>
                           <span className="block text-[10px] font-semibold text-[var(--text-muted)] font-mono">
                             {t('baapDaysCount', {
                               count: String(animal.ageDays),
@@ -1302,8 +1304,7 @@ export default function BatchAnimalAssignmentPanel() {
                 <label className="font-semibold block mb-1">
                   {t('anpEntryDate')}
                 </label>
-                <input
-                  type="date"
+                <DateInput
                   className="nf-input w-full"
                   value={regForm.entry_date}
                   onChange={(e) =>
@@ -1379,8 +1380,7 @@ export default function BatchAnimalAssignmentPanel() {
                 <label className="font-semibold block mb-1">
                   {t('anpDateOfBirth')}
                 </label>
-                <input
-                  type="date"
+                <DateInput
                   className="nf-input w-full"
                   value={regForm.dob}
                   onChange={(e) =>

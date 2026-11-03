@@ -1,3 +1,4 @@
+import { formatDateTime } from '@/utils/date-short';
 import type { TranslationKeys } from '@/utils/translations';
 import {
   changeTone,
@@ -45,7 +46,7 @@ export async function exportFarrowingPdf(
   doc.setFontSize(8);
   doc.text(filters, 10, 18);
   doc.text(
-    t('rptGeneratedAt', { at: new Date(report.generated_at).toLocaleString() }),
+    t('rptGeneratedAt', { at: formatDateTime(report.generated_at) }),
     10,
     22,
   );

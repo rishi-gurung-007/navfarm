@@ -1,7 +1,7 @@
-import { lineFixtures as fixtures, BCS_SCALE_FIXTURE, COLLECTOR_CODES, Existing, planFixture } from './ai-station-fixture.lib';
+import { lineFixtures as fixtures, BCS_SCALE_FIXTURE, COLLECTOR_CODES, COMPANY_DEFAULT_SETUP, Existing, GENETIC_BAND_FIXTURE, planFixture } from './ai-station-fixture.lib';
 import { lineSetupIssues } from '../modules/master-data/breeding-line/breeding-line.rules';
 
-const none: Existing = { breeds: new Map([['Tempo', 'b-t'], ['L-Line', 'b-l'], ['Z-Line', 'b-z']]), setupBreedIds: new Set(), scaleScores: new Set(), collectorCodes: new Set() };
+const none: Existing = { breeds: new Map([['Tempo', 'b-t'], ['L-Line', 'b-l'], ['Z-Line', 'b-z']]), setupBreedIds: new Set(), scaleScores: new Set(), collectorCodes: new Set(), defaultSetup: null, defaultBandLevels: new Set() };
 const farms = { tempoFarmIds: ['f1', 'f2'], multiplierFarmId: 'fm' };
 
 describe('the AI Station fixture', () => {
@@ -60,15 +60,22 @@ describe('the AI Station fixture', () => {
 describe('planFixture', () => {
   it('creates everything on an empty company', () => {
     const plan = planFixture(none, farms);
-    expect(plan.filter((a) => a.do === 'create')).toHaveLength(3 + 1 + 5 + 3);
+    expect(plan.filter((a) => a.do === 'create')).toHaveLength(3 + 1 + 4 + 5 + 3);
     expect(plan.every((a) => a.do === 'create')).toBe(true);
   });
 
   it('leaves what exists alone, so it can be run again', () => {
-    const existing: Existing = { ...none, setupBreedIds: new Set(['b-l', '']), scaleScores: new Set([1, 2, 3, 4, 5]), collectorCodes: new Set(['CM']) };
+    const existing: Existing = {
+      ...none,
+      setupBreedIds: new Set(['b-l', '']),
+      scaleScores: new Set([1, 2, 3, 4, 5]),
+      collectorCodes: new Set(['CM']),
+      defaultSetup: { id: 'd1', hasWeights: true },
+      defaultBandLevels: new Set(GENETIC_BAND_FIXTURE.map((b) => b.level_name)),
+    };
     const plan = planFixture(existing, farms);
     expect(plan.filter((a) => a.do === 'create').map((a) => a.key)).toEqual(['Tempo', 'Z-Line', 'AW', 'TA']);
-    expect(plan.filter((a) => a.do === 'exists')).toHaveLength(1 + 1 + 5 + 1);
+    expect(plan.filter((a) => a.do === 'exists')).toHaveLength(1 + 1 + 4 + 5 + 1);
   });
 
   it('skips a line the company has no breed for, and says why', () => {
@@ -85,4 +92,27 @@ describe('planFixture', () => {
     const def = plan.find((a) => a.kind === 'default-setup');
     expect(def && def.do === 'create' && def.body.breed_id).toBeUndefined();
   });
+
+  it('grades a line with no sheet of its own like Tempo and L-Line, by filling the blank weights of an existing company default', () => {
+    expect(COMPANY_DEFAULT_SETUP).toMatchObject({ grading_genetic_weight: 1, grading_dose_weight: 0, grading_morphology_weight: 1 });
+    const plan = planFixture({ ...none, setupBreedIds: new Set(['']), defaultSetup: { id: 'd1', hasWeights: false } }, farms);
+    const def = plan.find((a) => a.kind === 'default-setup')!;
+    expect(def).toMatchObject({ do: 'update', path: '/breeding-line-setup/d1', body: { grading_genetic_weight: 1, grading_dose_weight: 0, grading_morphology_weight: 1 } });
+    // a default that already has weights is left alone
+    expect(planFixture({ ...none, setupBreedIds: new Set(['']), defaultSetup: { id: 'd1', hasWeights: true } }, farms).find((a) => a.kind === 'default-setup')).toMatchObject({ do: 'exists' });
+  });
+
+  it('seeds company-default genetic levels that cover every TSI once, with no breed, and leaves existing levels alone', () => {
+    const bands = GENETIC_BAND_FIXTURE;
+    for (const tsi of [0, 50, 99.99, 100, 109.99, 110, 119.99, 120, 144, 500]) {
+      const holding = bands.filter((b) => (b.tsi_from == null || tsi >= b.tsi_from) && (b.tsi_to == null || tsi <= b.tsi_to));
+      expect(holding).toHaveLength(1);
+    }
+    const plan = planFixture({ ...none, defaultBandLevels: new Set(['Good']) }, farms);
+    expect(plan.filter((a) => a.kind === 'band' && a.do === 'create').map((a) => a.key)).toEqual(['Excellent', 'Average', 'Below average']);
+    const first = plan.find((a) => a.kind === 'band' && a.do === 'create');
+    expect(first && first.do === 'create' && first.body.breed_id).toBeUndefined();
+    expect(first && first.do === 'create' && first.notes?.[0]).toMatchObject({ source: 'ours' });
+  });
 });
+

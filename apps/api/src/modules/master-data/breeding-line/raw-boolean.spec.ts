@@ -1,6 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { CreateBreedingLineSetupDto, QueryBreedingLineSetupDto, SelectionColumnDto, UpdateBreedingLineSetupDto } from './breeding-line-setup.dto';
+import { CreateBreedingLineSetupDto, QueryBreedingLineSetupDto } from './breeding-line-setup.dto';
 import { QueryGeneticLevelBandDto } from './genetic-level-band.dto';
 import { QuerySemenCollectorDto } from './semen-collector.dto';
 
@@ -18,34 +18,23 @@ describe("a boolean sent as text ('true' / 'false')", () => {
     expect((plainToInstance(cls as any, { isActive: 'true' }, asTheApiDoes) as any).isActive).toBe(true);
     expect((plainToInstance(cls as any, {}, asTheApiDoes) as any).isActive).toBeUndefined();
   });
-
-  it("is read as the boolean it says on a selection column's Shown / Hidden dropdown, and a real boolean is left alone", () => {
-    const col = (visible: unknown) => plainToInstance(SelectionColumnDto, { key: 'boar', label: '', visible }, asTheApiDoes).visible;
-    expect(col('false')).toBe(false);
-    expect(col('true')).toBe(true);
-    expect(col(false)).toBe(false);
-    expect(col(true)).toBe(true);
-  });
 });
 
-describe('the selection column layout, as the API validates it', () => {
+describe('what the setup form no longer takes', () => {
   // The same options as the API's global ValidationPipe (main.ts).
-  const validateAsTheApiDoes = (cls: any, body: object) =>
-    validate(plainToInstance(cls, body, asTheApiDoes) as object, { whitelist: true, forbidNonWhitelisted: true });
-  const layout = [{ key: 'boar', label: 'A', visible: 'true' }, { key: 'dose_rank', label: '', visible: 'false' }];
+  const refused = async (body: object) =>
+    (await validate(plainToInstance(CreateBreedingLineSetupDto, body, asTheApiDoes) as object, { whitelist: true, forbidNonWhitelisted: true })).length;
 
-  it('is accepted on create', async () => {
-    expect(await validateAsTheApiDoes(CreateBreedingLineSetupDto, { selection_columns: layout })).toEqual([]);
+  it.each([
+    ['the table column layout', { selection_columns: [{ key: 'boar', label: 'A', visible: true }] }],
+    ['the tie rule', { rank_tie_break: 'SHARED' }],
+    ['the week basis', { week_basis: 'ISO' }],
+    ['add-the-year', { include_year: true }],
+  ])('refuses %s, which was taken out', async (_name, body) => {
+    expect(await refused(body)).toBeGreaterThan(0);
   });
 
-  it('is accepted on edit too: the columns keep their type through the derived update DTO', async () => {
-    expect(await validateAsTheApiDoes(UpdateBreedingLineSetupDto, { selection_columns: layout })).toEqual([]);
-    const edited = plainToInstance(UpdateBreedingLineSetupDto, { selection_columns: layout }, asTheApiDoes);
-    expect(edited.selection_columns?.map((c) => c.visible)).toEqual([true, false]);
-  });
-
-  it('still refuses a column that does not exist, on edit', async () => {
-    const errors = await validateAsTheApiDoes(UpdateBreedingLineSetupDto, { selection_columns: [{ key: 'colour', label: '', visible: true }] });
-    expect(errors).toHaveLength(1);
+  it('still takes the grading weights', async () => {
+    expect(await refused({ grading_genetic_weight: 1, grading_dose_weight: 0, grading_morphology_weight: 1 })).toBe(0);
   });
 });

@@ -1645,9 +1645,9 @@ describe('BreedingService', () => {
           expect(lastPost().label).toBe('POOLL-41');
         });
 
-        it('falls back to the boar\'s animal code when he has no tag, and adds the year when the line says so', async () => {
+        it('falls back to the boar\'s animal code when he has no tag, and puts the year where the template says {YEAR}', async () => {
           rows.set(schema.animalRegister, [{ ...boar, breed_id: 'b-line' }]);
-          lineSetups.findEffective.mockResolvedValue(rule({ label_template: '{BOAR_TAG}-{WEEK}', include_year: true }));
+          lineSetups.findEffective.mockResolvedValue(rule({ label_template: '{BOAR_TAG}-{WEEK}-{YEAR}' }));
           semenLots.postCollection.mockResolvedValue(posted());
           await service.recordSemenCollection(collection({ output_item_id: 'item-1' }), 'tenant-1');
           expect(lastPost().label).toBe('BOAR-1-41-2026');

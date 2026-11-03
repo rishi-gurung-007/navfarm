@@ -1,5 +1,7 @@
 "use client";
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { useEffect, useState } from "react";
 import {
   Loader2, Download, RefreshCw, CheckCircle2, AlertTriangle, ArrowRight,
@@ -121,8 +123,7 @@ export default function BioAssetRollForwardPanel() {
             <label className="nf-text-label block mb-1" style={S.muted}>
               {t("barfFromDate")}
             </label>
-            <input
-              type="date"
+            <DateInput
               className="nf-input text-xs"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
@@ -132,8 +133,7 @@ export default function BioAssetRollForwardPanel() {
             <label className="nf-text-label block mb-1" style={S.muted}>
               {t("barfToDate")}
             </label>
-            <input
-              type="date"
+            <DateInput
               className="nf-input text-xs"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
@@ -170,7 +170,7 @@ export default function BioAssetRollForwardPanel() {
             <StatCard
               label={t("barfOpeningCarryingValue")}
               value={formatCurrency(data.openingCarryingValue)}
-              sub={t("barfAsOf", { date: dateFrom })}
+              sub={t("barfAsOf", { date: formatDate(dateFrom) })}
             />
             <StatCard
               label={t("barfNetPeriodMovement")}
@@ -181,7 +181,7 @@ export default function BioAssetRollForwardPanel() {
             <StatCard
               label={t("barfClosingCarryingValue")}
               value={formatCurrency(data.closingCarryingValue)}
-              sub={t("barfAsOf", { date: dateTo })}
+              sub={t("barfAsOf", { date: formatDate(dateTo) })}
             />
             <StatCard
               icon={glReconciliationUnavailable ? Layers : data.glReconciliation.isReconciled ? CheckCircle2 : AlertTriangle}

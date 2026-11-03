@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from '@/components/ui/date-input';
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Inbox, Loader2 } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -200,7 +201,7 @@ export default function FaConversionsPanel() {
         {action?.kind === "post" && (
           <>
             <label className="nf-text-label mb-1 block" style={S.muted} htmlFor="fac-date">{t("facConversionDate")}</label>
-            <input id="fac-date" type="date" className="nf-input text-xs" value={convDate} min={day(action.row.out_of_production_date)} max={todayStr()} onChange={(e) => setConvDate(e.target.value)} />
+            <DateInput id="fac-date" className="nf-input text-xs" value={convDate} min={day(action.row.out_of_production_date)} max={todayStr()} onChange={(e) => setConvDate(e.target.value)} />
           </>
         )}
       </Dialog>

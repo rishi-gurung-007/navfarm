@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -695,8 +697,8 @@ export default function StockTransferPanel() {
             );
           }
           const noteParts: string[] = [];
-          if (l.shipment_date) noteParts.push(`Ship Date: ${l.shipment_date}`);
-          if (l.receipt_date) noteParts.push(`Receipt Date: ${l.receipt_date}`);
+          if (l.shipment_date) noteParts.push(`Ship Date: ${formatDate(l.shipment_date)}`);
+          if (l.receipt_date) noteParts.push(`Receipt Date: ${formatDate(l.receipt_date)}`);
           if (l.remarks?.trim()) noteParts.push(l.remarks.trim());
 
           const effectiveShipQty =
@@ -1712,7 +1714,7 @@ export default function StockTransferPanel() {
                           className="whitespace-nowrap text-xs font-mono"
                           style={S.sub}
                         >
-                          {row.posting_date}
+                          {formatDate(row.posting_date)}
                         </TableCell>
                         <TableCell
                           className="whitespace-nowrap text-xs"
@@ -2203,8 +2205,7 @@ export default function StockTransferPanel() {
                       <Calendar className="h-3 w-3" /> Posting Date{' '}
                       <span className="text-(--danger)">*</span>
                     </label>
-                    <input
-                      type="date"
+                    <DateInput
                       value={header.posting_date}
                       disabled={
                         !!editingTransfer && editingTransfer.status !== 'DRAFT'
@@ -2474,8 +2475,7 @@ export default function StockTransferPanel() {
                           Receipt Posting Date{' '}
                           <span className="text-(--danger)">*</span>
                         </label>
-                        <input
-                          type="date"
+                        <DateInput
                           value={receivePostingDate}
                           onChange={(e) =>
                             setReceivePostingDate(e.target.value)
@@ -3376,11 +3376,10 @@ export default function StockTransferPanel() {
                               {editingTransfer &&
                               editingTransfer.status !== 'DRAFT' ? (
                                 <div className="flex h-11 items-center font-mono text-xs opacity-75">
-                                  {line.shipment_date || NA}
+                                  {line.shipment_date ? formatDate(line.shipment_date) : NA}
                                 </div>
                               ) : (
-                                <input
-                                  type="date"
+                                <DateInput
                                   value={line.shipment_date}
                                   onChange={(e) =>
                                     setLineField(
@@ -3400,11 +3399,10 @@ export default function StockTransferPanel() {
                               {editingTransfer &&
                               editingTransfer.status === 'RECEIVED' ? (
                                 <div className="flex h-11 items-center font-mono text-xs opacity-75">
-                                  {line.receipt_date || NA}
+                                  {line.receipt_date ? formatDate(line.receipt_date) : NA}
                                 </div>
                               ) : (
-                                <input
-                                  type="date"
+                                <DateInput
                                   value={line.receipt_date}
                                   onChange={(e) =>
                                     setLineField(
@@ -3689,7 +3687,7 @@ export default function StockTransferPanel() {
                                         className="border-b border-(--row-border)"
                                       >
                                         <TableCell className="px-3 py-2 font-mono text-xs">
-                                          {s.posting_date}
+                                          {formatDate(s.posting_date)}
                                         </TableCell>
                                         <TableCell
                                           className="px-3 py-2 font-medium"
@@ -3890,7 +3888,7 @@ export default function StockTransferPanel() {
                                               className="border-b border-(--row-border)"
                                             >
                                               <TableCell className="px-3 py-2 font-mono text-xs">
-                                                {r.posting_date}
+                                                {formatDate(r.posting_date)}
                                               </TableCell>
                                               <TableCell
                                                 className="px-3 py-2 font-medium"

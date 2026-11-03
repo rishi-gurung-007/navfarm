@@ -6,6 +6,8 @@
  * that entry (+1, "from GR-…"), and a death is the only -. The page reads like the Inventory Ledger Entries page: the
  * same filters, columns, badges, exports and entry view.
  */
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import {
@@ -444,9 +446,8 @@ export default function BioAssetLedgerPanel() {
 
         {/* Date From */}
         <Field label={t('ilpFrom')} htmlFor="bal-date-from">
-          <input
+          <DateInput
             id="bal-date-from"
-            type="date"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
             className={`${inputCls} h-9`}
@@ -456,9 +457,8 @@ export default function BioAssetLedgerPanel() {
 
         {/* Date To */}
         <Field label={t('ilpTo')} htmlFor="bal-date-to">
-          <input
+          <DateInput
             id="bal-date-to"
-            type="date"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
             className={`${inputCls} h-9`}
@@ -571,7 +571,7 @@ export default function BioAssetLedgerPanel() {
                         className="whitespace-nowrap font-medium"
                         style={S.primary}
                       >
-                        {row.posting_date}
+                        {formatDate(row.posting_date)}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
                         <div className="flex flex-col">

@@ -173,7 +173,7 @@ describe('MortalityAnimalsField', () => {
     fireEvent.click(screen.getByTestId('mortality-animals-button'));
     const dead = screen.getByTestId('mortality-dead-d-1');
     expect(dead.textContent).toContain('PIG-0099');
-    expect(dead.textContent).toContain('Died 2026-10-06');
+    expect(dead.textContent).toContain('Died 06/10/26');
     expect((within(dead).getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
   });
 });

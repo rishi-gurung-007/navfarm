@@ -1,12 +1,13 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
 import { useCallback, useEffect, useState } from 'react';
 import { Upload, Trophy, CalendarDays } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { Button } from '@/components/ui/button';
 import { EntryModal, Field, inputStyle } from './breeding-form-parts';
 import { todayIso, type Issue, type Row } from './breeding-rules';
-import { cellText, parseTsiPaste } from './boar-selection-rules';
+import { bandNote, cellText, parseTsiPaste } from './boar-selection-rules';
 import { CollectionPlans, PlanDialog } from './collection-plans';
 
 const unwrap = <T,>(res: any): T => (Array.isArray(res) ? res : (res?.data ?? res)) as T;
@@ -20,28 +21,35 @@ const S = {
 };
 
 /**
- * The AI technician's view when choosing boars to collect (plan 2026-11-02-ai-station-semen-collection, Phase 3): pick a breeding
- * line, then see that line's boars with the columns, ranks and overall grading its setup configures. Nothing here is fixed: the
- * columns, the genetic levels and the grading come from the line's setup, and the figures from each boar's own collections.
+ * The AI technician's view when choosing boars to collect (plan 2026-11-02-ai-station-semen-collection, Phase 3): every breeding
+ * line with its boars, or one line chosen from the list, with the columns, ranks and overall grading its setup configures. Nothing
+ * here is fixed: the genetic levels and the grading come from the line's setup, and the figures from each boar's own collections.
+ * A collection is planned for one line at a time, so ticking a boar of another line starts a new choice.
  */
 export function BoarSelectionPanel({
   version = 0,
   onCollect,
+  onSummary,
 }: {
   /** Changes when a collection was recorded, so the table and the plans are read again. */
   version?: number;
   /** Start recording a collection of these boars against a plan. */
   onCollect?: (plan: Row, boarIds: string[], batchId: string | null) => void;
+  /** The lines, the boars shown and the plans as loaded, for the figures above the tabs. */
+  onSummary?: (summary: { lines: Row[]; rows: Row[]; plans: Row[]; allLines: boolean }) => void;
 }) {
   const [lines, setLines] = useState<Row[]>([]);
+  // Empty = every line, a table each.
   const [breedId, setBreedId] = useState('');
   const [asOf, setAsOf] = useState(todayIso());
-  const [data, setData] = useState<Row | null>(null);
+  const [tables, setTables] = useState<Record<string, Row>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tsiBoar, setTsiBoar] = useState<Row | null>(null);
   const [importing, setImporting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // The line the ticked boars belong to: a plan is for one line.
+  const [selectedBreed, setSelectedBreed] = useState('');
   const [planning, setPlanning] = useState(false);
   const [plans, setPlans] = useState<Row[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
@@ -49,31 +57,30 @@ export function BoarSelectionPanel({
   useEffect(() => {
     api
       .get('/piggery/boar-selection/lines')
-      .then((res) => {
-        const found = unwrap<Row[]>(res) ?? [];
-        setLines(found);
-        setBreedId((current) => current || found[0]?.breed_id || '');
-      })
+      .then((res) => setLines(unwrap<Row[]>(res) ?? []))
       .catch((e) => setError(e.message || 'Could not load the breeding lines.'));
   }, []);
 
+  const shownLines = breedId ? lines.filter((l) => l.breed_id === breedId) : lines;
+
   const load = useCallback(async () => {
-    if (!breedId) return setData(null);
+    if (!lines.length) return setTables({});
+    const ids = breedId ? [breedId] : lines.map((l) => l.breed_id);
     setLoading(true);
     setError(null);
     try {
-      setData(unwrap<Row>(await api.get(`/piggery/boar-selection?breed_id=${breedId}&as_of=${asOf}`)));
+      const loaded = await Promise.all(ids.map(async (id) => [id, unwrap<Row>(await api.get(`/piggery/boar-selection?breed_id=${id}&as_of=${asOf}`))] as const));
+      setTables(Object.fromEntries(loaded));
     } catch (e: any) {
-      setData(null);
+      setTables({});
       setError(e.message || 'Could not load the boars.');
     } finally {
       setLoading(false);
     }
-  }, [breedId, asOf]);
+  }, [breedId, lines, asOf]);
   const loadPlans = useCallback(async () => {
-    if (!breedId) return setPlans([]);
     try {
-      setPlans(unwrap<Row[]>(await api.get(`/piggery/collection-plans?breed_id=${breedId}`)) ?? []);
+      setPlans(unwrap<Row[]>(await api.get(`/piggery/collection-plans${breedId ? `?breed_id=${breedId}` : ''}`)) ?? []);
     } catch {
       setPlans([]);
     }
@@ -82,10 +89,27 @@ export function BoarSelectionPanel({
     load();
     loadPlans();
     setSelected(new Set());
+    setSelectedBreed('');
   }, [load, loadPlans, version]);
 
-  const columns: { key: string; label: string }[] = data?.columns ?? [];
-  const rows: Row[] = data?.rows ?? [];
+  const allRows: Row[] = shownLines.flatMap((l) => tables[l.breed_id]?.rows ?? []);
+  useEffect(() => {
+    onSummary?.({ lines, rows: allRows, plans, allLines: !breedId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, tables, plans, breedId, onSummary]);
+
+  const tick = (breed: string, boarIds: string[], on: boolean) => {
+    // Boars of another line than the ones already ticked start a new choice.
+    const base = breed === selectedBreed ? new Set(selected) : new Set<string>();
+    for (const id of boarIds) (on ? base.add(id) : base.delete(id));
+    setSelected(base);
+    setSelectedBreed(base.size ? breed : '');
+  };
+  const planned = selectedBreed ? tables[selectedBreed] : null;
+  const rulesFor = (plan: Row) => {
+    const rules = tables[plan.breed_id]?.plan_rules;
+    return { referenceLabel: rules?.reference_label ?? null, poolingAllowed: rules?.pooling_allowed ?? true };
+  };
 
   return (
     <div className="space-y-3">
@@ -98,7 +122,13 @@ export function BoarSelectionPanel({
             onChange={(e) => setBreedId(e.target.value)}
             aria-label="Breeding line"
           >
-            {!lines.length && <option value="">No breeding line has live boars</option>}
+            {!lines.length ? (
+              <option value="">No breeding line has live boars</option>
+            ) : (
+              <option value="">
+                All lines ({lines.reduce((n, l) => n + (Number(l.boars) || 0), 0)} boars)
+              </option>
+            )}
             {lines.map((l) => (
               <option key={l.breed_id} value={l.breed_id}>
                 {l.breed_code} ({l.boars} {l.boars === 1 ? 'boar' : 'boars'})
@@ -108,7 +138,7 @@ export function BoarSelectionPanel({
         </label>
         <label className="text-xs font-semibold" style={S.sub}>
           As of
-          <input type="date" className="nf-input block mt-1 text-sm" value={asOf} max={todayIso()} onChange={(e) => setAsOf(e.target.value || todayIso())} />
+          <DateInput className="nf-input block mt-1 text-sm" value={asOf} max={todayIso()} onChange={(e) => setAsOf(e.target.value || todayIso())} />
         </label>
         <div className="ml-auto flex gap-2">
           <Button onClick={() => setPlanning(true)} disabled={!selected.size}>
@@ -120,16 +150,6 @@ export function BoarSelectionPanel({
         </div>
       </div>
 
-      {data && !data.setup_id && (
-        <p className="text-xs rounded-lg border p-2" style={{ ...S.raised, ...S.sub }}>
-          This line has no setup, and there is no company default, so no overall grading is shown. Set the rank weights in Breeding Line Setup.
-        </p>
-      )}
-      {data && data.setup_id && !data.grading?.used && (
-        <p className="text-xs rounded-lg border p-2" style={{ ...S.raised, ...S.sub }}>
-          No rank weights are set for this line, so no overall grading is shown. Set them in Breeding Line Setup.
-        </p>
-      )}
       {notice && (
         <p className="text-xs rounded-lg border p-2" style={{ ...S.raised, ...S.sub }}>
           {notice}
@@ -141,80 +161,32 @@ export function BoarSelectionPanel({
         </p>
       )}
 
-      <div className="rounded-lg border overflow-x-auto" style={S.surface}>
-        <table className="w-full text-xs">
-          <thead>
-            <tr style={S.raised} className="text-left">
-              <th className="px-3 py-2 w-8">
-                <input
-                  type="checkbox"
-                  aria-label="Choose every boar"
-                  checked={rows.length > 0 && selected.size === rows.length}
-                  onChange={(e) => setSelected(e.target.checked ? new Set(rows.map((r) => r.boar_id)) : new Set())}
-                />
-              </th>
-              {columns.map((c) => (
-                <th key={c.key} className="px-3 py-2 font-semibold whitespace-nowrap" style={S.sub}>
-                  {c.label}
-                </th>
-              ))}
-              <th className="px-3 py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {loading && (
-              <tr>
-                <td className="px-3 py-6 text-center" style={S.muted} colSpan={columns.length + 2}>
-                  Loading…
-                </td>
-              </tr>
-            )}
-            {!loading && !rows.length && (
-              <tr>
-                <td className="px-3 py-6 text-center" style={S.muted} colSpan={Math.max(columns.length, 1) + 2}>
-                  {breedId ? 'No live boars in this line.' : 'Choose a breeding line.'}
-                </td>
-              </tr>
-            )}
-            {!loading &&
-              rows.map((r) => (
-                <tr key={r.boar_id} className="border-t" style={{ borderColor: 'var(--border)' }}>
-                  <td className="px-3 py-2">
-                    <input
-                      type="checkbox"
-                      aria-label={`Choose ${r.boar}`}
-                      checked={selected.has(r.boar_id)}
-                      onChange={(e) => {
-                        const next = new Set(selected);
-                        if (e.target.checked) next.add(r.boar_id);
-                        else next.delete(r.boar_id);
-                        setSelected(next);
-                      }}
-                    />
-                  </td>
-                  {columns.map((c) => (
-                    <td key={c.key} className={`px-3 py-2 whitespace-nowrap ${c.key === 'boar' ? 'font-mono font-bold' : ''}`} style={c.key === 'boar' ? S.accent : S.primary}>
-                      {cellText(c.key, r[c.key], r)}
-                    </td>
-                  ))}
-                  <td className="px-3 py-2 text-right">
-                    <button type="button" className="text-xs font-semibold cursor-pointer hover:underline" style={S.accent} onClick={() => setTsiBoar(r)}>
-                      Record TSI
-                    </button>
-                  </td>
-                </tr>
-              ))}
-          </tbody>
-        </table>
-      </div>
-      <p className="text-[11px] flex items-center gap-1" style={S.muted}>
-        <Trophy className="w-3 h-3" /> Ranks are among the boars shown that have a collection on record; a dash means there is no figure yet.
-      </p>
+      {!lines.length && !loading && (
+        <p className="rounded-lg border p-6 text-center text-xs" style={{ ...S.surface, ...S.muted }}>
+          No breeding line has live boars.
+        </p>
+      )}
+      {shownLines.map((line) => (
+        <LineTable
+          key={line.breed_id}
+          line={line}
+          data={tables[line.breed_id] ?? null}
+          loading={loading}
+          showHeader={!breedId}
+          selected={selectedBreed === line.breed_id ? selected : new Set<string>()}
+          onTick={(ids, on) => tick(line.breed_id, ids, on)}
+          onRecordTsi={setTsiBoar}
+        />
+      ))}
+      {!!lines.length && (
+        <p className="text-[11px] flex items-center gap-1" style={S.muted}>
+          <Trophy className="w-3 h-3" /> Ranks are among the boars of each line that have a collection on record; a dash means there is no figure yet. A collection is planned for one line at a time.
+        </p>
+      )}
 
       <CollectionPlans
         plans={plans}
-        referenceLabel={data?.plan_rules?.reference_label ?? null}
-        poolingAllowed={data?.plan_rules?.pooling_allowed ?? true}
+        rulesFor={rulesFor}
         onCollect={(plan, boarIds, batchId) => onCollect?.(plan, boarIds, batchId)}
         onChanged={() => {
           load();
@@ -222,16 +194,17 @@ export function BoarSelectionPanel({
         }}
       />
 
-      {planning && data && (
+      {planning && planned && (
         <PlanDialog
-          breedId={breedId}
-          lineName={data.breed.breed_code}
-          boars={rows.filter((r) => selected.has(r.boar_id))}
-          rules={data.plan_rules}
+          breedId={selectedBreed}
+          lineName={planned.breed.breed_code}
+          boars={(planned.rows as Row[]).filter((r) => selected.has(r.boar_id))}
+          rules={planned.plan_rules}
           onClose={() => setPlanning(false)}
           onSaved={(warnings) => {
             setPlanning(false);
             setSelected(new Set());
+            setSelectedBreed('');
             setNotice(['Collection planned.', ...warnings].join(' '));
             load();
             loadPlans();
@@ -259,6 +232,115 @@ export function BoarSelectionPanel({
         />
       )}
     </div>
+  );
+}
+
+/** One line's boars: its own columns, ranks and grading, with a heading when several lines are shown together. */
+function LineTable({
+  line,
+  data,
+  loading,
+  showHeader,
+  selected,
+  onTick,
+  onRecordTsi,
+}: {
+  line: Row;
+  data: Row | null;
+  loading: boolean;
+  showHeader: boolean;
+  selected: Set<string>;
+  onTick: (boarIds: string[], on: boolean) => void;
+  onRecordTsi: (boar: Row) => void;
+}) {
+  const columns: { key: string; label: string }[] = data?.columns ?? [];
+  const rows: Row[] = data?.rows ?? [];
+  return (
+    <section className="space-y-2">
+      {showHeader && (
+        <h4 className="text-sm font-bold flex items-center gap-2" style={S.primary}>
+          {line.breed_code}
+          <span className="text-[11px] font-semibold rounded-full px-2 py-0.5" style={{ ...S.raised, ...S.muted }}>
+            {line.boars} {line.boars === 1 ? 'boar' : 'boars'}
+          </span>
+        </h4>
+      )}
+      {data && !data.setup_id && (
+        <p className="text-xs rounded-lg border p-2" style={{ ...S.raised, ...S.sub }}>
+          This line has no setup, and there is no company default, so no overall grading is shown. Set the rank weights in Breeding Line Setup.
+        </p>
+      )}
+      {data && data.setup_id && !data.grading?.used && (
+        <p className="text-xs rounded-lg border p-2" style={{ ...S.raised, ...S.sub }}>
+          No rank weights are set for this line, so no overall grading is shown. Set them in Breeding Line Setup.
+        </p>
+      )}
+      {data && bandNote(rows, data.bands) && (
+        <p className="text-xs rounded-lg border p-2" style={{ ...S.raised, ...S.sub }}>
+          {bandNote(rows, data.bands)}
+        </p>
+      )}
+      <div className="rounded-lg border overflow-x-auto" style={S.surface}>
+        <table className="w-full text-xs">
+          <thead>
+            <tr style={S.raised} className="text-left">
+              <th className="px-3 py-2 w-8">
+                <input
+                  type="checkbox"
+                  aria-label={`Choose every ${line.breed_code} boar`}
+                  checked={rows.length > 0 && selected.size === rows.length}
+                  onChange={(e) => onTick(rows.map((r) => r.boar_id), e.target.checked)}
+                />
+              </th>
+              {columns.map((c) => (
+                <th key={c.key} className="px-3 py-2 font-semibold whitespace-nowrap" style={S.sub}>
+                  {c.label}
+                </th>
+              ))}
+              <th className="px-3 py-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {loading && !data && (
+              <tr>
+                <td className="px-3 py-6 text-center" style={S.muted} colSpan={columns.length + 2}>
+                  Loading…
+                </td>
+              </tr>
+            )}
+            {!loading && !rows.length && (
+              <tr>
+                <td className="px-3 py-6 text-center" style={S.muted} colSpan={Math.max(columns.length, 1) + 2}>
+                  No live boars in this line.
+                </td>
+              </tr>
+            )}
+            {rows.map((r) => (
+              <tr key={r.boar_id} className="border-t" style={{ borderColor: 'var(--border)' }}>
+                <td className="px-3 py-2">
+                  <input
+                    type="checkbox"
+                    aria-label={`Choose ${r.boar}`}
+                    checked={selected.has(r.boar_id)}
+                    onChange={(e) => onTick([r.boar_id], e.target.checked)}
+                  />
+                </td>
+                {columns.map((c) => (
+                  <td key={c.key} className={`px-3 py-2 whitespace-nowrap ${c.key === 'boar' ? 'font-mono font-bold' : ''}`} style={c.key === 'boar' ? S.accent : S.primary}>
+                    {cellText(c.key, r[c.key], r)}
+                  </td>
+                ))}
+                <td className="px-3 py-2 text-right">
+                  <button type="button" className="text-xs font-semibold cursor-pointer hover:underline" style={S.accent} onClick={() => onRecordTsi(r)}>
+                    Record TSI
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -302,7 +384,7 @@ function TsiDialog({ boar, onClose, onSaved }: { boar: Row; onClose: () => void;
           <input type="number" step="0.01" className="nf-input w-full text-sm" style={inputStyle(issues, 'tsi')} value={tsi} onChange={(e) => setTsi(e.target.value)} autoFocus />
         </Field>
         <Field label="As of" issues={issues} name="date" required>
-          <input type="date" className="nf-input w-full text-sm" style={inputStyle(issues, 'date')} value={date} max={todayIso()} onChange={(e) => setDate(e.target.value)} />
+          <DateInput className="nf-input w-full text-sm" style={inputStyle(issues, 'date')} value={date} max={todayIso()} onChange={(e) => setDate(e.target.value)} />
         </Field>
         <Field label="Genetic rank published with it" issues={issues} name="rank" hint="Optional. The herd-wide rank, used as given. Leave it out and the rank is worked out from TSI.">
           <input type="number" step="1" min="1" className="nf-input w-full text-sm" style={inputStyle(issues, 'rank')} value={rank} onChange={(e) => setRank(e.target.value)} />
@@ -343,7 +425,7 @@ function TsiImportDialog({ onClose, onSaved }: { onClose: () => void; onSaved: (
   return (
     <EntryModal title="Import TSI" icon={<Upload className="w-5 h-5" style={S.accent} />} onClose={onClose} onSubmit={submit} submitting={busy} submitLabel={`Import ${parsed.rows.length || ''} boars`.trim()} savingLabel="Importing…" issues={issues}>
       <Field label="As of" issues={issues} name="date" required>
-        <input type="date" className="nf-input w-full text-sm" value={date} max={todayIso()} onChange={(e) => setDate(e.target.value)} />
+        <DateInput className="nf-input w-full text-sm" value={date} max={todayIso()} onChange={(e) => setDate(e.target.value)} />
       </Field>
       <Field label="Boars" issues={issues} name="list" required hint="One per line: animal code, TSI, and optionally the genetic rank published with it. A spreadsheet's copied cells work. Nothing is imported unless every boar is found.">
         <textarea

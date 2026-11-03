@@ -1,3 +1,4 @@
+import { DateInput } from '@/components/ui/date-input';
 import { NA } from '@/utils/na';
 import React, { useState, useEffect } from 'react';
 import { Select } from '@/components/ui/select';
@@ -1323,9 +1324,8 @@ export default function CompanyTab({
                         label={t('ctIncorporationDate')}
                         htmlFor="profile-incorporation-date"
                       >
-                        <Input
+                        <DateInput
                           id="profile-incorporation-date"
-                          type="date"
                           value={profileForm.incorporation_date}
                           onChange={(e) =>
                             setProfileForm({

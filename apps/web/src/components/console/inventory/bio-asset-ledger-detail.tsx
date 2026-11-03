@@ -5,6 +5,7 @@
  * key figures, item and tracking panels, and — for a GRN's entry — the animals registered from it, as a receipt lists
  * the issues applied to it. A registration shows the GRN entry it was taken from.
  */
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -206,7 +207,7 @@ export default function BioAssetLedgerDetail({
           </div>
           <span className="flex items-center gap-1 text-xs" style={S.sub}>
             <Calendar className="h-3.5 w-3.5" style={S.muted} /> Posting Date:{' '}
-            <strong style={S.primary}>{entry.posting_date}</strong>
+            <strong style={S.primary}>{formatDate(entry.posting_date)}</strong>
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -578,7 +579,7 @@ export default function BioAssetLedgerDetail({
                       >
                         {a.entry_no}
                       </TableCell>
-                      <TableCell style={S.primary}>{a.posting_date}</TableCell>
+                      <TableCell style={S.primary}>{formatDate(a.posting_date)}</TableCell>
                       <TableCell>
                         <a
                           className="font-mono text-xs text-(--accent) hover:underline"

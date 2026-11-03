@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -365,7 +367,7 @@ export default function BatchTransferPanel() {
                     {r.transfer_no}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-[var(--text-secondary)]">
-                    {r.transfer_date}
+                    {formatDate(r.transfer_date)}
                   </td>
                   <td className="px-4 py-3">
                     <span className="inline-flex items-center gap-2 whitespace-nowrap">
@@ -469,8 +471,7 @@ export default function BatchTransferPanel() {
             </label>
             <label className="block">
               <span className="nf-text-label">{t('btTransferDate')}</span>
-              <input
-                type="date"
+              <DateInput
                 value={transferDate}
                 onChange={(e) => setTransferDate(e.target.value)}
                 className="nf-input w-full text-sm"
@@ -612,7 +613,7 @@ export default function BatchTransferPanel() {
             ? t('btDetailDescription', {
                 from: viewing.from_batch_no || batchNo(viewing.from_batch_id),
                 to: viewing.to_batch_no || batchNo(viewing.to_batch_id),
-                date: viewing.transfer_date,
+                date: formatDate(viewing.transfer_date),
               })
             : ''
         }

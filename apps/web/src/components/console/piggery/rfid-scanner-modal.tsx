@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate as formatDateShared } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useState, useRef, useEffect } from 'react';
 import {
@@ -36,11 +37,7 @@ function unwrap<T = any>(res: any): T {
 
 function formatDate(d?: string | null) {
   if (!d) return NA;
-  return new Date(d).toLocaleDateString(undefined, {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
+  return formatDateShared(d);
 }
 
 const S = {

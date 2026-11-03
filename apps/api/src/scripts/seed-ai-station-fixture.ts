@@ -1,7 +1,7 @@
 /**
  * Applies the AI Station set-up the client's documents describe (ai-station-fixture.lib.ts) through the running API, so validation and
- * audit run as they do for a user: the rules of Tempo, L-Line and Z-Line, the three Collector IDs, and SOP 21's five-point body condition
- * scale. A NAMED FIXTURE, not a default: nothing in the application needs it, and everything it creates is edited like any other row.
+ * audit run as they do for a user: the rules of Tempo, L-Line and Z-Line, the three Collector IDs, SOP 21's five-point body condition
+ * scale, and a company-default grading and set of genetic levels (placeholders of ours) so every line is graded. A NAMED FIXTURE, not a default: nothing in the application needs it, and everything it creates is edited like any other row.
  * Read-only by default; --apply writes; safe to repeat (anything that exists is left alone).
  *
  *   pnpm nx run api:db-seed-ai-station-fixture                                        # print the plan
@@ -57,21 +57,27 @@ async function run() {
     setupBreedIds: new Set(setups.map((s) => (s.breed_id ?? '') as string)),
     scaleScores: new Set((await rows('/bcs-scale?limit=200')).filter((r) => !r.breed_id).map((r) => Number(r.score))),
     collectorCodes: new Set((await rows('/semen-collector?limit=200')).map((c) => String(c.collector_code))),
+    defaultSetup: (() => {
+      const d = setups.find((x) => !x.breed_id);
+      return d ? { id: String(d.setup_id), hasWeights: [d.grading_genetic_weight, d.grading_dose_weight, d.grading_morphology_weight].some((w) => w != null && Number(w) > 0) } : null;
+    })(),
+    defaultBandLevels: new Set((await rows('/genetic-level-band?limit=200')).filter((b) => !b.breed_id).map((b) => String(b.level_name))),
   };
 
   const plan = planFixture(existing, choices);
   let made = 0, refused = 0;
   for (const a of plan) {
     const label = `${a.kind} ${a.key}`;
-    if (a.do !== 'create') { console.log(`${label}: ${a.do === 'skip' ? 'SKIPPED' : 'exists'} — ${a.why}`); continue; }
-    console.log(`${label}: ${APPLY ? 'creating' : 'would be created'}`);
+    if (a.do === 'skip' || a.do === 'exists') { console.log(`${label}: ${a.do === 'skip' ? 'SKIPPED' : 'exists'} — ${a.why}`); continue; }
+    const verb = a.do === 'update' ? ['updating', 'would be updated'] : ['creating', 'would be created'];
+    console.log(`${label}: ${APPLY ? verb[0] : verb[1]}`);
     for (const n of a.notes ?? []) console.log(`    [${n.source}] ${n.field}: ${n.text}`);
     if (!APPLY) continue;
-    const res = await call('POST', a.path, a.body);
+    const res = await call(a.do === 'update' ? 'PUT' : 'POST', a.path, a.body);
     if (res.status >= 300) { refused += 1; console.log(`    REFUSED ${res.status} ${res.message}`); } else made += 1;
   }
   console.log(`${APPLY ? 'Done' : 'Plan only'}: ${made} created, ${refused} refused.${APPLY ? '' : ' Run with --apply to write.'}`);
-  console.log('Not set (the documents do not give them): genetic-level TSI bands, the Tempo label, rest days, motility floor, collector names, any colorant stock item.');
+  console.log('Placeholders of ours, to confirm with the client: the company-default genetic-level TSI ranges and the default grading. Not set (the documents do not give them): the Tempo label, rest days, motility floor, collector names, any colorant stock item.');
   if (refused) process.exitCode = 1;
 }
 run().catch((e) => { console.error(e); process.exitCode = 1; });

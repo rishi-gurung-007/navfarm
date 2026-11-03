@@ -6,6 +6,8 @@
  * The thresholds marked "guidance" are ours, not the client's; they only colour a hint and never block a save.
  */
 
+import { formatDate } from '@/utils/date-short';
+
 export type Row = Record<string, any>;
 export type Issue = { level: "error" | "warn"; field: string; text: string };
 
@@ -44,7 +46,7 @@ export function openMatingOf(sowId: string, matings: Row[]): Row | undefined {
 /** Why a sow cannot be served now, or null when she can. Mirrors BreedingService.assertSowCanBeServed. */
 export function whyNotServed(sow: Row, matings: Row[]): string | null {
   const open = openMatingOf(sow.animal_id, matings);
-  if (open) return `open service ${String(open.mating_date).slice(0, 10)} — not farrowed`;
+  if (open) return `open service ${formatDate(open.mating_date)} — not farrowed`;
   if (sow.status === "PREGNANT") return "pregnant";
   if (sow.status === "LACTATING") return "nursing — wean first";
   return null;
@@ -61,7 +63,7 @@ export function whyNotFarrowing(sow: Row, matings: Row[]): string | null {
 export function lotState(lot: Row, matingDate: string): { left: number; usable: boolean; why: string | null } {
   const left = Number(lot.doses_collected) - Number(lot.doses_used_internal || 0) - Number(lot.doses_sold || 0);
   if (left <= 0) return { left, usable: false, why: "no doses left" };
-  if (lot.expiry_date && String(lot.expiry_date).slice(0, 10) < matingDate) return { left, usable: false, why: `expired ${String(lot.expiry_date).slice(0, 10)}` };
+  if (lot.expiry_date && String(lot.expiry_date).slice(0, 10) < matingDate) return { left, usable: false, why: `expired ${formatDate(lot.expiry_date)}` };
   if (lot.collection_date && String(lot.collection_date).slice(0, 10) > matingDate) return { left, usable: false, why: "collected after the mating" };
   return { left, usable: true, why: null };
 }
@@ -228,6 +230,27 @@ export interface LineRules {
   colorant_name?: string | null;
   colorant_item_id?: string | null;
   colorant_qty_per_lot?: number | string | null;
+  // The line's collection rules (Breeding Line Setup), checked on the form as well as by the API.
+  collection_mode?: string;
+  collection_weekdays?: string[] | null;
+  boars_per_collection_day?: number | null;
+  reference_required?: boolean;
+  reference_label?: string | null;
+  destination_rule?: string;
+  destination_farm_ids?: string[] | null;
+  restrict_to_destination?: string;
+}
+
+const WEEKDAY_CODES = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+const WEEKDAY_NAMES: Record<string, string> = { SUN: "Sunday", MON: "Monday", TUE: "Tuesday", WED: "Wednesday", THU: "Thursday", FRI: "Friday", SAT: "Saturday" };
+
+/** MON..SUN for a stored date. */
+export const weekdayOf = (date: string): string => WEEKDAY_CODES[new Date(`${String(date).slice(0, 10)}T00:00:00Z`).getUTCDay()];
+
+/** "Sunday and Wednesday" / "Monday, Tuesday and Friday". */
+export function weekdayList(codes: string[]): string {
+  const names = codes.map((c) => WEEKDAY_NAMES[c] ?? c);
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : (names[0] ?? "");
 }
 
 /** What one boar gave at a collection, as the form holds it (every figure typed, so every one a string). */
@@ -271,9 +294,11 @@ export interface SemenCheck {
   boars: Row[];
   lots: Row[];
   rules?: LineRules | null;
+  /** Every boar of the line the form is for, so the boars it has already tapped on the day can be counted. */
+  lineBoarIds?: string[];
 }
 
-export function checkSemen({ form, boars, lots, rules }: SemenCheck): Issue[] {
+export function checkSemen({ form, boars, lots, rules, lineBoarIds }: SemenCheck): Issue[] {
   const out: Issue[] = [];
   const err = (field: string, text: string) => out.push({ level: "error", field, text });
   const warn = (field: string, text: string) => out.push({ level: "warn", field, text });
@@ -294,9 +319,45 @@ export function checkSemen({ form, boars, lots, rules }: SemenCheck): Issue[] {
   if (rules?.max_boars_per_lot != null && count > rules.max_boars_per_lot) err("boar_animal_ids", `This line allows at most ${rules.max_boars_per_lot} boar${rules.max_boars_per_lot === 1 ? "" : "s"} in a lot.`);
   if (rules?.min_boars_per_lot != null && count > 0 && count < rules.min_boars_per_lot) err("boar_animal_ids", `This line needs at least ${rules.min_boars_per_lot} boars in a lot.`);
 
+  // ── The line's own collection rules, as its Breeding Line Setup sets them ──
+  if (rules?.reference_required && !form.plan_id) {
+    const what = rules.reference_label?.trim() || "reference";
+    err("plan_id", `A ${what} is required for this line: plan the collection in Boar Selection with it, then record it from the plan.`);
+  }
+  const plannedForThisDay = !!form.plan_id && !!form.plan_info && String(form.plan_info.collection_date).slice(0, 10) === form.collection_date;
+  if (form.plan_id && form.plan_info && form.collection_date && !plannedForThisDay) {
+    warn("collection_date", `Plan ${form.plan_info.plan_no ?? ""} was for ${formatDate(form.plan_info.collection_date)}; this collection is dated ${formatDate(form.collection_date)}.`);
+  }
+  if (rules?.collection_mode === "SCHEDULED" && rules.collection_weekdays?.length && form.collection_date && !plannedForThisDay) {
+    const day = weekdayOf(form.collection_date);
+    if (!rules.collection_weekdays.includes(day)) {
+      soft("collection_date", `This line is collected on ${weekdayList(rules.collection_weekdays)}; ${formatDate(form.collection_date)} is a ${WEEKDAY_NAMES[day]}.`);
+    }
+  }
+  if (rules?.boars_per_collection_day != null && form.collection_date && lineBoarIds && form.boar_animal_ids.length) {
+    const n = rules.boars_per_collection_day;
+    const tappedToday = new Set<string>();
+    for (const l of lots) {
+      if (String(l.collection_date).slice(0, 10) !== form.collection_date) continue;
+      for (const id of [l.boar_id, ...(l.boars || []).map((b: Row) => b.boar_id), ...(l.results || []).map((b: Row) => b.boar_id)]) {
+        if (id && lineBoarIds.includes(id) && !form.boar_animal_ids.includes(id)) tappedToday.add(id);
+      }
+    }
+    const total = tappedToday.size + form.boar_animal_ids.length;
+    const plural = (k: number) => `boar${k === 1 ? "" : "s"}`;
+    if (total > n) {
+      err("boar_animal_ids", `This line taps ${n} ${plural(n)} a day; ${tappedToday.size} already ${tappedToday.size === 1 ? "has" : "have"} been collected on ${formatDate(form.collection_date)}, so at most ${Math.max(0, n - tappedToday.size)} more.`);
+    } else if (total < n) {
+      warn("boar_animal_ids", `This line taps ${n} ${plural(n)} a day; ${total} so far on ${formatDate(form.collection_date)}.`);
+    }
+  }
+  if (rules?.destination_rule === "LIST" && !form.plan_id) {
+    warn("plan_id", "This line's semen goes to a list of farms: record the collection from a plan that names the farm, or the lot has no destination.");
+  }
+
   for (const b of boars) {
     if (b.entry_date && form.collection_date && form.collection_date < String(b.entry_date).slice(0, 10)) {
-      err("collection_date", `${b.animal_code} entered on ${String(b.entry_date).slice(0, 10)}.`);
+      err("collection_date", `${b.animal_code} entered on ${formatDate(b.entry_date)}.`);
     }
     if (form.collection_date && rules?.min_rest_days != null) {
       const since = daysSinceCollection(b.animal_id, lots, form.collection_date);

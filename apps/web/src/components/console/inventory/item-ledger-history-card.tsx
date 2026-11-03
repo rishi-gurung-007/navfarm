@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import {
@@ -352,7 +353,7 @@ export default function ItemLedgerHistoryCard({
                             className="py-2.5 px-3 font-mono"
                             style={S.primary}
                           >
-                            {layer.posting_date}
+                            {formatDate(layer.posting_date)}
                           </TableCell>
                           <TableCell className="py-2.5 px-3">
                             <div className="flex flex-col">
@@ -563,7 +564,7 @@ export default function ItemLedgerHistoryCard({
                             className="py-2.5 px-3 font-mono"
                             style={S.primary}
                           >
-                            {out.posting_date}
+                            {formatDate(out.posting_date)}
                           </TableCell>
                           <TableCell className="py-2.5 px-3">
                             <div className="flex flex-col">

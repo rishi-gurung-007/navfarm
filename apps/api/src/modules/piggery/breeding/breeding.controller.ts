@@ -139,4 +139,12 @@ export class BreedingController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     return await this.breedingService.getSemenBatches(tenantId, companyId);
   }
+
+  @Get('semen-collection/:id')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'view')
+  @ApiOperation({ summary: 'One collected semen lot with its boars, results, cost, QR and the services that used it' })
+  async getSemenLot(@Param('id') id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    return await this.breedingService.getSemenLot(id, tenantId);
+  }
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from '@/components/ui/date-input';
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
@@ -242,7 +243,7 @@ function FeedSiloDashboardContent() {
           </div>
         </Field>
         <Field label={t("fsdPlanningDate")} htmlFor="sd-planning-date">
-          <input id="sd-planning-date" type="date" className="nf-input-sm" style={inputStyle} value={planningDate} onChange={(event) => setPlanningDate(event.target.value)} />
+          <DateInput id="sd-planning-date" className="nf-input-sm" style={inputStyle} value={planningDate} onChange={(event) => setPlanningDate(event.target.value)} />
         </Field>
         <Field label={t("ffView")} htmlFor="sd-view">
           <div className="relative min-w-[8rem]">
@@ -269,12 +270,12 @@ function FeedSiloDashboardContent() {
         </Field>
         {view !== "PERIOD" && (
           <Field label={t(view === "DAILY" ? "ffDate" : view === "WEEKLY" ? "ffWeekStart" : "ffDateFrom")} htmlFor="sd-from">
-            <input id="sd-from" type="date" className="nf-input-sm" style={inputStyle} value={from} onChange={(event) => setFrom(event.target.value)} />
+            <DateInput id="sd-from" className="nf-input-sm" style={inputStyle} value={from} onChange={(event) => setFrom(event.target.value)} />
           </Field>
         )}
         {view === "CUSTOM" && (
           <Field label={t("ffDateTo")} htmlFor="sd-to">
-            <input id="sd-to" type="date" className="nf-input-sm" style={inputStyle} value={to} onChange={(event) => setTo(event.target.value)} />
+            <DateInput id="sd-to" className="nf-input-sm" style={inputStyle} value={to} onChange={(event) => setTo(event.target.value)} />
           </Field>
         )}
       </div>

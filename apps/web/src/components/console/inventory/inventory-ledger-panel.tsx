@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -453,9 +455,8 @@ export default function InventoryLedgerPanel() {
 
         {/* Date Range: From */}
         <Field label={t('ilpFrom')} htmlFor="ilp-date-from">
-          <input
+          <DateInput
             id="ilp-date-from"
-            type="date"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
             className={`${inputCls} h-9`}
@@ -465,9 +466,8 @@ export default function InventoryLedgerPanel() {
 
         {/* Date Range: To */}
         <Field label={t('ilpTo')} htmlFor="ilp-date-to">
-          <input
+          <DateInput
             id="ilp-date-to"
-            type="date"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
             className={`${inputCls} h-9`}
@@ -595,7 +595,7 @@ export default function InventoryLedgerPanel() {
                         className="whitespace-nowrap font-medium"
                         style={S.primary}
                       >
-                        {row.posting_date}
+                        {formatDate(row.posting_date)}
                       </TableCell>
 
                       {/* Document No. & External Document No. */}
@@ -756,7 +756,7 @@ export default function InventoryLedgerPanel() {
                                 ? `${row.lot_lines} lots — open the entry to see which`
                                 : row.serial_no
                                   ? `Serial No(s): ${row.serial_no}`
-                                  : `Lot: ${row.lot_no}${row.expiry_date ? ` (Exp: ${String(row.expiry_date).slice(0, 10)})` : ''}`
+                                  : `Lot: ${row.lot_no}${row.expiry_date ? ` (Exp: ${formatDate(row.expiry_date)})` : ''}`
                             }
                           >
                             {Number(row.lot_lines) > 0

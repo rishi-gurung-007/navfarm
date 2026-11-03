@@ -47,7 +47,7 @@ describe('buildLifecycleStages', () => {
     // Day 1 is the start date; the move happened on 2026-07-11, which is day 11.
     expect(stages.find((s) => s.code === 'FLUSH_SERVICE')?.daysRange).toBe('Day 1 – 10');
     expect(stages.find((s) => s.code === 'DRY_SOW_GESTATION')?.daysRange).toContain('Day 11');
-    expect(stages.find((s) => s.code === 'FLUSH_SERVICE')?.dateRange).toContain('2026-07-01');
+    expect(stages.find((s) => s.code === 'FLUSH_SERVICE')?.dateRange).toContain('01/07/26');
   });
 
   it('returns the id of the current stage so the stepper can position itself', () => {

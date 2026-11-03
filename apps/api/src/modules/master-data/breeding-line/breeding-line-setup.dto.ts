@@ -11,7 +11,6 @@ import {
   IsOptional,
   IsString,
   IsUUID,
-  ValidateNested,
   Max,
   MaxLength,
   Min,
@@ -19,23 +18,12 @@ import {
 import { MasterListQueryDto } from '../../../common/master-list-query';
 import { rawBoolean } from './raw-boolean';
 import {
-  TIE_BREAKS,
-  SELECTION_COLUMN_KEYS,
   COLLECTION_MODES,
   DESTINATION_RULES,
   ENFORCEMENTS,
   RESTRICTIONS,
   WEEKDAYS,
-  WEEK_BASES,
 } from './breeding-line.rules';
-
-export class SelectionColumnDto {
-  @IsIn(SELECTION_COLUMN_KEYS) key!: string;
-  @IsString() @MaxLength(50) label!: string;
-  // The form's row editor sends a Shown/Hidden dropdown as 'true' / 'false'.
-  @Transform(rawBoolean)
-  @IsBoolean() visible!: boolean;
-}
 
 export class CreateBreedingLineSetupDto {
   @IsOptional() @IsUUID() company_id?: string;
@@ -58,8 +46,6 @@ export class CreateBreedingLineSetupDto {
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0) colorant_qty_per_lot?: number | null;
 
   @IsOptional() @IsString() @MaxLength(100) label_template?: string | null;
-  @IsOptional() @IsIn(WEEK_BASES) week_basis?: string;
-  @IsOptional() @IsBoolean() include_year?: boolean;
 
   @IsOptional() @IsIn(DESTINATION_RULES) destination_rule?: string;
   @IsOptional() @IsArray() @ArrayUnique() @ArrayMaxSize(50) @IsUUID(undefined, { each: true }) destination_farm_ids?: string[] | null;
@@ -71,11 +57,10 @@ export class CreateBreedingLineSetupDto {
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(100) min_motility_pct?: number | null;
   @IsOptional() @IsIn(ENFORCEMENTS) rule_enforcement?: string;
 
-  // The boar selection table: the relative weights of the ranks in the overall grading, how ties rank, and the columns shown.
+  // The boar selection table's overall grading: how much each rank counts.
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(1000) grading_genetic_weight?: number | null;
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(1000) grading_dose_weight?: number | null;
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(1000) grading_morphology_weight?: number | null;
-  @IsOptional() @IsIn(TIE_BREAKS) rank_tie_break?: string;
 
   // Boar body condition (SOP 21): how often a boar is scored, the days of grace and of notice, and whether the scale's feed may be overridden.
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(3650) bcs_frequency_days?: number | null;
@@ -83,17 +68,11 @@ export class CreateBreedingLineSetupDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(365) bcs_reminder_days?: number | null;
   @IsOptional() @IsBoolean() bcs_allow_feed_override?: boolean;
   @IsOptional() @IsBoolean() bcs_override_reason_required?: boolean;
-  @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => SelectionColumnDto) selection_columns?: SelectionColumnDto[] | null;
 }
 
 /** A row's line is its identity (like a master's code): it is not edited, a different line is a new row. */
 export class UpdateBreedingLineSetupDto extends PartialType(OmitType(CreateBreedingLineSetupDto, ['company_id', 'breed_id'] as const)) {
   @IsOptional() @IsUUID() breed_id?: string | null;
-
-  // Declared again here on purpose. The nested column type is lost through PartialType(OmitType(...)) in the bundled API (it
-  // passed in unit tests and failed live: every column property was refused as "not a field this form accepts"), so the
-  // decorators must sit on this class itself.
-  @IsOptional() @IsArray() @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => SelectionColumnDto) selection_columns?: SelectionColumnDto[] | null;
 }
 
 export class QueryBreedingLineSetupDto extends MasterListQueryDto {

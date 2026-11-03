@@ -214,7 +214,7 @@ describe('AnimalDetailsModal', () => {
 
     await waitFor(() => {
       expect(screen.getByText('23071 g/d')).toBeTruthy();
-      expect(screen.getByText('Between 2026-10-01 and 2026-10-08')).toBeTruthy();
+      expect(screen.getByText('Between 01/10/26 and 08/10/26')).toBeTruthy();
       expect(screen.getByText('24.0 kg')).toBeTruthy();
       expect(screen.getByText('3.5', { selector: 'span' })).toBeTruthy();
     });

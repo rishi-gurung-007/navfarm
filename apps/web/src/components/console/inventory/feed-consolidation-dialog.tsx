@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from '@/components/ui/date-input';
 import { useMemo, useState, type CSSProperties } from "react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
@@ -140,7 +141,7 @@ export function FeedConsolidationDialog({ open, onClose, onCreated }: { open: bo
           </div>
         </Field>
         {mode === "requisition" && <Field label={t("fcdByRequisition")} htmlFor="consolidation-search"><input id="consolidation-search" className="nf-input-sm" placeholder={t("fcdSearchPlaceholder")} value={reqSearch} onChange={(event) => setReqSearch(event.target.value)} /></Field>}
-        {mode === "date" && <><Field label={t("fcdFromDate")} htmlFor="consolidation-from"><input id="consolidation-from" type="date" className="nf-input-sm" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></Field><Field label={t("fcdToDate")} htmlFor="consolidation-to"><input id="consolidation-to" type="date" className="nf-input-sm" value={toDate} onChange={(event) => setToDate(event.target.value)} /></Field></>}
+        {mode === "date" && <><Field label={t("fcdFromDate")} htmlFor="consolidation-from"><DateInput id="consolidation-from" className="nf-input-sm" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></Field><Field label={t("fcdToDate")} htmlFor="consolidation-to"><DateInput id="consolidation-to" className="nf-input-sm" value={toDate} onChange={(event) => setToDate(event.target.value)} /></Field></>}
         <Button variant="outline" onClick={load} disabled={busy}>{busy ? t("fcdLoading") : t("fcdFind")}</Button>
       </div>
       {dateHint && <p role="alert" className="text-xs" style={{ color: "var(--danger)" }}>{dateHint}</p>}

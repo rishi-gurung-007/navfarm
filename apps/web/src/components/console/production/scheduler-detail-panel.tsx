@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState, useMemo } from 'react';
 import {
@@ -725,7 +727,7 @@ export default function SchedulerDetailPanel({
                     {t('scLabelEffectiveFrom')}
                   </p>
                   <p className="font-semibold mt-0.5" style={S.primary}>
-                    {header.effective_from || NA}
+                    {header.effective_from ? formatDate(header.effective_from) : NA}
                   </p>
                 </div>
                 <div>
@@ -736,7 +738,7 @@ export default function SchedulerDetailPanel({
                     {t('scLabelEffectiveTo')}
                   </p>
                   <p className="font-semibold mt-0.5" style={S.primary}>
-                    {header.effective_to || NA}
+                    {header.effective_to ? formatDate(header.effective_to) : NA}
                   </p>
                 </div>
                 <div>
@@ -794,7 +796,7 @@ export default function SchedulerDetailPanel({
                       {t('scLabelActualEndDate')}
                     </p>
                     <p className="font-semibold mt-0.5" style={S.primary}>
-                      {header.actual_end_date}
+                      {formatDate(header.actual_end_date)}
                     </p>
                   </div>
                 )}
@@ -888,9 +890,8 @@ export default function SchedulerDetailPanel({
                       >
                         {t('scLabelEffectiveFrom')}
                       </label>
-                      <input
+                      <DateInput
                         id="sched-from"
-                        type="date"
                         className={inputCls}
                         style={S.input}
                         value={dates.from}
@@ -907,9 +908,8 @@ export default function SchedulerDetailPanel({
                       >
                         {t('scLabelEffectiveTo')}
                       </label>
-                      <input
+                      <DateInput
                         id="sched-to"
-                        type="date"
                         className={inputCls}
                         style={S.input}
                         value={dates.to}

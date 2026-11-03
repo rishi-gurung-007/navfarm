@@ -1,3 +1,4 @@
+import { formatDate } from '@/utils/date-short';
 import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { RequisitionNewDialog } from '../src/components/console/inventory/requisition-new-dialog';
@@ -13,7 +14,7 @@ jest.mock('../src/hooks/useAuth', () => ({
   getActiveCompanyId: () => 'co-1',
   getStoredUser: () => ({ userId: 'u-requester', email: 'requester@triplec.local', fullName: 'Requesting User' }),
 }));
-jest.mock('../src/utils/date-short', () => ({ formatDateShort: (v: string | null) => v ?? '' }));
+jest.mock('../src/utils/date-short', () => ({ ...jest.requireActual('../src/utils/date-short'), formatDateShort: (v: string | null) => v ?? '' }));
 jest.mock('../src/hooks/useLanguage', () => {
   const stableT = (key: string, vars?: Record<string, any>) => (vars ? `${key}:${JSON.stringify(vars)}` : key);
   return { useLanguage: () => ({ t: stableT }) };
@@ -490,11 +491,12 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
     await fillLine(1, 's1', '3000', '2099-10-05');
 
     const dateInput = screen.getByLabelText('rqdReqDate') as HTMLInputElement;
-    expect(dateInput.value).toBe(todayIso());
+    // The field shows the app's one date style; the request carries the stored date.
+    expect(dateInput.value).toBe(formatDate(todayIso()));
 
     // Edit to past date
     fireEvent.change(dateInput, { target: { value: '2025-01-10' } });
-    expect(dateInput.value).toBe('2025-01-10');
+    expect(dateInput.value).toBe('10/01/25');
 
     fireEvent.click(screen.getByRole('button', { name: 'rqNewCreate' }));
     await waitFor(() => expect(post).toHaveBeenCalledWith('/feed-requisition', expect.objectContaining({

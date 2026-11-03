@@ -1,5 +1,6 @@
 "use client";
 
+import { formatDate } from '@/utils/date-short';
 import React from "react";
 import { useLanguage } from "@/hooks/useLanguage";
 import { api } from "@/services/api-client";
@@ -196,7 +197,7 @@ export function MortalityAnimalsField({
               <label className="flex cursor-not-allowed items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1 text-sm text-[var(--text-muted)] opacity-60">
                 <input type="checkbox" checked disabled aria-label={`${a.animal_code} - ${t("deMortAlreadyDead")}`} />
                 <span className="font-medium line-through">{a.animal_code}</span>
-                <span className="text-xs">{a.died_on ? t("deMortDiedOn", { date: a.died_on }) : t("deMortAlreadyDead")}</span>
+                <span className="text-xs">{a.died_on ? t("deMortDiedOn", { date: formatDate(a.died_on) }) : t("deMortAlreadyDead")}</span>
               </label>
             </li>
           ))}

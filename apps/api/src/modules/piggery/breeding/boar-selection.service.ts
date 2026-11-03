@@ -193,7 +193,8 @@ export class BoarSelectionService {
       genetic_weight: num(setup?.grading_genetic_weight),
       dose_weight: num(setup?.grading_dose_weight),
       morphology_weight: num(setup?.grading_morphology_weight),
-      tie_break: (setup?.rank_tie_break as TieBreak) ?? 'GENETIC_RANK',
+      // Boars with the same figure are ranked apart, the better genetic rank first (the client's sheets).
+      tie_break: 'GENETIC_RANK' as TieBreak,
     };
     const tsiFor = (b: Animal) => tsiOf.get(b.animal_id) ?? { tsi: num(b.tsi), published_rank: null, effective_date: null };
     const ranks = rankBoars(
@@ -249,12 +250,8 @@ export class BoarSelectionService {
       })
       .sort((a, b) => (a.genetic_rank ?? Number.MAX_SAFE_INTEGER) - (b.genetic_rank ?? Number.MAX_SAFE_INTEGER) || a.boar.localeCompare(b.boar));
 
-    // The columns the line shows, in its order; every column in the default order when it names none.
-    const labelOf = new Map<string, string>(SELECTION_COLUMNS.map((c) => [c.key, c.label]));
-    const layout = setup?.selection_columns?.length
-      ? setup.selection_columns
-      : SELECTION_COLUMNS.map((c) => ({ key: c.key as string, label: '', visible: true }));
-    const columns = layout.filter((c) => c.visible).map((c) => ({ key: c.key, label: c.label?.trim() || labelOf.get(c.key) || c.key }));
+    // Every column, in the default order.
+    const columns = SELECTION_COLUMNS.map((c) => ({ key: c.key as string, label: c.label as string }));
 
     return {
       breed: { breed_id: breed.breed_id, breed_code: breed.breed_code, breed_name: breed.breed_name },
@@ -262,6 +259,8 @@ export class BoarSelectionService {
       setup_id: setup?.setup_id ?? null,
       plan_rules: planRules,
       grading: { ...formula, used: formula.genetic_weight || formula.dose_weight || formula.morphology_weight ? true : false },
+      // The genetic level bands that apply to this line (its own, else the company default's).
+      bands,
       columns,
       rows,
     };

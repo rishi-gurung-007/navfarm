@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { useEffect, useState } from 'react';
 import {
   Loader2,
@@ -258,8 +260,7 @@ export default function PiggeryGmDashboard() {
           >
             <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
               <span>From:</span>
-              <input
-                type="date"
+              <DateInput
                 value={dateFrom}
                 onChange={(e) => setDateFrom(e.target.value)}
                 className="rounded-[var(--radius-sm)] border px-2 py-1 text-xs font-mono font-medium"
@@ -272,8 +273,7 @@ export default function PiggeryGmDashboard() {
             </div>
             <div className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
               <span>To:</span>
-              <input
-                type="date"
+              <DateInput
                 value={dateTo}
                 onChange={(e) => setDateTo(e.target.value)}
                 className="rounded-[var(--radius-sm)] border px-2 py-1 text-xs font-mono font-medium"
@@ -461,7 +461,7 @@ export default function PiggeryGmDashboard() {
                         {l.sowCode}
                       </span>
                       <span className="ml-2 font-mono text-[10px] text-[var(--text-muted)]">
-                        {l.farrowingDate}
+                        {formatDate(l.farrowingDate)}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 font-mono">

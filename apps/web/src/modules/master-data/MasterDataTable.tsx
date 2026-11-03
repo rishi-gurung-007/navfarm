@@ -1,5 +1,6 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
 import { NA } from '@/utils/na';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { entityDisplayText } from '@/utils/code-name';
@@ -327,7 +328,7 @@ function displayValue(
     }
     return NA;
   }
-  const formatted = formatColumnValue(v, col);
+  const formatted = formatColumnValue(v, col, key);
   if (formatted !== undefined) return formatted;
   if (typeof v === 'boolean') return v ? yesLabel : noLabel;
   // A list column is a list of values, not the JSON that carried them. The euro
@@ -4215,9 +4216,8 @@ export function MasterDataTable({
                     label={t('mdShedEffectiveFrom')}
                     htmlFor={`attached-shed-from-${shedId}`}
                   >
-                    <input
+                    <DateInput
                       id={`attached-shed-from-${shedId}`}
-                      type="date"
                       className="nf-input-sm"
                       value={dates[shedId]?.effective_from ?? ''}
                       onChange={(e) =>
@@ -4229,9 +4229,8 @@ export function MasterDataTable({
                     label={t('mdShedEffectiveTo')}
                     htmlFor={`attached-shed-to-${shedId}`}
                   >
-                    <input
+                    <DateInput
                       id={`attached-shed-to-${shedId}`}
-                      type="date"
                       className="nf-input-sm"
                       value={dates[shedId]?.effective_to ?? ''}
                       onChange={(e) =>
@@ -4352,6 +4351,27 @@ export function MasterDataTable({
           )
         : undefined;
 
+    // A date is the app's own field: DD/MM/YY on screen, "YYYY-MM-DD" in the form.
+    if (f.type === 'date') {
+      return (
+        <DateInput
+          {...accessibility}
+          min={typeof f.min === 'string' ? f.min : undefined}
+          max={typeof f.max === 'string' ? f.max : undefined}
+          value={value ?? ''}
+          onChange={(e) => setField(f.key, e.target.value)}
+          placeholder={f.placeholder}
+          disabled={isDisabled}
+          className={`${inputCls} disabled:cursor-not-allowed disabled:opacity-70`}
+          style={
+            isDisabled
+              ? { ...S.input, backgroundColor: 'var(--surface-raised)' }
+              : S.input
+          }
+        />
+      );
+    }
+
     return (
       <input
         {...accessibility}
@@ -4362,11 +4382,9 @@ export function MasterDataTable({
               : 'text'
             : f.type === 'email'
               ? 'email'
-              : f.type === 'date'
-                ? 'date'
-                : f.type === 'time'
-                  ? 'time'
-                  : 'text'
+              : f.type === 'time'
+                ? 'time'
+                : 'text'
         }
         inputMode={
           f.type === 'number' && !useNativeNumber

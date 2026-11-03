@@ -1,5 +1,7 @@
 "use client";
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { useEffect, useMemo, useState } from "react";
 import { CalendarClock, CheckCircle2, Loader2, Sprout } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -227,7 +229,7 @@ export default function GiltSelectionDialog({
     ? t("gsDlgTitle", { sow: farrow?.sow_code ?? "", lot: farrow?.piglet_lot_no ?? "" })
     : draft ? `${t("gsDlgTitleCards")} · ${draft.selection_no}` : t("gsDlgTitleCards");
   const weekChip = litter
-    ? litter.weaned ? t("gsWeanedTag") : litter.age_weeks >= 4 ? t("gsWeek4Reached") : t("gsWeek4On", { date: litter.week4_date })
+    ? litter.weaned ? t("gsWeanedTag") : litter.age_weeks >= 4 ? t("gsWeek4Reached") : t("gsWeek4On", { date: formatDate(litter.week4_date) })
     : "";
 
   return (
@@ -305,7 +307,7 @@ export default function GiltSelectionDialog({
               <div className="grid gap-3 sm:grid-cols-[10rem_9rem_1fr]">
                 <div>
                   <label className="nf-text-label mb-1 block" style={S.muted} htmlFor="gsd-date">{t("gsDate")}</label>
-                  <input id="gsd-date" type="date" className="nf-input w-full text-xs" value={selectionDate} min={minDate} max={today()} onChange={(e) => changeDate(e.target.value)} />
+                  <DateInput id="gsd-date" className="nf-input w-full text-xs" value={selectionDate} min={minDate} max={today()} onChange={(e) => changeDate(e.target.value)} />
                 </div>
                 <div>
                   <label className="nf-text-label mb-1 block" style={S.muted} htmlFor="gsd-count">{t("brpWeanGiltsCount")}</label>

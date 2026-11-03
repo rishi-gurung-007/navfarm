@@ -1,5 +1,6 @@
 "use client";
 
+import { formatDate } from '@/utils/date-short';
 import { useEffect, useMemo, useState } from "react";
 import { Inbox, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -86,8 +87,8 @@ export function AnimalCostCard({ animal, stageName, loading, ledger }: { animal:
             <div><dt style={S.muted}>{t("bcrBorn")}</dt><dd className="font-medium" style={S.primary}>{born || "—"}</dd></div>
             <div><dt style={S.muted}>{t("bcrCostingStart")}</dt><dd className="font-medium" style={S.primary}>{start || "—"}</dd></div>
             <div><dt style={S.muted}>{t("bcrCostedBy")}</dt><dd className="font-medium" style={S.primary}>{animal.costing_item_code || "—"}</dd></div>
-            <div><dt style={S.muted}>{t("bcrLastRun")}</dt><dd className="font-medium" style={S.primary}>{String(animal.last_run_date || "").slice(0, 10) || "—"}</dd></div>
-            <div><dt style={S.muted}>{t("bcrNextDue")}</dt><dd className="font-medium" style={S.primary}>{String(animal.next_due_date || "").slice(0, 10) || "—"}</dd></div>
+            <div><dt style={S.muted}>{t("bcrLastRun")}</dt><dd className="font-medium" style={S.primary}>{formatDate(animal.last_run_date || "") || "—"}</dd></div>
+            <div><dt style={S.muted}>{t("bcrNextDue")}</dt><dd className="font-medium" style={S.primary}>{formatDate(animal.next_due_date || "") || "—"}</dd></div>
           </dl>
         </div>
         <div className="text-right">
@@ -156,7 +157,7 @@ export function AnimalCostCard({ animal, stageName, loading, ledger }: { animal:
                   const amt = n(row.cost_amount);
                   return (
                     <TableRow key={row.entry_id || row.entry_no}>
-                      <TableCell className="whitespace-nowrap font-medium" style={S.primary}>{String(row.posting_date).slice(0, 10)}</TableCell>
+                      <TableCell className="whitespace-nowrap font-medium" style={S.primary}>{formatDate(row.posting_date)}</TableCell>
                       <TableCell className="whitespace-nowrap"><Badge variant={amt < 0 ? "warning" : "success"}>{row.event || row.entry_type}</Badge></TableCell>
                       <TableCell className="whitespace-nowrap font-mono" style={S.sub}>{row.document_no || "-"}</TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono font-medium" style={gainTone(amt)}>{signed(amt)}</TableCell>

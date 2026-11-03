@@ -19,7 +19,6 @@ export class CreateBcsScaleDto {
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0.01) @Max(999) feed_kg_per_day?: number | null;
   @IsOptional() @IsBoolean() health_assessment_required?: boolean;
   @IsOptional() @IsBoolean() medication_review?: boolean;
-  @IsOptional() @IsString() @MaxLength(100) sop_reference?: string | null;
 }
 
 /** A row's line and score are its identity: they are not edited, another score or line is a new row. */

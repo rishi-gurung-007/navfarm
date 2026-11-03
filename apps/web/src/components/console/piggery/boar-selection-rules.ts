@@ -1,3 +1,4 @@
+import { formatDate } from "@/utils/date-short";
 /**
  * The boar selection tab's small rules (plan 2026-11-02-ai-station-semen-collection, Phase 3): reading a pasted list of boars'
  * TSI, and how a cell of the table is shown.
@@ -54,7 +55,7 @@ export function parseTsiPaste(text: string): PastedTsi {
 export const CONDITION_STATUS_TEXT: Record<string, string> = {
   NEVER: "Never assessed",
   NOT_SCHEDULED: "No schedule",
-  OK: "OK",
+  OK: "On schedule",
   DUE_SOON: "Due soon",
   DUE: "Due",
   OVERDUE: "Overdue",
@@ -64,9 +65,11 @@ export const CONDITION_STATUS_TEXT: Record<string, string> = {
 export function cellText(key: string, value: unknown, row?: Record<string, any>): string {
   if (key === "bcs_status") {
     const text = CONDITION_STATUS_TEXT[String(value)] ?? "—";
-    return row?.bcs_due && ["OK", "DUE_SOON", "DUE", "OVERDUE"].includes(String(value)) ? `${text} · ${row.bcs_due}` : text;
+    return row?.bcs_due && ["OK", "DUE_SOON", "DUE", "OVERDUE"].includes(String(value)) ? `${text} · ${formatDate(row.bcs_due)}` : text;
   }
   if (value === null || value === undefined || value === "") return "—";
+  // Dates (the date of birth, a planned day) read in the app's one date style.
+  if ((key === "dob" || key === "planned_day") && /^\d{4}-\d{2}-\d{2}/.test(String(value))) return formatDate(String(value));
   if (key === "overall_grading") return Number(value).toFixed(1).replace(/\.0$/, ".0");
   if (key === "last_volume_ml" || key === "last_morphology" || key === "tsi") return String(Number(value));
   return String(value);
@@ -97,3 +100,18 @@ export function planDraftIssues(draft: PlanDraft, rules: PlanDraftRules | null |
   if (rules?.destination_rule && rules.destination_rule !== 'ANY' && !draft.destination) out.push({ field: 'destination', text: 'Choose the destination farm.' });
   return out;
 }
+
+/**
+ * Why a boar with a TSI shows no genetic level: the line (and the company default) has no genetic level bands, or his TSI is in
+ * none of them. Null when every boar with a TSI has a level, or none has a TSI.
+ */
+export function bandNote(rows: Record<string, any>[], bands: unknown[] | null | undefined): string | null {
+  const withTsi = rows.filter((r) => r.tsi != null);
+  if (!withTsi.length) return null;
+  if (!bands?.length) return "No genetic level bands are set for this line, so no genetic level is shown. Add them in Genetic Level Bands.";
+  const missing = withTsi.filter((r) => r.genetic_level == null);
+  if (!missing.length) return null;
+  const list = missing.map((r) => `${r.boar} (${Number(r.tsi)})`).join(", ");
+  return `${missing.length === 1 ? "This boar's TSI is" : "These boars' TSI are"} in none of the line's genetic level bands: ${list}. Add a band that covers ${missing.length === 1 ? "it" : "them"} in Genetic Level Bands.`;
+}
+

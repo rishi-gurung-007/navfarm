@@ -1,3 +1,4 @@
+import { withLineLabels } from './line-label';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
@@ -42,7 +43,8 @@ export class GeneticLevelBandService {
     if (query.isActive !== undefined) conditions.push(eq(table.is_active, query.isActive));
     if (query.breedId) conditions.push(eq(table.breed_id, query.breedId));
     conditions.push(...listFilterConditions(table, query.filter));
-    return runMasterList(this.db, table, conditions, query, table.sort_order);
+    const list = await runMasterList(this.db, table, conditions, query, table.sort_order);
+    return { ...list, data: await withLineLabels(this.db, list.data as { breed_id: string | null }[]) as any };
   }
 
   /**

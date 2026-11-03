@@ -5869,7 +5869,7 @@ const breedingLineSetup: MasterDataConfig = {
   description:
     'How each breeding line (Tempo, L-Line, Z-Line) is collected at the AI Station: its collection days, whether and how it is pooled, its colorant, its lot label, where its semen may go, and the rest and motility a collection must respect. A setup with no Breeding Line is the default for any line without its own.',
   columns: [
-    { key: 'breed_id', label: 'Breeding Line' },
+    { key: 'line_label', label: 'Breeding Line' },
     { key: 'collection_mode', label: 'Collection' },
     { key: 'collection_weekdays', label: 'Days' },
     { key: 'pooling_allowed', label: 'Pooled' },
@@ -6010,21 +6010,6 @@ const breedingLineSetup: MasterDataConfig = {
       section: 'Colorant & Label',
     },
     {
-      key: 'week_basis',
-      label: 'Week Number',
-      type: 'select',
-      defaultValue: 'ISO',
-      options: [{ value: 'ISO', label: 'ISO week' }],
-      section: 'Colorant & Label',
-    },
-    {
-      key: 'include_year',
-      label: 'Add the year to the label',
-      type: 'boolean',
-      helpText: 'Adds -<year> to the end of the label unless the template already uses {YEAR}.',
-      section: 'Colorant & Label',
-    },
-    {
       key: 'destination_rule',
       label: 'Destination',
       type: 'select',
@@ -6095,71 +6080,31 @@ const breedingLineSetup: MasterDataConfig = {
     },
     {
       key: 'grading_genetic_weight',
-      label: 'Genetic Rank Weight',
+      label: 'Weight of Genetic Rank',
       type: 'number',
       min: 0,
       step: '0.01',
       helpText:
-        "How much each rank counts in a boar's overall grading (a weighted average; lower is better). Blank or 0 = that rank is not used; all blank = no overall grading.",
-      section: 'Selection Table',
+        "How much the boar's genetic rank counts in his overall grading on the Boar Selection table. The grading is a weighted average of the ranks; the lower the better. Blank or 0 = this rank is not used; all three blank = no overall grading for this line.",
+      section: 'Overall Grading',
     },
     {
       key: 'grading_dose_weight',
-      label: 'Dose Rank Weight',
+      label: 'Weight of Dose Rank',
       type: 'number',
       min: 0,
       step: '0.01',
-      section: 'Selection Table',
+      helpText: "How much the rank of the boar's last doses counts in his overall grading. Blank or 0 = not used.",
+      section: 'Overall Grading',
     },
     {
       key: 'grading_morphology_weight',
-      label: 'Morphology Rank Weight',
+      label: 'Weight of Morphology Rank',
       type: 'number',
       min: 0,
       step: '0.01',
-      section: 'Selection Table',
-    },
-    {
-      key: 'rank_tie_break',
-      label: 'Boars with the Same Figure',
-      type: 'select',
-      defaultValue: 'GENETIC_RANK',
-      options: [
-        { value: 'GENETIC_RANK', label: 'Ranked apart: the better genetic rank goes first' },
-        { value: 'SHARED', label: 'Share a rank (1, 2, 2, 4)' },
-      ],
-      section: 'Selection Table',
-    },
-    {
-      key: 'selection_columns',
-      label: 'Table Columns',
-      type: 'json',
-      singleRow: true,
-      helpText:
-        'The columns of the boar selection table, in order, with the heading each shows (blank = the default heading). Leave empty to show every column in its default order.',
-      jsonRow: [
-        {
-          key: 'key',
-          label: 'Column',
-          type: 'select-entity',
-          required: true,
-          entityEndpoint: '/breeding-line-setup/selection-column-options',
-          entityValueKey: 'column_key',
-          entityLabelKeys: ['column_label'],
-        },
-        { key: 'label', label: 'Heading', type: 'text', maxLength: 50 },
-        {
-          key: 'visible',
-          label: 'Shown',
-          type: 'select',
-          defaultValue: 'true',
-          options: [
-            { value: 'true', label: 'Shown' },
-            { value: 'false', label: 'Hidden' },
-          ],
-        },
-      ],
-      section: 'Selection Table',
+      helpText: "How much the rank of the boar's last morphology counts in his overall grading. Blank or 0 = not used.",
+      section: 'Overall Grading',
     },
     {
       key: 'bcs_frequency_days',
@@ -6230,7 +6175,7 @@ const geneticLevelBand: MasterDataConfig = {
   description:
     "The genetic levels of a breeding line, as bands of TSI. A boar's level is the band his TSI falls in (both ends inclusive; a blank end is open). A band with no Breeding Line is the default for any line without its own.",
   columns: [
-    { key: 'breed_id', label: 'Breeding Line' },
+    { key: 'line_label', label: 'Breeding Line' },
     { key: 'level_name', label: 'Level' },
     { key: 'tsi_from', label: 'TSI From' },
     { key: 'tsi_to', label: 'TSI To' },
@@ -6289,7 +6234,7 @@ const bcsScale: MasterDataConfig = {
   description:
     "The body condition scale boars are scored on (SOP 21): for each score, what a boar looks like, the action it needs and the feed level it sets. A row with no Breeding Line belongs to the company's default scale, used by any line without its own.",
   columns: [
-    { key: 'breed_id', label: 'Breeding Line' },
+    { key: 'line_label', label: 'Breeding Line' },
     { key: 'score', label: 'Score' },
     { key: 'score_name', label: 'Name' },
     { key: 'feed_kg_per_day', label: 'Feed (kg/day)' },
@@ -6343,7 +6288,6 @@ const bcsScale: MasterDataConfig = {
     },
     { key: 'health_assessment_required', label: 'Flag for a health assessment', type: 'boolean' },
     { key: 'medication_review', label: 'Flag for a medication review', type: 'boolean' },
-    { key: 'sop_reference', label: 'SOP Reference', type: 'text', maxLength: 100, placeholder: 'Doc 21, Issue 01' },
   ],
 };
 

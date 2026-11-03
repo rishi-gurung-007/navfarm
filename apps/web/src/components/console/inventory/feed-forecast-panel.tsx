@@ -10,6 +10,7 @@
  * answer (A11) but only sent once the user changes them — the farm's own
  * today is the API's to decide (D16).
  */
+import { DateInput } from '@/components/ui/date-input';
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@/services/api-client';
 import { InlineAlert } from '@/components/ui/alert';
@@ -506,9 +507,8 @@ function FeedForecastPanelContent() {
           <label className={labelCls} htmlFor="ff-planning">
             {t('ffPlanningDate')}
           </label>
-          <input
+          <DateInput
             id="ff-planning"
-            type="date"
             value={shownPlanning}
             onChange={(e) => changePlanningDate(e.target.value)}
             className="nf-input-sm mt-1.5"
@@ -613,9 +613,8 @@ function FeedForecastPanelContent() {
                       : 'ffDateFrom',
                 )}
               </label>
-              <input
+              <DateInput
                 id="ff-from"
-                type="date"
                 value={shownFrom}
                 min={shownPlanning || undefined}
                 onChange={(e) =>
@@ -631,9 +630,8 @@ function FeedForecastPanelContent() {
               <label className={labelCls} htmlFor="ff-to">
                 {t('ffDateTo')}
               </label>
-              <input
+              <DateInput
                 id="ff-to"
-                type="date"
                 value={shownTo}
                 min={shownPlanning || undefined}
                 onChange={(e) =>

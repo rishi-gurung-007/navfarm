@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { Badge } from '@/components/ui/badge';
 import { InlineAlert } from '@/components/ui/alert';
@@ -209,7 +210,7 @@ export function CostingCalculation({
                         {d.lot_no ? ` · ${d.lot_no}` : ''}
                       </TableCell>
                       <TableCell className="py-2 px-3 font-mono" style={S.sub}>
-                        {d.posting_date || NA}
+                        {d.posting_date ? formatDate(d.posting_date) : NA}
                       </TableCell>
                       <TableCell className="py-2 px-3 font-mono" style={S.sub}>
                         {d.document_no || NA}
@@ -313,7 +314,7 @@ export function CostingCalculation({
                         #{r.entry_no}
                       </TableCell>
                       <TableCell className="py-2 px-3 font-mono" style={S.sub}>
-                        {r.posting_date || NA}
+                        {r.posting_date ? formatDate(r.posting_date) : NA}
                       </TableCell>
                       <TableCell className="py-2 px-3 font-mono" style={S.sub}>
                         {r.document_no || NA}

@@ -104,8 +104,30 @@ export function lineFixtures(farms: FarmChoices): LineFixture[] {
   ];
 }
 
-/** The company default: any line without a setup of its own reads this. It only carries the body condition schedule. */
-export const COMPANY_DEFAULT_SETUP = { collection_mode: 'ON_REQUEST', ...MONTHLY } as const;
+/**
+ * The company default: any line without a setup of its own reads this. It carries the body condition schedule and, so that such a
+ * line is graded too, the same grading as the Tempo and L-Line sheets (genetic and morphology rank equally). The grading is OURS for
+ * a line with no sheet of its own: say so if the client wants another.
+ */
+export const COMPANY_DEFAULT_SETUP = { collection_mode: 'ON_REQUEST', ...MONTHLY, ...SHEET_GRADING } as const;
+
+export interface GeneticBandFixture {
+  level_name: string;
+  tsi_from: number | null;
+  tsi_to: number | null;
+  sort_order: number;
+}
+
+/**
+ * Company-default genetic levels, for any line without bands of its own. PLACEHOLDERS (ours): the sheets show a level per boar but
+ * not the TSI ranges, and the client's TSI figures run about 100–145. Edit them in Genetic Level Bands when the client says.
+ */
+export const GENETIC_BAND_FIXTURE: GeneticBandFixture[] = [
+  { level_name: 'Excellent', tsi_from: 120, tsi_to: null, sort_order: 10 },
+  { level_name: 'Good', tsi_from: 110, tsi_to: 119.99, sort_order: 20 },
+  { level_name: 'Average', tsi_from: 100, tsi_to: 109.99, sort_order: 30 },
+  { level_name: 'Below average', tsi_from: null, tsi_to: 99.99, sort_order: 40 },
+];
 
 /** The collectors on the client's sheets. Their names are not given: each is named by its own ID until someone renames it. */
 export const COLLECTOR_CODES = ['CM', 'AW', 'TA'] as const;
@@ -118,16 +140,15 @@ export interface BcsScaleFixture {
   feed_kg_per_day: number;
   health_assessment_required: boolean;
   medication_review: boolean;
-  sop_reference: string;
 }
 
 /** SOP 21, "Boar Body Score Guide and Required Action". */
 export const BCS_SCALE_FIXTURE: BcsScaleFixture[] = [
-  { score: 1, score_name: 'Very thin', indicators: 'Very thin; hips, ribs and backbone are highly prominent.', required_action: 'Assess health status. Possible medication requirement', feed_kg_per_day: 4, health_assessment_required: true, medication_review: true, sop_reference: 'Doc 21, Issue 01' },
-  { score: 2, score_name: 'Below normal', indicators: 'Below normal; inadequate fat cover.', required_action: 'Assess health status', feed_kg_per_day: 3.5, health_assessment_required: true, medication_review: false, sop_reference: 'Doc 21, Issue 01' },
-  { score: 3, score_name: 'Normal / ideal', indicators: 'Normal/ideal; balanced muscling and fat cover.', required_action: null, feed_kg_per_day: 3, health_assessment_required: false, medication_review: false, sop_reference: 'Doc 21, Issue 01' },
-  { score: 4, score_name: 'Overfat', indicators: 'Overfat; excess cover over frame.', required_action: null, feed_kg_per_day: 2.5, health_assessment_required: false, medication_review: false, sop_reference: 'Doc 21, Issue 01' },
-  { score: 5, score_name: 'Obese', indicators: 'Obese; poor body balance and excess fat.', required_action: null, feed_kg_per_day: 2.3, health_assessment_required: false, medication_review: false, sop_reference: 'Doc 21, Issue 01' },
+  { score: 1, score_name: 'Very thin', indicators: 'Very thin; hips, ribs and backbone are highly prominent.', required_action: 'Assess health status. Possible medication requirement', feed_kg_per_day: 4, health_assessment_required: true, medication_review: true },
+  { score: 2, score_name: 'Below normal', indicators: 'Below normal; inadequate fat cover.', required_action: 'Assess health status', feed_kg_per_day: 3.5, health_assessment_required: true, medication_review: false },
+  { score: 3, score_name: 'Normal / ideal', indicators: 'Normal/ideal; balanced muscling and fat cover.', required_action: null, feed_kg_per_day: 3, health_assessment_required: false, medication_review: false },
+  { score: 4, score_name: 'Overfat', indicators: 'Overfat; excess cover over frame.', required_action: null, feed_kg_per_day: 2.5, health_assessment_required: false, medication_review: false },
+  { score: 5, score_name: 'Obese', indicators: 'Obese; poor body balance and excess fat.', required_action: null, feed_kg_per_day: 2.3, health_assessment_required: false, medication_review: false },
 ];
 
 export interface Existing {
@@ -137,11 +158,17 @@ export interface Existing {
   setupBreedIds: Set<string>;
   scaleScores: Set<number>;
   collectorCodes: Set<string>;
+  /** The company default setup's id and whether it has any grading weight, when it exists. */
+  defaultSetup?: { id: string; hasWeights: boolean } | null;
+  /** The level names of the company-default genetic bands (those with no breed). */
+  defaultBandLevels?: Set<string>;
 }
 
+type Kind = 'setup' | 'default-setup' | 'scale' | 'collector' | 'band';
 export type Action =
-  | { kind: 'setup' | 'default-setup' | 'scale' | 'collector'; key: string; do: 'create'; path: string; body: Record<string, unknown>; notes?: LineFixture['notes'] }
-  | { kind: 'setup' | 'default-setup' | 'scale' | 'collector'; key: string; do: 'exists' | 'skip'; why: string };
+  | { kind: Kind; key: string; do: 'create'; path: string; body: Record<string, unknown>; notes?: LineFixture['notes'] }
+  | { kind: Kind; key: string; do: 'update'; path: string; body: Record<string, unknown>; notes?: LineFixture['notes'] }
+  | { kind: Kind; key: string; do: 'exists' | 'skip'; why: string };
 
 /** What the script would do, given what is already there: anything that exists is left alone, a line with no breed is skipped and said so. */
 export function planFixture(existing: Existing, farms: FarmChoices): Action[] {
@@ -152,11 +179,22 @@ export function planFixture(existing: Existing, farms: FarmChoices): Action[] {
     else if (existing.setupBreedIds.has(breedId)) out.push({ kind: 'setup', key: line.breed_code, do: 'exists', why: 'the line already has a setup' });
     else out.push({ kind: 'setup', key: line.breed_code, do: 'create', path: '/breeding-line-setup', body: { breed_id: breedId, ...line.body }, notes: line.notes });
   }
-  out.push(
-    existing.setupBreedIds.has('')
-      ? { kind: 'default-setup', key: 'company default', do: 'exists', why: 'the company default setup already exists' }
-      : { kind: 'default-setup', key: 'company default', do: 'create', path: '/breeding-line-setup', body: { ...COMPANY_DEFAULT_SETUP } },
-  );
+  const defaultNotes: LineFixture['notes'] = [{ field: 'grading', source: 'ours', text: 'A line with no sheet of its own is graded like Tempo and L-Line: genetic and morphology rank equally.' }];
+  if (!existing.setupBreedIds.has('')) {
+    out.push({ kind: 'default-setup', key: 'company default', do: 'create', path: '/breeding-line-setup', body: { ...COMPANY_DEFAULT_SETUP }, notes: defaultNotes });
+  } else if (existing.defaultSetup && !existing.defaultSetup.hasWeights) {
+    // Only the blank weights are filled in; nothing already set is changed.
+    out.push({ kind: 'default-setup', key: 'company default', do: 'update', path: `/breeding-line-setup/${existing.defaultSetup.id}`, body: { ...SHEET_GRADING }, notes: defaultNotes });
+  } else {
+    out.push({ kind: 'default-setup', key: 'company default', do: 'exists', why: 'the company default setup already exists' });
+  }
+  for (const band of GENETIC_BAND_FIXTURE) {
+    out.push(
+      existing.defaultBandLevels?.has(band.level_name)
+        ? { kind: 'band', key: band.level_name, do: 'exists', why: 'the company default already has this level' }
+        : { kind: 'band', key: band.level_name, do: 'create', path: '/genetic-level-band', body: { ...band }, notes: [{ field: 'TSI range', source: 'ours', text: 'A placeholder: the sheets show a level per boar, not the TSI ranges.' }] },
+    );
+  }
   for (const row of BCS_SCALE_FIXTURE) {
     out.push(
       existing.scaleScores.has(row.score)

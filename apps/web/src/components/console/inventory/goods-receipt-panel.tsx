@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -249,9 +251,8 @@ function TrackingLinesDialog({
                 >
                   {t('grpColExpiry')}
                 </label>
-                <input
+                <DateInput
                   id="grn-trk-expiry"
-                  type="date"
                   value={expiry}
                   onChange={(e) => setExpiry(e.target.value)}
                   className={inputCls}
@@ -370,9 +371,8 @@ function TrackingLinesDialog({
                 >
                   {t('grpColExpiry')}
                 </label>
-                <input
+                <DateInput
                   id="grn-trk-expiry-s"
-                  type="date"
                   value={expiry}
                   onChange={(e) => setExpiry(e.target.value)}
                   className={inputCls}
@@ -987,7 +987,7 @@ export default function GoodsReceiptPanel() {
                       {row.receipt_no}
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>
-                      {row.posting_date}
+                      {formatDate(row.posting_date)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>
                       {warehouseLabel(row.warehouse_id)}
@@ -1147,8 +1147,7 @@ export default function GoodsReceiptPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('grpPostingDate')} <span className="text-(--danger)">*</span>
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={header.posting_date}
                 onChange={(e) =>
                   setHeader((h) => ({ ...h, posting_date: e.target.value }))
@@ -1459,8 +1458,7 @@ export default function GoodsReceiptPanel() {
                         )}
                       </TableCell>
                       <TableCell className="px-2 py-1.5 w-36">
-                        <input
-                          type="date"
+                        <DateInput
                           value={line.expiry_date}
                           onChange={(e) =>
                             setLineField(idx, 'expiry_date', e.target.value)
@@ -1559,7 +1557,7 @@ export default function GoodsReceiptPanel() {
                 >
                   {t('grpPostingDate')}
                 </p>
-                <p style={S.primary}>{viewing.posting_date}</p>
+                <p style={S.primary}>{formatDate(viewing.posting_date)}</p>
               </div>
               <div>
                 <p
@@ -1587,7 +1585,7 @@ export default function GoodsReceiptPanel() {
                   >
                     {t('grpPostedAt')}
                   </p>
-                  <p style={S.primary}>{viewing.posted_at}</p>
+                  <p style={S.primary}>{formatDate(viewing.posted_at)}</p>
                 </div>
               )}
             </div>

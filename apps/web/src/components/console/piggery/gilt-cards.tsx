@@ -1,5 +1,7 @@
 "use client";
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { CheckCircle2, IdCard, ShieldAlert, Sprout, Venus, Mars, Layers } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { useLanguage } from "@/hooks/useLanguage";
@@ -146,7 +148,7 @@ export default function GiltCards({
                 </div>
                 <div>
                   <label className="nf-text-label mb-1 block" style={S.muted} htmlFor={`gc-dob-${r.key}`}>{t("gsDob")}</label>
-                  <input id={`gc-dob-${r.key}`} type="date" className="nf-input w-full text-xs" value={r.dob} onChange={(e) => onChange(r.key, { dob: e.target.value })} />
+                  <DateInput id={`gc-dob-${r.key}`} className="nf-input w-full text-xs" value={r.dob} onChange={(e) => onChange(r.key, { dob: e.target.value })} />
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-[var(--radius-md)] px-3 py-2 text-[11px]" style={{ backgroundColor: "var(--surface-raised)", color: "var(--text-secondary)" }}>
@@ -172,7 +174,7 @@ export function GiltCreatedCard({ gilt, onOpenAnimal }: { gilt: Record<string, a
           <span className="flex h-8 w-8 items-center justify-center rounded-full" style={{ backgroundColor: "var(--accent)", color: "var(--accent-contrast, #fff)" }}><Sprout className="h-4 w-4" /></span>
           <div>
             <button type="button" onClick={() => gilt.animal_id && onOpenAnimal(gilt.animal_id)} className="text-sm font-bold underline decoration-dotted underline-offset-2" style={{ color: "var(--accent)" }}>{gilt.animal_code}</button>
-            <p className="text-[11px]" style={S.muted}>RFID {gilt.rfid_tag} · {t("gsTeatsN", { count: gilt.no_of_teats })}{gilt.dob ? ` · ${t("gsBornOn", { date: String(gilt.dob).slice(0, 10) })}` : ""}</p>
+            <p className="text-[11px]" style={S.muted}>RFID {gilt.rfid_tag} · {t("gsTeatsN", { count: gilt.no_of_teats })}{gilt.dob ? ` · ${t("gsBornOn", { date: formatDate(gilt.dob) })}` : ""}</p>
           </div>
         </div>
         <div className="text-right">

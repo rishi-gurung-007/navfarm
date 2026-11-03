@@ -53,7 +53,7 @@ function useFinancePageState() {
   return { ready, mayView };
 }
 
-export function FinancePageShell({ activeKey, children }: { activeKey: FinanceTabKey; children: React.ReactNode }) {
+export function FinancePageShell({ activeKey, titleAddon, children }: { activeKey: FinanceTabKey; /** A control beside the page title, to its right (an info tooltip). */ titleAddon?: React.ReactNode; children: React.ReactNode }) {
   const { t } = useLanguage();
   const { ready, mayView } = useFinancePageState();
 
@@ -86,7 +86,7 @@ export function FinancePageShell({ activeKey, children }: { activeKey: FinanceTa
 
   return (
     <ConsolePage>
-      <PageHeader title={title} description={t("finPageDescription")} />
+      <PageHeader title={title} description={t("finPageDescription")} titleAddon={titleAddon} />
       {children}
     </ConsolePage>
   );

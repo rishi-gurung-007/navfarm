@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -1889,7 +1891,7 @@ export default function BatchPanel() {
                       )}
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>
-                      {row.start_date}
+                      {formatDate(row.start_date)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>
                       {row.costing_method}
@@ -2267,8 +2269,7 @@ export default function BatchPanel() {
                 {t('blLabelStartDate')}{' '}
                 <span className="text-(--danger)">*</span>
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={header.start_date}
                 onChange={(e) =>
                   setHeader((h) => ({ ...h, start_date: e.target.value }))
@@ -2281,8 +2282,7 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelExpectedEndDate')}
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={header.expected_end_date}
                 onChange={(e) =>
                   setHeader((h) => ({
@@ -3140,7 +3140,7 @@ export default function BatchPanel() {
                   {t('blLabelStartDate')}
                 </p>
                 <p className="font-semibold mt-0.5" style={S.primary}>
-                  {viewing.start_date || NA}
+                  {viewing.start_date ? formatDate(viewing.start_date) : NA}
                 </p>
               </div>
               <div>
@@ -3151,7 +3151,7 @@ export default function BatchPanel() {
                   {t('blLabelExpectedEndDate')}
                 </p>
                 <p className="font-semibold mt-0.5" style={S.primary}>
-                  {viewing.expected_end_date || NA}
+                  {viewing.expected_end_date ? formatDate(viewing.expected_end_date) : NA}
                 </p>
               </div>
               <BatchShedField
@@ -3308,7 +3308,7 @@ export default function BatchPanel() {
                                 {s.to_stage_code}
                               </TableCell>
                               <TableCell className="px-3 py-2" style={S.sub}>
-                                {s.transferred_at}
+                                {formatDate(s.transferred_at)}
                               </TableCell>
                               <TableCell className="px-3 py-2" style={S.sub}>
                                 {s.remarks || NA}
@@ -3565,7 +3565,7 @@ export default function BatchPanel() {
                                   className="px-3 py-2"
                                   style={S.primary}
                                 >
-                                  {e.posting_date}
+                                  {formatDate(e.posting_date)}
                                 </TableCell>
                                 <TableCell className="px-3 py-2" style={S.sub}>
                                   {BIO_DOCUMENT_LABEL[e.document_type] ?? e.document_type} · {formatTransactionType(e.transaction_type)}
@@ -4094,8 +4094,7 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelStartDate')} *
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={renewForm.start_date || ''}
                 onChange={(e) =>
                   setRenewForm((f: Row) => ({
@@ -4111,8 +4110,7 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelExpectedEndDate')}
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={renewForm.expected_end_date || ''}
                 onChange={(e) =>
                   setRenewForm((f: Row) => ({
@@ -4312,8 +4310,7 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelActualEndDate')}
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={closeDate}
                 onChange={(e) => setCloseDate(e.target.value)}
                 className={inputCls}
@@ -4585,8 +4582,7 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelPostingDate')}
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={bioForm.posting_date}
                 onChange={(e) =>
                   setBioForm((f: Row) => ({
@@ -4609,8 +4605,7 @@ export default function BatchPanel() {
                 <label className="nf-text-label" style={S.sub}>
                   {t('blLabelPostingDate')}
                 </label>
-                <input
-                  type="date"
+                <DateInput
                   value={bioForm.posting_date}
                   onChange={(e) =>
                     setBioForm((f: Row) => ({
@@ -4688,8 +4683,7 @@ export default function BatchPanel() {
                   <label className="nf-text-label" style={S.sub}>
                     {t('blLabelPostingDate')}
                   </label>
-                  <input
-                    type="date"
+                  <DateInput
                     value={bioForm.posting_date}
                     onChange={(e) =>
                       setBioForm((f: Row) => ({
@@ -4944,8 +4938,7 @@ export default function BatchPanel() {
                   <label className="nf-text-label" style={S.sub}>
                     {t('blLabelQcDate')}
                   </label>
-                  <input
-                    type="date"
+                  <DateInput
                     value={qcForm.qc_date}
                     onChange={(e) =>
                       setQcForm((f: Row) => ({ ...f, qc_date: e.target.value }))
@@ -5237,9 +5230,9 @@ export default function BatchPanel() {
               </div>
               <p className="text-xs" style={S.sub}>
                 {formatQuantity(generatedPack.net_weight)}{' '}
-                {generatedPack.pack_uom} — {generatedPack.production_date}
+                {generatedPack.pack_uom} — {formatDate(generatedPack.production_date)}
                 {generatedPack.expiry_date
-                  ? ` → ${generatedPack.expiry_date}`
+                  ? ` → ${formatDate(generatedPack.expiry_date)}`
                   : ''}
               </p>
             </div>
@@ -5352,7 +5345,7 @@ export default function BatchPanel() {
                   }
                   options={packQcRecords.map((q) => ({
                     value: q.qc_id,
-                    label: `${q.qc_date} — ${q.overall_result}`,
+                    label: `${formatDate(q.qc_date)} — ${q.overall_result}`,
                   }))}
                   placeholder={t('blNone')}
                   searchPlaceholder="Search QC record…"

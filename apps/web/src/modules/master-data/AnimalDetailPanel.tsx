@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { ageBetween, formatAge } from './utils/age';
@@ -128,7 +129,7 @@ function pregCheckTimelineEvent(m: Row, isMale: boolean): TimelineEvent | null {
       : `Pregnancy check — ${human(m.conception_result)}`,
     summary: [
       human(m.preg_check_method),
-      fmt(m.expected_farrowing_date) ? `due ${m.expected_farrowing_date}` : '',
+      fmt(m.expected_farrowing_date) ? `due ${formatDate(m.expected_farrowing_date)}` : '',
     ]
       .filter(Boolean)
       .join(' · '),
@@ -262,7 +263,7 @@ function TimelineList({
                   {ev.title}
                 </span>
                 <span className="shrink-0 font-mono text-xs" style={S.sub}>
-                  {ev.date}
+                  {formatDate(ev.date)}
                 </span>
               </div>
               <div className="mt-1 flex items-center justify-between gap-2">

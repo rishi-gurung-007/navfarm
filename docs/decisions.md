@@ -4794,3 +4794,52 @@ Source: the AI Station manager's session as relayed by email (`AI Station .pdf`)
 8. **A lot's destination restricts where its doses may go**, at an AI mating and when a stock transfer names the lot (BLOCK, WARN or none, per line). Other movements (a sale, a disposal) are not yet restricted.
 9. **Body condition (SOP 21):** the scale is a master; the schedule is read as every 30 days (SOP says monthly: ours); each assessment keeps what the scale said then. The feed level is **recorded and shown, not read by the feed forecast** (question 9), and a health or medication flag is a flag, not a task (question 10).
 10. **Proof method, and what it taught.** Each phase was driven through the running API and read back from MySQL, then rolled back. Four defects passed every unit test and showed only in the bundled API: a text `'false'` turned into `true` by implicit conversion (also in the existing `reason` master's `isActive` filter, **not fixed there**); a derived update DTO losing a nested type; declared-but-omitted DTO fields arriving as own `undefined` keys that overwrite defaults in a merge; and a foreign key name reused across tables (MySQL names are unique per database, and DDL does not roll back, so the migration left both tenants half-migrated). Guard tests now cover the migration one. **Do not restore whole tables on a development database someone is using**: a rollback of that kind once removed a colleague's test assessment made minutes earlier (it had been re-entered by the time it was found, so nothing was lost for good; the binary log was used to find what was written and by whom). Delete only what you tagged.
+
+## 3 Nov 2026 — one date style, DD/MM/YY
+
+Chosen by the owner after an audit found eight styles side by side (raw ISO on most operational screens, `03 Nov 2026`, the browser's locale, `3 Nov 2026, 1:17 PM`, a month heading, and the date picker).
+
+1. **Every screen shows a date as `DD/MM/YY`**, from `apps/web/src/utils/date-short.ts`: `formatDate` (a date), `formatDateTime` (`DD/MM/YY HH:mm`), `datesInText` (the dates inside a sentence the server wrote; applied to every API error message in `lib/api-client.ts`). Never the browser's locale, so the same date reads the same for every user.
+2. **A guard test** (`specs/date-format-uniformity.spec.ts`) fails on `toLocaleDateString`, `dateStyle`, `new Date(..).toLocaleString` and on a stored date field printed straight into the page. A month heading ("November 2026") is a period, not a date, and is the one listed exception.
+3. **Master-data lists** format any `*_date` / `*_on` / `*_at` column holding a stored date, whether or not the config says `format: 'date'`.
+4. **Date fields are `<DateInput>`** (`components/ui/date-input.tsx`, rules in `utils/date-input.ts`), never `<input type="date">`, which shows the date in the browser's language. It takes and shows DD/MM/YY (DD/MM/YYYY also typed; a stored `YYYY-MM-DD` pasted), puts the slashes in as it is typed, has a calendar, keeps to `min` / `max`, and hands the form the stored `YYYY-MM-DD` through the same `onChange(e)` / `e.target.value`. The guard test fails on a native date input. Still native: the two `datetime-local` inputs (feed loading, stock count), which are a time of day as well. Values sent to the API stay ISO. Documents the API itself renders (emails, server-made PDFs) were not looked at.
+5. **To show a date:** `formatDate(value)`; a bare `{row.some_date}` fails the guard. **To take one:** `<DateInput value onChange min max />`.
+
+## 3 Nov 2026 — the collection form follows the line's setup and the plan
+
+1. **The form checks what the line's Breeding Line Setup says**, not only what the API refuses: the reference a line asks for (error without a plan), the collection days (a warning, or a stop when the line enforces BLOCK; a collection from a plan made for that day is not asked), the boars a line taps a day (over is an error, counting the boars already collected that day; short is a warning), a list-of-farms destination with no plan (warning), alongside pooling, rest and motility. A collection dated another day than its plan warns.
+2. **"Record collection" from a plan fills the form from the plan**: batch, line, boars (only the plan's boars still to collect are offered), each boar's collector, the date, the semen item of the line's last collection, and a summary of the plan (day, farm, reference, who asked). The line and batch are fixed by the plan.
+3. The Breeding Line Setup, Genetic Level Bands and Body Condition Scale lists name the line ("Tempo", or "Company default") instead of its id.
+
+## 3 Nov 2026 — four setup fields taken out, the grading weights renamed
+
+Asked by the owner (the setup form was more than the client's documents need).
+1. **Removed from Breeding Line Setup** (form, API, validation, tests): **Table Columns** (the Boar Selection table now always shows every column, in its default order and with its standard headings), **Boars with the Same Figure** (tied boars are always ranked apart, the better genetic rank first, as on the client's Tempo and L-Line sheets), **Week Number** (only ISO ever existed) and **Add the year to the label** (put `{YEAR}` in the template). The database columns remain (no migration); the API now refuses them if sent.
+2. **Renamed:** Genetic / Dose / Morphology Rank Weight → **Weight of Genetic Rank / Dose Rank / Morphology Rank**, in a section called **Overall Grading**.
+3. Two dev rows (L-Line, Z-Line) still hold a Table Columns layout saved on 3 Nov; it is no longer read.
+
+## 3 Nov 2026 — Boar Selection opens on all lines; condition status split from the next date; genetic levels checked
+
+1. **Boar Selection starts on "All lines"**: one table per line (each with its own setup's grading, bands and columns). A collection is planned for one line, so ticking a boar of another line starts a new choice; the Plan dialog is for the ticked line. A single line can still be picked.
+2. **Boar Condition**: the Status column (On schedule / Due soon / Due / Overdue / Never assessed) is separate from Next assessment (the date, or "Score now" for a boar never scored, "No schedule" where the line has none). "OK" is now "On schedule".
+3. **Genetic Level Bands, checked on 3 Nov**: a boar's level is the band his TSI falls in, ends inclusive; a line uses its own bands, else the company default bands (a line with bands of its own ignores the default). Proven live with test bands (since deleted): 120 and 110 sit on band edges and fall in the band that starts/ends there; an overlapping band, a TSI from above its TSI to, and a band with neither end are all refused. Boar Selection now says why a boar has a TSI and no level (no bands for the line, or his TSI is in none of them).
+
+## 3 Nov 2026 — the AI Station fixture now also seeds a default grading and default genetic levels
+
+Asked by the owner so every line is graded and shows a level. **Both are placeholders of ours**, to confirm with the client (the sheets show a level per boar but not the TSI ranges):
+1. **Company default setup gets the sheets' grading** (genetic 1, dose 0, morphology 1), so a line with no setup of its own (the dev boars' "Z-Line-Sow", "Teaser-Boar") has an overall grading. Existing defaults are only filled where the weights are blank.
+2. **Company-default genetic levels** (no breed): Excellent 120+, Good 110–119.99, Average 100–109.99, Below average to 99.99. A line with bands of its own ignores them.
+3. **Dev data only, not in the fixture:** Z-Line-Sow carries a band "Average 1–22" made by hand on 3 Nov, which overrides the default for that line; Excellent (120+) and Good (100–119.99) were added to it so its boars (TSI 110–131) have a level. Remove or rename that band to use the default levels.
+`
+
+## 3 Nov 2026 — the AI Station is its own page
+
+`/livestock/ai-station` ("AI Station" in the Livestock menu) holds **Semen Collection**, **Boar Selection** and **Boar Condition**. **Breeding & Insemination** (`/livestock/breeding`) keeps **Mating & Insemination** (natural and AI services), **Farrowing & Litters** and **Gilt Selections**. One component (`BreedingPanel`, `section` = `breeding` | `ai-station`) serves both pages over the same records and forms, so a collection recorded from a plan, an AI service drawing on a lot and the figures stay in step.
+
+## 3 Nov 2026 — Pen Occupancy & Biosecurity back in the menu, paged
+
+The entry is in the Livestock menu again (Herd Analytics & Parity stays off, see `HIDDEN_FROM_MENU`). The page uses the shared header and figure tiles, has a search and type / status filters, and shows 25 locations a page (375 were rendered at once before); cards truncate long codes and names instead of overlapping their badges.
+
+## 3 Nov 2026 — Pen Occupancy & Biosecurity drills down: farms → sheds → pens
+
+The page opens on the farms; a farm opens its sheds, a shed its pens and crates (breadcrumb to go back, search and status filter and paging at every level). The API gives only what stands directly in each place, so a shed or a farm read 0 while its pens were full; the figures are now added up from what is under each place (`facility-tree.ts`): head = animals + batch-wise head, capacity = the place's own head capacity, else the total of what is under it (a note says so, and when the places under it declare a different total). A store or a silo is listed apart and never counted as head; a shed whose capacity is written in doses is still a shed, with no head capacity. Nothing in the API changed.

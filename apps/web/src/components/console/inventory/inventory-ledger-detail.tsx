@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate, formatDateTime } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -320,7 +321,7 @@ export default function InventoryLedgerDetail({
             <span className="flex items-center gap-1">
               <Calendar className="h-3.5 w-3.5" style={S.muted} />
               Posting Date:{' '}
-              <strong style={S.primary}>{entry.posting_date}</strong>
+              <strong style={S.primary}>{formatDate(entry.posting_date)}</strong>
             </span>
             {entry.external_reference_no && (
               <span className="flex items-center gap-1">
@@ -757,7 +758,7 @@ export default function InventoryLedgerDetail({
                 className="mt-0.5 font-mono"
                 style={entry.expiry_date ? S.primary : S.muted}
               >
-                {entry.expiry_date || NA}
+                {entry.expiry_date ? formatDate(entry.expiry_date) : NA}
               </p>
             </div>
 
@@ -845,7 +846,7 @@ export default function InventoryLedgerDetail({
                     </TableCell>
                     <TableCell className="py-2.5 px-3 font-mono" style={S.sub}>
                       {lot.expiry_date
-                        ? String(lot.expiry_date).slice(0, 10)
+                        ? formatDate(lot.expiry_date)
                         : NA}
                     </TableCell>
                     <TableCell
@@ -993,7 +994,7 @@ export default function InventoryLedgerDetail({
                         style={S.primary}
                       >
                         {issue.posting_date
-                          ? String(issue.posting_date).slice(0, 10)
+                          ? formatDate(issue.posting_date)
                           : NA}
                       </TableCell>
                       <TableCell
@@ -1212,7 +1213,7 @@ export default function InventoryLedgerDetail({
                         className="py-2.5 px-3 font-mono"
                         style={S.primary}
                       >
-                        {app.application_date || NA}
+                        {app.application_date ? formatDate(app.application_date) : NA}
                       </TableCell>
                       <TableCell
                         className="py-2.5 px-3 font-mono font-medium"
@@ -1350,7 +1351,7 @@ export default function InventoryLedgerDetail({
             <span className="flex items-center gap-1 font-mono" style={S.muted}>
               <Clock className="h-3 w-3" /> System Created:{' '}
               <span style={S.sub}>
-                {new Date(entry.created_at).toLocaleString()}
+                {formatDateTime(entry.created_at)}
               </span>
             </span>
           )}

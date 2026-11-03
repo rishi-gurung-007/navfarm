@@ -10,7 +10,7 @@ import {
   UpdateBreedingLineSetupDto,
 } from './breeding-line-setup.dto';
 import { BreedingLineSetupService } from './breeding-line-setup.service';
-import { SELECTION_COLUMNS, WEEKDAY_OPTIONS } from './breeding-line.rules';
+import { WEEKDAY_OPTIONS } from './breeding-line.rules';
 
 // A company master: the AI Station's line rules apply company-wide, not to one farm.
 @ApiTags('Breeding Line Setup') @ApiBearerAuth()
@@ -28,10 +28,6 @@ export class BreedingLineSetupController {
   // The weekdays a line can be tapped on, as options for the form's picker. Declared before ':id'.
   @Get('weekday-options') @RequirePermission('MASTER_DATA', 'BREEDING_LINE_SETUP', 'view')
   weekdayOptions() { return { data: WEEKDAY_OPTIONS }; }
-
-  // The columns the boar selection table can show, as options for the setup form's column layout. Declared before ':id'.
-  @Get('selection-column-options') @RequirePermission('MASTER_DATA', 'BREEDING_LINE_SETUP', 'view')
-  selectionColumnOptions() { return { data: SELECTION_COLUMNS.map((c) => ({ column_key: c.key, column_label: c.label })) }; }
 
   @Get('effective') @RequirePermission('MASTER_DATA', 'BREEDING_LINE_SETUP', 'view')
   async effective(@Query() query: EffectiveBreedingLineSetupQueryDto, @Req() req: any) {

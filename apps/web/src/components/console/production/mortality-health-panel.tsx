@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import {
@@ -962,7 +964,7 @@ export default function MortalityHealthPanel() {
                     className="border-b border-[var(--border)] hover:bg-[var(--surface-raised)] transition-colors"
                   >
                     <TableCell className="py-2.5 px-3 font-mono">
-                      {m.record_date}
+                      {formatDate(m.record_date)}
                     </TableCell>
                     <TableCell className="py-2.5 px-3 font-semibold text-[var(--text-primary)]">
                       {m.batch_no}
@@ -1073,7 +1075,7 @@ export default function MortalityHealthPanel() {
                     className="border-b border-[var(--border)] hover:bg-[var(--surface-raised)] transition-colors"
                   >
                     <TableCell className="py-2.5 px-3 font-mono">
-                      {tr.treatment_date}
+                      {formatDate(tr.treatment_date)}
                     </TableCell>
                     <TableCell className="py-2.5 px-3 font-mono font-bold text-[var(--accent)]">
                       {tr.rfid_tag}
@@ -1187,7 +1189,7 @@ export default function MortalityHealthPanel() {
                   <div className="flex justify-between text-[11px] text-[var(--text-secondary)]">
                     <span>{t('mhDueDate')}</span>
                     <span className="font-mono text-[var(--text-primary)]">
-                      {v.scheduled_date}
+                      {formatDate(v.scheduled_date)}
                     </span>
                   </div>
                   <div className="flex justify-between text-[11px] text-[var(--text-secondary)]">
@@ -1224,8 +1226,7 @@ export default function MortalityHealthPanel() {
               <label className="font-semibold block mb-1">
                 {t('mhDateOfDeath')}
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={newMortality.record_date}
                 onChange={(e) =>
                   setNewMortality({
@@ -1516,9 +1517,8 @@ export default function MortalityHealthPanel() {
                 htmlFor="treatment-date"
                 required
               >
-                <input
+                <DateInput
                   id="treatment-date"
-                  type="date"
                   value={newTreatment.treatment_date}
                   onChange={(e) =>
                     setNewTreatment({

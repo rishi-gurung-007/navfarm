@@ -50,7 +50,7 @@ import { ContextNavProvider } from '../../components/shell/ContextNav';
 import { PROFILE_ITEMS } from '../../components/shell/ProfilePopover';
 import { ThemeIconButton } from '../../components/shell/ThemeIconButton';
 import { resolveLobFamily } from '@/lib/lob';
-import { LIVESTOCK_SECTIONS } from '@/components/console/livestock/livestock-page-shell';
+import { LIVESTOCK_MENU_SECTIONS } from '@/components/console/livestock/livestock-page-shell';
 import { FINANCE_SECTIONS } from '@/components/console/finance/finance-page-shell';
 import { EXPENSE_SECTIONS } from '@/components/console/expenses/expense-shell';
 import { REPORT_SECTIONS } from '@/components/console/reports/reports-shell';
@@ -392,7 +392,7 @@ export default function ConsoleLayout({
     { label: t('navBatchRecords'), href: '/batches/records' },
     { label: t('navBatchTransfers'), href: '/batches/transfers' },
   ];
-  const livestockChildren = LIVESTOCK_SECTIONS.map((section) => ({
+  const livestockChildren = LIVESTOCK_MENU_SECTIONS.map((section) => ({
     label:
       section.key === 'register' && lobFamily === 'DAIRY'
         ? t('dairyCowRegister')

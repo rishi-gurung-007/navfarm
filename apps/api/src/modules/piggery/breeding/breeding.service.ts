@@ -2189,7 +2189,6 @@ export class BreedingService {
           date: dto.collection_date,
           seq,
         },
-        !!lineRules.include_year,
       );
     }
     const lineFarms = (lineRules?.destination_farm_ids ?? []) as string[];
@@ -2662,64 +2661,9 @@ export class BreedingService {
       .where(and(...conditions))
       .orderBy(desc(schema.semenBatch.collection_date));
 
-    // A pooled lot names every boar that went into it, in the order they were chosen.
-    const pooled = lots.length
-      ? await this.db
-          .select({
-            semen_batch_id: schema.semenBatchBoar.semen_batch_id,
-            boar_id: schema.semenBatchBoar.boar_animal_id,
-            boar_code: schema.animalRegister.animal_code,
-          })
-          .from(schema.semenBatchBoar)
-          .innerJoin(
-            schema.animalRegister,
-            eq(
-              schema.animalRegister.animal_id,
-              schema.semenBatchBoar.boar_animal_id,
-            ),
-          )
-          .where(
-            inArray(
-              schema.semenBatchBoar.semen_batch_id,
-              lots.map((l) => l.semen_batch_id),
-            ),
-          )
-          .orderBy(schema.semenBatchBoar.sort_order)
-      : [];
-    // What each boar gave, rejected ejaculates included (lots recorded before Phase 2 have none).
-    const results = lots.length
-      ? await this.db
-          .select({
-            semen_batch_id: schema.semenBoarResult.semen_batch_id,
-            boar_id: schema.semenBoarResult.boar_animal_id,
-            boar_code: schema.animalRegister.animal_code,
-            collector_id: schema.semenBoarResult.collector_id,
-            collector_code: schema.semenCollector.collector_code,
-            volume_ml: schema.semenBoarResult.volume_ml,
-            doses: schema.semenBoarResult.doses,
-            morphology_pct: schema.semenBoarResult.morphology_pct,
-            motility_pct: schema.semenBoarResult.motility_pct,
-            concentration_m_per_ml: schema.semenBoarResult.concentration_m_per_ml,
-            accepted: schema.semenBoarResult.accepted,
-            reject_reason: schema.semenBoarResult.reject_reason,
-          })
-          .from(schema.semenBoarResult)
-          .innerJoin(
-            schema.animalRegister,
-            eq(schema.animalRegister.animal_id, schema.semenBoarResult.boar_animal_id),
-          )
-          .leftJoin(
-            schema.semenCollector,
-            eq(schema.semenCollector.collector_id, schema.semenBoarResult.collector_id),
-          )
-          .where(
-            inArray(
-              schema.semenBoarResult.semen_batch_id,
-              lots.map((l) => l.semen_batch_id),
-            ),
-          )
-          .orderBy(schema.semenBoarResult.sort_order)
-      : [];
+    const lotIds = lots.map((l) => l.semen_batch_id);
+    const pooled = await this.semenLotBoars(lotIds);
+    const results = await this.semenLotResults(lotIds);
     return lots.map((l) => {
       const boars = pooled.filter((p) => p.semen_batch_id === l.semen_batch_id);
       return {
@@ -2732,5 +2676,188 @@ export class BreedingService {
         })),
       };
     });
+  }
+
+  /** A pooled lot names every boar that went into it, in the order they were chosen, with the share of cost each carried. */
+  private async semenLotBoars(lotIds: string[]) {
+    if (!lotIds.length) return [];
+    return this.db
+      .select({
+        semen_batch_id: schema.semenBatchBoar.semen_batch_id,
+        boar_id: schema.semenBatchBoar.boar_animal_id,
+        boar_code: schema.animalRegister.animal_code,
+        cost_share: schema.semenBatchBoar.cost_share,
+      })
+      .from(schema.semenBatchBoar)
+      .innerJoin(
+        schema.animalRegister,
+        eq(schema.animalRegister.animal_id, schema.semenBatchBoar.boar_animal_id),
+      )
+      .where(inArray(schema.semenBatchBoar.semen_batch_id, lotIds))
+      .orderBy(schema.semenBatchBoar.sort_order);
+  }
+
+  /** What each boar gave, rejected ejaculates included (lots recorded before Phase 2 have none). */
+  private async semenLotResults(lotIds: string[]) {
+    if (!lotIds.length) return [];
+    return this.db
+      .select({
+        semen_batch_id: schema.semenBoarResult.semen_batch_id,
+        boar_id: schema.semenBoarResult.boar_animal_id,
+        boar_code: schema.animalRegister.animal_code,
+        collector_id: schema.semenBoarResult.collector_id,
+        collector_code: schema.semenCollector.collector_code,
+        volume_ml: schema.semenBoarResult.volume_ml,
+        doses: schema.semenBoarResult.doses,
+        morphology_pct: schema.semenBoarResult.morphology_pct,
+        motility_pct: schema.semenBoarResult.motility_pct,
+        concentration_m_per_ml: schema.semenBoarResult.concentration_m_per_ml,
+        accepted: schema.semenBoarResult.accepted,
+        reject_reason: schema.semenBoarResult.reject_reason,
+      })
+      .from(schema.semenBoarResult)
+      .innerJoin(
+        schema.animalRegister,
+        eq(schema.animalRegister.animal_id, schema.semenBoarResult.boar_animal_id),
+      )
+      .leftJoin(
+        schema.semenCollector,
+        eq(schema.semenCollector.collector_id, schema.semenBoarResult.collector_id),
+      )
+      .where(inArray(schema.semenBoarResult.semen_batch_id, lotIds))
+      .orderBy(schema.semenBoarResult.sort_order);
+  }
+
+  /**
+   * Everything about one collected lot for its details page: the lot as listed, the names behind its ids (line, boar
+   * batch, item, store, destination, plan), the cost it was worked out from, what each boar gave, its QR, and the AI
+   * services that drew doses from it.
+   */
+  async getSemenLot(id: string, tenantId: string) {
+    const [row] = await this.db
+      .select({
+        lot: schema.semenBatch,
+        boar_code: schema.animalRegister.animal_code,
+        boar_tag: schema.animalRegister.rfid_tag,
+        boar_batch_no: schema.batchHeader.batch_no,
+      })
+      .from(schema.semenBatch)
+      .innerJoin(
+        schema.animalRegister,
+        eq(schema.semenBatch.boar_animal_id, schema.animalRegister.animal_id),
+      )
+      .leftJoin(
+        schema.batchHeader,
+        eq(schema.batchHeader.batch_id, schema.semenBatch.boar_batch_id),
+      )
+      .where(
+        and(
+          eq(schema.semenBatch.semen_batch_id, id),
+          eq(schema.semenBatch.tenant_id, tenantId),
+          ...animalScopeConditions(farmScope(this.cls)),
+        ),
+      )
+      .limit(1);
+    if (!row) throw new NotFoundException('Semen lot not found.');
+    const { lot } = row;
+
+    const place = async (locationId: string | null) => {
+      if (!locationId) return null;
+      const [l] = await this.db
+        .select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
+        .from(schema.locationMaster)
+        .where(eq(schema.locationMaster.location_id, locationId))
+        .limit(1);
+      return l ?? null;
+    };
+    const itemOf = async (itemId: string | null) => {
+      if (!itemId) return null;
+      const [i] = await this.db
+        .select({ code: schema.itemMaster.item_code, name: schema.itemMaster.item_name })
+        .from(schema.itemMaster)
+        .where(eq(schema.itemMaster.item_id, itemId))
+        .limit(1);
+      return i ?? null;
+    };
+
+    const [breed] = lot.breed_id
+      ? await this.db
+          .select({ code: schema.breedMaster.breed_code, name: schema.breedMaster.breed_name })
+          .from(schema.breedMaster)
+          .where(eq(schema.breedMaster.breed_id, lot.breed_id))
+          .limit(1)
+      : [];
+    const [plan] = lot.plan_id
+      ? await this.db
+          .select({
+            plan_no: schema.semenCollectionPlan.plan_no,
+            weekday: schema.semenCollectionPlan.weekday,
+            reference: schema.semenCollectionPlan.reference,
+            requested_by: schema.semenCollectionPlan.requested_by,
+          })
+          .from(schema.semenCollectionPlan)
+          .where(eq(schema.semenCollectionPlan.plan_id, lot.plan_id))
+          .limit(1)
+      : [];
+    const [qr] = lot.qr_id
+      ? await this.db
+          .select({
+            pack_no: schema.qrCodeMaster.pack_no,
+            qr_data: schema.qrCodeMaster.qr_data,
+            is_voided: schema.qrCodeMaster.is_voided,
+            generated_at: schema.qrCodeMaster.generated_at,
+          })
+          .from(schema.qrCodeMaster)
+          .where(eq(schema.qrCodeMaster.qr_id, lot.qr_id))
+          .limit(1)
+      : [];
+
+    const [boars, results] = await Promise.all([
+      this.semenLotBoars([id]),
+      this.semenLotResults([id]),
+    ]);
+    // AI services that drew doses from this lot (the lot is named on the mating).
+    const services = await this.db
+      .select({
+        breeding_id: schema.breedingRecord.breeding_id,
+        mating_date: schema.breedingRecord.mating_date,
+        sow_code: schema.animalRegister.animal_code,
+        doses: schema.breedingRecord.semen_dose_qty,
+        conception_result: schema.breedingRecord.conception_result,
+      })
+      .from(schema.breedingRecord)
+      .innerJoin(
+        schema.animalRegister,
+        eq(schema.animalRegister.animal_id, schema.breedingRecord.sow_animal_id),
+      )
+      .where(
+        and(
+          eq(schema.breedingRecord.tenant_id, tenantId),
+          eq(schema.breedingRecord.semen_lot_id, id),
+        ),
+      )
+      .orderBy(desc(schema.breedingRecord.mating_date));
+
+    const collected = Number(lot.doses_collected) || 0;
+    const used = (Number(lot.doses_used_internal) || 0) + (Number(lot.doses_sold) || 0);
+    return {
+      ...lot,
+      boar_id: lot.boar_animal_id,
+      boar_code: row.boar_code,
+      boar_tag: row.boar_tag,
+      boar_batch_no: row.boar_batch_no,
+      breed: breed ?? null,
+      item: await itemOf(lot.output_item_id),
+      colorant_item: await itemOf(lot.colorant_item_id),
+      warehouse: await place(lot.warehouse_id),
+      destination_farm: await place(lot.destination_farm_id),
+      plan: plan ?? null,
+      qr: qr ?? null,
+      pooled: boars.length > 0,
+      boars,
+      results,
+      services,
+      doses_remaining: Math.max(0, collected - used),
+    };
   }
 }

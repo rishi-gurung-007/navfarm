@@ -19,7 +19,6 @@ export const DESTINATION_RULES = ['ANY', 'LIST', 'ONE'] as const;
 export const RESTRICTIONS = ['NONE', 'WARN', 'BLOCK'] as const;
 export const ENFORCEMENTS = ['WARN', 'BLOCK'] as const;
 export const WEEK_BASES = ['ISO'] as const;
-export const TIE_BREAKS = ['GENETIC_RANK', 'SHARED'] as const;
 
 /** The columns of the boar selection table, in their default order, with the label each carries until a line renames it. */
 export const SELECTION_COLUMNS = [
@@ -41,7 +40,6 @@ export const SELECTION_COLUMNS = [
   { key: 'bcs_score', label: 'Condition score' },
   { key: 'bcs_status', label: 'Condition check' },
 ] as const;
-export const SELECTION_COLUMN_KEYS = SELECTION_COLUMNS.map((c) => c.key) as string[];
 
 /** The tokens a lot label may use (see `renderLotLabel`). It is rendered when the lot is posted; it is validated here so a typo is refused when saved. */
 export const LABEL_TOKENS = ['LINE', 'BOAR_TAG', 'BOAR_CODE', 'WEEK', 'YEAR', 'DATE', 'SEQ'] as const;
@@ -67,8 +65,6 @@ export interface LineSetupValues {
   grading_genetic_weight?: number | null;
   grading_dose_weight?: number | null;
   grading_morphology_weight?: number | null;
-  rank_tie_break?: string;
-  selection_columns?: { key: string; label: string; visible: boolean }[] | null;
   bcs_frequency_days?: number | null;
   bcs_grace_days?: number | null;
   bcs_reminder_days?: number | null;
@@ -147,20 +143,10 @@ export function lineSetupIssues(v: LineSetupValues): string[] {
   for (const [label, w] of [['genetic', v.grading_genetic_weight], ['dose', v.grading_dose_weight], ['morphology', v.grading_morphology_weight]] as const) {
     if (has(w) && (w as number) < 0) out.push(`The ${label} rank weight cannot be negative.`);
   }
-  if (v.rank_tie_break !== undefined && !(TIE_BREAKS as readonly string[]).includes(v.rank_tie_break)) {
-    out.push(`Tied boars are ranked ${TIE_BREAKS.join(' or ')}.`);
-  }
   if (has(v.bcs_frequency_days) && (v.bcs_frequency_days as number) < 1) out.push('Body condition frequency must be at least 1 day.');
   if (has(v.bcs_grace_days) && (v.bcs_grace_days as number) < 0) out.push('Body condition grace days cannot be negative.');
   if (has(v.bcs_reminder_days) && (v.bcs_reminder_days as number) < 0) out.push('Body condition reminder days cannot be negative.');
   if (!has(v.bcs_frequency_days) && (has(v.bcs_grace_days) || has(v.bcs_reminder_days))) out.push('Grace and reminder days need a body condition frequency.');
-  if (v.selection_columns) {
-    const keys = v.selection_columns.map((c) => c.key);
-    const unknown = keys.filter((k) => !SELECTION_COLUMN_KEYS.includes(k));
-    if (unknown.length) out.push(`Unknown selection table column(s): ${[...new Set(unknown)].join(', ')}.`);
-    if (new Set(keys).size !== keys.length) out.push('A selection table column is listed twice.');
-    if (v.selection_columns.length && !v.selection_columns.some((c) => c.visible)) out.push('The selection table needs at least one visible column.');
-  }
   return out;
 }
 

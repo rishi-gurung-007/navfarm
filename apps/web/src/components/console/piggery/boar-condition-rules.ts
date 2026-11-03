@@ -1,3 +1,4 @@
+import { formatDate } from "@/utils/date-short";
 /**
  * The Boar Condition tab's small rules (plan 2026-11-02-ai-station-semen-collection, Phase 6; SOP 21): how a status looks, what an
  * assessment will do (read from the line's own scale), and the "is it filled in" checks of the assess dialog. The line's rules
@@ -9,7 +10,7 @@ export type ConditionStatus = "NEVER" | "NOT_SCHEDULED" | "OK" | "DUE_SOON" | "D
 export const STATUS_LABEL: Record<ConditionStatus, string> = {
   NEVER: "Never assessed",
   NOT_SCHEDULED: "No schedule",
-  OK: "OK",
+  OK: "On schedule",
   DUE_SOON: "Due soon",
   DUE: "Due",
   OVERDUE: "Overdue",
@@ -24,6 +25,13 @@ export const STATUS_COLOUR: Record<ConditionStatus, string> = {
   DUE: "var(--warning)",
   OVERDUE: "var(--danger)",
 };
+
+/** What the Next assessment column says: the day it falls due, or why there is none. */
+export function nextAssessmentText(status: string, due: string | null | undefined): string {
+  if (status === "NEVER") return "Score now";
+  if (status === "NOT_SCHEDULED") return "No schedule";
+  return due ? formatDate(due) : "—";
+}
 
 /** A status that wants someone to act. */
 export const needsAttention = (s: string) => s === "OVERDUE" || s === "DUE" || s === "NEVER";

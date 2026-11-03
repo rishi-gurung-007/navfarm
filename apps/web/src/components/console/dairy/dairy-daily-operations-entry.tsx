@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -285,8 +287,7 @@ export default function DairyDailyOperationsEntry() {
               <span className="nf-text-label">{t('dyLogDate')}</span>
               <div className="flex items-center gap-2">
                 <Calendar className="h-4 w-4 text-[var(--accent)]" />
-                <input
-                  type="date"
+                <DateInput
                   value={selectedDate}
                   onChange={(e) => setSelectedDate(e.target.value)}
                   className="nf-input text-sm"
@@ -314,7 +315,7 @@ export default function DairyDailyOperationsEntry() {
             {batch.batch_no}
             {batch.current_stage_code ? ` • ${batch.current_stage_code}` : ''}
             {batch.start_date
-              ? ` • ${t('bdeStartLabel')} ${batch.start_date}`
+              ? ` • ${t('bdeStartLabel')} ${formatDate(batch.start_date)}`
               : ''}
           </p>
         )}

@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from '@/components/ui/date-input';
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/services/api-client";
 import { showToast } from "@/components/ui/toast";
@@ -158,7 +159,7 @@ export default function FeedPlanPanel() {
       <div className="flex shrink-0 flex-wrap items-end gap-3">
         <FeedFarmSelect id="feed-plan-farm" label={t("rqFarm")} farms={farm.farms} farmId={farmId} onChange={setFarmId} fixedLabel={fixedLabel} />
         <Field label={t("feedPlanProductionDate")} htmlFor="feed-plan-production-date">
-          <input id="feed-plan-production-date" type="date" value={planningDate} onChange={(event) => setPlanningDate(event.target.value)} className="nf-input-sm" />
+          <DateInput id="feed-plan-production-date" value={planningDate} onChange={(event) => setPlanningDate(event.target.value)} className="nf-input-sm" />
         </Field>
         <Button className="ml-auto" onClick={generateVersion} disabled={!farmId || !planningDate || !hasSavedRun || generating}>
           {generating ? t("feedPlanGenerating") : t("feedPlanGenerate")}

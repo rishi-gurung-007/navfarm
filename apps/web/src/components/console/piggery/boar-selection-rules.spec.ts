@@ -1,4 +1,4 @@
-import { cellText, parseTsiPaste, planDraftIssues } from "./boar-selection-rules";
+import { bandNote, cellText, parseTsiPaste, planDraftIssues } from "./boar-selection-rules";
 
 describe("parseTsiPaste", () => {
   it("reads code, TSI and an optional genetic rank, split by commas, tabs or semicolons", () => {
@@ -33,8 +33,8 @@ describe("parseTsiPaste", () => {
 
 describe("cellText: body condition", () => {
   it("reads the status in words, with the day it falls due where there is one", () => {
-    expect(cellText("bcs_status", "OVERDUE", { bcs_due: "2026-10-31" })).toBe("Overdue · 2026-10-31");
-    expect(cellText("bcs_status", "OK", { bcs_due: "2026-11-30" })).toBe("OK · 2026-11-30");
+    expect(cellText("bcs_status", "OVERDUE", { bcs_due: "2026-10-31" })).toBe("Overdue · 31/10/26");
+    expect(cellText("bcs_status", "OK", { bcs_due: "2026-11-30" })).toBe("On schedule · 30/11/26");
     expect(cellText("bcs_status", "NEVER", { bcs_due: null })).toBe("Never assessed");
     expect(cellText("bcs_status", "NOT_SCHEDULED", {})).toBe("No schedule");
     expect(cellText("bcs_status", null)).toBe("—");
@@ -84,3 +84,23 @@ describe("planDraftIssues", () => {
     expect(planDraftIssues(draft({ destination: "f1" }), { destination_rule: "LIST" })).toEqual([]);
   });
 });
+
+describe("bandNote: why a boar has no genetic level", () => {
+  const bands = [{ level_name: "Average", tsi_from: 1, tsi_to: 22 }];
+  it("says nothing when every boar with a TSI has a level, or none has a TSI", () => {
+    expect(bandNote([{ boar: "B1", tsi: 10, genetic_level: "Average" }], bands)).toBeNull();
+    expect(bandNote([{ boar: "B1", tsi: null, genetic_level: null }], bands)).toBeNull();
+    expect(bandNote([{ boar: "B1", tsi: null, genetic_level: null }], [])).toBeNull();
+  });
+
+  it("says when the line has no bands at all", () => {
+    expect(bandNote([{ boar: "B1", tsi: 10, genetic_level: null }], [])).toContain("No genetic level bands are set");
+  });
+
+  it("names the boars whose TSI is in none of the bands", () => {
+    const note = bandNote([{ boar: "B1", tsi: 131, genetic_level: null }, { boar: "B2", tsi: 5, genetic_level: "Average" }, { boar: "B3", tsi: 124, genetic_level: null }], bands)!;
+    expect(note).toContain("B1 (131), B3 (124)");
+    expect(note).toContain("These boars");
+  });
+});
+

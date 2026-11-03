@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from "@/components/ui/date-input";
 import { useCallback, useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -64,7 +65,11 @@ export default function FairValueRatesDialog({ itemId, itemCode, open, onClose }
   const field = (key: keyof typeof form, label: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
     <label className="flex flex-col gap-1 text-xs font-semibold" style={S.sub}>
       {label}
-      <Input value={String(form[key])} onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))} {...props} />
+      {props.type === "date" ? (
+        <DateInput value={String(form[key])} onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))} />
+      ) : (
+        <Input value={String(form[key])} onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))} {...props} />
+      )}
     </label>
   );
 

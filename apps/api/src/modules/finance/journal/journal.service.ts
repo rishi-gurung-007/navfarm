@@ -1,12 +1,13 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, count, sql, inArray } from 'drizzle-orm';
+import { eq, and, like, isNull, count, sql, inArray, gte, lte } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateJournalDto, UpdateJournalDto, QueryJournalDto } from './dto/journal.dto';
 import { journalOrderBy } from './journal-order';
+import { postingDateRangeIssue } from './journal-date-range';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 
@@ -346,6 +347,10 @@ export class JournalService {
     if (query.status) conditions.push(eq(schema.journalHeader.status, query.status));
     if (query.source) conditions.push(eq(schema.journalHeader.source, query.source));
     if (query.search) conditions.push(like(schema.journalHeader.journal_no, `%${query.search}%`));
+    const rangeIssue = postingDateRangeIssue(query.dateFrom, query.dateTo);
+    if (rangeIssue) throw new BadRequestException(rangeIssue);
+    if (query.dateFrom) conditions.push(gte(schema.journalHeader.posting_date, query.dateFrom.slice(0, 10)));
+    if (query.dateTo) conditions.push(lte(schema.journalHeader.posting_date, query.dateTo.slice(0, 10)));
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;

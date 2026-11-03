@@ -1,4 +1,4 @@
-import { assessDraftIssues, consequenceOf, needsAttention, ScaleOption, STATUS_LABEL } from "./boar-condition-rules";
+import { assessDraftIssues, consequenceOf, needsAttention, nextAssessmentText, ScaleOption, STATUS_LABEL } from "./boar-condition-rules";
 
 // The client's SOP 21 scale, as test data (the application holds none until one is entered).
 const opt = (score: number, name: string, feed: number | null, action: string | null = null, health = false, meds = false): ScaleOption => ({
@@ -63,3 +63,19 @@ describe("status helpers", () => {
     expect(["OK", "DUE_SOON", "NOT_SCHEDULED"].some(needsAttention)).toBe(false);
   });
 });
+
+describe("the status and the next assessment are two things", () => {
+  it("calls a boar within his schedule 'On schedule', and says in the next column when he is next due", () => {
+    expect(STATUS_LABEL.OK).toBe("On schedule");
+    expect(nextAssessmentText("OK", "2026-12-02")).toBe("02/12/26");
+    expect(nextAssessmentText("DUE_SOON", "2026-11-30")).toBe("30/11/26");
+    expect(nextAssessmentText("OVERDUE", "2026-10-30")).toBe("30/10/26");
+  });
+
+  it("says to score a boar who has never been scored, and that there is no schedule where there is none", () => {
+    expect(nextAssessmentText("NEVER", null)).toBe("Score now");
+    expect(nextAssessmentText("NOT_SCHEDULED", null)).toBe("No schedule");
+    expect(nextAssessmentText("OK", null)).toBe("—");
+  });
+});
+

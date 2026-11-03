@@ -1,5 +1,6 @@
 "use client";
 
+import { formatDate } from '@/utils/date-short';
 import { useState } from "react";
 import { ChevronDown, ChevronRight, Loader2, PiggyBank } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -68,7 +69,7 @@ export default function GiltSelectionHistory({
               <span style={S.muted}>{isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</span>
               <span className="min-w-[8rem]">
                 <span className="block text-sm font-bold" style={S.primary}>{h.selection_no}</span>
-                <span className="block text-[11px]" style={S.muted}>{String(h.selection_date).slice(0, 10)}{h.production_week ? ` · ${t("gsWeekN", { n: h.production_week })}` : ""}</span>
+                <span className="block text-[11px]" style={S.muted}>{formatDate(h.selection_date)}{h.production_week ? ` · ${t("gsWeekN", { n: h.production_week })}` : ""}</span>
               </span>
               <span className="min-w-[10rem] flex-1">
                 <span className="block text-[10px] font-semibold uppercase tracking-wider" style={S.muted}>{t("gsSowsCol")}</span>

@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from '@/components/ui/date-input';
 import { useState, useEffect } from "react";
 import {
   ArrowRight, Loader2, AlertTriangle,
@@ -292,8 +293,7 @@ export default function AnimalStageTransitionModal({
           )}
 
           <Field label={t("astmTransitionDateLabel")} required className="sm:col-span-6">
-            <input
-              type="date"
+            <DateInput
               className="nf-input text-xs"
               value={transitionDate}
               onChange={(e) => setTransitionDate(e.target.value)}

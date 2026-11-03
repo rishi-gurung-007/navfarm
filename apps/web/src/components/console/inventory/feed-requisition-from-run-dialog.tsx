@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from '@/components/ui/date-input';
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/services/api-client";
 import { InlineAlert } from "@/components/ui/alert";
@@ -148,7 +149,7 @@ export function FeedRequisitionFromRunDialog({ open, runId, onClose, onView }: {
                 <td className={RUN_TD_TEXT}>{line.item_name}</td>
                 <td className={`${RUN_TD} text-right tabular-nums`}>{Number(line.recommended_qty_kg).toLocaleString("en-US")}</td>
                 <td className={`${RUN_TD} text-right`}><input aria-label={t("rqNewKg", { line: index + 1 })} type="number" min="0.001" step="0.001" className="nf-input-sm w-32 text-right" style={inputStyle} value={line.quantity_kg} onChange={(event) => updateLine(index, { quantity_kg: Number(event.target.value) })} /></td>
-                <td className={RUN_TD}><input aria-label={t("rqNewDate", { line: index + 1 })} type="date" className="nf-input-sm" style={inputStyle} value={line.proposed_delivery_date} onChange={(event) => updateLine(index, { proposed_delivery_date: event.target.value })} /></td>
+                <td className={RUN_TD}><DateInput aria-label={t("rqNewDate", { line: index + 1 })} className="nf-input-sm" style={inputStyle} value={line.proposed_delivery_date} onChange={(event) => updateLine(index, { proposed_delivery_date: event.target.value })} /></td>
               </tr>
             ))}</tbody>
           </ScrollTable>

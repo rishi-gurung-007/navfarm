@@ -1,11 +1,13 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
 import { useCallback, useEffect, useState } from 'react';
 import { HeartPulse, History } from 'lucide-react';
 import { api } from '@/services/api-client';
+import { formatDate } from '@/utils/date-short';
 import { EntryModal, Field, inputStyle } from './breeding-form-parts';
 import { todayIso, type Issue, type Row } from './breeding-rules';
-import { assessDraftIssues, consequenceOf, needsAttention, STATUS_COLOUR, STATUS_LABEL, type ConditionStatus, type ScaleOption } from './boar-condition-rules';
+import { assessDraftIssues, consequenceOf, needsAttention, nextAssessmentText, STATUS_COLOUR, STATUS_LABEL, type ConditionStatus, type ScaleOption } from './boar-condition-rules';
 
 const unwrap = <T,>(res: any): T => (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 const S = {
@@ -24,7 +26,7 @@ const feedText = (v: number | null | undefined) => (v == null ? '—' : `${v} kg
  * be changed are the line's setup; nothing here is a fixed figure. The feed level is recorded and shown: the feed forecast does not
  * read it.
  */
-export function BoarConditionPanel({ version = 0 }: { version?: number }) {
+export function BoarConditionPanel({ version = 0, onSummary }: { version?: number; onSummary?: (rows: Row[]) => void }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [lines, setLines] = useState<Row[]>([]);
   const [breedId, setBreedId] = useState('');
@@ -57,6 +59,11 @@ export function BoarConditionPanel({ version = 0 }: { version?: number }) {
   useEffect(() => {
     load();
   }, [load, version]);
+
+  // The figures above the tabs read what this list holds.
+  useEffect(() => {
+    onSummary?.(rows);
+  }, [rows, onSummary]);
 
   const shown = onlyAttention ? rows.filter((r) => needsAttention(r.status)) : rows;
   const count = (s: string) => rows.filter((r) => r.status === s).length;
@@ -103,7 +110,7 @@ export function BoarConditionPanel({ version = 0 }: { version?: number }) {
         <table className="w-full text-xs">
           <thead>
             <tr style={S.raised} className="text-left">
-              {['Boar', 'Line', 'Last assessed', 'Score', 'Feed level', 'Next assessment', 'Flags', ''].map((h) => (
+              {['Boar', 'Line', 'Last assessed', 'Score', 'Feed level', 'Status', 'Next assessment', 'Flags', ''].map((h) => (
                 <th key={h} className="px-3 py-2 font-semibold whitespace-nowrap" style={S.sub}>
                   {h}
                 </th>
@@ -113,7 +120,7 @@ export function BoarConditionPanel({ version = 0 }: { version?: number }) {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={8} className="px-3 py-6 text-center" style={S.muted}>
+                <td colSpan={9} className="px-3 py-6 text-center" style={S.muted}>
                   Loading…
                 </td>
               </tr>
@@ -135,7 +142,7 @@ export function BoarConditionPanel({ version = 0 }: { version?: number }) {
                       {r.rfid_tag && <span className="block" style={S.muted}>Tag: {r.rfid_tag}</span>}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap" style={S.sub}>{r.breed_code ?? '—'}</td>
-                    <td className="px-3 py-2 whitespace-nowrap" style={S.sub}>{l?.assessed_on ?? '—'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap" style={S.sub}>{l?.assessed_on ? formatDate(l?.assessed_on) : '—'}</td>
                     <td className="px-3 py-2 whitespace-nowrap" style={S.primary}>
                       {l ? (
                         <>
@@ -150,11 +157,11 @@ export function BoarConditionPanel({ version = 0 }: { version?: number }) {
                       {feedText(r.feed_kg_per_day)}
                       {l?.override_reason && <span className="block" style={S.muted} title={l.override_reason}>changed from the scale</span>}
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap">
-                      <span className="font-semibold" style={{ color: STATUS_COLOUR[r.status as ConditionStatus] }}>
-                        {STATUS_LABEL[r.status as ConditionStatus] ?? r.status}
-                      </span>
-                      {r.due && <span className="block" style={S.muted}>{r.due}</span>}
+                    <td className="px-3 py-2 whitespace-nowrap font-semibold" style={{ color: STATUS_COLOUR[r.status as ConditionStatus] }}>
+                      {STATUS_LABEL[r.status as ConditionStatus] ?? r.status}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap" style={S.primary}>
+                      {nextAssessmentText(r.status, r.due)}
                     </td>
                     <td className="px-3 py-2" style={S.sub}>
                       {l?.health_flag && <span className="block font-semibold" style={{ color: 'var(--warning)' }}>Health assessment</span>}
@@ -237,7 +244,7 @@ function AssessDialog({ boar, onClose, onSaved }: { boar: Row; onClose: () => vo
           res.feed_kg_per_day != null ? `Feed level ${res.feed_kg_per_day} kg a day.` : null,
           res.required_action,
           res.health_flag ? 'Health assessment flagged.' : null,
-          res.next_due ? `Next assessment ${res.next_due}.` : null,
+          res.next_due ? `Next assessment ${formatDate(res.next_due)}.` : null,
         ]
           .filter(Boolean)
           .join(' '),
@@ -278,7 +285,7 @@ function AssessDialog({ boar, onClose, onSaved }: { boar: Row; onClose: () => vo
           )}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Assessed on" issues={issues} name="date" required>
-              <input type="date" className="nf-input w-full text-sm" style={inputStyle(issues, 'date')} value={date} max={todayIso()} onChange={(e) => setDate(e.target.value)} />
+              <DateInput className="nf-input w-full text-sm" style={inputStyle(issues, 'date')} value={date} max={todayIso()} onChange={(e) => setDate(e.target.value)} />
             </Field>
             {info?.allow_feed_override && (
               <Field label="Feed level other than the scale's (kg a day)" issues={issues} name="feed" hint="Leave blank to use the scale's.">
@@ -324,7 +331,7 @@ function HistoryDialog({ boar, onClose }: { boar: Row; onClose: () => void }) {
           {rows?.length === 0 && <tr><td colSpan={5} style={S.muted}>He has not been scored yet.</td></tr>}
           {rows?.map((h) => (
             <tr key={h.record_id} className="border-t" style={{ borderColor: 'var(--border)' }}>
-              <td className="py-1 pr-3 whitespace-nowrap" style={S.primary}>{h.assessed_on}</td>
+              <td className="py-1 pr-3 whitespace-nowrap" style={S.primary}>{formatDate(h.assessed_on)}</td>
               <td className="py-1 pr-3 whitespace-nowrap" style={S.primary}>{h.score}{h.score_name ? ` — ${h.score_name}` : ''}</td>
               <td className="py-1 pr-3 whitespace-nowrap" style={S.sub}>{h.previous_feed_kg_per_day != null ? `${h.previous_feed_kg_per_day} → ` : ''}{feedText(h.feed_kg_per_day)}{h.override_reason ? ` (${h.override_reason})` : ''}</td>
               <td className="py-1 pr-3" style={S.sub}>{[h.health_flag && 'Health assessment', h.medication_review && 'Medication review', h.required_action].filter(Boolean).join(' · ') || '—'}</td>

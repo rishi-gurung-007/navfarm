@@ -1,3 +1,4 @@
+import { withLineLabels } from './line-label';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
@@ -63,7 +64,8 @@ export class BreedingLineSetupService {
     if (query.isActive !== undefined) conditions.push(eq(table.is_active, query.isActive));
     if (query.breedId) conditions.push(eq(table.breed_id, query.breedId));
     conditions.push(...listFilterConditions(table, query.filter));
-    return runMasterList(this.db, table, conditions, query, table.created_at);
+    const list = await runMasterList(this.db, table, conditions, query, table.created_at);
+    return { ...list, data: await withLineLabels(this.db, list.data as { breed_id: string | null }[]) as any };
   }
 
   /**
@@ -155,7 +157,6 @@ export class BreedingLineSetupService {
       colorant_qty_per_lot: dto.colorant_qty_per_lot == null ? null : String(dto.colorant_qty_per_lot),
       min_motility_pct: dto.min_motility_pct == null ? null : String(dto.min_motility_pct),
       ...weightsOf(dto),
-      selection_columns: dto.selection_columns?.length ? dto.selection_columns : null,
       collection_weekdays: dto.collection_weekdays?.length ? dto.collection_weekdays : null,
       destination_farm_ids: dto.destination_farm_ids?.length ? dto.destination_farm_ids : null,
       setup_id,
@@ -183,7 +184,6 @@ export class BreedingLineSetupService {
         colorant_qty_per_lot: changes.colorant_qty_per_lot === undefined ? undefined : changes.colorant_qty_per_lot == null ? null : String(changes.colorant_qty_per_lot),
         min_motility_pct: changes.min_motility_pct === undefined ? undefined : changes.min_motility_pct == null ? null : String(changes.min_motility_pct),
         ...weightsOf(changes),
-        selection_columns: changes.selection_columns === undefined ? undefined : changes.selection_columns?.length ? changes.selection_columns : null,
         collection_weekdays: changes.collection_weekdays === undefined ? undefined : changes.collection_weekdays?.length ? changes.collection_weekdays : null,
         destination_farm_ids: changes.destination_farm_ids === undefined ? undefined : changes.destination_farm_ids?.length ? changes.destination_farm_ids : null,
         updated_by: user?.userId,

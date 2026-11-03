@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate as formatDateShared } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -110,11 +112,7 @@ const DISPOSAL_TYPE_LABEL_KEY: Record<string, TranslationKeys> = {
 
 function formatDate(d?: string | null) {
   if (!d) return NA;
-  return new Date(d).toLocaleDateString(undefined, {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
+  return formatDateShared(d);
 }
 
 // ── Withdrawal warning banner ─────────────────────────────────────────────────
@@ -679,7 +677,7 @@ export default function AnimalPanel() {
             exit_weight_kg: '',
             disposal_destination: '',
             out_of_production_date: anim.out_of_production_date
-              ? String(anim.out_of_production_date).slice(0, 10)
+              ? formatDate(anim.out_of_production_date)
               : '',
             notes: '',
           });
@@ -697,7 +695,7 @@ export default function AnimalPanel() {
           setViewing(anim);
           setOopDate(
             anim.out_of_production_date
-              ? String(anim.out_of_production_date).slice(0, 10)
+              ? formatDate(anim.out_of_production_date)
               : new Date().toISOString().slice(0, 10),
           );
           setOopError('');
@@ -836,9 +834,8 @@ export default function AnimalPanel() {
             <label className="nf-label" htmlFor="dispose-date">
               {t('anpDate')}
             </label>
-            <input
+            <DateInput
               id="dispose-date"
-              type="date"
               className={inputCls}
               value={disposeForm.disposal_date}
               onChange={(e) =>
@@ -890,9 +887,8 @@ export default function AnimalPanel() {
                 <label className="nf-label" htmlFor="dispose-oop">
                   {t('anpOutOfProductionDate')}
                 </label>
-                <input
+                <DateInput
                   id="dispose-oop"
-                  type="date"
                   className={inputCls}
                   value={disposeForm.out_of_production_date || ''}
                   onChange={(e) =>
@@ -1025,9 +1021,8 @@ export default function AnimalPanel() {
         <label className="nf-label" htmlFor="oop-date">
           {t('anpOutOfProductionDate')}
         </label>
-        <input
+        <DateInput
           id="oop-date"
-          type="date"
           className={inputCls}
           value={oopDate}
           onChange={(e) => setOopDate(e.target.value)}

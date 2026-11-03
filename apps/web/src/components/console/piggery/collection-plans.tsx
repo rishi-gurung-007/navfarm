@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { useEffect, useState } from 'react';
 import { CalendarDays, FlaskConical } from 'lucide-react';
 import { api } from '@/services/api-client';
@@ -100,7 +102,7 @@ export function PlanDialog({
     <EntryModal title={`Plan a collection — ${lineName}`} icon={<CalendarDays className="w-5 h-5" style={S.accent} />} onClose={onClose} onSubmit={submit} submitting={busy} submitLabel="Save plan" savingLabel="Saving…" issues={issues}>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Collection date" issues={issues} name="date" required hint={rules?.collection_mode === 'SCHEDULED' && days.length ? `This line is tapped on ${days.join(', ')}.` : rules?.collection_mode === 'ON_REQUEST' ? 'This line is collected on request.' : undefined}>
-          <input type="date" className="nf-input w-full text-sm" style={inputStyle(issues, 'date')} value={date} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setDate(e.target.value)} />
+          <DateInput className="nf-input w-full text-sm" style={inputStyle(issues, 'date')} value={date} min={new Date().toISOString().slice(0, 10)} onChange={(e) => setDate(e.target.value)} />
         </Field>
         <Field label="Requested by" issues={issues} name="requested_by" hint="Who asked for it (for example the Multiplier Unit).">
           <input type="text" maxLength={100} className="nf-input w-full text-sm" value={requestedBy} onChange={(e) => setRequestedBy(e.target.value)} />
@@ -186,14 +188,13 @@ function ReasonDialog({ title, onClose, onConfirm }: { title: string; onClose: (
 /** The planned collections of a line, with what to do next on each. */
 export function CollectionPlans({
   plans,
-  referenceLabel,
-  poolingAllowed,
+  rulesFor,
   onCollect,
   onChanged,
 }: {
   plans: Row[];
-  referenceLabel: string | null;
-  poolingAllowed: boolean;
+  /** What the plan's own line asks for: the name of its reference, and whether its lots are pooled. */
+  rulesFor: (plan: Row) => { referenceLabel: string | null; poolingAllowed: boolean };
   /** Start recording a collection of these boars against the plan. */
   onCollect: (plan: Row, boarIds: string[], batchId: string | null) => void;
   onChanged: () => void;
@@ -207,6 +208,7 @@ export function CollectionPlans({
         <CalendarDays className="w-4 h-4" style={S.accent} /> Planned collections
       </h4>
       {plans.map((p) => {
+        const { referenceLabel, poolingAllowed } = rulesFor(p);
         const open = p.status === 'PLANNED';
         const pending: Row[] = p.lines.filter((l: Row) => l.status === 'PLANNED');
         // A line that is never pooled is collected one boar at a time; a pooled one in one lot, from boars that share a batch.
@@ -217,7 +219,8 @@ export function CollectionPlans({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-bold font-mono" style={S.accent}>{p.plan_no}</span>
-                <span className="text-sm" style={S.primary}>{p.weekday} {String(p.collection_date).slice(0, 10)}</span>
+                {p.breed_code && <span className="text-[11px] font-semibold rounded-full px-2 py-0.5" style={{ ...S.raised, ...S.muted }}>{p.breed_code}</span>}
+                <span className="text-sm" style={S.primary}>{p.weekday} {formatDate(p.collection_date)}</span>
                 <span className="text-[11px] font-semibold uppercase" style={STATUS_STYLE[p.status] ?? S.muted}>{p.status}</span>
               </div>
               {open && (

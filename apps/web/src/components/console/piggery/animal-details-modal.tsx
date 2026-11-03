@@ -1,6 +1,7 @@
 'use client';
 
 import { NA } from '@/utils/na';
+import { formatDate as formatDateShared } from '@/utils/date-short';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Loader2,
@@ -72,13 +73,7 @@ function fmt(v: any): string {
 
 function formatDate(d?: string | null): string {
   if (!d) return NA;
-  try {
-    const s = String(d).trim();
-    if (s.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-    return new Date(d).toISOString().slice(0, 10);
-  } catch {
-    return String(d);
-  }
+  return formatDateShared(d);
 }
 
 function formatMoney(amount?: number | string | null): string {
@@ -678,7 +673,7 @@ export default function AnimalDetailsModal({
               <strong>{activeWithdrawal.medicationName}</strong>. Withdrawal
               period active for{' '}
               <strong>{activeWithdrawal.daysRemaining} more day(s)</strong>{' '}
-              (until {activeWithdrawal.expiryDate}). Slaughter or sale is
+              (until {formatDate(activeWithdrawal.expiryDate)}). Slaughter or sale is
               restricted.
             </span>
           </div>
@@ -752,7 +747,7 @@ export default function AnimalDetailsModal({
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)]">
                       {activity?.current_weight_date
-                        ? `Recorded ${activity.current_weight_date}`
+                        ? `Recorded ${formatDate(activity.current_weight_date)}`
                         : 'None recorded'}
                     </span>
                   </div>
@@ -1272,7 +1267,7 @@ export default function AnimalDetailsModal({
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)] mt-1 block">
                       {activity?.current_weight_date
-                        ? `Last recorded ${activity.current_weight_date}`
+                        ? `Last recorded ${formatDate(activity.current_weight_date)}`
                         : 'No weight recorded yet'}
                     </span>
                   </div>
@@ -1288,7 +1283,7 @@ export default function AnimalDetailsModal({
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)] mt-1 block">
                       {activity?.adg_g_per_day != null
-                        ? `Between ${activity.first_weight_date} and ${activity.current_weight_date}`
+                        ? `Between ${formatDate(activity.first_weight_date)} and ${formatDate(activity.current_weight_date)}`
                         : 'Needs two weights on different days'}
                     </span>
                   </div>
@@ -1685,7 +1680,7 @@ export default function AnimalDetailsModal({
                                 )}
                               </div>
                               <span className="font-mono text-xs text-[var(--text-muted)]">
-                                {ev.date}
+                                {formatDate(ev.date)}
                               </span>
                             </div>
 
