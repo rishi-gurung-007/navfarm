@@ -26,7 +26,7 @@ const balance = (over: Record<string, unknown>) => ({
 
 const farm = (over: Partial<MillPlanFarmInput> = {}): MillPlanFarmInput => ({
   farm: { id: 'farm-1', code: 'F1', name: 'Farm One' },
-  daily: [], sourceBalances: [], dietChanges: [],
+  daily: [], sourceBalances: [], dietChanges: [], flags: [],
   ...over,
 });
 
@@ -182,6 +182,17 @@ describe('buildMillPlan', () => {
       { farmId: 'farm-1', farmCode: 'F1', farmName: 'Farm One', sourceCode: 'SL-1', sourceName: 'Silo 1', items: ['Grower', 'Starter'], stockKg: 4000, capacityKg: 10000, fillPct: 40, runOutDate: null },
       { farmId: 'farm-1', farmCode: 'F1', farmName: 'Farm One', sourceCode: 'SL-2', sourceName: 'Silo 1', items: ['Grower'], stockKg: 900, capacityKg: null, fillPct: null, runOutDate: dates[1] },
     ]);
+  });
+
+  it('says which batches eat nothing for want of a lifecycle feed row, once per batch and stage', () => {
+    const plan = buildMillPlan(input({
+      farms: [farm({ flags: [
+        { kind: 'NO_FEED_ROW', batchNo: 'B-302', stageCode: 'LACTATION', day: 185, date: dates[1] },
+        { kind: 'NO_FEED_ROW', batchNo: 'B-302', stageCode: 'LACTATION', day: 184, date: dates[0] },
+        { kind: 'HEADS_ASSUMED_FLAT', batchNo: 'B-302' },
+      ] })],
+    }));
+    expect(plan.farms[0].noFeedRows).toEqual([{ batchNo: 'B-302', stageCode: 'LACTATION', fromDay: 184, fromDate: dates[0] }]);
   });
 
   it('carries failed farms through untouched', () => {

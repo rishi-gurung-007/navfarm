@@ -65,6 +65,7 @@ export class MillPlanService {
           daily: report.daily.filter((row) => row.date >= from && row.date <= to),
           sourceBalances: report.sourceBalances,
           dietChanges: report.dietChanges,
+          flags: report.flags,
         });
       } catch (error) {
         failedFarms.push({ farmId: farm.farmId, code: farm.code, name: farm.name, error: error instanceof Error ? error.message : String(error) });

@@ -33,6 +33,7 @@ const plan = {
   dietChanges: [{ farmId: "farm-1", farmName: "Farm One", shedCode: "S1", batchNo: "B-1", changeDate: dates[3], fromItemName: "Starter", toItemName: "Grower", heads: 120 }],
   farms: [{
     farmId: "farm-1", code: "F1", name: "Farm One", totals: zeros(),
+    noFeedRows: [{ batchNo: "B-302", stageCode: "LACTATION", fromDay: 184, fromDate: dates[0] }],
     sheds: [{ key: "S1|B-1", shedCode: "S1", batchNo: "B-1", heads: 120, items: [{ itemId: "i1", itemName: "Grower" }], changeDate: dates[3], kg: [313.5, 313.5, 313.5, 313.5, 313.5, 313.5, 313.5] }],
     silos: [
       { sourceCode: "SL-1", sourceName: "Silo 1", sourceType: "SILO", itemId: "i1", itemName: "Grower", openingKg: 5000, closingKg: [null, 3000, 1000, 0, 0, 0, 0], runOutDate: dates[3] },
@@ -46,17 +47,17 @@ const plan = {
   failedFarms: [{ farmId: "farm-2", code: "F2", name: "Farm Two", error: "No lifecycle" }],
 };
 
-function routeGets() {
+function routeGets(override: Record<string, unknown> = {}) {
   (api.get as jest.Mock).mockImplementation(async (url: string) => {
     if (url.startsWith("/feed-requisition/options")) return { data: { items: [{ item_id: "i1", item_code: "GRW", item_name: "Grower" }] } };
-    if (url.startsWith("/feed-forecast/mill-plan")) return { data: plan };
+    if (url.startsWith("/feed-forecast/mill-plan")) return { data: { ...plan, ...override } };
     throw new Error(`unexpected ${url}`);
   });
 }
 const millPlanCalls = () => (api.get as jest.Mock).mock.calls.map(([url]) => url as string).filter((url) => url.startsWith("/feed-forecast/mill-plan"));
 
-async function renderPanel() {
-  routeGets();
+async function renderPanel(override: Record<string, unknown> = {}) {
+  routeGets(override);
   render(<MillPlanPanel />);
   await act(async () => undefined);
 }
@@ -85,7 +86,7 @@ it("sends weekOf, farmIds, itemIds and millId on Generate", async () => {
   // Narrow the farms to one and generate again: the ids go on the query.
   fireEvent.click(screen.getByRole("button", { name: /mplFarms/ }));
   fireEvent.click(screen.getByRole("option", { name: "F2 — Farm Two" }));
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplRegenerate" })); });
   expect(millPlanCalls()[1]).toBe("/feed-forecast/mill-plan?weekOf=2026-11-02&farmIds=farm-1&millId=mill-1");
 });
 
@@ -133,12 +134,15 @@ it("shows weights in tonnes, with the exact KG on hover", async () => {
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
   const cells = screen.getAllByText("0.31");
   expect(cells.length).toBe(7);
-  expect(cells[0].closest("td")?.getAttribute("title")).toBe("313.5 KG");
+  // The same hover card as the consolidation sheet, not the browser's plain tooltip.
+  expect(cells[0].closest("[data-hint]")?.getAttribute("data-hint")).toBe("313.5 KG");
+  expect(cells[0].closest("td")?.hasAttribute("title")).toBe(false);
   expect(document.querySelector(`[data-capacity-day="${dates[1]}"]`)?.textContent).toContain("12.00");
 });
 
 it("explains each section in an info hover instead of a unit in its title", async () => {
-  await renderPanel();
+  await renderPanel({ production: [{ itemId: "i1", itemCode: "GRW", itemName: "Grower", feedForm: "BULK", totalKg: 3000,
+    days: dates.map((date, i) => ({ date, approvedKg: i === 5 ? 3000 : 0, forecastKg: 0, totalKg: i === 5 ? 3000 : 0, capacity: null })) }] });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "mplGenerate" })); });
   for (const key of ["mplCapacityInfo", "mplProductionInfo", "mplGridInfo", "mplSiloLevelsInfo"]) {
     expect(document.querySelector(`[data-hint="${key}"]`)).toBeTruthy();
@@ -210,4 +214,58 @@ it("puts Collapse All and Expand All beside the grid they fold", async () => {
   const section = screen.getByRole("region", { name: "mplGrid" });
   expect(within(section).getByRole("button", { name: "mplCollapseAll" })).toBeTruthy();
   expect(within(section).getByRole("button", { name: "mplExpandAll" })).toBeTruthy();
+});
+
+const generate = async () => { await act(async () => { fireEvent.click(screen.getByRole("button", { name: /mpl(Re)?[Gg]enerate/ })); }); };
+
+it("leaves out a section with nothing in it, heading and all", async () => {
+  await renderPanel({ dietChanges: [] });
+  await generate();
+  expect(screen.queryByRole("region", { name: "mplProduction" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "mplDietChanges" })).toBeNull();
+  expect(screen.queryByText("mplNoProduction")).toBeNull();
+});
+
+it("offers Regenerate once a filter differs from the plan on screen", async () => {
+  await renderPanel();
+  await generate();
+  expect(screen.getByRole("button", { name: "mplGenerate" })).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("mplWeekOf"), { target: { value: "2026-11-09" } });
+  expect(screen.getByRole("button", { name: "mplRegenerate" })).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("mplWeekOf"), { target: { value: "2026-11-02" } });
+  expect(screen.getByRole("button", { name: "mplGenerate" })).toBeTruthy();
+});
+
+it("puts the day under the date in the grid headers", async () => {
+  await renderPanel();
+  await generate();
+  const head = document.querySelector("[data-mill-grid] thead [data-day-head]") as HTMLElement;
+  expect([...head.children].map((c) => c.textContent)).toEqual([dates[0], "Mon"]);
+});
+
+it("shows a silo's code and name on lines of their own", async () => {
+  await renderPanel();
+  await generate();
+  const row = document.querySelector("[data-silo-row]") as HTMLElement;
+  expect(row.querySelector("[data-silo-code]")?.textContent).toBe("SL-1");
+  expect(row.querySelector("[data-silo-name]")?.textContent).toBe("Silo 1");
+  const card = document.querySelector("[data-silo-card]") as HTMLElement;
+  expect(card.querySelector("[data-silo-code]")?.textContent).toBe("SL-1");
+  expect(card.querySelector("[data-silo-name]")?.textContent).toBe("Silo 1");
+});
+
+it("says on the farm row why a batch eats nothing: no lifecycle feed row", async () => {
+  await renderPanel();
+  await generate();
+  const farmRow = document.querySelector("[data-farm-row]") as HTMLElement;
+  const note = farmRow.querySelector("[data-no-feed-rows]") as HTMLElement;
+  expect(note.textContent).toContain("mplNoFeedRows");
+  expect(note.closest("[data-hint]")?.getAttribute("data-hint")).toContain("B-302");
+});
+
+it("scrolls in an area that reaches the window's edge, so its scrollbar sits on the screen border", async () => {
+  await renderPanel();
+  const root = document.querySelector("[data-fill-body]") as HTMLElement;
+  expect(root.className).toMatch(/lg:-mr-7/);
+  expect(root.className).toMatch(/lg:pr-7/);
 });

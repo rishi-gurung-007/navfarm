@@ -10,7 +10,7 @@
  * feed requisitioned, transferred or planned incoming, so nothing is counted
  * twice. The mill produces daily: net need sits on its delivery date.
  */
-import type { DailyForecastRow, DietChange, SourceBalancePoint } from './feed-forecast.engine';
+import type { DailyForecastRow, DietChange, ForecastFlag, SourceBalancePoint } from './feed-forecast.engine';
 import type { DietCapacity, MillCapacitySetup, MillDemandLine } from './mill-capacity.rules';
 
 const roundKg = (value: number) => Math.round((value + Number.EPSILON) * 10_000) / 10_000;
@@ -21,6 +21,16 @@ export interface MillPlanFarmInput {
   daily: DailyForecastRow[];
   sourceBalances: Array<SourceBalancePoint & { sourceName: string | null; feedType: 'BULK' | 'BAGGED' }>;
   dietChanges: DietChange[];
+  /** The forecast's flags; NO_FEED_ROW explains a batch (or a whole farm) that eats nothing. */
+  flags: ForecastFlag[];
+}
+
+/** A batch the forecast gives no feed because its lifecycle has no feed row for its stage and day. */
+export interface MillPlanNoFeedRow {
+  batchNo: string;
+  stageCode: string;
+  fromDay: number;
+  fromDate: string;
 }
 
 export interface MillPlanInput {
@@ -95,7 +105,7 @@ export interface MillPlan {
     totalKg: number;
   }>;
   dietChanges: Array<{ farmId: string; farmName: string; shedCode: string; batchNo: string; changeDate: string; fromItemName: string; toItemName: string; heads: number }>;
-  farms: Array<{ farmId: string; code: string; name: string; totals: number[]; sheds: MillPlanShed[]; silos: MillPlanSilo[] }>;
+  farms: Array<{ farmId: string; code: string; name: string; totals: number[]; sheds: MillPlanShed[]; silos: MillPlanSilo[]; noFeedRows: MillPlanNoFeedRow[] }>;
   siloCards: MillPlanSiloCard[];
   failedFarms: MillPlanInput['failedFarms'];
 }
@@ -223,7 +233,14 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
 
     const shedList = [...sheds.values()].sort((a, b) => a.shedCode.localeCompare(b.shedCode) || a.batchNo.localeCompare(b.batchNo));
     const totals = dates.map((_, i) => roundKg(shedList.reduce((sum, s) => sum + s.kg[i], 0)));
-    farms.push({ farmId: f.farm.id, code: f.farm.code, name: f.farm.name, totals, sheds: shedList, silos: [...silos.values()] });
+    const noFeedRows = new Map<string, MillPlanNoFeedRow>();
+    for (const flag of f.flags ?? []) {
+      if (flag.kind !== 'NO_FEED_ROW') continue;
+      const key = `${flag.batchNo}|${flag.stageCode}`;
+      const known = noFeedRows.get(key);
+      if (!known || flag.date < known.fromDate) noFeedRows.set(key, { batchNo: flag.batchNo, stageCode: flag.stageCode, fromDay: flag.day, fromDate: flag.date });
+    }
+    farms.push({ farmId: f.farm.id, code: f.farm.code, name: f.farm.name, totals, sheds: shedList, silos: [...silos.values()], noFeedRows: [...noFeedRows.values()] });
   }
 
   const itemIds = [...new Set([...approved.keys(), ...forecast.keys()])];

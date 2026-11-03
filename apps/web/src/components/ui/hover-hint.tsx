@@ -13,9 +13,12 @@ export function HoverHint({
   hint,
   children,
   focusable = true,
+  plain = false,
 }: {
   hint: string;
   children: ReactNode;
+  /** No dotted underline: for a figure in a dense grid, where every cell has a hover and underlining them all is noise. */
+  plain?: boolean;
   /** false inside a control that is already focusable (a button), so keyboard users meet one stop, not two. */
   focusable?: boolean;
 }) {
@@ -38,7 +41,7 @@ export function HoverHint({
         onMouseLeave={hide}
         onFocus={show}
         onBlur={hide}
-        className="cursor-help underline decoration-dotted underline-offset-2 outline-none focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-(--accent)"
+        className={`cursor-help outline-none focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-(--accent) ${plain ? '' : 'underline decoration-dotted underline-offset-2'}`}
       >
         {children}
       </span>
