@@ -165,6 +165,16 @@ const plan = {
           items: [{ itemId: 'i1', itemName: 'Grower' }],
           changeDate: dates[3],
           kg: [313.5, 313.5, 313.5, 313.5, 313.5, 313.5, 313.5],
+          headsByDay: [120, 120, 120, 120, 120, 120, 120],
+          sourcesByDay: [
+            ['SL-1|i1'],
+            ['SL-1|i1'],
+            ['SL-1|i1'],
+            ['SL-1|i1'],
+            ['SL-1|i1'],
+            ['SL-1|i1'],
+            ['SL-1|i1'],
+          ],
         },
       ],
       silos: [
@@ -192,6 +202,8 @@ const plan = {
           openingKg: 5000,
           closingKg: [null, 3000, 1000, 0, 0, 0, 0],
           runOutDate: dates[3],
+          useKg: [0, 2000, 2000, 1000, 0, 0, 0],
+          capacityKg: 10000,
         },
         {
           requisitions: [],
@@ -203,6 +215,8 @@ const plan = {
           openingKg: 200,
           closingKg: [null, 200, 200, 200, 200, 200, 200],
           runOutDate: null,
+          useKg: [0, 2000, 2000, 1000, 0, 0, 0],
+          capacityKg: 10000,
         },
       ],
     },
@@ -371,9 +385,10 @@ it('shows weights in tonnes, with the exact KG on hover', async () => {
   const cells = screen.getAllByText('0.31');
   expect(cells.length).toBe(7);
   // The same hover card as the consolidation sheet, not the browser's plain tooltip.
-  expect(cells[0].closest('[data-hint]')?.getAttribute('data-hint')).toBe(
-    '313.5 KG',
-  );
+  // Rishi, 4 Nov: the exact KG leads the day's details (consumption, head, kg/head/day, silo stock).
+  expect(
+    cells[0].closest('[data-hint]')?.getAttribute('data-hint')?.split('\n')[0],
+  ).toBe('mplEaten: 313.5 KG');
   expect(cells[0].closest('td')?.hasAttribute('title')).toBe(false);
   expect(
     document.querySelector(`[data-capacity-day="${dates[1]}"]`)?.textContent,
@@ -739,6 +754,8 @@ it('shows the requisition stage on hover and colours the circle by it', async ()
     openingKg: 1000,
     closingKg: [1000, 1000, 4000, 4000, 4000, 4000, 4000],
     runOutDate: null,
+    useKg: [0, 0, 0, 0, 0, 0, 0],
+    capacityKg: null,
   });
   await renderPanel({
     farms: [
@@ -809,4 +826,60 @@ it('lays a requisition hover out as labels and values', async () => {
     ]),
   );
   expect(card.textContent).toContain('REQ-F1-00006');
+});
+
+// Rishi, 4 Nov: every grid number shows the day's consumption and the silo's stock against its capacity.
+it("shows a shed figure's consumption and its silo's stock, and a silo figure's use and stock, on hover", async () => {
+  await renderPanel();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'mplGenerate' }));
+  });
+  const shedRow = document
+    .querySelector(
+      '[data-mill-grid] tbody tr:not([data-silo-row]) td:nth-child(3)',
+    )
+    ?.closest('tr') as HTMLElement;
+  const shedCell = [...document.querySelectorAll('[data-mill-grid] tbody tr')]
+    .find((tr) => tr.textContent?.includes('B-1'))!
+    .querySelectorAll('td')[2] as HTMLElement;
+  const shedHint =
+    shedCell.querySelector('[data-hint]')?.getAttribute('data-hint') ?? '';
+  expect(shedHint).toContain('mplEaten: 313.5 KG');
+  expect(shedHint).toContain('mplHead: 120');
+  expect(shedHint).toContain('mplKgPerHeadDay: 2.613');
+  expect(shedHint).toContain(
+    'SL-1: mplStockOfCapacity {"stock":"3,000 KG","capacity":"10,000 KG","pct":30}',
+  );
+  const siloCell = document.querySelector(
+    '[data-silo-row] td:nth-child(3)',
+  ) as HTMLElement;
+  const siloHint =
+    siloCell.querySelector('[data-hint]')?.getAttribute('data-hint') ?? '';
+  expect(siloHint).toContain('mplUsed: 2,000 KG');
+  expect(siloHint).toContain(
+    'mplStockRemaining: mplStockOfCapacity {"stock":"3,000 KG","capacity":"10,000 KG","pct":30}',
+  );
+  expect(shedRow).toBeTruthy();
+});
+
+// Rishi, 4 Nov: Collapse All is disabled when every farm is collapsed, Expand All when every farm is expanded.
+it('disables Collapse All and Expand All when every farm is already in that state', async () => {
+  await renderPanel();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'mplGenerate' }));
+  });
+  const collapseAll = screen.getByRole('button', {
+    name: 'mplCollapseAll',
+  }) as HTMLButtonElement;
+  const expandAll = screen.getByRole('button', {
+    name: 'mplExpandAll',
+  }) as HTMLButtonElement;
+  expect(expandAll.disabled).toBe(true);
+  expect(collapseAll.disabled).toBe(false);
+  fireEvent.click(collapseAll);
+  expect(collapseAll.disabled).toBe(true);
+  expect(expandAll.disabled).toBe(false);
+  fireEvent.click(expandAll);
+  expect(expandAll.disabled).toBe(true);
+  expect(collapseAll.disabled).toBe(false);
 });

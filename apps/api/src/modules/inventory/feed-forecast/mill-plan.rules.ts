@@ -205,6 +205,10 @@ export interface MillPlanShed {
   items: Array<{ itemId: string; itemName: string }>;
   changeDate: string | null;
   kg: number[];
+  /** Heads fed each day (Rishi, 4 Nov: the day's consumption on hover). */
+  headsByDay: number[];
+  /** The silos/stores the row draws on each day, as `sourceCode|itemId` (a silo row's key). */
+  sourcesByDay: string[][];
 }
 
 export interface MillPlanSilo {
@@ -220,6 +224,9 @@ export interface MillPlanSilo {
   /** null on a day the forecast does not cover (before the planning date). */
   closingKg: Array<number | null>;
   runOutDate: string | null;
+  /** Feed drawn from it each day, and its capacity (null for a store or a silo without one) — Rishi, 4 Nov. */
+  useKg: number[];
+  capacityKg: number | null;
 }
 
 export interface MillPlan {
@@ -433,8 +440,17 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
         items: [],
         changeDate: null,
         kg: dates.map(() => 0),
+        headsByDay: dates.map(() => 0),
+        sourcesByDay: dates.map((): string[] => []),
       };
       shed.kg[i] = roundKg(shed.kg[i] + r.demandKg);
+      // A batch on two feeds the same day is the same heads twice: keep the larger, not the sum.
+      shed.headsByDay[i] = Math.max(shed.headsByDay[i], r.heads);
+      if (
+        r.sourceCode &&
+        !shed.sourcesByDay[i].includes(`${r.sourceCode}|${r.itemId}`)
+      )
+        shed.sourcesByDay[i].push(`${r.sourceCode}|${r.itemId}`);
       if (r.heads > 0) {
         const e = eaten.get(r.itemId) ?? {
           heads: dates.map(() => 0),
@@ -521,10 +537,16 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
         itemName: point.itemName,
         openingKg: 0,
         closingKg: dates.map((): number | null => null),
+        useKg: dates.map(() => 0),
+        capacityKg:
+          point.sourceType === 'SILO'
+            ? (input.siloCapacityKg.get(point.locationId) ?? null)
+            : null,
         runOutDate: null,
       };
       if (silo.closingKg.slice(0, i).every((kg) => kg === null))
         silo.openingKg = point.openingSystemBalanceKg;
+      silo.useKg[i] = roundKg(silo.useKg[i] + point.dailyUseKg);
       silo.closingKg[i] = roundKg(
         (silo.closingKg[i] ?? 0) + point.projectedClosingBalanceKg,
       );

@@ -118,6 +118,9 @@ interface MillPlan {
       items: Array<{ itemId: string; itemName: string }>;
       changeDate: string | null;
       kg: number[];
+      /** Heads fed and the silos drawn on, per day (Rishi, 4 Nov). */
+      headsByDay: number[];
+      sourcesByDay: string[][];
     }>;
     silos: Array<{
       /** Requisitions due into this silo for this feed (Rishi, 4 Nov). */
@@ -130,6 +133,9 @@ interface MillPlan {
       openingKg: number;
       closingKg: Array<number | null>;
       runOutDate: string | null;
+      /** Feed drawn each day and the silo's capacity (null for a store or none set). */
+      useKg: number[];
+      capacityKg: number | null;
     }>;
     /** Batches the forecast found no lifecycle feed row for (mill-plan.rules MillPlanNoFeedRow). */
     noFeedRows: Array<{
@@ -286,6 +292,22 @@ const stageText = (d: Due, t: (key: any, vars?: any) => string) => {
   }
 };
 
+/** Stock remaining against capacity: "4,741 KG of 5,800 KG (82%)", or the stock alone without a capacity. */
+const stockOf = (
+  closingKg: number | null,
+  capacityKg: number | null,
+  t: (key: any, vars?: any) => string,
+) => {
+  if (closingKg === null) return t('mplNotForecast');
+  const stock = exactKg(closingKg) ?? '0 KG';
+  if (!capacityKg) return t('mplStockNoCapacity', { stock });
+  return t('mplStockOfCapacity', {
+    stock,
+    capacity: exactKg(capacityKg),
+    pct: Math.round((closingKg / capacityKg) * 100),
+  });
+};
+
 /**
  * A grid figure on a day a requisition is due (Rishi, 4 Nov): circled as on the Mill Consolidation sheet, the
  * requisitions on hover. Without one it is the plain figure with its exact KG.
@@ -293,7 +315,7 @@ const stageText = (d: Due, t: (key: any, vars?: any) => string) => {
 function DueFigure({
   kg,
   due,
-  label,
+  details,
   heading,
   changes = [],
   t,
@@ -301,14 +323,15 @@ function DueFigure({
 }: {
   kg: number | null;
   due: Due[];
-  label: string;
+  /** The figure's own day (Rishi, 4 Nov): consumption, and stock remaining against capacity. */
+  details: Array<[string, string]>;
   heading: string;
   /** The day's feed changes (Rishi, 4 Nov); they lead the hover. */
   changes?: Change[];
   t: (key: any, vars?: any) => string;
   children: ReactNode;
 }) {
-  if (!due.length && !changes.length)
+  if (!due.length && !changes.length && !details.length)
     return <Figure kg={kg}>{children}</Figure>;
   // Several requisitions on one day: the circle shows the least advanced.
   const stage = due.length
@@ -332,7 +355,7 @@ function DueFigure({
   };
   // The plain text of the card, for assistive tech and the hint attribute.
   const lines = [
-    `${label}: ${exactKg(kg) ?? '0 KG'}`,
+    ...details.map(([k, v]) => `${k}: ${v}`),
     ...changes.flatMap((c) => [
       t('mplChangeLine', { from: c.fromItemName, to: c.toItemName }),
       animalsOf(c),
@@ -356,7 +379,7 @@ function DueFigure({
   );
   const content = (
     <div className="space-y-2" data-hover-body>
-      {pairs([[label, exactKg(kg) ?? '0 KG']])}
+      {pairs(details)}
       {changes.map((c, i) => (
         <div key={`c${i}`} className="border-t border-(--border) pt-1.5">
           {pairs([
@@ -965,9 +988,13 @@ export default function MillPlanPanel() {
           <section aria-label={t('mplGrid')}>
             <SectionTitle title={t('mplGrid')} info={t('mplGridInfo')}>
               <div className="flex gap-2">
+                {/* Rishi, 4 Nov: each button is disabled once every farm is already in its state. */}
                 <Button
                   size="sm"
                   variant="outline"
+                  disabled={plan.farms.every((farm) =>
+                    collapsed.includes(farm.farmId),
+                  )}
                   onClick={() =>
                     setCollapsed(plan.farms.map((farm) => farm.farmId))
                   }
@@ -977,6 +1004,9 @@ export default function MillPlanPanel() {
                 <Button
                   size="sm"
                   variant="outline"
+                  disabled={
+                    !plan.farms.some((farm) => collapsed.includes(farm.farmId))
+                  }
                   onClick={() => setCollapsed([])}
                 >
                   {t('mplExpandAll')}
@@ -1166,11 +1196,52 @@ export default function MillPlanPanel() {
                                       due={shed.requisitions.filter(
                                         (d) => d.date === date,
                                       )}
-                                      label={t('mplEaten')}
+                                      details={[
+                                        [t('mplEaten'), exactKg(kg) ?? '0 KG'],
+                                        [
+                                          t('mplHead'),
+                                          shed.headsByDay[i].toLocaleString(
+                                            'en-US',
+                                          ),
+                                        ],
+                                        [
+                                          t('mplKgPerHeadDay'),
+                                          shed.headsByDay[i] > 0
+                                            ? kgHead(kg / shed.headsByDay[i])
+                                            : '—',
+                                        ],
+                                        ...shed.sourcesByDay[i].map(
+                                          (key): [string, string] => {
+                                            const source = farm.silos.find(
+                                              (sl) =>
+                                                `${sl.sourceCode}|${sl.itemId}` ===
+                                                key,
+                                            );
+                                            return [
+                                              source
+                                                ? source.sourceCode
+                                                : key.split('|')[0],
+                                              source
+                                                ? stockOf(
+                                                    source.closingKg[i],
+                                                    source.capacityKg,
+                                                    t,
+                                                  )
+                                                : t('mplNotForecast'),
+                                            ];
+                                          },
+                                        ),
+                                      ]}
                                       heading={
                                         change
                                           ? t('mplFeedChangeHeading')
-                                          : t('mplRequisitionsDue')
+                                          : shed.requisitions.some(
+                                                (d) => d.date === date,
+                                              )
+                                            ? t('mplRequisitionsDue')
+                                            : t('mplDayHeading', {
+                                                day: `${weekday(date)} ${formatDateShort(date)}`,
+                                              })
                                       }
                                       changes={dayChanges}
                                     >
@@ -1239,8 +1310,25 @@ export default function MillPlanPanel() {
                                       due={silo.requisitions.filter(
                                         (d) => d.date === date,
                                       )}
-                                      label={t('mplClosing')}
-                                      heading={t('mplRequisitionsDue')}
+                                      details={[
+                                        [
+                                          t('mplUsed'),
+                                          exactKg(silo.useKg[i]) ?? '0 KG',
+                                        ],
+                                        [
+                                          t('mplStockRemaining'),
+                                          stockOf(kg, silo.capacityKg, t),
+                                        ],
+                                      ]}
+                                      heading={
+                                        silo.requisitions.some(
+                                          (d) => d.date === date,
+                                        )
+                                          ? t('mplRequisitionsDue')
+                                          : t('mplDayHeading', {
+                                              day: `${weekday(date)} ${formatDateShort(date)}`,
+                                            })
+                                      }
                                     >
                                       {tonnes(kg)}
                                     </DueFigure>

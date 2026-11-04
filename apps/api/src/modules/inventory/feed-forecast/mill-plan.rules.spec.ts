@@ -823,3 +823,50 @@ describe('requisitionStage', () => {
     ).toBe('TRANSFER_OPEN');
   });
 });
+
+// Rishi, 4 Nov: every grid number shows the day's consumption and the silo's stock against its capacity.
+describe('grid details per day', () => {
+  it("keeps each shed row's heads and silos per day, and each silo's daily use and capacity", () => {
+    const daily = [
+      row({
+        date: dates[0],
+        heads: 100,
+        demandKg: 200,
+        sourceCode: 'SL-1',
+        destinationLocationId: 'loc-sl1',
+      }),
+      // The same batch on a second feed that day: the same heads, not twice as many.
+      row({
+        date: dates[0],
+        itemId: STARTER,
+        itemName: 'Starter',
+        heads: 100,
+        demandKg: 50,
+        sourceCode: 'SL-2',
+        destinationLocationId: 'loc-sl2',
+      }),
+    ];
+    const sourceBalances = [
+      balance({
+        date: dates[0],
+        dailyUseKg: 200,
+        projectedClosingBalanceKg: 4800,
+        openingSystemBalanceKg: 5000,
+      }),
+    ];
+    const plan = buildMillPlan(
+      input({
+        farms: [farm({ daily, sourceBalances })],
+        siloCapacityKg: new Map([['loc-sl1', 10000]]),
+      }),
+    );
+    const shed = plan.farms[0].sheds[0];
+    expect(shed.headsByDay[0]).toBe(100);
+    expect(shed.kg[0]).toBe(250);
+    expect(shed.sourcesByDay[0]).toEqual([`SL-1|${GROWER}`, `SL-2|${STARTER}`]);
+    const silo = plan.farms[0].silos[0];
+    expect(silo.useKg[0]).toBe(200);
+    expect(silo.closingKg[0]).toBe(4800);
+    expect(silo.capacityKg).toBe(10000);
+  });
+});
