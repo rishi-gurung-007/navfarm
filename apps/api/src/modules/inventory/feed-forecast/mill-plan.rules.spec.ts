@@ -293,15 +293,13 @@ describe('buildMillPlan', () => {
       input({
         farms: [
           farm({
-            sourceBalances: dates
-              .slice(1)
-              .map((date, i) =>
-                balance({
-                  date,
-                  openingSystemBalanceKg: i === 0 ? 4000 : 0,
-                  projectedClosingBalanceKg: 3000,
-                }),
-              ),
+            sourceBalances: dates.slice(1).map((date, i) =>
+              balance({
+                date,
+                openingSystemBalanceKg: i === 0 ? 4000 : 0,
+                projectedClosingBalanceKg: 3000,
+              }),
+            ),
           }),
         ],
       }),
@@ -574,5 +572,88 @@ describe('consumption per feed', () => {
     expect(c.animals).toBe(60);
     expect(c.kgPerHeadDay).toBe(0.5);
     expect(c.byType).toEqual([{ animalType: 'COMMERCIAL_PIG', heads: 60 }]);
+  });
+});
+
+// Rishi, 4 Nov: a requisition due in the week is circled on its day, as on the consolidation sheet.
+describe('requisitions due in the grid', () => {
+  it('puts a requisition on its silo row and on each shed row drawing that feed from that silo, on its day', () => {
+    const daily = dates.flatMap((date) => [
+      row({
+        date,
+        batchId: 'B-1',
+        batchNo: 'B-1',
+        shedCode: 'S1',
+        destinationLocationId: 'loc-sl1',
+      }),
+      row({
+        date,
+        batchId: 'B-2',
+        batchNo: 'B-2',
+        shedCode: 'S2',
+        destinationLocationId: 'loc-sl1',
+      }),
+      row({
+        date,
+        batchId: 'B-3',
+        batchNo: 'B-3',
+        shedCode: 'S3',
+        destinationLocationId: 'loc-sl2',
+        sourceCode: 'SL-2',
+      }),
+    ]);
+    const sourceBalances = dates.map((date) => balance({ date }));
+    const requisitions = [
+      {
+        requisitionId: 'r1',
+        reqNo: 'REQ-1',
+        status: 'APPROVED',
+        siloId: 'loc-sl1',
+        itemId: GROWER,
+        date: dates[3],
+        kg: 3000,
+      },
+      {
+        requisitionId: 'r2',
+        reqNo: 'REQ-2',
+        status: 'APPROVED',
+        siloId: 'loc-sl1',
+        itemId: STARTER,
+        date: dates[4],
+        kg: 1000,
+      },
+      {
+        requisitionId: 'r3',
+        reqNo: 'REQ-3',
+        status: 'APPROVED',
+        siloId: 'loc-sl1',
+        itemId: GROWER,
+        date: '2026-11-20',
+        kg: 500,
+      },
+    ];
+    const plan = buildMillPlan(
+      input({ farms: [farm({ daily, sourceBalances, requisitions })] }),
+    );
+    const f = plan.farms[0];
+    const due = {
+      date: dates[3],
+      requisitionId: 'r1',
+      reqNo: 'REQ-1',
+      status: 'APPROVED',
+      kg: 3000,
+      sourceCode: 'SL-1',
+      itemName: 'Grower',
+    };
+    expect(f.silos.find((s) => s.sourceCode === 'SL-1')!.requisitions).toEqual([
+      due,
+    ]);
+    expect(f.sheds.find((s) => s.batchNo === 'B-1')!.requisitions).toEqual([
+      due,
+    ]);
+    expect(f.sheds.find((s) => s.batchNo === 'B-2')!.requisitions).toEqual([
+      due,
+    ]);
+    expect(f.sheds.find((s) => s.batchNo === 'B-3')!.requisitions).toEqual([]);
   });
 });

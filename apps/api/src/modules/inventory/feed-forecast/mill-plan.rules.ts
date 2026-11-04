@@ -41,6 +41,8 @@ export interface MillPlanFarmInput {
    * A batch not here is count-only: its heads are typed by stage (animalTypeOfStage).
    */
   animalTypes?: Record<string, Record<string, number>>;
+  /** The farm's feed requisition lines due in the week, by destination silo, feed and delivery date (Rishi, 4 Nov). */
+  requisitions?: MillPlanRequisitionLine[];
   /** The forecast's flags; NO_FEED_ROW explains a batch (or a whole farm) that eats nothing. */
   flags: ForecastFlag[];
 }
@@ -103,8 +105,31 @@ export interface MillPlanSiloCard {
 
 export type DayStatus = 'OK' | 'WARN' | 'OVER' | 'NO_CAPACITY';
 
+export interface MillPlanRequisitionLine {
+  requisitionId: string;
+  reqNo: string;
+  status: string;
+  siloId: string;
+  itemId: string;
+  date: string;
+  kg: number;
+}
+
+/** A requisition due on a grid day: the circle and hover on that day (Rishi, 4 Nov, as on the consolidation sheet). */
+export interface MillPlanDue {
+  date: string;
+  requisitionId: string;
+  reqNo: string;
+  status: string;
+  kg: number;
+  sourceCode: string;
+  itemName: string;
+}
+
 export interface MillPlanShed {
   key: string;
+  /** Requisitions due into the silos this row draws its feed from. */
+  requisitions: MillPlanDue[];
   shedCode: string;
   batchNo: string;
   heads: number;
@@ -114,6 +139,8 @@ export interface MillPlanShed {
 }
 
 export interface MillPlanSilo {
+  /** Requisitions due into this silo for this feed. */
+  requisitions: MillPlanDue[];
   sourceCode: string;
   sourceName: string | null;
   sourceType: 'SILO' | 'STORE';
@@ -318,12 +345,20 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
     }
 
     const sheds = new Map<string, MillPlanShed>();
+    // Which silo and feed each shed row draws on, to give it the requisitions due into them.
+    const drawsOn = new Map<string, Set<string>>();
     for (const r of f.daily) {
       const i = dateIndex.get(r.date);
       if (i === undefined || !selected(r.itemId)) continue;
       const key = `${r.shedCode}|${r.batchNo}`;
+      if (r.destinationLocationId) {
+        const set = drawsOn.get(key) ?? new Set<string>();
+        set.add(`${r.destinationLocationId}|${r.itemId}`);
+        drawsOn.set(key, set);
+      }
       const shed = sheds.get(key) ?? {
         key,
+        requisitions: [],
         shedCode: r.shedCode,
         batchNo: r.batchNo,
         heads: 0,
@@ -379,11 +414,14 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
 
     // One row per source and feed: a store (or a silo also holding the next diet) can carry several feeds.
     const silos = new Map<string, MillPlanSilo>();
+    const siloLocation = new Map<string, string>();
     for (const point of f.sourceBalances) {
       const i = dateIndex.get(point.date);
       if (i === undefined || !selected(point.itemId)) continue;
       const siloKey = `${point.sourceCode}|${point.itemId}`;
+      siloLocation.set(siloKey, `${point.locationId}|${point.itemId}`);
       const silo = silos.get(siloKey) ?? {
+        requisitions: [],
         sourceCode: point.sourceCode,
         sourceName: point.sourceName,
         sourceType: point.sourceType,
@@ -403,6 +441,31 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
     for (const silo of silos.values()) {
       const at = silo.closingKg.findIndex((kg) => kg !== null && kg <= 0);
       silo.runOutDate = at < 0 ? null : dates[at];
+    }
+
+    // Requisitions due in the week: on the silo they deliver into, and on every shed row drawing that feed from it.
+    const codeOf = new Map<string, string>();
+    for (const point of f.sourceBalances)
+      codeOf.set(`${point.locationId}|${point.itemId}`, point.sourceCode);
+    for (const line of f.requisitions ?? []) {
+      if (!dateIndex.has(line.date) || !selected(line.itemId)) continue;
+      const target = `${line.siloId}|${line.itemId}`;
+      const due: MillPlanDue = {
+        date: line.date,
+        requisitionId: line.requisitionId,
+        reqNo: line.reqNo,
+        status: line.status,
+        kg: roundKg(line.kg),
+        sourceCode: codeOf.get(target) ?? '',
+        itemName:
+          input.items.get(line.itemId)?.itemName ??
+          names.get(line.itemId) ??
+          line.itemId,
+      };
+      for (const [key, silo] of silos)
+        if (siloLocation.get(key) === target) silo.requisitions.push(due);
+      for (const [key, shed] of sheds)
+        if (drawsOn.get(key)?.has(target)) shed.requisitions.push(due);
     }
 
     // Cards: every silo whatever the Feed Types filter — a silo's fill is physical, not per feed. Its stock is the

@@ -117,6 +117,17 @@ interface MillPlan {
     totals: number[];
     sheds: Array<{
       key: string;
+      /** Requisitions due into the silos this row draws from (Rishi, 4 Nov). */
+      requisitions: Array<{
+        date: string;
+        requisitionId: string;
+        reqNo: string;
+        status: string;
+        kg: number;
+        sourceCode: string;
+        itemName: string;
+      }>;
+
       shedCode: string;
       batchNo: string;
       heads: number;
@@ -125,6 +136,16 @@ interface MillPlan {
       kg: number[];
     }>;
     silos: Array<{
+      /** Requisitions due into this silo for this feed (Rishi, 4 Nov). */
+      requisitions: Array<{
+        date: string;
+        requisitionId: string;
+        reqNo: string;
+        status: string;
+        kg: number;
+        sourceCode: string;
+        itemName: string;
+      }>;
       sourceCode: string;
       sourceName: string | null;
       sourceType: 'SILO' | 'STORE';
@@ -194,6 +215,59 @@ function Figure({
     </HoverHint>
   ) : (
     <>{children}</>
+  );
+}
+
+type Due = {
+  date: string;
+  requisitionId: string;
+  reqNo: string;
+  status: string;
+  kg: number;
+  sourceCode: string;
+  itemName: string;
+};
+
+/**
+ * A grid figure on a day a requisition is due (Rishi, 4 Nov): circled as on the Mill Consolidation sheet, the
+ * requisitions on hover. Without one it is the plain figure with its exact KG.
+ */
+function DueFigure({
+  kg,
+  due,
+  label,
+  heading,
+  children,
+}: {
+  kg: number | null;
+  due: Due[];
+  label: string;
+  heading: string;
+  children: ReactNode;
+}) {
+  if (!due.length) return <Figure kg={kg}>{children}</Figure>;
+  const lines = [
+    `${label}: ${exactKg(kg) ?? '0 KG'}`,
+    ...due.map(
+      (d) =>
+        `${d.reqNo} · ${exactKg(d.kg)} ${d.itemName}${d.sourceCode ? ` → ${d.sourceCode}` : ''} · ${d.status.replace(/_/g, ' ').toLowerCase()}`,
+    ),
+  ];
+  return (
+    <HoverHint
+      plain
+      focusable={false}
+      heading={heading}
+      hint={lines.join('\n')}
+      list={lines}
+    >
+      <span
+        data-requisition-due
+        className="inline-flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 ring-2 ring-(--accent)"
+      >
+        {children}
+      </span>
+    </HoverHint>
   );
 }
 
@@ -1052,7 +1126,16 @@ export default function MillPlanPanel() {
                                         }
                                       : {})}
                                   >
-                                    <Figure kg={kg}>{tonnes(kg)}</Figure>
+                                    <DueFigure
+                                      kg={kg}
+                                      due={shed.requisitions.filter(
+                                        (d) => d.date === date,
+                                      )}
+                                      label={t('mplEaten')}
+                                      heading={t('mplRequisitionsDue')}
+                                    >
+                                      {tonnes(kg)}
+                                    </DueFigure>
                                   </td>
                                 );
                               })}
@@ -1110,7 +1193,16 @@ export default function MillPlanPanel() {
                                         }
                                       : {})}
                                   >
-                                    <Figure kg={kg}>{tonnes(kg)}</Figure>
+                                    <DueFigure
+                                      kg={kg}
+                                      due={silo.requisitions.filter(
+                                        (d) => d.date === date,
+                                      )}
+                                      label={t('mplClosing')}
+                                      heading={t('mplRequisitionsDue')}
+                                    >
+                                      {tonnes(kg)}
+                                    </DueFigure>
                                   </td>
                                 );
                               })}

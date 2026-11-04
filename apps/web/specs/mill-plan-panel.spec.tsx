@@ -126,6 +126,17 @@ const plan = {
       sheds: [
         {
           key: 'S1|B-1',
+          requisitions: [
+            {
+              date: dates[2],
+              requisitionId: 'r1',
+              reqNo: 'REQ-F1-00006',
+              status: 'APPROVED',
+              kg: 3000,
+              sourceCode: 'SL-1',
+              itemName: 'Grower',
+            },
+          ],
           shedCode: 'S1',
           batchNo: 'B-1',
           heads: 120,
@@ -136,6 +147,17 @@ const plan = {
       ],
       silos: [
         {
+          requisitions: [
+            {
+              date: dates[2],
+              requisitionId: 'r1',
+              reqNo: 'REQ-F1-00006',
+              status: 'APPROVED',
+              kg: 3000,
+              sourceCode: 'SL-1',
+              itemName: 'Grower',
+            },
+          ],
           sourceCode: 'SL-1',
           sourceName: 'Silo 1',
           sourceType: 'SILO',
@@ -146,6 +168,7 @@ const plan = {
           runOutDate: dates[3],
         },
         {
+          requisitions: [],
           sourceCode: 'SL-1',
           sourceName: 'Silo 1',
           sourceType: 'SILO',
@@ -654,4 +677,19 @@ it("shows each feed's animals, kg per head per day, and the animals by type on h
       ?.getAttribute('data-hint') ?? '';
   expect(hint).toContain('Commercial Pig: 200');
   expect(hint).toContain('Sow: 4');
+});
+
+// Rishi, 4 Nov: a requisition due on a day is circled in the grid, with its quantity on hover.
+it('circles the day a requisition is due, on the shed and silo rows, with the requisition on hover', async () => {
+  await renderPanel();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'mplGenerate' }));
+  });
+  const circled = [...document.querySelectorAll('[data-requisition-due]')];
+  expect(circled).toHaveLength(2);
+  for (const el of circled) {
+    expect(el.closest('td')?.cellIndex).toBe(3);
+    const hint = el.closest('[data-hint]')?.getAttribute('data-hint') ?? '';
+    expect(hint).toContain('REQ-F1-00006 · 3,000 KG Grower → SL-1 · approved');
+  }
 });

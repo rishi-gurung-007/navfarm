@@ -4,7 +4,7 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { ClsService } from 'nestjs-cls';
-import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from '../../../core/database/schema';
 import { resolveItemFeedForm } from '../../../common/feed-form';
@@ -124,6 +124,12 @@ export class MillPlanService {
           animalTypes: await this.animalTypes(tenantId, [
             ...new Set(daily.map((row) => String(row.realBatchId))),
           ]),
+          requisitions: await this.requisitionsDue(
+            tenantId,
+            farm.farmId,
+            from,
+            to,
+          ),
           sourceBalances: report.sourceBalances,
           dietChanges: report.dietChanges,
           flags: report.flags,
@@ -246,6 +252,54 @@ export class MillPlanService {
         companyId: row.companyId,
       })),
     };
+  }
+
+  /**
+   * The farm's feed requisition lines due in the week (Rishi, 4 Nov): by destination silo, feed and proposed delivery
+   * date; rejected and cancelled requisitions are left out.
+   */
+  protected async requisitionsDue(
+    tenantId: string,
+    farmId: string,
+    from: string,
+    to: string,
+  ) {
+    const R = schema.requisition;
+    const L = schema.requisitionLine;
+    const rows = await this.db
+      .select({
+        requisitionId: R.requisition_id,
+        reqNo: R.req_no,
+        status: R.status,
+        siloId: L.destination_location_id,
+        itemId: L.item_id,
+        date: L.proposed_delivery_date,
+        kg: L.quantity,
+      })
+      .from(L)
+      .innerJoin(R, eq(R.requisition_id, L.requisition_id))
+      .where(
+        and(
+          eq(R.tenant_id, tenantId),
+          eq(R.farm_id, farmId),
+          eq(R.doc_type, 'FEED'),
+          isNull(R.deleted_at),
+          sql`${L.proposed_delivery_date} BETWEEN ${from} AND ${to}`,
+          sql`COALESCE(${R.status}, '') NOT IN ('CANCELLED', 'REJECTED')`,
+          sql`COALESCE(${R.approval_status}, '') <> 'REJECTED'`,
+        ),
+      );
+    return rows
+      .filter((row) => row.siloId && row.itemId && row.date)
+      .map((row) => ({
+        requisitionId: row.requisitionId,
+        reqNo: row.reqNo ?? row.requisitionId,
+        status: row.status ?? '',
+        siloId: row.siloId as string,
+        itemId: row.itemId as string,
+        date: String(row.date).slice(0, 10),
+        kg: Number(row.kg) || 0,
+      }));
   }
 
   /** Registered animals in each batch by Animal Type (Rishi, 4 Nov); a count-only batch has none and is left out. */
