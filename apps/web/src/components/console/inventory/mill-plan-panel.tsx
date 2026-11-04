@@ -849,6 +849,7 @@ export default function MillPlanPanel() {
             return (
               <StatRow columns={6}>
                 <StatCard
+                  fitLines
                   label={t('mplCardTotal')}
                   value={
                     <Figure kg={plan.cards.totalKg}>
@@ -863,6 +864,7 @@ export default function MillPlanPanel() {
                   })}
                 />
                 <StatCard
+                  fitLines
                   label={t('mplCardFarms')}
                   value={plan.cards.farms}
                   sub={t('mplCardFarmsSub', {
@@ -871,11 +873,14 @@ export default function MillPlanPanel() {
                   })}
                 />
                 <StatCard
+                  fitLines
                   label={t('mplCardFeedTypes')}
                   value={plan.cards.feedTypes}
                   sub={feedNames.length ? upTo(feedNames, 3) : t('mplCardNone')}
+                  subHint={feedNames.length ? feedNames.join(' · ') : undefined}
                 />
                 <StatCard
+                  fitLines
                   label={t('mplCardDietChanges')}
                   value={plan.cards.dietChanges}
                   tone={plan.cards.dietChanges ? 'warning' : 'default'}
@@ -886,6 +891,7 @@ export default function MillPlanPanel() {
                   }
                 />
                 <StatCard
+                  fitLines
                   label={t('mplCardDaysNear')}
                   value={plan.cards.daysNearOrOver}
                   tone={
@@ -904,6 +910,7 @@ export default function MillPlanPanel() {
                   }
                 />
                 <StatCard
+                  fitLines
                   label={t('mplCardSilosOut')}
                   value={plan.cards.silosRunningOut}
                   tone={plan.cards.silosRunningOut ? 'danger' : 'default'}
@@ -911,6 +918,11 @@ export default function MillPlanPanel() {
                     runningOut.length
                       ? t('mplCardRefill', { silos: upTo(runningOut, 3) })
                       : t('mplCardNoneRunOut')
+                  }
+                  subHint={
+                    runningOut.length
+                      ? t('mplCardRefill', { silos: runningOut.join(' · ') })
+                      : undefined
                   }
                 />
               </StatRow>

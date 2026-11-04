@@ -17,8 +17,11 @@ export function HoverHint({
   heading,
   list,
   content,
+  className,
 }: {
   hint: string;
+  /** Extra classes on the anchor, e.g. `block truncate` for a clipped one-line value. */
+  className?: string;
   children: ReactNode;
   /** No dotted underline: for a figure in a dense grid, where every cell has a hover and underlining them all is noise. */
   plain?: boolean;
@@ -50,7 +53,7 @@ export function HoverHint({
         onMouseLeave={hide}
         onFocus={show}
         onBlur={hide}
-        className={`cursor-help outline-none focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-(--accent) ${plain ? '' : 'underline decoration-dotted underline-offset-2'}`}
+        className={`cursor-help outline-none focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-(--accent) ${plain ? '' : 'underline decoration-dotted underline-offset-2'} ${className ?? ''}`}
       >
         {children}
       </span>

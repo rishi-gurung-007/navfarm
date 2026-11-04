@@ -1,5 +1,6 @@
 import type { ElementType, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
+import { HoverHint } from '@/components/ui/hover-hint';
 
 /**
  * The "KPI strip under the page title" pattern (apple.design.md §21's
@@ -52,6 +53,13 @@ export interface StatCardProps {
   emphasis?: boolean;
   href?: string;
   onClick?: () => void;
+  /**
+   * Keep the label to two lines (always taking two, so values line up across
+   * a row) and `sub` to one, with the full text on hover.
+   */
+  fitLines?: boolean;
+  /** The hover text for a clipped `sub` when it says more than `sub` does (e.g. every name, not "1 more"). */
+  subHint?: string;
 }
 
 const TONE_TEXT: Record<string, string> = {
@@ -78,6 +86,8 @@ export function StatCard({
   emphasis = false,
   href,
   onClick,
+  fitLines = false,
+  subHint,
 }: StatCardProps) {
   const emphasisClass = emphasis ? TONE_EMPHASIS[tone] : undefined;
   const Wrapper = href ? 'a' : 'div';
@@ -93,7 +103,13 @@ export function StatCard({
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)">
+        <p
+          title={fitLines ? label : undefined}
+          className={cn(
+            'text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)',
+            fitLines && 'line-clamp-2 min-h-[2lh]',
+          )}
+        >
           {label}
         </p>
         {action ??
@@ -119,9 +135,20 @@ export function StatCard({
           </span>
         )}
       </p>
-      {sub && (
-        <div className="mt-1.5 text-xs text-(--text-secondary)">{sub}</div>
-      )}
+      {sub &&
+        (fitLines ? (
+          <div className="mt-1.5 text-xs text-(--text-secondary)">
+            <HoverHint
+              plain
+              hint={subHint ?? (typeof sub === 'string' ? sub : label)}
+              className="block truncate"
+            >
+              {sub}
+            </HoverHint>
+          </div>
+        ) : (
+          <div className="mt-1.5 text-xs text-(--text-secondary)">{sub}</div>
+        ))}
     </Wrapper>
   );
 }
