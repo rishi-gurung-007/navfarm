@@ -16,6 +16,7 @@ export function HoverHint({
   plain = false,
   heading,
   list,
+  content,
 }: {
   hint: string;
   children: ReactNode;
@@ -25,6 +26,8 @@ export function HoverHint({
   heading?: string;
   /** The card shows these one per line as a list instead of `hint` (which still names the hint for assistive tech). */
   list?: string[];
+  /** A laid-out card body (e.g. label and value columns) in place of `list`; `hint` still names it for assistive tech. */
+  content?: ReactNode;
   /** false inside a control that is already focusable (a button), so keyboard users meet one stop, not two. */
   focusable?: boolean;
 }) {
@@ -57,7 +60,7 @@ export function HoverHint({
           <span
             id={id}
             role="tooltip"
-            className={`pointer-events-none fixed z-[1000] -translate-x-1/2 -translate-y-full rounded-md border px-2.5 py-1.5 text-xs leading-snug shadow-lg ${list ? 'max-w-80' : 'max-w-64'}`}
+            className={`pointer-events-none fixed z-[1000] -translate-x-1/2 -translate-y-full rounded-md border px-2.5 py-1.5 text-xs leading-snug shadow-lg ${content ? 'max-w-96' : list ? 'max-w-80' : 'max-w-64'}`}
             style={{
               left: at.left,
               top: at.top - 6,
@@ -66,9 +69,18 @@ export function HoverHint({
               color: 'var(--text-primary)',
             }}
           >
-            {list ? (
+            {content ? (
               <>
-                {heading && <span className="mb-1 block font-semibold">{heading}</span>}
+                {heading && (
+                  <span className="mb-1 block font-semibold">{heading}</span>
+                )}
+                {content}
+              </>
+            ) : list ? (
+              <>
+                {heading && (
+                  <span className="mb-1 block font-semibold">{heading}</span>
+                )}
                 <ul className="list-disc space-y-0.5 pl-4">
                   {list.map((line, i) => (
                     <li key={i}>{line}</li>

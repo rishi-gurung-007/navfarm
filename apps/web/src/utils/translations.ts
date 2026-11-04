@@ -2333,6 +2333,8 @@ export const translations = {
     mplStore: 'Store',
     mplOpening: 'opening {{t}} t',
     mplRequisitionsDue: 'Requisition due',
+    mplHintQuantity: 'Quantity',
+    mplHintStage: 'Stage',
     mplStagePending: 'awaiting approval',
     mplStageApproved: 'approved, not yet consolidated',
     mplStageInConsolidation: 'in mill consolidation',

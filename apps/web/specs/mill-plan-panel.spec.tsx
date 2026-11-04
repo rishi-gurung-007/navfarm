@@ -783,3 +783,30 @@ it('shows the requisition stage on hover and colours the circle by it', async ()
     'mplStageReceived {"tr":"TR-000099","received":"3,000 KG"}',
   );
 });
+
+// Rishi, 4 Nov: the hover shows each requisition as label and value in aligned columns.
+it('lays a requisition hover out as labels and values', async () => {
+  await renderPanel();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'mplGenerate' }));
+  });
+  const circle = document.querySelector(
+    '[data-requisition-due]',
+  ) as HTMLElement;
+  fireEvent.mouseEnter(circle.closest('[data-hint]') as HTMLElement);
+  const card = screen.getByRole('tooltip');
+  expect(card.querySelector('[data-hover-body]')).toBeTruthy();
+  const pairs = [...card.querySelectorAll('dt')].map((dt) => [
+    dt.textContent,
+    dt.nextElementSibling?.textContent,
+  ]);
+  expect(pairs).toEqual(
+    expect.arrayContaining([
+      ['mplHintQuantity', '3,000 KG'],
+      ['mplFeed', 'Grower'],
+      ['mplSilo', 'SL-1'],
+      ['mplHintStage', 'MplStageApproved'],
+    ]),
+  );
+  expect(card.textContent).toContain('REQ-F1-00006');
+});

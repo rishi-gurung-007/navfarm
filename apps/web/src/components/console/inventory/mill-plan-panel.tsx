@@ -303,8 +303,8 @@ function DueFigure({
   due: Due[];
   label: string;
   heading: string;
-  /** Feed-change lines for the highlighted day (Rishi, 4 Nov); they lead the hover. */
-  changes?: string[];
+  /** The day's feed changes (Rishi, 4 Nov); they lead the hover. */
+  changes?: Change[];
   t: (key: any, vars?: any) => string;
   children: ReactNode;
 }) {
@@ -314,21 +314,83 @@ function DueFigure({
   const stage = due.length
     ? STAGES[Math.min(...due.map((d) => STAGES.indexOf(d.stage)))]
     : null;
+  const rateOf = (c: Change) =>
+    c.fromKgPerHeadDay === null
+      ? t('mplChangeRateOnly', { to: kgHead(c.kgPerHeadDay) })
+      : t('mplChangeRate', {
+          to: kgHead(c.kgPerHeadDay),
+          from: kgHead(c.fromKgPerHeadDay),
+        });
+  const animalsOf = (c: Change) =>
+    t('mplChangeAnimals', {
+      n: c.heads.toLocaleString('en-US'),
+      types: typeList(c.byType).join(', '),
+    });
+  const stageOf = (d: Due) => {
+    const text = stageText(d, t);
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  };
+  // The plain text of the card, for assistive tech and the hint attribute.
   const lines = [
     `${label}: ${exactKg(kg) ?? '0 KG'}`,
-    ...changes,
+    ...changes.flatMap((c) => [
+      t('mplChangeLine', { from: c.fromItemName, to: c.toItemName }),
+      animalsOf(c),
+      rateOf(c),
+    ]),
     ...due.map(
       (d) =>
         `${d.reqNo} · ${exactKg(d.kg)} ${d.itemName}${d.sourceCode ? ` → ${d.sourceCode}` : ''} · ${stageText(d, t)}`,
     ),
   ];
+  // Rishi, 4 Nov: label and value in aligned columns, one block per change and per requisition.
+  const pairs = (rows: Array<[string, string]>) => (
+    <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5">
+      {rows.map(([k, v]) => (
+        <Fragment key={k}>
+          <dt className="whitespace-nowrap text-(--text-secondary)">{k}</dt>
+          <dd className="m-0 tabular-nums">{v}</dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
+  const content = (
+    <div className="space-y-2" data-hover-body>
+      {pairs([[label, exactKg(kg) ?? '0 KG']])}
+      {changes.map((c, i) => (
+        <div key={`c${i}`} className="border-t border-(--border) pt-1.5">
+          {pairs([
+            [
+              t('mplFeedChangeHeading'),
+              t('mplChangeLine', { from: c.fromItemName, to: c.toItemName }),
+            ],
+            [t('mplAnimals'), animalsOf(c)],
+            [t('mplKgPerHeadDay'), rateOf(c)],
+          ])}
+        </div>
+      ))}
+      {due.map((d, i) => (
+        <div key={`d${i}`} className="border-t border-(--border) pt-1.5">
+          <div className="mb-0.5 font-semibold">{d.reqNo}</div>
+          {pairs([
+            [t('mplHintQuantity'), exactKg(d.kg) ?? '0 KG'],
+            [t('mplFeed'), d.itemName],
+            ...(d.sourceCode
+              ? [[t('mplSilo'), d.sourceCode] as [string, string]]
+              : []),
+            [t('mplHintStage'), stageOf(d)],
+          ])}
+        </div>
+      ))}
+    </div>
+  );
   return (
     <HoverHint
       plain
       focusable={false}
       heading={heading}
       hint={lines.join('\n')}
-      list={lines}
+      content={content}
     >
       {due.length ? (
         <span
@@ -1110,24 +1172,7 @@ export default function MillPlanPanel() {
                                           ? t('mplFeedChangeHeading')
                                           : t('mplRequisitionsDue')
                                       }
-                                      changes={dayChanges.flatMap((c) => [
-                                        t('mplChangeLine', {
-                                          from: c.fromItemName,
-                                          to: c.toItemName,
-                                        }),
-                                        t('mplChangeAnimals', {
-                                          n: c.heads.toLocaleString('en-US'),
-                                          types: typeList(c.byType).join(', '),
-                                        }),
-                                        c.fromKgPerHeadDay === null
-                                          ? t('mplChangeRateOnly', {
-                                              to: kgHead(c.kgPerHeadDay),
-                                            })
-                                          : t('mplChangeRate', {
-                                              to: kgHead(c.kgPerHeadDay),
-                                              from: kgHead(c.fromKgPerHeadDay),
-                                            }),
-                                      ])}
+                                      changes={dayChanges}
                                     >
                                       {tonnes(kg)}
                                     </DueFigure>
