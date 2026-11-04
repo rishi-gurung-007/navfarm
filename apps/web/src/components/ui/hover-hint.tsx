@@ -18,8 +18,11 @@ export function HoverHint({
   list,
   content,
   className,
+  followCursor = false,
 }: {
   hint: string;
+  /** The card sits by the mouse and moves with it, for a large anchor such as a whole summary card. */
+  followCursor?: boolean;
   /** Extra classes on the anchor, e.g. `block truncate` for a clipped one-line value. */
   className?: string;
   children: ReactNode;
@@ -36,10 +39,26 @@ export function HoverHint({
 }) {
   const id = useId();
   const anchor = useRef<HTMLSpanElement>(null);
-  const [at, setAt] = useState<{ left: number; top: number } | null>(null);
+  const [at, setAt] = useState<{
+    left: number;
+    top: number;
+    cursor?: boolean;
+  } | null>(null);
   const show = () => {
     const box = anchor.current?.getBoundingClientRect();
     if (box) setAt({ left: box.left + box.width / 2, top: box.top });
+  };
+  const follow = (e: { clientX: number; clientY: number }) =>
+    setAt({ left: e.clientX, top: e.clientY, cursor: true });
+  // Beside the cursor, on whichever side has room, so the card never runs off the screen.
+  const cursorPlace = (left: number, top: number) => {
+    const right = left > window.innerWidth / 2;
+    const below = top < window.innerHeight / 2;
+    return {
+      left: right ? left - 12 : left + 12,
+      top: below ? top + 16 : top - 12,
+      transform: `translate(${right ? '-100%' : '0'}, ${below ? '0' : '-100%'})`,
+    };
   };
   const hide = () => setAt(null);
   return (
@@ -49,7 +68,8 @@ export function HoverHint({
         tabIndex={focusable ? 0 : undefined}
         aria-describedby={at ? id : undefined}
         data-hint={hint}
-        onMouseEnter={show}
+        onMouseEnter={followCursor ? follow : show}
+        onMouseMove={followCursor ? follow : undefined}
         onMouseLeave={hide}
         onFocus={show}
         onBlur={hide}
@@ -63,10 +83,11 @@ export function HoverHint({
           <span
             id={id}
             role="tooltip"
-            className={`pointer-events-none fixed z-[1000] -translate-x-1/2 -translate-y-full rounded-md border px-2.5 py-1.5 text-xs leading-snug shadow-lg ${content ? 'max-w-96' : list ? 'max-w-80' : 'max-w-64'}`}
+            className={`pointer-events-none fixed z-[1000] ${at.cursor ? '' : '-translate-x-1/2 -translate-y-full'} rounded-md border px-2.5 py-1.5 text-xs leading-snug shadow-lg ${content ? 'max-w-96' : list ? 'max-w-80' : 'max-w-64'}`}
             style={{
-              left: at.left,
-              top: at.top - 6,
+              ...(at.cursor
+                ? cursorPlace(at.left, at.top)
+                : { left: at.left, top: at.top - 6 }),
               backgroundColor: 'var(--surface-raised)',
               borderColor: 'var(--border)',
               color: 'var(--text-primary)',

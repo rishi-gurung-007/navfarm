@@ -900,3 +900,16 @@ it('gives each summary card a line of text from the plan', async () => {
   expect(text).toContain('mplCardBusyDays {"days":"Tue"}');
   expect(text).toContain('mplCardRefill {"silos":"SL-1"}');
 });
+
+it('shows a summary card detail on hover, one aligned row per day with the week total', async () => {
+  await renderPanel();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'mplGenerate' }));
+  });
+  const label = screen.getByText('mplCardTotal');
+  const anchor = label.closest('[data-hint]') as HTMLElement;
+  fireEvent.mouseEnter(anchor);
+  const tip = screen.getByRole('tooltip');
+  expect(tip.querySelectorAll('dt')).toHaveLength(dates.length + 1);
+  expect(tip.textContent).toContain('mplCardWeek');
+});

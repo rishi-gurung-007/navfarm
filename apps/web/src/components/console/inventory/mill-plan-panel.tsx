@@ -447,6 +447,44 @@ function DayHead({ date }: { date: string }) {
   );
 }
 
+/** A summary card's hover: one label and value per row, in aligned columns, with an optional total row (Rishi, 4 Nov). */
+function CardDetail({
+  rows,
+  total,
+  empty,
+}: {
+  rows: Array<[string, string]>;
+  total?: [string, string];
+  empty: string;
+}) {
+  if (!rows.length) return <span className="block">{empty}</span>;
+  return (
+    <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5">
+      {rows.map(([k, v], i) => (
+        <Fragment key={i}>
+          <dt className="whitespace-nowrap text-(--text-secondary)">{k}</dt>
+          <dd className="m-0 tabular-nums">{v}</dd>
+        </Fragment>
+      ))}
+      {total && (
+        <>
+          <dt className="mt-1 whitespace-nowrap border-t border-(--border) pt-1 font-semibold">
+            {total[0]}
+          </dt>
+          <dd className="m-0 mt-1 border-t border-(--border) pt-1 font-semibold tabular-nums">
+            {total[1]}
+          </dd>
+        </>
+      )}
+    </dl>
+  );
+}
+/** The plain text of a CardDetail, for assistive tech. */
+const detailText = (rows: Array<[string, string]>, empty: string) =>
+  rows.length ? rows.map(([k, v]) => `${k}: ${v}`).join('; ') : empty;
+const dayLabel = (iso: string) =>
+  `${weekday(iso)} ${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+
 /** A section heading with an ⓘ that explains the section (and its unit) on hover. */
 function SectionTitle({
   title,
@@ -846,22 +884,99 @@ export default function MillPlanPanel() {
               names.length > n
                 ? `${names.slice(0, n).join(' · ')} · ${t('mplCardMore', { n: names.length - n })}`
                 : names.join(' · ');
+            const feedKg = new Map<string, number>();
+            for (const p of plan.production)
+              feedKg.set(
+                p.itemName,
+                (feedKg.get(p.itemName) ?? 0) + p.consumption.kg,
+              );
+            // Each card's hover detail, one row per day, farm, feed, change or silo.
+            const detail = {
+              // The week's requirement by day: the Mill Total row of the grid.
+              total: plan.dates.map((date, i): [string, string] => [
+                dayLabel(date),
+                exactKg(
+                  plan.farms.reduce(
+                    (sum, farm) => sum + (farm.totals[i] ?? 0),
+                    0,
+                  ),
+                ) ?? '—',
+              ]),
+
+              farms: plan.farms.map((farm): [string, string] => [
+                `${farm.code} — ${farm.name}`,
+                t('mplFarmSub', {
+                  sheds: farm.sheds.length,
+                  silos: farm.silos.length,
+                }),
+              ]),
+              feeds: feedNames.map((name): [string, string] => [
+                name,
+                feedKg.has(name) ? (exactKg(feedKg.get(name)) ?? '—') : '—',
+              ]),
+              changes: [...plan.dietChanges]
+                .sort((a, b) => a.changeDate.localeCompare(b.changeDate))
+                .map((c): [string, string] => [
+                  `${dayLabel(c.changeDate)} · ${c.shedCode}`,
+                  t('mplChangeLine', {
+                    from: c.fromItemName,
+                    to: c.toItemName,
+                  }),
+                ]),
+              days: plan.capacity.map((d): [string, string] => [
+                dayLabel(d.date),
+                d.capacityKg
+                  ? t('mplCardDayUse', {
+                      used: tonnes(d.productionKg),
+                      cap: tonnes(d.capacityKg),
+                      pct: Math.round(d.usedPct ?? 0),
+                    })
+                  : t('mplCapacityNotSet'),
+              ]),
+              silos: plan.farms.flatMap((farm) =>
+                farm.silos
+                  .filter((sl) => sl.runOutDate)
+                  .map((sl): [string, string] => [
+                    `${sl.sourceCode} · ${sl.itemName}`,
+                    t('mplCardRunsOut', { day: dayLabel(sl.runOutDate!) }),
+                  ]),
+              ),
+            };
+            const card = (
+              rows: Array<[string, string]>,
+              empty: string,
+              total?: [string, string],
+            ) => ({
+              detail: <CardDetail rows={rows} total={total} empty={empty} />,
+              detailHint: detailText(rows, empty),
+            });
+            const changesSub = changeDays.length
+              ? t('mplCardChangesOn', { days: changeDays.join(', ') })
+              : t('mplCardNoChanges');
+            const daysSub = !plan.mill?.dailyKg
+              ? t('mplCapacityNotSet')
+              : busyDays.length
+                ? t('mplCardBusyDays', { days: busyDays.join(' + ') })
+                : t('mplCardAllWithin');
+            const silosSub = runningOut.length
+              ? t('mplCardRefill', { silos: upTo(runningOut, 3) })
+              : t('mplCardNoneRunOut');
             return (
               <StatRow columns={6}>
                 <StatCard
                   fitLines
                   label={t('mplCardTotal')}
-                  value={
-                    <Figure kg={plan.cards.totalKg}>
-                      {tonnes(plan.cards.totalKg)}
-                    </Figure>
-                  }
+                  value={tonnes(plan.cards.totalKg)}
                   unit="t"
                   sub={t('mplCardTotalSub', {
                     t: tonnes(
                       plan.cards.totalKg / Math.max(1, plan.dates.length),
                     ),
                   })}
+                  {...card(detail.total, t('mplCardNone'), [
+                    t('mplCardWeek'),
+                    exactKg(plan.cards.totalKg) ?? '—',
+                  ])}
                 />
                 <StatCard
                   fitLines
@@ -871,24 +986,22 @@ export default function MillPlanPanel() {
                     sheds: plan.cards.sheds,
                     silos: plan.cards.silos,
                   })}
+                  {...card(detail.farms, t('mplCardNone'))}
                 />
                 <StatCard
                   fitLines
                   label={t('mplCardFeedTypes')}
                   value={plan.cards.feedTypes}
                   sub={feedNames.length ? upTo(feedNames, 3) : t('mplCardNone')}
-                  subHint={feedNames.length ? feedNames.join(' · ') : undefined}
+                  {...card(detail.feeds, t('mplCardNone'))}
                 />
                 <StatCard
                   fitLines
                   label={t('mplCardDietChanges')}
                   value={plan.cards.dietChanges}
                   tone={plan.cards.dietChanges ? 'warning' : 'default'}
-                  sub={
-                    changeDays.length
-                      ? t('mplCardChangesOn', { days: changeDays.join(', ') })
-                      : t('mplCardNoChanges')
-                  }
+                  sub={changesSub}
+                  {...card(detail.changes, changesSub)}
                 />
                 <StatCard
                   fitLines
@@ -901,29 +1014,16 @@ export default function MillPlanPanel() {
                         ? CARD_TONE.WARN
                         : 'default'
                   }
-                  sub={
-                    !plan.mill?.dailyKg
-                      ? t('mplCapacityNotSet')
-                      : busyDays.length
-                        ? t('mplCardBusyDays', { days: busyDays.join(' + ') })
-                        : t('mplCardAllWithin')
-                  }
+                  sub={daysSub}
+                  {...card(plan.mill?.dailyKg ? detail.days : [], daysSub)}
                 />
                 <StatCard
                   fitLines
                   label={t('mplCardSilosOut')}
                   value={plan.cards.silosRunningOut}
                   tone={plan.cards.silosRunningOut ? 'danger' : 'default'}
-                  sub={
-                    runningOut.length
-                      ? t('mplCardRefill', { silos: upTo(runningOut, 3) })
-                      : t('mplCardNoneRunOut')
-                  }
-                  subHint={
-                    runningOut.length
-                      ? t('mplCardRefill', { silos: runningOut.join(' · ') })
-                      : undefined
-                  }
+                  sub={silosSub}
+                  {...card(detail.silos, silosSub)}
                 />
               </StatRow>
             );

@@ -2310,6 +2310,9 @@ export const translations = {
     mplCardAllWithin: 'Every day within capacity',
     mplCardRefill: 'Refill needed: {{silos}}',
     mplCardNoneRunOut: 'No silo runs out this week',
+    mplCardWeek: 'Week',
+    mplCardDayUse: '{{used}} t of {{cap}} t ({{pct}}%)',
+    mplCardRunsOut: 'Runs out {{day}}',
     mplFarmFailed: '{{farm}}: forecast not available — {{error}}',
     mplProduction: 'Production by Feed Type',
     mplProductionInfo:
