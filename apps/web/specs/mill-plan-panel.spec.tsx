@@ -107,6 +107,9 @@ const plan = {
       fromItemName: 'Starter',
       toItemName: 'Grower',
       heads: 120,
+      byType: [{ animalType: 'COMMERCIAL_PIG', heads: 120 }],
+      kgPerHeadDay: 2.6,
+      fromKgPerHeadDay: 1.4,
     },
   ],
   farms: [
@@ -126,6 +129,21 @@ const plan = {
       sheds: [
         {
           key: 'S1|B-1',
+          changes: [
+            {
+              farmId: 'farm-1',
+              farmName: 'Farm One',
+              shedCode: 'S1',
+              batchNo: 'B-1',
+              changeDate: dates[3],
+              fromItemName: 'Starter',
+              toItemName: 'Grower',
+              heads: 120,
+              byType: [{ animalType: 'COMMERCIAL_PIG', heads: 120 }],
+              kgPerHeadDay: 2.6,
+              fromKgPerHeadDay: 1.4,
+            },
+          ],
           requisitions: [
             {
               date: dates[2],
@@ -377,12 +395,7 @@ it('explains each section in an info hover instead of a unit in its title', asyn
   await act(async () => {
     fireEvent.click(screen.getByRole('button', { name: 'mplGenerate' }));
   });
-  for (const key of [
-    'mplCapacityInfo',
-    'mplProductionInfo',
-    'mplGridInfo',
-    'mplSiloLevelsInfo',
-  ]) {
+  for (const key of ['mplCapacityInfo', 'mplGridInfo', 'mplSiloLevelsInfo']) {
     expect(document.querySelector(`[data-hint="${key}"]`)).toBeTruthy();
   }
 });
@@ -599,7 +612,8 @@ it('lists feed type changes in aligned columns, one row per batch', async () => 
     'mplColFarmShed',
     'mplColBatch',
     'mplColFeedChange',
-    'mplColHead',
+    'mplAnimals',
+    'mplKgPerHeadDay',
   ]);
   const cells = within(table).getAllByRole('row')[1].querySelectorAll('td');
   expect([...cells].map((c) => c.textContent)).toEqual([
@@ -608,6 +622,7 @@ it('lists feed type changes in aligned columns, one row per batch', async () => 
     'B-1',
     'Starter→Grower',
     '120',
+    '2.60',
   ]);
 });
 
@@ -637,50 +652,6 @@ it("shows one capacity bar of the week's average day against the mill's daily ca
   expect(document.querySelectorAll('[data-capacity-day]')).toHaveLength(7);
 });
 
-// Rishi, 4 Nov: Production by Feed Type shows the animals eating each feed and their kg/head/day.
-it("shows each feed's animals, kg per head per day, and the animals by type on hover", async () => {
-  await renderPanel({
-    production: [
-      {
-        itemId: 'i1',
-        itemCode: 'GRW',
-        itemName: 'Grower',
-        feedForm: 'BULK',
-        totalKg: 0,
-        days: dates.map((date) => ({
-          date,
-          approvedKg: 0,
-          forecastKg: 0,
-          totalKg: 0,
-          capacity: null,
-        })),
-        consumption: {
-          animals: 204,
-          byType: [
-            { animalType: 'COMMERCIAL_PIG', heads: 200 },
-            { animalType: 'SOW', heads: 4 },
-          ],
-          kgPerHeadDay: 0.539,
-          kg: 770,
-        },
-      },
-    ],
-  });
-  await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'mplGenerate' }));
-  });
-  expect(document.querySelector('[data-animals]')?.textContent).toBe('204');
-  expect(document.querySelector('[data-kg-per-head]')?.textContent).toBe(
-    '0.539',
-  );
-  const hint =
-    document
-      .querySelector('[data-animals] [data-hint]')
-      ?.getAttribute('data-hint') ?? '';
-  expect(hint).toContain('Commercial Pig: 200');
-  expect(hint).toContain('Sow: 4');
-});
-
 // Rishi, 4 Nov: a requisition due on a day is circled in the grid, with its quantity on hover.
 it('circles the day a requisition is due, on the shed and silo rows, with the requisition on hover', async () => {
   await renderPanel();
@@ -694,4 +665,40 @@ it('circles the day a requisition is due, on the shed and silo rows, with the re
     const hint = el.closest('[data-hint]')?.getAttribute('data-hint') ?? '';
     expect(hint).toContain('REQ-F1-00006 · 3,000 KG Grower → SL-1 · approved');
   }
+});
+
+// Rishi, 4 Nov: Feed Type Changes shows the animals (by Animal Type on hover) and the new feed's kg/head/day.
+it('shows each feed change with its animals by type and the kg/head/day of the new feed', async () => {
+  await renderPanel();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'mplGenerate' }));
+  });
+  const animals = document.querySelector(
+    '[data-change-animals]',
+  ) as HTMLElement;
+  expect(animals.textContent).toBe('120');
+  expect(animals.querySelector('[data-hint]')?.getAttribute('data-hint')).toBe(
+    'Commercial Pig: 120',
+  );
+  const rate = document.querySelector('[data-change-rate]') as HTMLElement;
+  expect(rate.textContent).toBe('2.60');
+  expect(
+    rate.querySelector('[data-hint]')?.getAttribute('data-hint'),
+  ).toContain('"from":"1.40"');
+  expect(screen.queryByRole('region', { name: 'mplProduction' })).toBeNull();
+});
+
+it('explains a highlighted change day on hover', async () => {
+  await renderPanel();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'mplGenerate' }));
+  });
+  const cell = document.querySelector('[data-diet-change]') as HTMLElement;
+  const hint =
+    cell.querySelector('[data-hint]')?.getAttribute('data-hint') ?? '';
+  expect(hint).toContain('mplChangeLine {"from":"Starter","to":"Grower"}');
+  expect(hint).toContain(
+    'mplChangeAnimals {"n":"120","types":"Commercial Pig: 120"}',
+  );
+  expect(hint).toContain('mplChangeRate {"to":"2.60","from":"1.40"}');
 });

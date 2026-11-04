@@ -34,7 +34,6 @@ import { useFeedForecastContext } from './feed-forecast-context';
 import { loadFeedFarms, type FeedFarm } from './use-feed-farm';
 import {
   formatKg,
-  millCapacityText,
   type MillCapacityState,
   type MillCapacityStatus,
 } from './mill-capacity-view';
@@ -100,16 +99,7 @@ interface MillPlan {
     };
     totalKg: number;
   }>;
-  dietChanges: Array<{
-    farmId: string;
-    farmName: string;
-    shedCode: string;
-    batchNo: string;
-    changeDate: string;
-    fromItemName: string;
-    toItemName: string;
-    heads: number;
-  }>;
+  dietChanges: Change[];
   farms: Array<{
     farmId: string;
     code: string;
@@ -117,6 +107,8 @@ interface MillPlan {
     totals: number[];
     sheds: Array<{
       key: string;
+      /** The row's feed changes in the week (Rishi, 4 Nov). */
+      changes: Change[];
       /** Requisitions due into the silos this row draws from (Rishi, 4 Nov). */
       requisitions: Array<{
         date: string;
@@ -218,6 +210,34 @@ function Figure({
   );
 }
 
+/** A feed change with its animals by Animal Type and the kg/head/day of the new feed and the one it replaces. */
+type Change = {
+  farmId: string;
+  farmName: string;
+  shedCode: string;
+  batchNo: string;
+  changeDate: string;
+  fromItemName: string;
+  toItemName: string;
+  heads: number;
+  byType: Array<{ animalType: string; heads: number }>;
+  kgPerHeadDay: number | null;
+  fromKgPerHeadDay: number | null;
+};
+
+const kgHead = (kg: number | null) =>
+  kg === null
+    ? '—'
+    : kg.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 3,
+      });
+const typeList = (byType: Change['byType']) =>
+  byType.map(
+    (type) =>
+      `${animalTypeLabel(type.animalType)}: ${type.heads.toLocaleString('en-US')}`,
+  );
+
 type Due = {
   date: string;
   requisitionId: string;
@@ -237,17 +257,22 @@ function DueFigure({
   due,
   label,
   heading,
+  changes = [],
   children,
 }: {
   kg: number | null;
   due: Due[];
   label: string;
   heading: string;
+  /** Feed-change lines for the highlighted day (Rishi, 4 Nov); they lead the hover. */
+  changes?: string[];
   children: ReactNode;
 }) {
-  if (!due.length) return <Figure kg={kg}>{children}</Figure>;
+  if (!due.length && !changes.length)
+    return <Figure kg={kg}>{children}</Figure>;
   const lines = [
     `${label}: ${exactKg(kg) ?? '0 KG'}`,
+    ...changes,
     ...due.map(
       (d) =>
         `${d.reqNo} · ${exactKg(d.kg)} ${d.itemName}${d.sourceCode ? ` → ${d.sourceCode}` : ''} · ${d.status.replace(/_/g, ' ').toLowerCase()}`,
@@ -261,12 +286,16 @@ function DueFigure({
       hint={lines.join('\n')}
       list={lines}
     >
-      <span
-        data-requisition-due
-        className="inline-flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 ring-2 ring-(--accent)"
-      >
-        {children}
-      </span>
+      {due.length ? (
+        <span
+          data-requisition-due
+          className="inline-flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 ring-2 ring-(--accent)"
+        >
+          {children}
+        </span>
+      ) : (
+        <span data-change-figure>{children}</span>
+      )}
     </HoverHint>
   );
 }
@@ -339,11 +368,6 @@ const CARD_TONE: Record<
   DayStatus,
   'success' | 'warning' | 'danger' | 'default'
 > = { OK: 'default', WARN: 'warning', OVER: 'danger', NO_CAPACITY: 'default' };
-const DOT: Record<MillCapacityStatus, string> = {
-  GREEN: 'bg-(--success)',
-  AMBER: 'bg-(--warning)',
-  RED: 'bg-(--danger)',
-};
 
 const TH =
   'sticky top-0 border-b border-(--border) bg-(--surface-raised) px-3 py-2 text-xs font-semibold text-(--text-secondary)';
@@ -721,147 +745,6 @@ export default function MillPlanPanel() {
             </div>
           )}
 
-          {plan.production.length > 0 && (
-            <section aria-label={t('mplProduction')}>
-              <SectionTitle
-                title={t('mplProduction')}
-                info={t('mplProductionInfo')}
-              />
-              {
-                <div className="overflow-x-auto rounded-lg border border-(--border)">
-                  <table className="w-full min-w-[64rem] table-fixed border-collapse">
-                    <thead>
-                      <tr>
-                        <th className={`${TH_FIRST} w-56`}>{t('mplFeed')}</th>
-                        <th className={`${TH_DAY} ${NUM} w-24`}>
-                          {t('mplAnimals')}
-                        </th>
-                        <th className={`${TH_DAY} ${NUM} w-28`}>
-                          {t('mplKgPerHeadDay')}
-                        </th>
-                        {plan.dates.map((date) => (
-                          <th key={date} className={`${TH_DAY} ${NUM}`}>
-                            <DayHead date={date} />
-                          </th>
-                        ))}
-                        <th className={`${TH_DAY} ${NUM}`}>{t('mplTotal')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {plan.production.map((row) => (
-                        <tr key={row.itemId}>
-                          <td className={`${TD} ${STICKY} bg-(--surface)`}>
-                            <div className="font-medium text-(--text-primary)">
-                              {row.itemName}
-                            </div>
-                            <div className="text-[11px] text-(--text-secondary)">
-                              {row.itemCode}
-                              {row.feedForm ? ` · ${row.feedForm}` : ''}
-                            </div>
-                          </td>
-                          <td className={`${TD} ${NUM}`} data-animals>
-                            {row.consumption.animals > 0 ? (
-                              <HoverHint
-                                plain
-                                focusable={false}
-                                heading={t('mplAnimalsByType')}
-                                hint={row.consumption.byType
-                                  .map(
-                                    (type) =>
-                                      `${animalTypeLabel(type.animalType)}: ${type.heads.toLocaleString('en-US')}`,
-                                  )
-                                  .join('\n')}
-                                list={row.consumption.byType.map(
-                                  (type) =>
-                                    `${animalTypeLabel(type.animalType)}: ${type.heads.toLocaleString('en-US')}`,
-                                )}
-                              >
-                                <span className="underline decoration-dotted underline-offset-2">
-                                  {row.consumption.animals.toLocaleString(
-                                    'en-US',
-                                  )}
-                                </span>
-                              </HoverHint>
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-                          <td className={`${TD} ${NUM}`} data-kg-per-head>
-                            {row.consumption.kgPerHeadDay !== null ? (
-                              <Figure
-                                hint={t('mplConsumedWeek', {
-                                  kg: exactKg(row.consumption.kg) ?? '0 KG',
-                                })}
-                              >
-                                {row.consumption.kgPerHeadDay.toLocaleString(
-                                  'en-US',
-                                  {
-                                    minimumFractionDigits: 2,
-                                    maximumFractionDigits: 3,
-                                  },
-                                )}
-                              </Figure>
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-                          {row.days.map((day) => (
-                            <td key={day.date} className={`${TD} ${NUM}`}>
-                              {day.totalKg > 0 ? (
-                                <Figure
-                                  hint={t('mplProductionSplit', {
-                                    approved: exactKg(day.approvedKg) ?? '0 KG',
-                                    forecast: exactKg(day.forecastKg) ?? '0 KG',
-                                  })}
-                                >
-                                  {tonnes(day.totalKg)}
-                                </Figure>
-                              ) : (
-                                '—'
-                              )}
-                              {day.totalKg > 0 && day.capacity && (
-                                <div className="mt-0.5 flex items-center justify-end gap-1 text-[10px] text-(--text-secondary)">
-                                  {day.capacity.status && (
-                                    <span
-                                      aria-hidden
-                                      className={`h-1.5 w-1.5 rounded-full ${DOT[day.capacity.status]}`}
-                                    />
-                                  )}
-                                  <HoverHint
-                                    hint={t(
-                                      day.capacity.state === 'NOT_SCHEDULED'
-                                        ? 'mplNotScheduledHint'
-                                        : day.capacity.state ===
-                                            'NOT_CONFIGURED'
-                                          ? 'mplNotConfiguredHint'
-                                          : 'mplBinAvailableHint',
-                                    )}
-                                    focusable={false}
-                                  >
-                                    {millCapacityText(
-                                      day.capacity.state,
-                                      day.capacity.availableKg,
-                                      t,
-                                    )}
-                                  </HoverHint>
-                                </div>
-                              )}
-                            </td>
-                          ))}
-                          <td className={`${TD} ${NUM} font-semibold`}>
-                            <Figure kg={row.totalKg}>
-                              {tonnes(row.totalKg)}
-                            </Figure>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              }
-            </section>
-          )}
-
           {plan.dietChanges.length > 0 && (
             <section aria-label={t('mplDietChanges')}>
               <SectionTitle
@@ -886,14 +769,17 @@ export default function MillPlanPanel() {
                           {t('mplColFeedChange')}
                         </th>
                         <th className={`${TH_PLAIN} w-24 text-right`}>
-                          {t('mplColHead')}
+                          {t('mplAnimals')}
+                        </th>
+                        <th className={`${TH_PLAIN} w-28 text-right`}>
+                          {t('mplKgPerHeadDay')}
                         </th>
                       </tr>
                     </thead>
                     <tbody>
                       {plan.dietChanges.map((change) => (
                         <tr
-                          key={`${change.farmId}|${change.shedCode}|${change.batchNo}|${change.changeDate}`}
+                          key={`${change.farmId}|${change.shedCode}|${change.batchNo}|${change.changeDate}|${change.toItemName}`}
                         >
                           <td className={TD}>
                             <div className="flex flex-col leading-tight">
@@ -924,8 +810,41 @@ export default function MillPlanPanel() {
                               </span>
                             </span>
                           </td>
-                          <td className={`${TD} ${NUM}`}>
-                            {change.heads.toLocaleString('en-US')}
+                          <td className={`${TD} ${NUM}`} data-change-animals>
+                            {change.heads > 0 ? (
+                              <HoverHint
+                                plain
+                                focusable={false}
+                                heading={t('mplAnimalsByType')}
+                                hint={typeList(change.byType).join('\n')}
+                                list={typeList(change.byType)}
+                              >
+                                <span className="underline decoration-dotted underline-offset-2">
+                                  {change.heads.toLocaleString('en-US')}
+                                </span>
+                              </HoverHint>
+                            ) : (
+                              '0'
+                            )}
+                          </td>
+                          <td className={`${TD} ${NUM}`} data-change-rate>
+                            {change.kgPerHeadDay === null ? (
+                              '—'
+                            ) : change.fromKgPerHeadDay === null ? (
+                              // The old feed was last eaten before the week: no rate to compare with.
+                              kgHead(change.kgPerHeadDay)
+                            ) : (
+                              <HoverHint
+                                plain
+                                focusable={false}
+                                hint={t('mplRateWas', {
+                                  from: kgHead(change.fromKgPerHeadDay),
+                                  item: change.fromItemName,
+                                })}
+                              >
+                                <span>{kgHead(change.kgPerHeadDay)}</span>
+                              </HoverHint>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1119,7 +1038,10 @@ export default function MillPlanPanel() {
                               </td>
                               {shed.kg.map((kg, i) => {
                                 const date = plan.dates[i];
-                                const change = shed.changeDate === date;
+                                const dayChanges = shed.changes.filter(
+                                  (c) => c.changeDate === date,
+                                );
+                                const change = dayChanges.length > 0;
                                 return (
                                   <td
                                     key={date}
@@ -1137,7 +1059,29 @@ export default function MillPlanPanel() {
                                         (d) => d.date === date,
                                       )}
                                       label={t('mplEaten')}
-                                      heading={t('mplRequisitionsDue')}
+                                      heading={
+                                        change
+                                          ? t('mplFeedChangeHeading')
+                                          : t('mplRequisitionsDue')
+                                      }
+                                      changes={dayChanges.flatMap((c) => [
+                                        t('mplChangeLine', {
+                                          from: c.fromItemName,
+                                          to: c.toItemName,
+                                        }),
+                                        t('mplChangeAnimals', {
+                                          n: c.heads.toLocaleString('en-US'),
+                                          types: typeList(c.byType).join(', '),
+                                        }),
+                                        c.fromKgPerHeadDay === null
+                                          ? t('mplChangeRateOnly', {
+                                              to: kgHead(c.kgPerHeadDay),
+                                            })
+                                          : t('mplChangeRate', {
+                                              to: kgHead(c.kgPerHeadDay),
+                                              from: kgHead(c.fromKgPerHeadDay),
+                                            }),
+                                      ])}
                                     >
                                       {tonnes(kg)}
                                     </DueFigure>

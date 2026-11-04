@@ -16,6 +16,7 @@ import type {
   ForecastFlag,
   SourceBalancePoint,
 } from './feed-forecast.engine';
+import { addDays } from './feed-forecast.engine';
 import type {
   DietCapacity,
   MillCapacitySetup,
@@ -126,8 +127,28 @@ export interface MillPlanDue {
   itemName: string;
 }
 
+/**
+ * A feed change in the week (Rishi, 4 Nov): the animals changing, by Animal Type, and what each eats a day of the
+ * new feed (and of the one it replaces), from the lifecycle feed rows the forecast used.
+ */
+export interface MillPlanChange {
+  farmId: string;
+  farmName: string;
+  shedCode: string;
+  batchNo: string;
+  changeDate: string;
+  fromItemName: string;
+  toItemName: string;
+  heads: number;
+  byType: Array<{ animalType: string; heads: number }>;
+  kgPerHeadDay: number | null;
+  fromKgPerHeadDay: number | null;
+}
+
 export interface MillPlanShed {
   key: string;
+  /** The row's feed changes in the week, for the highlighted day's hover. */
+  changes: MillPlanChange[];
   /** Requisitions due into the silos this row draws its feed from. */
   requisitions: MillPlanDue[];
   shedCode: string;
@@ -194,16 +215,7 @@ export interface MillPlan {
     /** What the animals eat of this feed in the week (Rishi, 4 Nov): average heads a day, by Animal Type, and kg per head per day. */
     consumption: MillPlanConsumption;
   }>;
-  dietChanges: Array<{
-    farmId: string;
-    farmName: string;
-    shedCode: string;
-    batchNo: string;
-    changeDate: string;
-    fromItemName: string;
-    toItemName: string;
-    heads: number;
-  }>;
+  dietChanges: MillPlanChange[];
   farms: Array<{
     farmId: string;
     code: string;
@@ -344,6 +356,13 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
       );
     }
 
+    // Heads by Animal Type on a forecast row: registered animals by their own type, count-only heads by stage.
+    const typesOf = (r: DailyForecastRow): Record<string, number> => {
+      const registered = f.animalTypes?.[String(r.realBatchId)];
+      return registered && Object.keys(registered).length
+        ? shareHeads(r.heads, registered)
+        : { [animalTypeOfStage(r.stageCode)]: r.heads };
+    };
     const sheds = new Map<string, MillPlanShed>();
     // Which silo and feed each shed row draws on, to give it the requisitions due into them.
     const drawsOn = new Map<string, Set<string>>();
@@ -358,6 +377,7 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
       }
       const shed = sheds.get(key) ?? {
         key,
+        changes: [],
         requisitions: [],
         shedCode: r.shedCode,
         batchNo: r.batchNo,
@@ -375,12 +395,7 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
         };
         e.heads[i] += r.heads;
         e.kg[i] = roundKg(e.kg[i] + r.demandKg);
-        const registered = f.animalTypes?.[String(r.realBatchId)];
-        const split =
-          registered && Object.keys(registered).length
-            ? shareHeads(r.heads, registered)
-            : { [animalTypeOfStage(r.stageCode)]: r.heads };
-        for (const [type, heads] of Object.entries(split))
+        for (const [type, heads] of Object.entries(typesOf(r)))
           e.types[i][type] = (e.types[i][type] ?? 0) + heads;
         eaten.set(r.itemId, e);
       }
@@ -394,11 +409,24 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
     for (const change of f.dietChanges) {
       if (!dateIndex.has(change.changeDate)) continue;
       if (!selected(change.fromItemId) && !selected(change.toItemId)) continue;
-      const heads =
-        f.daily.find(
-          (r) => r.batchId === change.batchId && r.date === change.changeDate,
-        )?.heads ?? 0;
-      dietChanges.push({
+      const onDay = f.daily.filter(
+        (r) => r.batchId === change.batchId && r.date === change.changeDate,
+      );
+      const toRow = onDay.find((r) => r.itemId === change.toItemId) ?? onDay[0];
+      // The old feed's rate: the last day in the week the batch ate it before the change, or the same day when the
+      // two run side by side; null when it was last eaten before the week (the forecast's rows start with the week).
+      const fromRow =
+        f.daily
+          .filter(
+            (r) =>
+              r.batchId === change.batchId &&
+              r.itemId === change.fromItemId &&
+              r.date <= addDays(change.changeDate, -1),
+          )
+          .sort((a, b) => b.date.localeCompare(a.date))[0] ??
+        onDay.find((r) => r.itemId === change.fromItemId);
+      const heads = toRow?.heads ?? 0;
+      const entry: MillPlanChange = {
         farmId: f.farm.id,
         farmName: f.farm.name,
         shedCode: change.shedCode,
@@ -407,9 +435,25 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
         fromItemName: change.fromItemName,
         toItemName: change.toItemName,
         heads,
-      });
+        byType: toRow
+          ? Object.entries(typesOf(toRow))
+              .filter(([, n]) => n > 0)
+              .map(([animalType, n]) => ({ animalType, heads: n }))
+              .sort(
+                (a, b) =>
+                  b.heads - a.heads || a.animalType.localeCompare(b.animalType),
+              )
+          : [],
+        kgPerHeadDay:
+          toRow?.itemId === change.toItemId ? toRow.feedRateKg : null,
+        fromKgPerHeadDay: fromRow ? fromRow.feedRateKg : null,
+      };
+      dietChanges.push(entry);
       const shed = sheds.get(`${change.shedCode}|${change.batchNo}`);
-      if (shed && !shed.changeDate) shed.changeDate = change.changeDate;
+      if (shed) {
+        if (!shed.changeDate) shed.changeDate = change.changeDate;
+        shed.changes.push(entry);
+      }
     }
 
     // One row per source and feed: a store (or a silo also holding the next diet) can carry several feeds.

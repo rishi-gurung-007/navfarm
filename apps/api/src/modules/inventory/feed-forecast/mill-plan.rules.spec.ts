@@ -657,3 +657,71 @@ describe('requisitions due in the grid', () => {
     expect(f.sheds.find((s) => s.batchNo === 'B-3')!.requisitions).toEqual([]);
   });
 });
+
+// Rishi, 4 Nov: Feed Type Changes carry the animals (by Animal Type) and the kg/head/day of the new feed.
+describe('feed change details', () => {
+  it('gives a change its heads by type, the new and old feed rates, and puts it on its grid row', () => {
+    const change: DietChange = {
+      batchId: 'B-1',
+      realBatchId: 'B-1' as any,
+      batchNo: 'B-1',
+      shedCode: 'S1',
+      fromItemId: STARTER,
+      fromItemName: 'Starter',
+      toItemId: GROWER,
+      toItemName: 'Grower',
+      changeDate: dates[3],
+      nextSourceType: 'SILO',
+      nextSourceCode: 'SL-1',
+    };
+    const daily = [
+      row({
+        date: dates[2],
+        itemId: STARTER,
+        itemName: 'Starter',
+        heads: 4,
+        feedRateKg: 1.5,
+        demandKg: 6,
+        stageCode: 'GESTATION',
+      }),
+      row({
+        date: dates[3],
+        itemId: GROWER,
+        itemName: 'Grower',
+        heads: 4,
+        feedRateKg: 2.8,
+        demandKg: 11.2,
+        stageCode: 'GESTATION',
+      }),
+    ];
+    const plan = buildMillPlan(
+      input({
+        farms: [
+          farm({
+            daily,
+            dietChanges: [change],
+            animalTypes: { 'B-1': { SOW: 3, GILT: 1 } },
+          }),
+        ],
+      }),
+    );
+    const expected = {
+      farmId: 'farm-1',
+      farmName: 'Farm One',
+      shedCode: 'S1',
+      batchNo: 'B-1',
+      changeDate: dates[3],
+      fromItemName: 'Starter',
+      toItemName: 'Grower',
+      heads: 4,
+      byType: [
+        { animalType: 'SOW', heads: 3 },
+        { animalType: 'GILT', heads: 1 },
+      ],
+      kgPerHeadDay: 2.8,
+      fromKgPerHeadDay: 1.5,
+    };
+    expect(plan.dietChanges).toEqual([expected]);
+    expect(plan.farms[0].sheds[0].changes).toEqual([expected]);
+  });
+});
