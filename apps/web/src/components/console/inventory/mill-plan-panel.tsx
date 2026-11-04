@@ -273,9 +273,14 @@ function DueFigure({
 
 /** A day column's head: the date, and the weekday under it. */
 function DayHead({ date }: { date: string }) {
+  // Day and month only, so seven days fit beside the Farm / Shed column (Rishi, 4 Nov); the full date is on hover.
   return (
-    <div data-day-head className="flex flex-col items-end leading-tight">
-      <span>{formatDateShort(date)}</span>
+    <div
+      data-day-head
+      title={formatDateShort(date)}
+      className="flex flex-col items-end leading-tight"
+    >
+      <span className="whitespace-nowrap">{`${date.slice(8, 10)}/${date.slice(5, 7)}`}</span>
       <span className="text-[10px] font-normal text-(--text-muted)">
         {weekday(date)}
       </span>
@@ -961,7 +966,7 @@ export default function MillPlanPanel() {
               >
                 <thead ref={headRef}>
                   <tr ref={datesRowRef}>
-                    <th className={`${TH_FIRST} w-80 rounded-tl-lg`}>
+                    <th className={`${TH_FIRST} w-56 rounded-tl-lg xl:w-80`}>
                       {t('mplFarmShed')}
                     </th>
                     {plan.dates.map((date) => (

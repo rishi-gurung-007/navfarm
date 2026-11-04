@@ -536,10 +536,12 @@ it('puts the day under the date in the grid headers', async () => {
   const head = document.querySelector(
     '[data-mill-grid] thead [data-day-head]',
   ) as HTMLElement;
+  // Rishi, 4 Nov: day and month only, so seven days fit; the full date is the header's hover.
   expect([...head.children].map((c) => c.textContent)).toEqual([
-    dates[0],
+    `${dates[0].slice(8, 10)}/${dates[0].slice(5, 7)}`,
     'Mon',
   ]);
+  expect(head.getAttribute('title')).toBe(dates[0]);
 });
 
 it("shows a silo's code and name on lines of their own", async () => {
