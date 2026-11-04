@@ -110,15 +110,7 @@ interface MillPlan {
       /** The row's feed changes in the week (Rishi, 4 Nov). */
       changes: Change[];
       /** Requisitions due into the silos this row draws from (Rishi, 4 Nov). */
-      requisitions: Array<{
-        date: string;
-        requisitionId: string;
-        reqNo: string;
-        status: string;
-        kg: number;
-        sourceCode: string;
-        itemName: string;
-      }>;
+      requisitions: Due[];
 
       shedCode: string;
       batchNo: string;
@@ -129,15 +121,7 @@ interface MillPlan {
     }>;
     silos: Array<{
       /** Requisitions due into this silo for this feed (Rishi, 4 Nov). */
-      requisitions: Array<{
-        date: string;
-        requisitionId: string;
-        reqNo: string;
-        status: string;
-        kg: number;
-        sourceCode: string;
-        itemName: string;
-      }>;
+      requisitions: Due[];
       sourceCode: string;
       sourceName: string | null;
       sourceType: 'SILO' | 'STORE';
@@ -238,14 +222,68 @@ const typeList = (byType: Change['byType']) =>
       `${animalTypeLabel(type.animalType)}: ${type.heads.toLocaleString('en-US')}`,
   );
 
+/** Where a requisition line has got to (mill-plan.rules requisitionStage), least advanced first. */
+const STAGES = [
+  'PENDING',
+  'APPROVED',
+  'IN_CONSOLIDATION',
+  'RELEASED',
+  'TRANSFER_OPEN',
+  'SHIPPED',
+  'PARTLY_RECEIVED',
+  'RECEIVED',
+] as const;
+type Stage = (typeof STAGES)[number];
+
 type Due = {
   date: string;
   requisitionId: string;
   reqNo: string;
   status: string;
+  stage: Stage;
+  transferNos: string[];
+  shippedKg: number;
+  receivedKg: number;
   kg: number;
   sourceCode: string;
   itemName: string;
+};
+
+/**
+ * The circle's colour by stage (Rishi, 4 Nov): the accent while the feed is still to be shipped, amber once it
+ * is on its way or partly received, green once all of it is received.
+ */
+const stageRing = (stage: Stage) =>
+  stage === 'RECEIVED'
+    ? 'ring-(--success)'
+    : stage === 'SHIPPED' || stage === 'PARTLY_RECEIVED'
+      ? 'ring-(--warning)'
+      : 'ring-(--accent)';
+
+const stageText = (d: Due, t: (key: any, vars?: any) => string) => {
+  const tr = d.transferNos.join(', ');
+  switch (d.stage) {
+    case 'PENDING':
+      return t('mplStagePending');
+    case 'APPROVED':
+      return t('mplStageApproved');
+    case 'IN_CONSOLIDATION':
+      return t('mplStageInConsolidation');
+    case 'RELEASED':
+      return t('mplStageReleased');
+    case 'TRANSFER_OPEN':
+      return t('mplStageTransferOpen', { tr });
+    case 'SHIPPED':
+      return t('mplStageShipped', { tr, kg: exactKg(d.shippedKg) });
+    case 'PARTLY_RECEIVED':
+      return t('mplStagePartly', {
+        tr,
+        received: exactKg(d.receivedKg),
+        kg: exactKg(d.kg),
+      });
+    case 'RECEIVED':
+      return t('mplStageReceived', { tr, received: exactKg(d.receivedKg) });
+  }
 };
 
 /**
@@ -258,6 +296,7 @@ function DueFigure({
   label,
   heading,
   changes = [],
+  t,
   children,
 }: {
   kg: number | null;
@@ -266,16 +305,21 @@ function DueFigure({
   heading: string;
   /** Feed-change lines for the highlighted day (Rishi, 4 Nov); they lead the hover. */
   changes?: string[];
+  t: (key: any, vars?: any) => string;
   children: ReactNode;
 }) {
   if (!due.length && !changes.length)
     return <Figure kg={kg}>{children}</Figure>;
+  // Several requisitions on one day: the circle shows the least advanced.
+  const stage = due.length
+    ? STAGES[Math.min(...due.map((d) => STAGES.indexOf(d.stage)))]
+    : null;
   const lines = [
     `${label}: ${exactKg(kg) ?? '0 KG'}`,
     ...changes,
     ...due.map(
       (d) =>
-        `${d.reqNo} · ${exactKg(d.kg)} ${d.itemName}${d.sourceCode ? ` → ${d.sourceCode}` : ''} · ${d.status.replace(/_/g, ' ').toLowerCase()}`,
+        `${d.reqNo} · ${exactKg(d.kg)} ${d.itemName}${d.sourceCode ? ` → ${d.sourceCode}` : ''} · ${stageText(d, t)}`,
     ),
   ];
   return (
@@ -289,7 +333,8 @@ function DueFigure({
       {due.length ? (
         <span
           data-requisition-due
-          className="inline-flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 ring-2 ring-(--accent)"
+          data-stage={stage ?? undefined}
+          className={`inline-flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 ring-2 ${stage ? stageRing(stage) : 'ring-(--accent)'}`}
         >
           {children}
         </span>
@@ -1054,6 +1099,7 @@ export default function MillPlanPanel() {
                                       : {})}
                                   >
                                     <DueFigure
+                                      t={t}
                                       kg={kg}
                                       due={shed.requisitions.filter(
                                         (d) => d.date === date,
@@ -1143,6 +1189,7 @@ export default function MillPlanPanel() {
                                       : {})}
                                   >
                                     <DueFigure
+                                      t={t}
                                       kg={kg}
                                       due={silo.requisitions.filter(
                                         (d) => d.date === date,

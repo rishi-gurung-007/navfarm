@@ -106,10 +106,54 @@ export interface MillPlanSiloCard {
 
 export type DayStatus = 'OK' | 'WARN' | 'OVER' | 'NO_CAPACITY';
 
+/**
+ * Where a requisition line has got to (Rishi, 4 Nov), from the most advanced of: posted receipts, posted shipments,
+ * a transfer order, release, consolidation, approval. A requisition carries three status fields — the approval
+ * workflow (status), Released (document_status) and the transfer states (fulfilment_status) — and the line's own
+ * transfer, shipped and received kg say the rest.
+ */
+export type RequisitionStage =
+  | 'PENDING'
+  | 'APPROVED'
+  | 'IN_CONSOLIDATION'
+  | 'RELEASED'
+  | 'TRANSFER_OPEN'
+  | 'SHIPPED'
+  | 'PARTLY_RECEIVED'
+  | 'RECEIVED';
+
+export function requisitionStage(line: {
+  status: string | null;
+  documentStatus: string | null;
+  fulfilmentStatus: string | null;
+  kg: number;
+  hasTransfer: boolean;
+  shippedKg: number;
+  receivedKg: number;
+}): RequisitionStage {
+  const f = (line.fulfilmentStatus ?? '').toUpperCase();
+  if (line.receivedKg > 0 && line.receivedKg + 1e-6 >= line.kg)
+    return 'RECEIVED';
+  if (line.receivedKg > 0) return 'PARTLY_RECEIVED';
+  if (line.shippedKg > 0 || f === 'SHIPPED' || f === 'PARTIALLY_SHIPPED')
+    return 'SHIPPED';
+  if (line.hasTransfer || f === 'TRANSFER_OPEN') return 'TRANSFER_OPEN';
+  if ((line.documentStatus ?? '').toUpperCase() === 'RELEASED')
+    return 'RELEASED';
+  const status = (line.status ?? '').toUpperCase();
+  if (status === 'IN_CONSOLIDATION') return 'IN_CONSOLIDATION';
+  if (status === 'APPROVED') return 'APPROVED';
+  return 'PENDING';
+}
+
 export interface MillPlanRequisitionLine {
   requisitionId: string;
   reqNo: string;
   status: string;
+  stage: RequisitionStage;
+  transferNos: string[];
+  shippedKg: number;
+  receivedKg: number;
   siloId: string;
   itemId: string;
   date: string;
@@ -122,6 +166,10 @@ export interface MillPlanDue {
   requisitionId: string;
   reqNo: string;
   status: string;
+  stage: RequisitionStage;
+  transferNos: string[];
+  shippedKg: number;
+  receivedKg: number;
   kg: number;
   sourceCode: string;
   itemName: string;
@@ -499,6 +547,10 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
         requisitionId: line.requisitionId,
         reqNo: line.reqNo,
         status: line.status,
+        stage: line.stage,
+        transferNos: line.transferNos,
+        shippedKg: roundKg(line.shippedKg),
+        receivedKg: roundKg(line.receivedKg),
         kg: roundKg(line.kg),
         sourceCode: codeOf.get(target) ?? '',
         itemName:

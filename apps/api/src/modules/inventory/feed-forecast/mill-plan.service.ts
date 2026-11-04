@@ -14,6 +14,8 @@ import { addDays } from './feed-forecast.engine';
 import { FeedForecastService } from './feed-forecast.service';
 import { MillCapacityService } from './mill-capacity.service';
 import {
+  requisitionStage,
+  type MillPlanRequisitionLine,
   buildMillPlan,
   MillPlan,
   MillPlanFarmInput,
@@ -263,14 +265,17 @@ export class MillPlanService {
     farmId: string,
     from: string,
     to: string,
-  ) {
+  ): Promise<MillPlanRequisitionLine[]> {
     const R = schema.requisition;
     const L = schema.requisitionLine;
     const rows = await this.db
       .select({
+        lineId: L.line_id,
         requisitionId: R.requisition_id,
         reqNo: R.req_no,
         status: R.status,
+        documentStatus: R.document_status,
+        fulfilmentStatus: R.fulfilment_status,
         siloId: L.destination_location_id,
         itemId: L.item_id,
         date: L.proposed_delivery_date,
@@ -289,17 +294,111 @@ export class MillPlanService {
           sql`COALESCE(${R.approval_status}, '') <> 'REJECTED'`,
         ),
       );
+    const lineIds = rows.map((row) => row.lineId);
+    // Each line's transfer order(s) and the kg posted as shipped and as received against them (Rishi, 4 Nov).
+    const TL = schema.stockTransferLine;
+    const T = schema.stockTransfer;
+    const transfers = lineIds.length
+      ? await this.db
+          .select({
+            requisitionLineId: TL.requisition_line_id,
+            transferLineId: TL.line_id,
+            transferNo: T.transfer_no,
+          })
+          .from(TL)
+          .innerJoin(T, eq(T.transfer_id, TL.transfer_id))
+          .where(
+            and(
+              inArray(TL.requisition_line_id, lineIds),
+              isNull(T.deleted_at),
+              sql`${T.status} <> 'CANCELLED'`,
+            ),
+          )
+      : [];
+    const transferLineIds = transfers.map((t) => t.transferLineId);
+    const SL = schema.transferShipmentLine;
+    const S = schema.transferShipment;
+    const RL = schema.transferReceiptLine;
+    const RC = schema.transferReceipt;
+    const [shipped, received] = transferLineIds.length
+      ? await Promise.all([
+          this.db
+            .select({
+              lineId: SL.line_id,
+              kg: sql<string>`SUM(${SL.quantity})`,
+            })
+            .from(SL)
+            .innerJoin(S, eq(S.shipment_id, SL.shipment_id))
+            .where(
+              and(
+                inArray(SL.line_id, transferLineIds),
+                eq(S.status, 'POSTED'),
+                isNull(S.deleted_at),
+              ),
+            )
+            .groupBy(SL.line_id),
+          this.db
+            .select({
+              lineId: RL.line_id,
+              kg: sql<string>`SUM(${RL.quantity})`,
+            })
+            .from(RL)
+            .innerJoin(RC, eq(RC.receipt_id, RL.receipt_id))
+            .where(
+              and(
+                inArray(RL.line_id, transferLineIds),
+                eq(RC.status, 'POSTED'),
+                isNull(RC.deleted_at),
+              ),
+            )
+            .groupBy(RL.line_id),
+        ])
+      : [[], []];
+    const shippedByTransferLine = new Map(
+      shipped.map((r) => [r.lineId, Number(r.kg) || 0]),
+    );
+    const receivedByTransferLine = new Map(
+      received.map((r) => [r.lineId, Number(r.kg) || 0]),
+    );
     return rows
       .filter((row) => row.siloId && row.itemId && row.date)
-      .map((row) => ({
-        requisitionId: row.requisitionId,
-        reqNo: row.reqNo ?? row.requisitionId,
-        status: row.status ?? '',
-        siloId: row.siloId as string,
-        itemId: row.itemId as string,
-        date: String(row.date).slice(0, 10),
-        kg: Number(row.kg) || 0,
-      }));
+      .map((row) => {
+        const own = transfers.filter((t) => t.requisitionLineId === row.lineId);
+        const shippedKg = own.reduce(
+          (sum, t) => sum + (shippedByTransferLine.get(t.transferLineId) ?? 0),
+          0,
+        );
+        const receivedKg = own.reduce(
+          (sum, t) => sum + (receivedByTransferLine.get(t.transferLineId) ?? 0),
+          0,
+        );
+        const kg = Number(row.kg) || 0;
+        return {
+          requisitionId: row.requisitionId,
+          reqNo: row.reqNo ?? row.requisitionId,
+          status: row.status ?? '',
+          stage: requisitionStage({
+            status: row.status,
+            documentStatus: row.documentStatus,
+            fulfilmentStatus: row.fulfilmentStatus,
+            kg,
+            hasTransfer: own.length > 0,
+            shippedKg,
+            receivedKg,
+          }),
+          transferNos: [
+            ...new Set(
+              own.map((t) => t.transferNo).filter((no): no is string => !!no),
+            ),
+          ],
+          shippedKg,
+          receivedKg,
+          siloId: row.siloId as string,
+          itemId: row.itemId as string,
+          date: String(row.date).slice(0, 10),
+          kg,
+        };
+      });
   }
 
   /** Registered animals in each batch by Animal Type (Rishi, 4 Nov); a count-only batch has none and is left out. */

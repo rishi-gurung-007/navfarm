@@ -1,5 +1,6 @@
 import type { DailyForecastRow, DietChange } from './feed-forecast.engine';
 import {
+  requisitionStage,
   animalTypeOfStage,
   buildMillPlan,
   MillPlanFarmInput,
@@ -608,6 +609,10 @@ describe('requisitions due in the grid', () => {
         requisitionId: 'r1',
         reqNo: 'REQ-1',
         status: 'APPROVED',
+        stage: 'APPROVED' as const,
+        transferNos: [],
+        shippedKg: 0,
+        receivedKg: 0,
         siloId: 'loc-sl1',
         itemId: GROWER,
         date: dates[3],
@@ -617,6 +622,10 @@ describe('requisitions due in the grid', () => {
         requisitionId: 'r2',
         reqNo: 'REQ-2',
         status: 'APPROVED',
+        stage: 'APPROVED' as const,
+        transferNos: [],
+        shippedKg: 0,
+        receivedKg: 0,
         siloId: 'loc-sl1',
         itemId: STARTER,
         date: dates[4],
@@ -626,6 +635,10 @@ describe('requisitions due in the grid', () => {
         requisitionId: 'r3',
         reqNo: 'REQ-3',
         status: 'APPROVED',
+        stage: 'APPROVED' as const,
+        transferNos: [],
+        shippedKg: 0,
+        receivedKg: 0,
         siloId: 'loc-sl1',
         itemId: GROWER,
         date: '2026-11-20',
@@ -641,6 +654,14 @@ describe('requisitions due in the grid', () => {
       requisitionId: 'r1',
       reqNo: 'REQ-1',
       status: 'APPROVED',
+      stage: 'APPROVED',
+      transferNos: [],
+      shippedKg: 0,
+      receivedKg: 0,
+      stage: 'APPROVED' as const,
+      transferNos: [],
+      shippedKg: 0,
+      receivedKg: 0,
       kg: 3000,
       sourceCode: 'SL-1',
       itemName: 'Grower',
@@ -723,5 +744,82 @@ describe('feed change details', () => {
     };
     expect(plan.dietChanges).toEqual([expected]);
     expect(plan.farms[0].sheds[0].changes).toEqual([expected]);
+  });
+});
+
+// Rishi, 4 Nov: a requisition's real stage from its three status fields and its transfer's shipped / received kg.
+describe('requisitionStage', () => {
+  const base = {
+    status: 'APPROVED',
+    documentStatus: null,
+    fulfilmentStatus: null,
+    kg: 3000,
+    hasTransfer: false,
+    shippedKg: 0,
+    receivedKg: 0,
+  };
+  it('follows a requisition from approval to receipt', () => {
+    expect(requisitionStage({ ...base, status: 'PENDING_APPROVAL' })).toBe(
+      'PENDING',
+    );
+    expect(requisitionStage(base)).toBe('APPROVED');
+    expect(requisitionStage({ ...base, status: 'IN_CONSOLIDATION' })).toBe(
+      'IN_CONSOLIDATION',
+    );
+    expect(
+      requisitionStage({
+        ...base,
+        status: 'IN_CONSOLIDATION',
+        documentStatus: 'RELEASED',
+      }),
+    ).toBe('RELEASED');
+    expect(
+      requisitionStage({
+        ...base,
+        documentStatus: 'RELEASED',
+        hasTransfer: true,
+      }),
+    ).toBe('TRANSFER_OPEN');
+    expect(
+      requisitionStage({ ...base, hasTransfer: true, shippedKg: 3000 }),
+    ).toBe('SHIPPED');
+    expect(
+      requisitionStage({
+        ...base,
+        hasTransfer: true,
+        shippedKg: 3000,
+        receivedKg: 1000,
+      }),
+    ).toBe('PARTLY_RECEIVED');
+    expect(
+      requisitionStage({
+        ...base,
+        hasTransfer: true,
+        shippedKg: 3000,
+        receivedKg: 3000,
+      }),
+    ).toBe('RECEIVED');
+  });
+
+  it('reads the approval field alone as In Consolidation even when the delivery has moved on', () => {
+    // REQ-MUL100-2026-00001: status IN_CONSOLIDATION, fulfilment RECEIVED, all 3,000 KG received.
+    expect(
+      requisitionStage({
+        ...base,
+        status: 'IN_CONSOLIDATION',
+        documentStatus: 'RECEIVED',
+        fulfilmentStatus: 'RECEIVED',
+        hasTransfer: true,
+        shippedKg: 3000,
+        receivedKg: 3000,
+      }),
+    ).toBe('RECEIVED');
+    expect(
+      requisitionStage({
+        ...base,
+        status: 'IN_CONSOLIDATION',
+        fulfilmentStatus: 'TRANSFER_OPEN',
+      }),
+    ).toBe('TRANSFER_OPEN');
   });
 });

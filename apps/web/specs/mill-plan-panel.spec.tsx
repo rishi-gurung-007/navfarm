@@ -150,6 +150,10 @@ const plan = {
               requisitionId: 'r1',
               reqNo: 'REQ-F1-00006',
               status: 'APPROVED',
+              stage: 'APPROVED',
+              transferNos: [],
+              shippedKg: 0,
+              receivedKg: 0,
               kg: 3000,
               sourceCode: 'SL-1',
               itemName: 'Grower',
@@ -171,6 +175,10 @@ const plan = {
               requisitionId: 'r1',
               reqNo: 'REQ-F1-00006',
               status: 'APPROVED',
+              stage: 'APPROVED',
+              transferNos: [],
+              shippedKg: 0,
+              receivedKg: 0,
               kg: 3000,
               sourceCode: 'SL-1',
               itemName: 'Grower',
@@ -663,7 +671,9 @@ it('circles the day a requisition is due, on the shed and silo rows, with the re
   for (const el of circled) {
     expect(el.closest('td')?.cellIndex).toBe(3);
     const hint = el.closest('[data-hint]')?.getAttribute('data-hint') ?? '';
-    expect(hint).toContain('REQ-F1-00006 · 3,000 KG Grower → SL-1 · approved');
+    expect(hint).toContain(
+      'REQ-F1-00006 · 3,000 KG Grower → SL-1 · mplStageApproved',
+    );
   }
 });
 
@@ -701,4 +711,75 @@ it('explains a highlighted change day on hover', async () => {
     'mplChangeAnimals {"n":"120","types":"Commercial Pig: 120"}',
   );
   expect(hint).toContain('mplChangeRate {"to":"2.60","from":"1.40"}');
+});
+
+// Rishi, 4 Nov: the hover says where the requisition has got to; the circle turns amber once shipped, green once received.
+it('shows the requisition stage on hover and colours the circle by it', async () => {
+  const due = (stage: string, over: Record<string, unknown> = {}) => ({
+    date: dates[2],
+    requisitionId: `r-${stage}`,
+    reqNo: `REQ-${stage}`,
+    status: 'IN_CONSOLIDATION',
+    stage,
+    transferNos: ['TR-000099'],
+    shippedKg: 3000,
+    receivedKg: 0,
+    kg: 3000,
+    sourceCode: 'SL-1',
+    itemName: 'Grower',
+    ...over,
+  });
+  const silo = (requisitions: unknown[], itemId: string) => ({
+    requisitions,
+    sourceCode: `SL-${itemId}`,
+    sourceName: null,
+    sourceType: 'SILO',
+    itemId,
+    itemName: 'Grower',
+    openingKg: 1000,
+    closingKg: [1000, 1000, 4000, 4000, 4000, 4000, 4000],
+    runOutDate: null,
+  });
+  await renderPanel({
+    farms: [
+      {
+        farmId: 'farm-1',
+        code: 'F1',
+        name: 'Farm One',
+        totals: zeros(),
+        noFeedRows: [],
+        sheds: [],
+        silos: [
+          silo([due('RECEIVED', { receivedKg: 3000 })], 'a'),
+          silo([due('SHIPPED')], 'b'),
+          silo(
+            [
+              due('TRANSFER_OPEN', { shippedKg: 0 }),
+              due('RECEIVED', { receivedKg: 3000 }),
+            ],
+            'c',
+          ),
+        ],
+      },
+    ],
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'mplGenerate' }));
+  });
+  const circles = [
+    ...document.querySelectorAll('[data-requisition-due]'),
+  ] as HTMLElement[];
+  expect(circles.map((c) => c.getAttribute('data-stage'))).toEqual([
+    'RECEIVED',
+    'SHIPPED',
+    'TRANSFER_OPEN',
+  ]);
+  expect(circles[0].className).toContain('ring-(--success)');
+  expect(circles[1].className).toContain('ring-(--warning)');
+  expect(circles[2].className).toContain('ring-(--accent)');
+  const hint =
+    circles[0].closest('[data-hint]')?.getAttribute('data-hint') ?? '';
+  expect(hint).toContain(
+    'mplStageReceived {"tr":"TR-000099","received":"3,000 KG"}',
+  );
 });
