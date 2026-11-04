@@ -814,50 +814,108 @@ export default function MillPlanPanel() {
             })()}
           </section>
 
-          <StatRow columns={6}>
-            <StatCard
-              label={t('mplCardTotal')}
-              value={
-                <Figure kg={plan.cards.totalKg}>
-                  {tonnes(plan.cards.totalKg)}
-                </Figure>
-              }
-              unit="t"
-            />
-            <StatCard
-              label={t('mplCardFarms')}
-              value={plan.cards.farms}
-              sub={t('mplCardFarmsSub', {
-                sheds: plan.cards.sheds,
-                silos: plan.cards.silos,
-              })}
-            />
-            <StatCard
-              label={t('mplCardFeedTypes')}
-              value={plan.cards.feedTypes}
-            />
-            <StatCard
-              label={t('mplCardDietChanges')}
-              value={plan.cards.dietChanges}
-              tone={plan.cards.dietChanges ? 'warning' : 'default'}
-            />
-            <StatCard
-              label={t('mplCardDaysNear')}
-              value={plan.cards.daysNearOrOver}
-              tone={
-                plan.capacity.some((d) => d.status === 'OVER')
-                  ? CARD_TONE.OVER
-                  : plan.cards.daysNearOrOver
-                    ? CARD_TONE.WARN
-                    : 'default'
-              }
-            />
-            <StatCard
-              label={t('mplCardSilosOut')}
-              value={plan.cards.silosRunningOut}
-              tone={plan.cards.silosRunningOut ? 'danger' : 'default'}
-            />
-          </StatRow>
+          {/* Rishi, 4 Nov: a line of text under each card's figure, as in the mockup, from the plan's own data. */}
+          {(() => {
+            const feedNames = [
+              ...new Set(
+                plan.farms.flatMap((farm) =>
+                  farm.sheds.flatMap((shed) =>
+                    shed.items.map((it) => it.itemName),
+                  ),
+                ),
+              ),
+            ].sort((a, b) => a.localeCompare(b));
+            const changeDays = [
+              ...new Set(plan.dietChanges.map((c) => c.changeDate)),
+            ]
+              .sort()
+              .map(weekday);
+            const busyDays = plan.capacity
+              .filter((d) => d.status === 'WARN' || d.status === 'OVER')
+              .map((d) => weekday(d.date));
+            const runningOut = [
+              ...new Set(
+                plan.farms.flatMap((farm) =>
+                  farm.silos
+                    .filter((sl) => sl.runOutDate)
+                    .map((sl) => sl.sourceCode),
+                ),
+              ),
+            ];
+            const upTo = (names: string[], n: number) =>
+              names.length > n
+                ? `${names.slice(0, n).join(' · ')} · ${t('mplCardMore', { n: names.length - n })}`
+                : names.join(' · ');
+            return (
+              <StatRow columns={6}>
+                <StatCard
+                  label={t('mplCardTotal')}
+                  value={
+                    <Figure kg={plan.cards.totalKg}>
+                      {tonnes(plan.cards.totalKg)}
+                    </Figure>
+                  }
+                  unit="t"
+                  sub={t('mplCardTotalSub', {
+                    t: tonnes(
+                      plan.cards.totalKg / Math.max(1, plan.dates.length),
+                    ),
+                  })}
+                />
+                <StatCard
+                  label={t('mplCardFarms')}
+                  value={plan.cards.farms}
+                  sub={t('mplCardFarmsSub', {
+                    sheds: plan.cards.sheds,
+                    silos: plan.cards.silos,
+                  })}
+                />
+                <StatCard
+                  label={t('mplCardFeedTypes')}
+                  value={plan.cards.feedTypes}
+                  sub={feedNames.length ? upTo(feedNames, 3) : t('mplCardNone')}
+                />
+                <StatCard
+                  label={t('mplCardDietChanges')}
+                  value={plan.cards.dietChanges}
+                  tone={plan.cards.dietChanges ? 'warning' : 'default'}
+                  sub={
+                    changeDays.length
+                      ? t('mplCardChangesOn', { days: changeDays.join(', ') })
+                      : t('mplCardNoChanges')
+                  }
+                />
+                <StatCard
+                  label={t('mplCardDaysNear')}
+                  value={plan.cards.daysNearOrOver}
+                  tone={
+                    plan.capacity.some((d) => d.status === 'OVER')
+                      ? CARD_TONE.OVER
+                      : plan.cards.daysNearOrOver
+                        ? CARD_TONE.WARN
+                        : 'default'
+                  }
+                  sub={
+                    !plan.mill?.dailyKg
+                      ? t('mplCapacityNotSet')
+                      : busyDays.length
+                        ? t('mplCardBusyDays', { days: busyDays.join(' + ') })
+                        : t('mplCardAllWithin')
+                  }
+                />
+                <StatCard
+                  label={t('mplCardSilosOut')}
+                  value={plan.cards.silosRunningOut}
+                  tone={plan.cards.silosRunningOut ? 'danger' : 'default'}
+                  sub={
+                    runningOut.length
+                      ? t('mplCardRefill', { silos: upTo(runningOut, 3) })
+                      : t('mplCardNoneRunOut')
+                  }
+                />
+              </StatRow>
+            );
+          })()}
 
           {plan.failedFarms.length > 0 && (
             <div

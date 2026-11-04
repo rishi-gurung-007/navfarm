@@ -883,3 +883,20 @@ it('disables Collapse All and Expand All when every farm is already in that stat
   expect(expandAll.disabled).toBe(true);
   expect(collapseAll.disabled).toBe(false);
 });
+
+// Rishi, 4 Nov: each summary card has a line of text under its figure, as in the mockup.
+it('gives each summary card a line of text from the plan', async () => {
+  await renderPanel();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'mplGenerate' }));
+  });
+  const text = document.body.textContent ?? '';
+  expect(text).toContain('mplCardTotalSub');
+  expect(text).toContain('mplCardFarmsSub');
+  // The sample's one shed eats Grower; its change is on dates[3] (a Thursday).
+  expect(text).toContain('Grower');
+  expect(text).toContain('mplCardChangesOn {"days":"Thu"}');
+  // dates[1] is over capacity; dates[2] has none set (NO_CAPACITY is not "near").
+  expect(text).toContain('mplCardBusyDays {"days":"Tue"}');
+  expect(text).toContain('mplCardRefill {"silos":"SL-1"}');
+});
