@@ -2275,9 +2275,11 @@ export const translations = {
     mplNoFeedRows: '{{count}} batch(es) with no lifecycle feed row',
     mplNoFeedRowLine: '{{batch}} — from day {{day}}, {{date}}',
     mplNoFeedRowsTitle: 'No lifecycle feed row for:',
-    mplNotScheduledHint: 'No mill bin is assigned to this feed on this day (BIN Diet Assignment), so the mill has no capacity set aside for it.',
-    mplNotConfiguredHint: 'The mill has no bulk or bagged capacity set for this feed form.',
-    mplBinAvailableHint: 'Capacity left in this feed\'s mill bin that day.',
+    mplNotScheduledHint:
+      'No mill bin is assigned to this feed on this day (BIN Diet Assignment), so the mill has no capacity set aside for it.',
+    mplNotConfiguredHint:
+      'The mill has no bulk or bagged capacity set for this feed form.',
+    mplBinAvailableHint: "Capacity left in this feed's mill bin that day.",
     mplCollapseAll: 'Collapse All',
     mplExpandAll: 'Expand All',
     mplBeforeGenerate: 'Choose the filters and click Generate.',
@@ -2286,6 +2288,11 @@ export const translations = {
     mplCapacityPerDay: '{{t}} t/day',
     mplCapacityUsed: '{{pct}}% of capacity',
     mplCapacityNotSet: 'Capacity not set',
+    mplCapacityBarUsed: '{{used}} / {{cap}} t/day used (week average)',
+    mplAnimals: 'Animals',
+    mplAnimalsByType: 'Animals by type',
+    mplKgPerHeadDay: 'Kg/head/day',
+    mplConsumedWeek: '{{kg}} eaten this week',
     mplNoMill: 'No mill set up',
     mplCardTotal: 'Total Week Requirement',
     mplCardFarms: 'Farms',
@@ -2296,18 +2303,26 @@ export const translations = {
     mplCardSilosOut: 'Silos Running Out',
     mplFarmFailed: '{{farm}}: forecast not available — {{error}}',
     mplProduction: 'Production by Feed Type',
-    mplProductionInfo: 'Tonnes the mill must make of each feed on each day.\nApproved feed requisitions not yet produced.\nPlus what the forecast says the farms will still need, after their stock, open orders and incoming feed.\nHover a figure for the split in KG.\nThe line under a figure is the feed\'s bin capacity at the mill that day.',
-    mplCapacityInfo: 'What the mill must make each day, in tonnes, against its daily capacity.\nAmber from the Capacity Warning % in Feed Planning Settings.\nRed above 100 %.',
-    mplDietChangesInfo: 'Batches moving to a new feed this week, from their lifecycle.\nThe day, the old and new feed, and the head count.\nThe new feed\'s first day is marked in the grid below.',
-    mplGridInfo: 'Tonnes per day; hover a figure for its exact KG.\nFarm and shed rows: what the animals eat.\nSilo and store rows: projected closing stock, with the run-out day marked.\nDays before today are blank.',
-    mplSiloLevelsInfo: 'Each silo\'s stock today, in tonnes, against its Silo Capacity KG in the Location master.\nRed at 15 % full or less.\nAmber at 35 % or less.',
-    mplProductionSplit: 'Approved requisitions {{approved}} + forecast need {{forecast}}',
-    mplNoProduction: 'Nothing to produce this week for the selected farms and feeds.',
+    mplProductionInfo:
+      "Tonnes the mill must make of each feed on each day.\nApproved feed requisitions not yet produced.\nPlus what the forecast says the farms will still need, after their stock, open orders and incoming feed.\nHover a figure for the split in KG.\nThe line under a figure is the feed's bin capacity at the mill that day.",
+    mplCapacityInfo:
+      "What the mill must make each day, in tonnes, against the mill's daily production capacity.\nThe bar is the week's average day; each chip is one day.\nAmber from the Capacity Warning % in Feed Planning Settings.\nRed above 100 %.",
+    mplDietChangesInfo:
+      "Batches moving to a new feed this week, from their lifecycle.\nThe day, the old and new feed, and the head count.\nThe new feed's first day is marked in the grid below.",
+    mplGridInfo:
+      'Tonnes per day; hover a figure for its exact KG.\nFarm and shed rows: what the animals eat.\nSilo and store rows: projected closing stock, with the run-out day marked.\nDays before today are blank.',
+    mplSiloLevelsInfo:
+      "Each silo's stock today, in tonnes, against its Silo Capacity KG in the Location master.\nRed at 15 % full or less.\nAmber at 35 % or less.",
+    mplProductionSplit:
+      'Approved requisitions {{approved}} + forecast need {{forecast}}',
+    mplNoProduction:
+      'Nothing to produce this week for the selected farms and feeds.',
     mplFeed: 'Feed',
     mplTotal: 'Total',
     mplDietChanges: 'Feed Type Changes This Week',
     mplNoDietChanges: 'No feed type changes this week.',
-    mplDietChangeLine: 'Batch {{batch}} changes on {{date}}: {{from}} → {{to}}, {{heads}} head',
+    mplDietChangeLine:
+      'Batch {{batch}} changes on {{date}}: {{from}} → {{to}}, {{heads}} head',
     mplGrid: 'Weekly Feed Requirement — Farm × Shed × Day',
     mplFarmShed: 'Farm / Shed',
     mplMillTotal: 'Mill Total',
@@ -2322,7 +2337,8 @@ export const translations = {
     mplSiloStock: '{{stock}} of {{capacity}} t',
     mplSiloStockOnly: '{{stock}} t',
     mplSiloRunsOut: 'Runs out {{date}}',
-    mplGridNote: 'Shed rows: what the animals eat each day. Silo and store rows: projected closing stock; the run-out day is marked. Days before today are blank.',
+    mplGridNote:
+      'Shed rows: what the animals eat each day. Silo and store rows: projected closing stock; the run-out day is marked. Days before today are blank.',
     fftTabMillConsolidation: 'Mill Consolidation',
     fftTabLoadingInstructions: 'Loading Instructions',
     fsdLabel: 'Silo dashboard',
