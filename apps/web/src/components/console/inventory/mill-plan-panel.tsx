@@ -536,6 +536,13 @@ const CARD_TONE: Record<
   DayStatus,
   'success' | 'warning' | 'danger' | 'default'
 > = { OK: 'default', WARN: 'warning', OVER: 'danger', NO_CAPACITY: 'default' };
+// Tinted day chips, as in the mockup: green within capacity, amber near it, red over it (Rishi, 4 Nov).
+const DAY_CHIP: Record<DayStatus, string> = {
+  OK: 'bg-(--success-muted) text-(--success)',
+  WARN: 'bg-(--warning-muted) text-(--warning)',
+  OVER: 'bg-(--danger-muted) text-(--danger)',
+  NO_CAPACITY: 'border border-(--border) text-(--text-secondary)',
+};
 
 const TH =
   'sticky top-0 border-b border-(--border) bg-(--surface-raised) px-3 py-2 text-xs font-semibold text-(--text-secondary)';
@@ -777,6 +784,31 @@ export default function MillPlanPanel() {
             {(() => {
               // Rishi, 4 Nov: one bar against the mill's production capacity, as in the mockup, with a chip per day.
               const daily = plan.mill?.dailyKg ?? null;
+              const dayStatusText: Record<DayStatus, string> = {
+                OK: t('mplDayOk'),
+                WARN: t('mplDayWarn'),
+                OVER: t('mplDayOver'),
+                NO_CAPACITY: t('mplCapacityNotSet'),
+              };
+              // A day chip's hover: what the mill makes against its capacity, one row each.
+              const dayRows = (
+                day: MillPlan['capacity'][number],
+              ): Array<[string, string]> => [
+                [t('mplDayProduction'), exactKg(day.productionKg) ?? '0 KG'],
+                [
+                  t('mplDayCapacity'),
+                  exactKg(day.capacityKg) ?? t('mplCapacityNotSet'),
+                ],
+                ...(day.usedPct !== null
+                  ? [
+                      [t('mplDayUsed'), `${Math.round(day.usedPct)}%`] as [
+                        string,
+                        string,
+                      ],
+                    ]
+                  : []),
+                [t('mplDayStatus'), dayStatusText[day.status]],
+              ];
               const avgKg =
                 plan.capacity.reduce((sum, d) => sum + d.productionKg, 0) /
                 Math.max(1, plan.capacity.length);
@@ -829,18 +861,20 @@ export default function MillPlanPanel() {
                           key={day.date}
                           plain
                           focusable={false}
-                          hint={`${weekday(day.date)} ${formatDateShort(day.date)} · ${exactKg(day.productionKg) ?? '0 KG'}${day.usedPct !== null ? ` · ${t('mplCapacityUsed', { pct: day.usedPct })}` : ''}`}
+                          heading={`${weekday(day.date)} ${formatDateShort(day.date)}`}
+                          hint={detailText(dayRows(day), '')}
+                          content={<CardDetail rows={dayRows(day)} empty="" />}
                         >
                           <span
                             data-capacity-day={day.date}
                             data-status={day.status}
-                            className="inline-flex items-center gap-1 rounded-md border border-(--border) px-2 py-1 font-mono text-[11px] tabular-nums text-(--text-primary)"
+                            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-[11px] font-semibold tabular-nums ${DAY_CHIP[day.status]}`}
                           >
                             {weekday(day.date).toUpperCase()}:{' '}
                             {tonnes(day.productionKg)}t
                             <mark.Icon
                               aria-label={day.status}
-                              className={`h-3 w-3 ${mark.cls}`}
+                              className="h-3 w-3"
                             />
                           </span>
                         </HoverHint>

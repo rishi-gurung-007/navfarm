@@ -1,6 +1,12 @@
 'use client';
 
-import { type ReactNode, useId, useRef, useState } from 'react';
+import {
+  type ReactNode,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 
 /**
@@ -39,27 +45,66 @@ export function HoverHint({
 }) {
   const id = useId();
   const anchor = useRef<HTMLSpanElement>(null);
+  const tip = useRef<HTMLSpanElement>(null);
+  // What the card is placed against: the value's box, or a point at the cursor.
   const [at, setAt] = useState<{
     left: number;
+    right: number;
     top: number;
+    bottom: number;
     cursor?: boolean;
   } | null>(null);
   const show = () => {
     const box = anchor.current?.getBoundingClientRect();
-    if (box) setAt({ left: box.left + box.width / 2, top: box.top });
+    if (box)
+      setAt({
+        left: box.left,
+        right: box.right,
+        top: box.top,
+        bottom: box.bottom,
+      });
   };
   const follow = (e: { clientX: number; clientY: number }) =>
-    setAt({ left: e.clientX, top: e.clientY, cursor: true });
-  // Beside the cursor, on whichever side has room, so the card never runs off the screen.
-  const cursorPlace = (left: number, top: number) => {
-    const right = left > window.innerWidth / 2;
-    const below = top < window.innerHeight / 2;
-    return {
-      left: right ? left - 12 : left + 12,
-      top: below ? top + 16 : top - 12,
-      transform: `translate(${right ? '-100%' : '0'}, ${below ? '0' : '-100%'})`,
-    };
-  };
+    setAt({
+      left: e.clientX,
+      right: e.clientX,
+      top: e.clientY,
+      bottom: e.clientY,
+      cursor: true,
+    });
+  // Measured once drawn, then kept inside the window: above the value if it fits, else below, else on the
+  // roomier side; never off the left or right edge (Rishi, 4 Nov: cards were cut off and squeezed at the edges).
+  useLayoutEffect(() => {
+    const el = tip.current;
+    if (!at || !el) return;
+    const margin = 8;
+    const { innerWidth: vw, innerHeight: vh } = window;
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const clamp = (v: number, size: number, max: number) =>
+      Math.max(margin, Math.min(v, max - size - margin));
+    let left: number;
+    let top: number;
+    if (at.cursor) {
+      left = at.left + 12 + w <= vw - margin ? at.left + 12 : at.left - 12 - w;
+      top = at.top + 16 + h <= vh - margin ? at.top + 16 : at.top - 12 - h;
+    } else {
+      left = (at.left + at.right) / 2 - w / 2;
+      const above = at.top - 6 - h;
+      const below = at.bottom + 6;
+      top =
+        above >= margin
+          ? above
+          : below + h <= vh - margin
+            ? below
+            : at.top > vh - at.bottom
+              ? above
+              : below;
+    }
+    el.style.left = `${clamp(left, w, vw)}px`;
+    el.style.top = `${clamp(top, h, vh)}px`;
+    el.style.visibility = 'visible';
+  }, [at]);
   const hide = () => setAt(null);
   return (
     <>
@@ -83,11 +128,13 @@ export function HoverHint({
           <span
             id={id}
             role="tooltip"
-            className={`pointer-events-none fixed z-[1000] ${at.cursor ? '' : '-translate-x-1/2 -translate-y-full'} rounded-md border px-2.5 py-1.5 text-xs leading-snug shadow-lg ${content ? 'max-w-96' : list ? 'max-w-80' : 'max-w-64'}`}
+            ref={tip}
+            className={`pointer-events-none fixed z-[1000] w-max overflow-hidden rounded-md border px-2.5 py-1.5 text-xs leading-snug shadow-lg ${content ? 'max-w-96' : list ? 'max-w-80' : 'max-w-64'}`}
             style={{
-              ...(at.cursor
-                ? cursorPlace(at.left, at.top)
-                : { left: at.left, top: at.top - 6 }),
+              left: 0,
+              top: 0,
+              visibility: 'hidden',
+              maxHeight: 'calc(100vh - 16px)',
               backgroundColor: 'var(--surface-raised)',
               borderColor: 'var(--border)',
               color: 'var(--text-primary)',
