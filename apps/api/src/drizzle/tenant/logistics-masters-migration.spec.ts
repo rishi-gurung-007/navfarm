@@ -5,10 +5,13 @@ const dir = __dirname;
 const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')).entries as Array<{ idx: number; when: number; tag: string }>;
 
 describe('Tenant migration 0228 — Logistics Phase 1 masters', () => {
-  it('is journalled after every other migration, at a `when` past Arun\'s unmerged 0214–0227 (…095)', () => {
+  // Not "it is the newest" any more — 0239 follows it on this branch. What has to hold is that it sits past
+  // Arun's unmerged 0214–0227 (…095) and shares its number and `when` with nothing else on any branch.
+  it('is journalled at a `when` past Arun\'s unmerged 0214–0227 (…095), and shares it with nothing', () => {
     const entry = journal.find((e) => e.tag === '0228_logistics_masters')!;
     expect(entry.when).toBe(1792000000096);
-    expect(Math.max(...journal.map((e) => e.when))).toBe(entry.when);
+    expect(journal.filter((e) => e.when === entry.when)).toHaveLength(1);
+    expect(journal.filter((e) => e.tag.startsWith('0228_'))).toHaveLength(1);
   });
 
   it('only adds the nine logistics tables', () => {

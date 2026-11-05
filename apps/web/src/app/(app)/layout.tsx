@@ -57,6 +57,7 @@ import { REPORT_SECTIONS } from '@/components/console/reports/reports-shell';
 import {
   MASTER_DATA_CONFIGS,
   MASTER_DATA_NAV_ORDER,
+  masterTabRoutes,
 } from '@/modules/master-data/configs';
 import { filterNavByPermission } from '@/utils/nav-permissions';
 
@@ -471,7 +472,13 @@ export default function ConsoleLayout({
       if (bi === -1) return -1;
       return ai - bi;
     })
-    .map((c) => ({ label: tLabel(c.label), href: `/master-data/${c.key}` }));
+    .map((c) => ({
+      label: tLabel(c.label),
+      href: `/master-data/${c.key}`,
+      // A master's tabs are routes of their own and are not listed here, so the menu has to be told they belong
+      // to the parent — otherwise opening a tab leaves nothing in the flyout highlighted.
+      alsoActiveOn: masterTabRoutes(c.key),
+    }));
 
   let navItems: AppShellNavItem[] = [];
 

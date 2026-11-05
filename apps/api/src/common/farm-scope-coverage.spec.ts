@@ -141,6 +141,8 @@ const EXEMPT: Record<string, string> = {
     'Master data, not farm-specific.',
   'logistics/logistics-master.controller.ts':
     "Company masters (Logistics: vehicles, drivers, zones, routes, rates, service plans, settings); not a farm's.",
+  'logistics/road-distance.controller.ts':
+    'Measures the distance between two points on a company route, and lists the route\'s own marks; reads no farm data and writes nothing.',
   'master-data/accounting-period/accounting-period.controller.ts':
     "Company master (Accounting Period Master); periods are company-wide, not a farm's.",
   'master-data/no-series/no-series.controller.ts':

@@ -1506,6 +1506,13 @@
       "when": 1792000000096,
       "tag": "0228_logistics_masters",
       "breakpoints": true
+    },
+    {
+      "idx": 215,
+      "version": "5",
+      "when": 1792000000107,
+      "tag": "0239_route_stop_point",
+      "breakpoints": true
     }
   ]
 }

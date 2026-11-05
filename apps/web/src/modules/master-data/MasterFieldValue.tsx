@@ -282,6 +282,19 @@ export function MasterFieldValue({
     return <>Loading reference…</>;
   }
 
+  // A coordinate pair is one control over two columns, so the record view shows both, not a bare latitude.
+  if (field?.type === 'latlng') {
+    const lng = record?.[field.mapLongitudeKey || 'longitude'];
+    const asCoord = (raw: unknown) => {
+      const n = Number(raw);
+      return raw === null || raw === undefined || raw === '' || !Number.isFinite(n) ? null : n;
+    };
+    const lat = asCoord(value);
+    const long = asCoord(lng);
+    if (lat === null || long === null) return <>{NA}</>;
+    return <>{`${lat.toFixed(5)}, ${long.toFixed(5)}`}</>;
+  }
+
   if (field?.type === 'image' && typeof value === 'string' && value) {
     const src = value.startsWith('http') ? value : `${API_ORIGIN}${value}`;
     return (

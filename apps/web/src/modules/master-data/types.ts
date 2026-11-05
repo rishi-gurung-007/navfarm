@@ -11,7 +11,9 @@ export type FieldType =
   | "field-list"
   | "json"
   | "string-list"
-  | "image";
+  | "image"
+  | "map"
+  | "latlng";
 
 export interface SelectOption {
   value: string;
@@ -53,6 +55,66 @@ export interface MasterDataField {
    */
   subDialog?: boolean | string;
   placeholder?: string;
+  /**
+   * The form key holding the longitude. On a `latlng` field this field's own key holds the latitude; on a `map`
+   * field `mapLatitudeKey` names it, because the map itself writes no column of its own.
+   *
+   * A coordinate pair is two columns but one thing to fill in, so `latlng` renders both boxes inside a single
+   * form cell — the width of any other field — and the `map` that sets them sits full-width below (Rishi,
+   * 5 Nov). Only the `latlng` field carries them into the payload; the `map` is `filterOnly`.
+   */
+  mapLongitudeKey?: string;
+  /** `map` field only: the form key holding the latitude, since a map field's own key is not a column. */
+  mapLatitudeKey?: string;
+  /**
+   * `latlng` field only: take the point from the record chosen in another field rather than asking for it twice.
+   * A Delivery Zone names a Location, and the Location Master already holds that place's coordinates — so
+   * choosing the farm should put the pin on the farm (Rishi, 5 Nov).
+   *
+   * Fills on a *change* of `sourceKey`, never on open, so a point moved by hand survives reopening the record;
+   * and never clears, so choosing a location that has no coordinates of its own leaves what is already there.
+   */
+  coordinatesFrom?: {
+    /** The field holding the chosen record (e.g. `location_id`); its own `entityEndpoint` supplies the rows. */
+    sourceKey: string;
+    latitudeKey: string;
+    longitudeKey: string;
+  };
+  /**
+   * Take this field's value off the record chosen in another field, rather than asking for something already
+   * known. A Service Plan for one truck does not need to be told what type that truck is (Rishi, 5 Nov).
+   *
+   * Filled whenever the source changes and cleared when the source is cleared, because the value was derived
+   * rather than chosen — leaving it behind would silently turn "this truck" into "every truck of this type".
+   * Pair with `readOnlyWhenSet: sourceKey` so a derived value cannot be edited out of step with its source.
+   */
+  copyFrom?: {
+    /** The field holding the chosen record; its own `entityEndpoint` supplies the rows. */
+    sourceKey: string;
+    /** The column to take off that record. */
+    valueKey: string;
+  };
+  /**
+   * `map` field only: after a point is picked, ask the API how far it is from the previous one and put the answer
+   * in `targetKey`. `params` maps a query parameter to the form field supplying it; the call is skipped until all
+   * of them have a value. The filled number stays editable — it is a suggestion, not a lock.
+   */
+  mapAutoDistance?: {
+    endpoint: string;
+    params: Record<string, string>;
+    targetKey: string;
+  };
+  /**
+   * `map` field only: points to draw on the map for context, fetched whenever every field in `params` has a
+   * value. A route's stops are placed against where the route starts, where it ends and the stops already on it,
+   * so the map has to show them. `idParam` names the query parameter carrying the record being edited, so a stop
+   * is not drawn as context for itself.
+   */
+  mapMarks?: {
+    endpoint: string;
+    params: Record<string, string>;
+    idParam?: string;
+  };
   /** jsonRow select only: key of a header form field whose value this column falls back to when left empty; the fallback is shown as the placeholder. */
   defaultFromField?: string;
   /** With defaultFromField: the column is display-only and always equals the header field (lifecycle KPI Period). */

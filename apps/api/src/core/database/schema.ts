@@ -8512,7 +8512,11 @@ export const logisticsRoute = mysqlTable(
   (t) => ({ uqCode: uniqueIndex('uq_logistics_route_code').on(t.tenant_id, t.company_id, t.route_code) }),
 );
 
-/** An extra drop on a multi-stop route, in order. */
+/**
+ * An extra drop on a multi-stop route, in order. A stop carries its own name and map point: the route code already
+ * says which zone the route runs in, so `zone_id` is no longer asked for (Rishi, 5 Nov) and is kept nullable only
+ * so stops recorded against a zone before 0239 still read back.
+ */
 export const logisticsRouteStop = mysqlTable(
   'logistics_route_stop',
   {
@@ -8521,7 +8525,10 @@ export const logisticsRouteStop = mysqlTable(
     company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
     route_id: varchar('route_id', { length: 36 }).notNull(),
     stop_seq: int('stop_seq').notNull(),
-    zone_id: varchar('zone_id', { length: 36 }).notNull(),
+    stop_name: varchar('stop_name', { length: 120 }),
+    zone_id: varchar('zone_id', { length: 36 }),
+    latitude: decimal('latitude', { precision: 10, scale: 7 }),
+    longitude: decimal('longitude', { precision: 10, scale: 7 }),
     distance_from_previous_km: decimal('distance_from_previous_km', { precision: 10, scale: 1 }),
     stop_minutes: int('stop_minutes').default(0).notNull(),
     ...logisticsAudit(),
@@ -8551,7 +8558,11 @@ export const logisticsFreightRate = mysqlTable(
   (t) => ({ idxCarrier: index('idx_logistics_rate_carrier').on(t.tenant_id, t.company_id, t.carrier_supplier_id) }),
 );
 
-/** When a truck is due a service: every X km and/or Y days, for one vehicle or every vehicle of a type. */
+/**
+ * When a truck is due a service: every X km and/or Y days, for one vehicle or every vehicle of a type. Where
+ * both are set, `vehicle_id` is the scope and `vehicle_type` is only that truck's own type, filled in for
+ * information (Rishi, 5 Nov) — see servicePlanProblems.
+ */
 export const logisticsServicePlan = mysqlTable(
   'logistics_service_plan',
   {

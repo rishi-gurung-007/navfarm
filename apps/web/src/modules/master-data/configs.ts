@@ -5864,4 +5864,14 @@ export function getConfig(key: string): MasterDataConfig | undefined {
   return MASTER_DATA_CONFIGS.find((c) => c.key === key);
 }
 
+/**
+ * The routes of a master's own tabs. A tab is a master in its own right at its own path — Vehicle Documents is
+ * /master-data/vehicle-document, not a path under /master-data/vehicle — and only primary masters appear in the
+ * sidebar. Without telling the menu that these paths belong to the parent, opening any tab left the whole Farm
+ * Master flyout unhighlighted, so it could not say which master you were inside.
+ */
+export function masterTabRoutes(parentKey: string): string[] {
+  return MASTER_DATA_CONFIGS.filter((c) => c.tabOf === parentKey).map((c) => `/master-data/${c.key}`);
+}
+
 export { STATUS_OPTIONS };

@@ -79,6 +79,7 @@ import { MasterRecordView } from './MasterRecordView';
 import { BcOwnershipNotice } from './BcOwnershipNotice';
 import { EntityLookupDialog, EntityLookupField } from './EntityLookupField';
 import { SearchableEntitySelect } from './SearchableEntitySelect';
+import { MapPointPicker } from './MapPointPicker';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ItemTemplateSelectModal } from './ItemTemplateSelectModal';
 import { exportMasterRowsToCsv } from './utils/master-csv';
@@ -126,6 +127,13 @@ const S = {
 };
 
 const inputCls = 'nf-input';
+
+/** A coordinate as a number, or null when the form or the column holds nothing. `Number('')` is 0, a real longitude. */
+const toCoordinate = (raw: unknown): number | null => {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+};
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
@@ -718,6 +726,23 @@ export function MasterDataTable({
   const [imageUploading, setImageUploading] = useState<Record<string, boolean>>(
     {},
   );
+  // What choosing a record filled a coordinate pair with, keyed by field key — or why it could not.
+  const [coordinateSource, setCoordinateSource] = useState<Record<string, { label: string; filled: boolean }>>({});
+  // Context points drawn on a "map" field (a route's start, destination and existing stops), keyed by field key.
+  const [mapMarks, setMapMarks] = useState<Record<string, Array<{ latitude: number; longitude: number; label: string; kind?: 'START' | 'END' | 'STOP' }>>>({});
+  // What a "map" field's auto-distance call last did, keyed by field key: whether it is in flight, the point it
+  // measured from, and whether the answer came from the road network or the straight line.
+  const [mapDistance, setMapDistance] = useState<
+    Record<
+      string,
+      {
+        busy?: boolean;
+        from?: { latitude: number; longitude: number; label: string };
+        source?: 'ROAD' | 'STRAIGHT_LINE';
+        error?: string;
+      }
+    >
+  >({});
   const [saving, setSaving] = useState(false);
   const [activeFormTab, setActiveFormTab] = useState<string>('');
   // Drives the API query param for filterTabs (e.g. resource_type: MANPOWER | EQUIPMENT).
@@ -2185,6 +2210,16 @@ export function MasterDataTable({
           Number(stored) !== 0;
         return;
       }
+      // A coordinate pair is one control over two columns, and only the latitude has a field entry. Without this
+      // the longitude never reached the form on edit: the pin was missing from a record that had one, and saving
+      // wrote the longitude back as null.
+      if (f.type === 'latlng' || f.type === 'map') {
+        const latKey = f.type === 'map' ? f.mapLatitudeKey || 'latitude' : f.key;
+        const lngKey = f.mapLongitudeKey || 'longitude';
+        initial[latKey] = row[latKey];
+        initial[lngKey] = row[lngKey];
+        return;
+      }
       let v = row[f.key];
       if (f.type === 'string-list' || f.type === 'field-list' || f.multiple) {
         const parsed = parseStringList(v);
@@ -2573,6 +2608,16 @@ export function MasterDataTable({
           payload[f.key] = '';
           continue;
         }
+        // A coordinate pair is one control over two columns, so the longitude is sent beside the latitude under
+        // its own key — it has no field entry of its own to be picked up by this loop. A cleared pair is sent as
+        // nulls, so a point can be taken off a record that already had one.
+        if (f.type === 'latlng') {
+          const asCoord = (raw: any) =>
+            raw === '' || raw === undefined || raw === null ? null : Number(raw);
+          payload[f.key] = asCoord(v);
+          payload[f.mapLongitudeKey || 'longitude'] = asCoord(form[f.mapLongitudeKey || 'longitude']);
+          continue;
+        }
         if (v === '' || v === undefined || v === null) continue;
         if (f.type === 'number') v = Number(v);
         if (f.type === 'json') {
@@ -2856,6 +2901,170 @@ export function MasterDataTable({
       return undefined;
     const reason = f.lockReason(editing as Row);
     return reason ? `🔒 ${reason}` : undefined;
+  };
+
+  /**
+   * Fetch the context points a `map` field draws (a route's start, destination and the stops already on it) as
+   * soon as the fields they depend on have values, and clear them when they do not. Keyed on the resolved query
+   * string so switching route refetches and re-rendering does not.
+   */
+  const markQueries = config.fields
+    .filter((f) => f.type === 'map' && f.mapMarks)
+    .map((f) => {
+      const spec = f.mapMarks!;
+      const params = new URLSearchParams();
+      let ready = true;
+      for (const [param, formKey] of Object.entries(spec.params)) {
+        const value = form[formKey];
+        if (value === undefined || value === null || value === '') { ready = false; break; }
+        params.set(param, String(value));
+      }
+      // A stop is not context for itself.
+      if (ready && spec.idParam && editing?.[config.idKey]) params.set(spec.idParam, String(editing[config.idKey]));
+      return { key: f.key, url: ready ? `${spec.endpoint}?${params.toString()}` : '' };
+    });
+  const markQueryKey = markQueries.map((q) => `${q.key}=${q.url}`).join('&');
+
+  useEffect(() => {
+    let cancelled = false;
+    for (const { key, url } of markQueries) {
+      if (!url) {
+        setMapMarks((prev) => (prev[key]?.length ? { ...prev, [key]: [] } : prev));
+        continue;
+      }
+      api
+        .get(url)
+        .then((res: any) => {
+          if (cancelled) return;
+          const rows = unwrap<any[]>(res);
+          setMapMarks((prev) => ({ ...prev, [key]: Array.isArray(rows) ? rows : [] }));
+        })
+        // A map with no context points is still usable; it just has nothing to place the new one against.
+        .catch(() => {
+          if (!cancelled) setMapMarks((prev) => ({ ...prev, [key]: [] }));
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+    // Deliberately keyed on the resolved query string alone: `markQueries` is rebuilt every render, so depending
+    // on it would refetch on every keystroke.
+  }, [markQueryKey]);
+
+  /**
+   * Take a coordinate pair from the record chosen in another field: pick the farm, and the pin goes to the farm.
+   * The Location Master already holds every place's coordinates, so a Delivery Zone should not ask for them a
+   * second time.
+   *
+   * Only on a change of the source, never on open — reopening a zone whose point was nudged by hand must not
+   * drag it back to the farm's own coordinates — and never clearing, since a location with no coordinates
+   * recorded is a gap in that master, not an instruction to forget this zone's point.
+   */
+  const coordinateSeen = useRef<Record<string, string>>({});
+  const coordinateFields = config.fields.filter(
+    (f) => (f.type === 'latlng' && f.coordinatesFrom) || f.copyFrom,
+  );
+  const coordinateSourceKey = coordinateFields
+    .map((f) => `${f.key}=${form[(f.coordinatesFrom ?? f.copyFrom)!.sourceKey] ?? ''}`)
+    .join('&');
+
+  /** The record currently chosen in `sourceKey`, from the options that field already fetched. */
+  const chosenRecordOf = (sourceKey: string): { row: Row; label: string } | null => {
+    const source = config.fields.find((f) => f.key === sourceKey);
+    const chosen = String(form[sourceKey] ?? '');
+    const rows = source?.entityEndpoint ? entityOptions[source.entityEndpoint] : undefined;
+    const row = rows?.find((r) => String(r[source?.entityValueKey || 'id'] ?? '') === chosen);
+    if (!row) return null;
+    return {
+      row,
+      label: String((source?.entityLabelKeys || []).map((k) => row[k]).filter(Boolean).join(' — ') || 'That record'),
+    };
+  };
+
+  /**
+   * Forget what was seen whenever the dialog opens, and declare this before the effect below so it runs first on
+   * the opening render. The ref outlives any one dialog: left alone it held the empty value the closed list page
+   * last reported, which made opening a record that already names a location look like someone had just chosen
+   * one — and a saved zone's own point was overwritten by its farm's the moment it was opened for editing.
+   */
+  useEffect(() => {
+    coordinateSeen.current = {};
+    setCoordinateSource({});
+  }, [modalOpen, editing]);
+
+  useEffect(() => {
+    // Only while a form is actually on screen; a closed dialog has no values worth remembering.
+    if (!modalOpen) return;
+    for (const field of coordinateFields) {
+      const spec = (field.coordinatesFrom ?? field.copyFrom)!;
+      const chosen = String(form[spec.sourceKey] ?? '');
+      const previous = coordinateSeen.current[field.key];
+      coordinateSeen.current[field.key] = chosen;
+      // First look at this field in this dialog: remember what it opened with, change nothing.
+      if (previous === undefined || previous === chosen) continue;
+
+      // A derived value belongs to its source: clearing the source clears it, or "this truck" would quietly
+      // become "every truck of this type". A coordinate pair is never cleared — see `coordinatesFrom`.
+      if (!chosen) {
+        if (field.copyFrom) setField(field.key, '');
+        continue;
+      }
+
+      const found = chosenRecordOf(spec.sourceKey);
+      if (!found) continue;
+      const { row, label } = found;
+
+      if (field.copyFrom) {
+        setField(field.key, row[field.copyFrom.valueKey] ?? '');
+        continue;
+      }
+
+      const coords = field.coordinatesFrom!;
+      const lat = toCoordinate(row[coords.latitudeKey]);
+      const lng = toCoordinate(row[coords.longitudeKey]);
+      if (lat === null || lng === null) {
+        setCoordinateSource((prev) => ({ ...prev, [field.key]: { label, filled: false } }));
+        continue;
+      }
+      setField(field.key, lat);
+      setField(field.mapLongitudeKey || 'longitude', lng);
+      setCoordinateSource((prev) => ({ ...prev, [field.key]: { label, filled: true } }));
+      void fillMapDistance(field.key, lat, lng);
+    }
+    // Keyed on the chosen records alone: `coordinateFields` is rebuilt every render.
+  }, [coordinateSourceKey, entityOptions, modalOpen]);
+
+  /**
+   * Works out how far a freshly-set point is from the one before it and puts the answer in the field the map
+   * names, keyed by the latitude column so the pair control and the map share one result. Driven from whichever
+   * of the two the value was set in: clicking the map and typing a coordinate must behave the same.
+   */
+  const fillMapDistance = async (latKey: string, lat: number, lng: number) => {
+    const mapField = config.fields.find(
+      (x) => x.type === 'map' && (x.mapLatitudeKey || 'latitude') === latKey,
+    );
+    const auto = mapField?.mapAutoDistance;
+    if (!auto) return;
+    const params: Record<string, string> = { latitude: String(lat), longitude: String(lng) };
+    for (const [param, formKey] of Object.entries(auto.params)) {
+      const supplied = form[formKey];
+      // Not enough on the form yet to say what this is measured from — leave the distance to be typed.
+      if (supplied === undefined || supplied === null || supplied === '') return;
+      params[param] = String(supplied);
+    }
+    setMapDistance((prev) => ({ ...prev, [latKey]: { busy: true } }));
+    try {
+      const res = unwrap<any>(await api.get(`${auto.endpoint}?${new URLSearchParams(params).toString()}`));
+      const km = Number(res?.km);
+      if (!Number.isFinite(km)) throw new Error('The distance could not be worked out.');
+      setField(auto.targetKey, km);
+      setMapDistance((prev) => ({ ...prev, [latKey]: { from: res?.from, source: res?.source } }));
+    } catch (err: any) {
+      setMapDistance((prev) => ({
+        ...prev,
+        [latKey]: { error: err?.message || 'The distance could not be worked out. Type it in.' },
+      }));
+    }
   };
 
   const renderField = (f: MasterDataField) => {
@@ -3632,6 +3841,94 @@ export function MasterDataTable({
               {rows.length ? t('mdAddMore') : t('mdAdd')}
             </button>
           )}
+        </div>
+      );
+    }
+    // One control for a pair of coordinates: click the map, and both the latitude (this field's key) and the
+    // longitude (mapLongitudeKey) are set. The numbers stay on show and stay typeable, because a point read off
+    // a GPS is sometimes more exact than a point read off a map, and because the tiles need the internet.
+    // A coordinate pair: both boxes inside one form cell, the width of any other field, so they can sit beside
+    // the field above the map rather than under it (Rishi, 5 Nov). These two keys are the ones saved; the `map`
+    // below is only a way of setting them.
+    if (f.type === 'latlng') {
+      const latKey = f.key;
+      const lngKey = f.mapLongitudeKey || 'longitude';
+      const lat = toCoordinate(value);
+      const lng = toCoordinate(form[lngKey]);
+      const box = (key: string, placeholder: string, current: number | null, isLat: boolean) => (
+        <input
+          type="number"
+          step="0.0000001"
+          min={isLat ? -90 : -180}
+          max={isLat ? 90 : 180}
+          aria-label={placeholder}
+          placeholder={placeholder}
+          value={current ?? ''}
+          disabled={fieldDisabled}
+          onChange={(e) => {
+            const next = e.target.value === '' ? '' : Number(e.target.value);
+            setField(key, next);
+            const nextLat = isLat ? next : lat;
+            const nextLng = isLat ? lng : next;
+            if (typeof nextLat === 'number' && typeof nextLng === 'number')
+              void fillMapDistance(latKey, nextLat, nextLng);
+          }}
+          className={cn(inputCls, 'w-full min-w-0')}
+          style={S.input}
+        />
+      );
+      const from = coordinateSource[f.key];
+      return (
+        <div className="min-w-0 space-y-1">
+          <div className="flex min-w-0 gap-2">
+            {box(latKey, 'Latitude', lat, true)}
+            {box(lngKey, 'Longitude', lng, false)}
+          </div>
+          {from && (
+            <p className="text-[11px]" style={from.filled ? S.muted : { color: 'var(--warning, #b45309)' }}>
+              {from.filled
+                ? `Taken from ${from.label}. Move the pin if the truck pulls in somewhere else.`
+                : `${from.label} has no coordinates in its own master, so nothing was filled in. Place the point on the map.`}
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    // The map that sets a coordinate pair. It writes no column of its own (the `latlng` field above carries the
+    // values), so it is `filterOnly` in the config and spans the full width of the form, last.
+    if (f.type === 'map') {
+      const latKey = f.mapLatitudeKey || 'latitude';
+      const lngKey = f.mapLongitudeKey || 'longitude';
+      const lat = toCoordinate(form[latKey]);
+      const lng = toCoordinate(form[lngKey]);
+      const state = mapDistance[latKey] || {};
+      const pick = (pickedLat: number, pickedLng: number) => {
+        setField(latKey, pickedLat);
+        setField(lngKey, pickedLng);
+        void fillMapDistance(latKey, pickedLat, pickedLng);
+      };
+      return (
+        <div className="space-y-2">
+          <MapPointPicker
+            latitude={lat}
+            longitude={lng}
+            onPick={pick}
+            disabled={fieldDisabled}
+            marks={mapMarks[f.key] ?? (state.from ? [{ ...state.from, kind: 'START' as const }] : [])}
+            busy={state.busy}
+          />
+          {state.error ? (
+            <p className="text-[11px]" style={{ color: 'var(--danger)' }}>
+              {state.error}
+            </p>
+          ) : state.source && state.from ? (
+            <p className="text-[11px]" style={S.muted}>
+              {state.source === 'ROAD'
+                ? `By road from ${state.from.label}. Change it if the truck goes another way.`
+                : `No road route was available, so this is the straight line from ${state.from.label}. Change it to the real road distance.`}
+            </p>
+          ) : null}
         </div>
       );
     }
@@ -5471,7 +5768,8 @@ export function MasterDataTable({
                         className={
                           f.type === 'textarea' ||
                           f.type === 'json' ||
-                          f.type === 'string-list'
+                          f.type === 'string-list' ||
+                          f.type === 'map'
                             ? 'sm:col-span-2'
                             : undefined
                         }
@@ -5585,7 +5883,8 @@ export function MasterDataTable({
                       className={
                         f.type === 'textarea' ||
                         f.type === 'json' ||
-                        f.type === 'string-list'
+                        f.type === 'string-list' ||
+                        f.type === 'map'
                           ? 'sm:col-span-2'
                           : undefined
                       }

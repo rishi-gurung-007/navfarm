@@ -97,7 +97,10 @@ export const LOGISTICS_MASTERS: LogisticsMaster[] = [
   },
   {
     path: 'delivery-zone', permission: { moduleCode: 'LOGISTICS', resource: 'DELIVERY_ZONE' }, label: 'Delivery Zone', table: S.logisticsDeliveryZone, idKey: 'zone_id',
-    fields: { zone_code: 'text', zone_name: 'text', zone_type: 'text', location_id: 'id', address: 'text', latitude: 'decimal', longitude: 'decimal', arrival_radius_m: 'int' },
+    // No Address (Rishi, 5 Nov) — the point on the map is what places a zone — but the Location is kept, limited
+    // to the top of the hierarchy (the form offers root locations only). The address column stays, unwritten, so
+    // zones recorded before the change still read back.
+    fields: { zone_code: 'text', zone_name: 'text', zone_type: 'text', location_id: 'id', latitude: 'decimal', longitude: 'decimal', arrival_radius_m: 'int' },
     problems: zoneProblems,
     unique: { columns: ['zone_code'], message: 'A delivery zone with this code already exists.' },
     references: [{ field: 'location_id', table: S.locationMaster, idColumn: 'location_id', label: 'Location' }],
@@ -122,12 +125,14 @@ export const LOGISTICS_MASTERS: LogisticsMaster[] = [
   },
   {
     path: 'route-stop', permission: { moduleCode: 'LOGISTICS', resource: 'ROUTE' }, label: 'Route Stop', table: S.logisticsRouteStop, idKey: 'stop_id',
-    fields: { route_id: 'id', stop_seq: 'int', zone_id: 'id', distance_from_previous_km: 'decimal', stop_minutes: 'int' },
+    // No Zone (Rishi, 5 Nov): the route code says which zone the route runs in. The column stays, unwritten.
+    fields: { route_id: 'id', stop_seq: 'int', stop_name: 'text', latitude: 'decimal', longitude: 'decimal', distance_from_previous_km: 'decimal', stop_minutes: 'int' },
     problems: routeStopProblems,
     unique: { columns: ['route_id', 'stop_seq'], message: 'This route already has a stop with that number.' },
-    references: [{ field: 'route_id', table: S.logisticsRoute, idColumn: 'route_id', label: 'Route' }, zoneRef('zone_id', 'Zone')],
-    display: [{ field: 'route_id', table: S.logisticsRoute, idColumn: 'route_id', columns: { route_code: 'route_code' } }, zoneName('zone_id', 'zone')],
+    references: [{ field: 'route_id', table: S.logisticsRoute, idColumn: 'route_id', label: 'Route' }],
+    display: [{ field: 'route_id', table: S.logisticsRoute, idColumn: 'route_id', columns: { route_code: 'route_code' } }],
     defaultSort: 'stop_seq',
+    search: ['stop_name'],
     filters: { routeId: 'route_id' },
   },
   {
@@ -157,19 +162,17 @@ export const LOGISTICS_MASTERS: LogisticsMaster[] = [
     path: 'setting', permission: { moduleCode: 'LOGISTICS', resource: 'SETTINGS' }, label: 'Logistics Settings', table: S.logisticsSetting, idKey: 'setting_id',
     fields: {
       capacity_warning_pct: 'decimal', cost_variance_pct: 'decimal', service_grace_days: 'int', pod_reminder_hours: 'int',
-      freight_expense_account_id: 'id', maintenance_expense_account_id: 'id', paid_from_account_id: 'id', trip_required_to_ship: 'bool',
+      freight_expense_account_id: 'id', maintenance_expense_account_id: 'id', trip_required_to_ship: 'bool',
     },
     problems: settingProblems,
     unique: { columns: [], message: 'This company already has its Logistics Settings; edit them instead.' },
     references: [
       { field: 'freight_expense_account_id', table: S.glAccountMaster, idColumn: 'gl_account_id', label: 'Freight Expense Account' },
       { field: 'maintenance_expense_account_id', table: S.glAccountMaster, idColumn: 'gl_account_id', label: 'Maintenance Expense Account' },
-      { field: 'paid_from_account_id', table: S.glAccountMaster, idColumn: 'gl_account_id', label: 'Paid From Account' },
     ],
     display: [
       { field: 'freight_expense_account_id', table: S.glAccountMaster, idColumn: 'gl_account_id', columns: { freight_expense_account: 'account_name' } },
       { field: 'maintenance_expense_account_id', table: S.glAccountMaster, idColumn: 'gl_account_id', columns: { maintenance_expense_account: 'account_name' } },
-      { field: 'paid_from_account_id', table: S.glAccountMaster, idColumn: 'gl_account_id', columns: { paid_from_account: 'account_name' } },
     ],
     defaultSort: 'created_at',
   },

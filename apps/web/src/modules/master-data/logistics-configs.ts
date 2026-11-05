@@ -24,6 +24,9 @@ const RATE_BASES = [
   { value: 'HEAD', label: 'Per Head' },
 ];
 const supplierLookup = { type: 'select-entity' as const, entityEndpoint: '/supplier?isActive=true', entityValueKey: 'supplier_id', entityLabelKeys: ['supplier_code', 'supplier_name'] };
+// A workshop is a supplier of services, so the picker asks for those and not for every feed and semen supplier
+// in the tenant (Rishi, 5 Nov). A workshop filed under another vendor type has to be retyped as Services to appear.
+const workshopLookup = { ...supplierLookup, entityEndpoint: '/supplier?isActive=true&vendorType=SERVICES' };
 const zoneLookup = { type: 'select-entity' as const, entityEndpoint: '/logistics/delivery-zone?isActive=true', entityValueKey: 'zone_id', entityLabelKeys: ['zone_code', 'zone_name'] };
 const vehicleLookup = { type: 'select-entity' as const, entityEndpoint: '/logistics/vehicle?isActive=true', entityValueKey: 'vehicle_id', entityLabelKeys: ['registration_no'] };
 const routeLookup = { type: 'select-entity' as const, entityEndpoint: '/logistics/route?isActive=true', entityValueKey: 'route_id', entityLabelKeys: ['route_code'] };
@@ -49,6 +52,8 @@ const vehicle: MasterDataConfig = {
     { key: 'home_farm_name', label: 'Home Farm' },
     { key: 'capacity_kg', label: 'Capacity KG' },
     { key: 'capacity_head', label: 'Capacity Head' },
+    { key: 'capacity_bags', label: 'Capacity Bags' },
+    { key: 'capacity_tonnes', label: 'Capacity Tonnes' },
     { key: 'status', label: 'Status', labels: labelsOf(opts(['AVAILABLE', 'RESERVED', 'IN_USE', 'IN_MAINTENANCE', 'BLOCKED'])) },
   ],
   fields: [
@@ -58,10 +63,13 @@ const vehicle: MasterDataConfig = {
     { key: 'ownership', label: 'Ownership', type: 'select', required: true, options: OWNERSHIP },
     { key: 'carrier_supplier_id', label: 'Carrier', ...supplierLookup, requiredWhen: { anyOf: [{ key: 'ownership', equals: 'HIRED' }] }, helpText: 'The haulier, from the Supplier master. Needed for a hired vehicle.' },
     { key: 'home_farm_id', label: 'Home Farm', type: 'select-entity', entityEndpoint: '/location?locationType=FARM&rootOnly=true&isActive=true', entityValueKey: 'location_id', entityLabelKeys: ['location_code', 'location_name'] },
-    { key: 'capacity_kg', label: 'Capacity KG', type: 'number', step: '0.01', helpText: 'Give at least one capacity: KG, head, bags or tonnes.' },
-    { key: 'capacity_head', label: 'Capacity Head', type: 'number' },
-    { key: 'capacity_bags', label: 'Capacity Bags', type: 'number' },
-    { key: 'capacity_tonnes', label: 'Capacity Tonnes', type: 'number', step: '0.001' },
+    // Rishi, 5 Nov: ask for the capacity the type is actually measured in — head for livestock, kg in bulk, bags
+    // bagged — and ask every type for its tonnage. `hideStoredWhenHidden` keeps a figure recorded under an earlier
+    // type in the table rather than wiping it when the type changes; it just stops being asked for or sent.
+    { key: 'capacity_head', label: 'Capacity Head', type: 'number', required: true, visibleWhen: { anyOf: [{ key: 'vehicle_type', equals: 'LIVESTOCK' }] }, hideStoredWhenHidden: true, helpText: 'How many pigs the truck carries.' },
+    { key: 'capacity_kg', label: 'Capacity KG', type: 'number', step: '0.01', required: true, visibleWhen: { anyOf: [{ key: 'vehicle_type', equals: 'BULK_FEED' }] }, hideStoredWhenHidden: true, helpText: 'How much bulk feed the tanker holds.' },
+    { key: 'capacity_bags', label: 'Capacity Bags', type: 'number', required: true, visibleWhen: { anyOf: [{ key: 'vehicle_type', equals: 'BAGGED_FEED' }] }, hideStoredWhenHidden: true, helpText: 'How many bags fit on the deck.' },
+    { key: 'capacity_tonnes', label: 'Capacity Tonnes', type: 'number', step: '0.001', helpText: 'The truck\'s rated payload. Asked of every type; leave it blank if it is not on the papers.' },
     { key: 'compartments', label: 'Compartments', type: 'number' },
     { key: 'odometer_km', label: 'Odometer KM', type: 'number', step: '0.1' },
     { key: 'remarks', label: 'Remarks', type: 'textarea' },
@@ -143,17 +151,26 @@ const deliveryZone: MasterDataConfig = {
     { key: 'zone_name', label: 'Name' },
     { key: 'zone_type', label: 'Type', labels: labelsOf(ZONE_TYPES) },
     { key: 'location_name', label: 'Location' },
+    { key: 'latitude', label: 'Latitude' },
+    { key: 'longitude', label: 'Longitude' },
   ],
   fields: [
     company,
     { key: 'zone_code', label: 'Code', type: 'text', required: true, maxLength: 30, createOnly: true },
     { key: 'zone_name', label: 'Name', type: 'text', required: true, maxLength: 120 },
     { key: 'zone_type', label: 'Type', type: 'select', required: true, options: ZONE_TYPES },
-    { key: 'location_id', label: 'Location', type: 'select-entity', entityEndpoint: '/location?isActive=true', entityValueKey: 'location_id', entityLabelKeys: ['location_code', 'location_name'], helpText: 'The farm, mill or quarantine location this zone is. Leave blank for a place outside NAVFarm, such as Colcom.' },
-    { key: 'address', label: 'Address', type: 'textarea' },
-    { key: 'latitude', label: 'Latitude', type: 'number', step: '0.0000001' },
-    { key: 'longitude', label: 'Longitude', type: 'number', step: '0.0000001' },
-    { key: 'arrival_radius_m', label: 'Arrival Radius (m)', type: 'number' },
+    // Rishi, 5 Nov: the Location is back, but only the top of the hierarchy — a zone is a place a truck drives
+    // to, which is a farm or the mill, never a shed or a pen inside one. `rootOnly` is that level: a location
+    // with no parent is level 1. The Address stays gone; the point on the map is what a zone is placed by.
+    { key: 'location_id', label: 'Location', type: 'select-entity', entityEndpoint: '/location?rootOnly=true&isActive=true', entityValueKey: 'location_id', entityLabelKeys: ['location_code', 'location_name'], helpText: 'The farm or mill this zone is, from the top level of the location hierarchy. Leave blank for a place outside NAVFarm, such as Colcom.' },
+    { key: 'arrival_radius_m', label: 'Arrival Radius (m)', type: 'number', helpText: 'How close a truck must get to count as arrived.' },
+    // The pair sits beside Arrival Radius, in one ordinary form cell (Rishi, 5 Nov); the map that sets them is
+    // below, full width. These are the two columns that get saved — the map writes none of its own.
+    // Choosing the Location fills these from the Location Master, which already holds that place's coordinates
+    // (Rishi, 5 Nov) — the same point should not be typed into two masters. Still editable: a zone is where the
+    // truck pulls in, which may be a gate rather than the middle of the farm.
+    { key: 'latitude', label: 'Latitude / Longitude', type: 'latlng', mapLongitudeKey: 'longitude', coordinatesFrom: { sourceKey: 'location_id', latitudeKey: 'gps_latitude', longitudeKey: 'gps_longitude' }, helpText: 'Filled from the Location when you choose one. Click the map below to move it, or type a GPS reading.' },
+    { key: 'zone_point_map', label: 'Point on Map', type: 'map', filterOnly: true, mapLatitudeKey: 'latitude', mapLongitudeKey: 'longitude', helpText: 'Click where the truck pulls in. Drag to move the map, scroll or use + and − to zoom.' },
   ],
 };
 
@@ -206,7 +223,7 @@ const routeStop: MasterDataConfig = {
   columns: [
     { key: 'route_code', label: 'Route' },
     { key: 'stop_seq', label: 'Stop No.' },
-    { key: 'zone_name', label: 'Zone' },
+    { key: 'stop_name', label: 'Stop' },
     { key: 'distance_from_previous_km', label: 'KM from Previous' },
     { key: 'stop_minutes', label: 'Stop Minutes' },
   ],
@@ -214,9 +231,34 @@ const routeStop: MasterDataConfig = {
     company,
     { key: 'route_id', label: 'Route', required: true, ...routeLookup },
     { key: 'stop_seq', label: 'Stop No.', type: 'number', required: true },
-    { key: 'zone_id', label: 'Zone', required: true, ...zoneLookup },
+    // Rishi, 5 Nov: no Zone — the route code already says which zone the route runs in. A stop is its own name
+    // and point, and picking the point works the distance out from the stop before it (the route's From Zone for
+    // stop 1). The number it fills in stays editable: it is what the road network says, not what the truck does.
+    { key: 'stop_name', label: 'Stop Name', type: 'text', required: true, maxLength: 120, placeholder: 'Nyabira turn-off' },
     { key: 'distance_from_previous_km', label: 'KM from Previous Stop', type: 'number', step: '0.1' },
     { key: 'stop_minutes', label: 'Stop Minutes', type: 'number' },
+    { key: 'latitude', label: 'Latitude / Longitude', type: 'latlng', mapLongitudeKey: 'longitude', helpText: 'Set by clicking the map below, or typed in from a GPS reading.' },
+    // Last, and the full width of the form. The map draws where the route starts, where it ends and the stops
+    // already on it (Rishi, 5 Nov), so the next one is placed against them instead of onto an empty country.
+    {
+      key: 'stop_point_map',
+      label: 'Point on Map',
+      type: 'map',
+      filterOnly: true,
+      mapLatitudeKey: 'latitude',
+      mapLongitudeKey: 'longitude',
+      helpText: 'Click where the truck stops. The KM from Previous Stop above is then worked out by road.',
+      mapAutoDistance: {
+        endpoint: '/logistics/route-distance/route-stop',
+        params: { routeId: 'route_id', stopSeq: 'stop_seq' },
+        targetKey: 'distance_from_previous_km',
+      },
+      mapMarks: {
+        endpoint: '/logistics/route-distance/route-marks',
+        params: { routeId: 'route_id' },
+        idParam: 'excludeStopId',
+      },
+    },
   ],
 };
 
@@ -276,13 +318,24 @@ const servicePlan: MasterDataConfig = {
   fields: [
     company,
     { key: 'plan_name', label: 'Plan Name', type: 'text', required: true, maxLength: 120 },
-    { key: 'vehicle_id', label: 'Vehicle', ...vehicleLookup, helpText: 'Choose a vehicle, or a vehicle type for every truck of that type.' },
-    { key: 'vehicle_type', label: 'Vehicle Type', type: 'select', options: VEHICLE_TYPES },
+    // The two together are the plan's scope: one named truck, or every truck of a type. Choosing a vehicle fills
+    // its type in and locks it (Rishi, 5 Nov) — the truck already knows what it is, and leaving the type
+    // separately editable let a plan say "this tanker" and "every bagged-feed truck" at the same time.
+    { key: 'vehicle_id', label: 'Vehicle', ...vehicleLookup, helpText: 'A plan for one named truck. Leave blank to cover every truck of a type instead.' },
+    {
+      key: 'vehicle_type',
+      label: 'Vehicle Type',
+      type: 'select',
+      options: VEHICLE_TYPES,
+      copyFrom: { sourceKey: 'vehicle_id', valueKey: 'vehicle_type' },
+      readOnlyWhenSet: 'vehicle_id',
+      helpText: "With no vehicle chosen, the plan covers every truck of this type. With one chosen, this is that truck's own type.",
+    },
     { key: 'interval_km', label: 'Every KM', type: 'number', step: '0.1' },
     { key: 'interval_days', label: 'Every Days', type: 'number' },
     { key: 'grace_km', label: 'Grace KM', type: 'number', step: '0.1' },
     { key: 'grace_days', label: 'Grace Days', type: 'number' },
-    { key: 'workshop_supplier_id', label: 'Workshop', ...supplierLookup },
+    { key: 'workshop_supplier_id', label: 'Workshop', ...workshopLookup },
   ],
 };
 
@@ -313,7 +366,6 @@ const logisticsSetting: MasterDataConfig = {
     { key: 'pod_reminder_hours', label: 'POD Reminder Hours', type: 'number', helpText: 'Alert when a delivery has no proof of delivery after this many hours. Default 24.' },
     { key: 'freight_expense_account_id', label: 'Freight Expense Account', ...glLookup },
     { key: 'maintenance_expense_account_id', label: 'Maintenance Expense Account', ...glLookup },
-    { key: 'paid_from_account_id', label: 'Paid From Account', ...glLookup },
     { key: 'trip_required_to_ship', label: 'Trip Required to Ship', type: 'boolean', helpText: 'Off until trips are in use: transfers ship as they do today.' },
   ],
 };

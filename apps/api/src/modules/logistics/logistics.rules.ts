@@ -34,6 +34,22 @@ function percent(problems: string[], label: string, value: unknown) {
   const n = num(value);
   if (n !== null && (!Number.isFinite(n) || n < 0 || n > 100)) problems.push(`${label} must be between 0 and 100.`);
 }
+function latLong(problems: string[], values: Values) {
+  const lat = num(values.latitude);
+  const lng = num(values.longitude);
+  if (lat !== null && (lat < -90 || lat > 90)) problems.push('Latitude must be between -90 and 90.');
+  if (lng !== null && (lng < -180 || lng > 180)) problems.push('Longitude must be between -180 and 180.');
+}
+
+/**
+ * Which load capacity a truck is asked for, by what it carries (Rishi, 5 Nov). Tonnes is asked of every type and
+ * stays optional — a truck's tonnage is not always on its papers — so the type's own measure is the one required.
+ */
+export const CAPACITY_BY_VEHICLE_TYPE: Record<string, { field: string; label: string }> = {
+  LIVESTOCK: { field: 'capacity_head', label: 'Capacity Head' },
+  BULK_FEED: { field: 'capacity_kg', label: 'Capacity KG' },
+  BAGGED_FEED: { field: 'capacity_bags', label: 'Capacity Bags' },
+};
 
 export function vehicleProblems(v: Values): string[] {
   const p: string[] = [];
@@ -43,8 +59,9 @@ export function vehicleProblems(v: Values): string[] {
   if (v.ownership === 'HIRED' && !text(v.carrier_supplier_id)) p.push('A hired vehicle needs its carrier.');
   for (const [k, l] of [['capacity_kg', 'Capacity KG'], ['capacity_head', 'Capacity Head'], ['capacity_bags', 'Capacity Bags'], ['capacity_tonnes', 'Capacity Tonnes'], ['compartments', 'Compartments'], ['odometer_km', 'Odometer']] as const)
     nonNegative(p, l, v[k]);
-  if ([v.capacity_kg, v.capacity_head, v.capacity_bags, v.capacity_tonnes].every((c) => !((num(c) ?? 0) > 0)))
-    p.push('Give at least one load capacity (KG, head, bags or tonnes).');
+  const measure = CAPACITY_BY_VEHICLE_TYPE[String(v.vehicle_type ?? '')];
+  if (measure && !((num(v[measure.field]) ?? 0) > 0))
+    p.push(`${measure.label} is required for this vehicle type.`);
   return p;
 }
 
@@ -72,10 +89,7 @@ export function zoneProblems(v: Values): string[] {
   required(p, 'Zone Code', v.zone_code);
   required(p, 'Zone Name', v.zone_name);
   oneOf(p, 'Zone Type', v.zone_type, ZONE_TYPES);
-  const lat = num(v.latitude);
-  const lng = num(v.longitude);
-  if (lat !== null && (lat < -90 || lat > 90)) p.push('Latitude must be between -90 and 90.');
-  if (lng !== null && (lng < -180 || lng > 180)) p.push('Longitude must be between -180 and 180.');
+  latLong(p, v);
   nonNegative(p, 'Arrival Radius', v.arrival_radius_m);
   return p;
 }
@@ -93,11 +107,13 @@ export function routeProblems(v: Values): string[] {
   return p;
 }
 
+/** No Zone: the route code says which zone the route runs in, so a stop is its own name and point (Rishi, 5 Nov). */
 export function routeStopProblems(v: Values): string[] {
   const p: string[] = [];
   required(p, 'Route', v.route_id);
-  required(p, 'Zone', v.zone_id);
+  required(p, 'Stop Name', v.stop_name);
   positive(p, 'Stop No.', v.stop_seq);
+  latLong(p, v);
   nonNegative(p, 'Distance from Previous Stop', v.distance_from_previous_km);
   nonNegative(p, 'Stop Minutes', v.stop_minutes);
   return p;
@@ -125,6 +141,14 @@ export function datesOverlap(a: { valid_from: string; valid_to: string | null },
   return a.valid_from <= bEnd && b.valid_from <= aEnd;
 }
 
+/**
+ * A plan's scope is one named truck or every truck of a type, and at least one of the two must be given.
+ *
+ * Both may be present: choosing a vehicle fills its own type in for information (Rishi, 5 Nov). **Where both
+ * are set, `vehicle_id` is the scope** and `vehicle_type` is only what that truck happens to be — a plan for
+ * one tanker must never be read as a plan for every tanker. Whatever resolves plans to trucks in Phase 2 has to
+ * check `vehicle_id` first.
+ */
 export function servicePlanProblems(v: Values): string[] {
   const p: string[] = [];
   required(p, 'Plan Name', v.plan_name);
