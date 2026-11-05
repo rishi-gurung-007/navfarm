@@ -140,6 +140,15 @@ export class BreedingController {
     return await this.breedingService.getSemenBatches(tenantId, companyId);
   }
 
+  @Get('semen-collectors')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'view')
+  @ApiOperation({ summary: 'Users who hold the Semen Collector role, to name on a collection plan or a collection' })
+  async getSemenCollectors(@Req() req: any, @Query('company_id') companyId?: string) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const active = req?.headers?.['x-active-company-id'];
+    return { data: await this.breedingService.semenCollectors(tenantId, companyId || (typeof active === 'string' && active ? active : null)) };
+  }
+
   @Get('semen-collection/:id')
   @RequirePermission('PIGGERY', 'ANIMAL', 'view')
   @ApiOperation({ summary: 'One collected semen lot with its boars, results, cost, QR and the services that used it' })

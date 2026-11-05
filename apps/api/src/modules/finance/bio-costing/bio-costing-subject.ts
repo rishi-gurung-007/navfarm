@@ -13,6 +13,8 @@ export interface SubjectGl {
   accum_amort_gl_id: string | null;
   amort_expense_gl_id: string | null;
   fv_gain_loss_gl_id: string | null;
+  /** A fair value loss, where the item splits gain from loss; null, a loss goes to fv_gain_loss_gl_id. */
+  fv_loss_gl_id: string | null;
   writeoff_gl_id: string | null;
 }
 
@@ -83,6 +85,7 @@ export function subjectFromItem(item: ItemRow): CostingSubject {
       accum_amort_gl_id: item.bio_accum_amort_gl_id,
       amort_expense_gl_id: item.bio_amort_expense_gl_id,
       fv_gain_loss_gl_id: item.bio_fv_gain_loss_gl_id,
+      fv_loss_gl_id: item.bio_fv_loss_gl_id ?? null,
       writeoff_gl_id: item.bio_writeoff_gl_id,
     },
   };

@@ -178,3 +178,11 @@ describe('MortalityAnimalsField', () => {
   });
 });
 
+describe('mortality payload: disposal destination', () => {
+  it('sends where the body went when it is said, and nothing when it is not', () => {
+    const base = { animal_id: 'a1', dead_weight_kg: '120', reason_id: 'r1', reason_text: '' };
+    expect(mortalityPayload([{ ...base, disposal_destination: ' Burial ' }])[0]).toMatchObject({ disposal_destination: 'Burial' });
+    expect(mortalityPayload([base])[0]).not.toHaveProperty('disposal_destination');
+    expect(mortalityPayload([{ ...base, disposal_destination: '  ' }])[0]).not.toHaveProperty('disposal_destination');
+  });
+});

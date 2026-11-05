@@ -37,7 +37,6 @@ const EXPECTED: Record<string, string> = {
   "cost-center": "Cost Centre",
   reason: "Reason",
   "breeding-line-setup": "Breeding Line Setup",
-  "semen-collector": "Semen Collector",
   "genetic-level-band": "Genetic Level Band",
   "bcs-scale": "Body Condition Scale",
   "alert-rule": "Alert Rule",

@@ -416,6 +416,7 @@ export default function ConsoleLayout({
   const inventoryChildren = [
     { label: t('invStockBalance'), href: '/inventory/balance' },
     { label: t('invGoodsReceipt'), href: '/inventory/goods-receipt' },
+    { label: t('invQcInspection'), href: '/inventory/qc-inspection' },
     { label: t('invTransfers'), href: '/inventory/transfers' },
     { label: t('invStockAdjustment'), href: '/inventory/stock-adjustment' },
     { label: t('invLedger'), href: '/inventory/ledger' },

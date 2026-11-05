@@ -13,6 +13,7 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { QrCodeService } from '../../production/qr-code/qr-code.service';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { bioCodes } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
+import { QcInspectionService } from '../../inventory/qc-inspection/qc-inspection.service';
 
 export interface PostedSemenLot {
   lot_no: string;
@@ -22,6 +23,8 @@ export interface PostedSemenLot {
   pack_no: string | null;
   /** What the colorant issued from stock cost, 0 when none was. It is part of the lot's cost, so of each dose's. */
   colorant_cost: number;
+  /** Set when the item is QC required: the doses are not stock until this inspection is completed and accepted. */
+  qc_inspection_no?: string | null;
 }
 
 export interface PostCollectionParams {
@@ -66,6 +69,7 @@ export class SemenLotService {
     private readonly numberSeriesService: NumberSeriesService,
     private readonly qrCodeService: QrCodeService,
     private readonly animalBookValue: AnimalBookValueService,
+    private readonly qcInspections: QcInspectionService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -153,26 +157,52 @@ export class SemenLotService {
     // The doses are stock at the cost of producing them. The boar's costs were booked as expense (or into his own asset), never into work in progress, so the
     // stock is credited to the recovery account (BIO_SEMEN_PRODUCTION), not to WIP; without that mapping it is posted the ordinary way, as an output.
     const recoveryMapped = lotUnitCost > 0 && (await this.glPostingService.hasMapping(tenantId, boar.company_id, 'BIO_SEMEN_PRODUCTION'));
-    const entry = await this.ledgerService.writePositiveEntry({
-      tenantId,
-      companyId: boar.company_id,
-      itemId: item.item_id,
-      glMappingType: recoveryMapped ? 'BIO_SEMEN_PRODUCTION' : undefined,
-      documentType: 'BREEDING',
-      documentNo: lotNo,
-      documentLineId: params.semenBatchId,
-      postingDate: params.collectionDate,
-      transactionType: 'OUTPUT',
-      quantity: params.doses,
-      uom: item.uom_primary,
-      rate: Number(lotUnitCost.toFixed(6)),
-      lotNo,
-      expiryDate: expiry ?? undefined,
-      batchNo: boarBatch?.batch_no,
-      warehouseId,
-      userId: userPayload?.userId,
-    });
-    await this.glPostingService.postInventoryLedgerEntry(entry, userPayload?.userId);
+    let qcInspectionNo: string | null = null;
+    if (item.is_qc_required) {
+      // QC required: the doses are not stock yet. An inspection stands in for the ledger entry, which is written (with its journal) when the
+      // inspection is completed and the doses accepted; until then the lot cannot be used in a mating (issueDoses).
+      const raised = await this.qcInspections.raise({
+        tenantId,
+        seriesCode: await this.qcInspections.resolveSeries(tenantId, boar.company_id),
+        userId: userPayload?.userId,
+        companyId: boar.company_id,
+        sourceDocType: 'SEMEN_COLLECTION',
+        sourceDocNo: lotNo,
+        sourceLineId: params.semenBatchId,
+        sourcePostingDate: params.collectionDate,
+        itemId: item.item_id,
+        lotNo,
+        expiryDate: expiry,
+        quantity: params.doses,
+        uom: item.uom_primary,
+        rate: Number(lotUnitCost.toFixed(6)),
+        warehouseId,
+        glMappingType: recoveryMapped ? 'BIO_SEMEN_PRODUCTION' : null,
+        batchNo: boarBatch?.batch_no ?? null,
+      });
+      qcInspectionNo = raised.inspection_no;
+    } else {
+      const entry = await this.ledgerService.writePositiveEntry({
+        tenantId,
+        companyId: boar.company_id,
+        itemId: item.item_id,
+        glMappingType: recoveryMapped ? 'BIO_SEMEN_PRODUCTION' : undefined,
+        documentType: 'BREEDING',
+        documentNo: lotNo,
+        documentLineId: params.semenBatchId,
+        postingDate: params.collectionDate,
+        transactionType: 'OUTPUT',
+        quantity: params.doses,
+        uom: item.uom_primary,
+        rate: Number(lotUnitCost.toFixed(6)),
+        lotNo,
+        expiryDate: expiry ?? undefined,
+        batchNo: boarBatch?.batch_no,
+        warehouseId,
+        userId: userPayload?.userId,
+      });
+      await this.glPostingService.postInventoryLedgerEntry(entry, userPayload?.userId);
+    }
 
     // The QR is a pack of its own, tied to a batch: a boar in no batch has none to print.
     const qr = boarBatch
@@ -186,7 +216,28 @@ export class SemenLotService {
         )
       : null;
 
-    return { lot_no: lotNo, expiry_date: expiry, warehouse_id: warehouseId, qr_id: qr?.qr_id ?? null, pack_no: qr?.pack_no ?? null, colorant_cost: colorantCost };
+    return { lot_no: lotNo, expiry_date: expiry, warehouse_id: warehouseId, qr_id: qr?.qr_id ?? null, pack_no: qr?.pack_no ?? null, colorant_cost: colorantCost, qc_inspection_no: qcInspectionNo };
+  }
+
+  /**
+   * A lot of a QC-required item is not stock until its inspection has been completed and accepted: it cannot be used while it waits, or if it failed.
+   * A lot with no inspection (every lot before QC, and any item that is not QC required) is not held.
+   */
+  private async assertNotHeldByQc(lot: typeof schema.semenBatch.$inferSelect) {
+    if (!lot.output_item_id || lot.inventory_posted) return;
+    const [inspection] = await this.db
+      .select({ no: schema.qcInspection.inspection_no, status: schema.qcInspection.status, ledger: schema.qcInspection.ledger_entry_id })
+      .from(schema.qcInspection)
+      .where(and(eq(schema.qcInspection.source_doc_type, 'SEMEN_COLLECTION'), eq(schema.qcInspection.source_line_id, lot.semen_batch_id)))
+      .limit(1);
+    if (!inspection) return;
+    const label = lot.lot_no ? ` ${lot.lot_no}` : '';
+    if (inspection.status !== 'CLOSED') {
+      throw new BadRequestException(`The semen lot${label} is waiting for its QC inspection (${inspection.no}); it cannot be used until it is completed and accepted.`);
+    }
+    if (!inspection.ledger) {
+      throw new BadRequestException(`The semen lot${label} did not pass QC (${inspection.no}); it cannot be used.`);
+    }
   }
 
   /**
@@ -206,6 +257,7 @@ export class SemenLotService {
     userPayload?: { userId?: string },
     use?: { sow: typeof schema.animalRegister.$inferSelect; batchId: string | null },
   ) {
+    await this.assertNotHeldByQc(lot);
     const remaining = Number(lot.doses_collected) - Number(lot.doses_used_internal ?? 0) - Number(lot.doses_sold ?? 0);
     if (quantity > remaining + 1e-9) {
       throw new BadRequestException(

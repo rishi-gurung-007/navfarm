@@ -4,7 +4,7 @@ import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { AnimalService } from './animal.service';
-import { ConsumptionRow, groupConsumption, Reading, summariseWeights } from './animal-activity';
+import { amortisationEndDate, ConsumptionRow, groupConsumption, Reading, summariseWeights } from './animal-activity';
 import { buildParityExpense, type ExpenseEvent, type ParityFacts } from './animal-parity-expense';
 import { bioEventCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
@@ -29,6 +29,80 @@ export class AnimalActivityService {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
     if (!tenantDb) throw new Error('Tenant database connection context not established.');
     return tenantDb;
+  }
+
+  /**
+   * The facts the animal card shows beside her register row, worked out from where they were recorded: her amortisation window from her
+   * item's terms, the litter lot and colour code her gilt selection gave her, her birth weight (the litter's average from its farrowing —
+   * piglets are not weighed one by one at birth) and her latest posted body weight. Out-of-production is her own column and is not here.
+   */
+  async cardFacts(animal: {
+    animal_id: string;
+    item_id: string;
+    dob: string | null;
+    entry_date: string;
+    age_at_entry_weeks: number | null;
+    source_batch_id: string | null;
+    costing_start_date: string | null;
+  }) {
+    const [item] = await this.db
+      .select({ bio_costing_method: schema.itemMaster.bio_costing_method, bio_useful_life_months: schema.itemMaster.bio_useful_life_months })
+      .from(schema.itemMaster)
+      .where(eq(schema.itemMaster.item_id, animal.item_id))
+      .limit(1);
+
+    const [gilt] = await this.db
+      .select({ lot_no: schema.giltSelectionLine.lot_no, colour_code: schema.giltSelectionLine.colour_code, farrow_id: schema.giltSelectionLine.farrow_id })
+      .from(schema.giltSelectionGilt)
+      .innerJoin(schema.giltSelectionLine, eq(schema.giltSelectionLine.line_id, schema.giltSelectionGilt.line_id))
+      .innerJoin(schema.giltSelection, eq(schema.giltSelection.selection_id, schema.giltSelectionGilt.selection_id))
+      .where(and(eq(schema.giltSelectionGilt.animal_id, animal.animal_id), sql`${schema.giltSelection.status} <> 'CANCELLED'`))
+      .orderBy(desc(schema.giltSelection.selection_date))
+      .limit(1);
+
+    // Her litter: the one her gilt selection names, else the litter lot she was born into (a piglet lot made at a farrowing).
+    const litterWhere = gilt?.farrow_id
+      ? eq(schema.farrowingRecord.farrow_id, gilt.farrow_id)
+      : animal.source_batch_id
+        ? eq(schema.farrowingRecord.piglet_batch_id, animal.source_batch_id)
+        : null;
+    const [litter] = litterWhere
+      ? await this.db
+          .select({ piglet_lot_no: schema.farrowingRecord.piglet_lot_no, avg_birth_weight_kg: schema.farrowingRecord.avg_birth_weight_kg })
+          .from(schema.farrowingRecord)
+          .where(litterWhere)
+          .limit(1)
+      : [];
+
+    const weights = await this.db
+      .select({ date: schema.batchDailyData.entry_date, value: schema.batchDailyData.entered_value })
+      .from(schema.batchDailyData)
+      .innerJoin(schema.schedulerLine, eq(schema.batchDailyData.line_id, schema.schedulerLine.line_id))
+      .where(
+        and(
+          eq(schema.batchDailyData.animal_id, animal.animal_id),
+          eq(schema.batchDailyData.posted, true),
+          isNotNull(schema.batchDailyData.entered_value),
+          eq(schema.schedulerLine.kpi_metric, 'BODY_WEIGHT'),
+        ),
+      )
+      .orderBy(asc(schema.batchDailyData.entry_date));
+    const { current_weight_kg, current_weight_date } = summariseWeights(
+      weights.map((r) => ({ date: String(r.date).slice(0, 10), value: Number(r.value) })),
+    );
+
+    return {
+      amortization_start_date: animal.costing_start_date ? String(animal.costing_start_date).slice(0, 10) : null,
+      amortization_end_date: amortisationEndDate(
+        { dob: animal.dob ? String(animal.dob).slice(0, 10) : null, entry_date: String(animal.entry_date).slice(0, 10), age_at_entry_weeks: animal.age_at_entry_weeks },
+        item,
+      ),
+      lot_no: gilt?.lot_no ?? litter?.piglet_lot_no ?? null,
+      colour_code: gilt?.colour_code ?? null,
+      birth_weight_kg: litter?.avg_birth_weight_kg != null ? Number(litter.avg_birth_weight_kg) : null,
+      current_weight_kg,
+      current_weight_date,
+    };
   }
 
   async getActivity(animalId: string) {
@@ -111,7 +185,10 @@ export class AnimalActivityService {
         reason_name: reason?.reason_name ?? null,
         cause_of_death: death?.cause_of_death ?? null,
         post_mortem_notes: death?.post_mortem_notes ?? null,
-        disposal_method: death?.disposal_method ?? null,
+        // Where the body went: the death record's, else what the register keeps for every exit.
+        disposal_method: death?.disposal_method ?? animal.disposal_destination ?? null,
+        weight_kg: animal.exit_weight_kg != null ? Number(animal.exit_weight_kg) : null,
+        book_value_at_death: animal.book_value_at_death != null ? Number(animal.book_value_at_death) : null,
         pen: death?.pen_name ?? null,
         remarks: death?.remarks ?? null,
       };

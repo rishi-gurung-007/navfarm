@@ -20,6 +20,7 @@ import { GiltSelectionController } from '../modules/piggery/gilt-selection/gilt-
 import { PiggeryAnalyticsController } from '../modules/piggery/analytics/piggery-analytics.controller';
 import { FarrowingReportController } from '../modules/piggery/reports/farrowing-report.controller';
 import { GoodsReceiptController } from '../modules/inventory/goods-receipt/goods-receipt.controller';
+import { QcInspectionController } from '../modules/inventory/qc-inspection/qc-inspection.controller';
 import { StockAdjustmentController } from '../modules/inventory/stock-adjustment/stock-adjustment.controller';
 import { MillOutputController } from '../modules/inventory/mill-output/mill-output.controller';
 import { StockTransferController } from '../modules/inventory/stock-transfer/stock-transfer.controller';
@@ -83,6 +84,7 @@ const SCOPED = {
   PiggeryAnalyticsController,
   FarrowingReportController,
   GoodsReceiptController,
+  QcInspectionController,
   StockAdjustmentController,
   StockTransferController,
   MillOutputController,
@@ -132,6 +134,8 @@ const EXEMPT: Record<string, string> = {
     'Master data, not farm-specific.',
   'master-data/item-attribute/item-attribute.controller.ts':
     'Master data, not farm-specific.',
+  'master-data/item-qc-spec/item-qc-spec.controller.ts':
+    'Master data (the checks on an item), not farm-specific.',
   'master-data/item-category/item-category.controller.ts':
     'Master data, not farm-specific.',
   'master-data/item-template/item-template.controller.ts':
@@ -154,8 +158,6 @@ const EXEMPT: Record<string, string> = {
     "Company-level AI Station master (the body condition scale of a breeding line, SOP 21); not a farm's.",
   'master-data/breeding-line/genetic-level-band.controller.ts':
     "Company-level AI Station master (the genetic levels of a breeding line, as bands of TSI); not a farm's.",
-  'master-data/breeding-line/semen-collector.controller.ts':
-    "Company-level AI Station master (the technicians who collect semen); not a farm's.",
   'master-data/reporting-period/reporting-period.controller.ts':
     "Company master (Reporting Period Master, D20); periods are company-wide, not a farm's.",
   'master-data/resource/resource.controller.ts':

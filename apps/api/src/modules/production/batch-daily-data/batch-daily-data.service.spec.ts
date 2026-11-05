@@ -959,7 +959,7 @@ describe('BatchDailyDataService', () => {
           animal_id: 'a-1',
           transaction_date: '2026-09-08',
           // The reason entered for the death goes with it (typed here, so as its cause), with its dead weight.
-          mortality_detail: { cause_of_death: 'Crushed' },
+          mortality_detail: { cause_of_death: 'Crushed', weight_kg: 10 },
           remarks: expect.stringContaining('Dead weight 10 kg'),
           skip_scheduler_count: false, // a named animal is counted by the register, not by this line
         }),

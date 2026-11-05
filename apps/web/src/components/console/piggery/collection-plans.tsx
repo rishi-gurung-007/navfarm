@@ -7,7 +7,7 @@ import { CalendarDays, FlaskConical } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { Button } from '@/components/ui/button';
 import { EntryModal, Field, inputStyle } from './breeding-form-parts';
-import { type Issue, type Row } from './breeding-rules';
+import { collectorLabel, type Issue, type Row } from './breeding-rules';
 import { planDraftIssues } from './boar-selection-rules';
 
 const unwrap = <T,>(res: any): T => (Array.isArray(res) ? res : (res?.data ?? res)) as T;
@@ -57,7 +57,7 @@ export function PlanDialog({
 
   useEffect(() => {
     api
-      .get('/semen-collector?isActive=true&limit=200')
+      .get('/piggery/breeding/semen-collectors')
       .then((r) => setCollectors(unwrap<Row[]>(r) ?? []))
       .catch(() => setCollectors([]));
     // A line that may send its semen anywhere is not restricted to a list: every farm is offered.
@@ -142,7 +142,7 @@ export function PlanDialog({
               <option value="">Collector not set</option>
               {collectors.map((c) => (
                 <option key={c.collector_id} value={c.collector_id}>
-                  {c.collector_code} — {c.collector_name}
+                  {collectorLabel(c)}
                 </option>
               ))}
             </select>

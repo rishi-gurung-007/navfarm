@@ -83,6 +83,7 @@ import { SearchableEntitySelect } from './SearchableEntitySelect';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ItemTemplateSelectModal } from './ItemTemplateSelectModal';
 import FairValueRatesDialog from './FairValueRatesDialog';
+import QcSpecDialog, { toApiLines, type QcSpecRow } from './QcSpecDialog';
 import { exportMasterRowsToCsv } from './utils/master-csv';
 import MasterDataImportModal from './MasterDataImportModal';
 
@@ -706,6 +707,9 @@ export function MasterDataTable({
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
   const [ratesOpen, setRatesOpen] = useState(false);
+  const [qcSpecOpen, setQcSpecOpen] = useState(false);
+  // The QC checks typed on a new item, saved with it (a saved item's checks are read and saved through the API).
+  const [pendingQcSpec, setPendingQcSpec] = useState<QcSpecRow[]>([]);
   // A row command that asks for a reason is answered in a dialog (never a browser prompt).
   const [reasonCommand, setReasonCommand] = useState<{
     row: Row;
@@ -1989,6 +1993,8 @@ export function MasterDataTable({
   const openCreate = () => {
     if (readOnly) return;
     setEditing(null);
+    setPendingQcSpec([]);
+    setQcSpecOpen(false);
     setIsManualNoAllowed(false);
     setTemplateLockedFields(new Set());
     const initial: Row = {};
@@ -2788,6 +2794,16 @@ export function MasterDataTable({
             .filter((id) => form.attached_shed_dates[id])
             .map((id) => [id, form.attached_shed_dates[id]]),
         );
+      }
+
+      // A new QC-required item is saved with its checks; without them a receipt of it could never be posted.
+      if (config.key === 'item' && !editing && form.is_qc_required) {
+        if (pendingQcSpec.length === 0) {
+          throw new Error(
+            tLabel('QC Required needs at least one check. Add it under QC Specification.'),
+          );
+        }
+        payload.qc_specs = toApiLines(pendingQcSpec);
       }
 
       if (editing) {
@@ -4013,6 +4029,7 @@ export function MasterDataTable({
     // native control produced, so nothing downstream of this field changes.
     if (f.type === 'select') {
       let options = f.options || [];
+      if (f.filterOptions) options = f.filterOptions(options, form);
       if (
         (config.key === 'number-series' || config.key === 'no-series') &&
         f.key === 'document_type' &&
@@ -5540,6 +5557,22 @@ export function MasterDataTable({
                 </button>
               </DialogHeaderActions>
             )}
+          {config.key === 'item' &&
+            (form.is_qc_required ?? editing?.is_qc_required) && (
+            <DialogHeaderActions>
+              <button
+                type="button"
+                onClick={() => setQcSpecOpen(true)}
+                className="rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer"
+                style={S.surface}
+              >
+                {tLabel('QC Specification')}
+                {!editing && pendingQcSpec.length > 0
+                  ? ` (${pendingQcSpec.length})`
+                  : ''}
+              </button>
+            </DialogHeaderActions>
+          )}
           {subDialogNames.length > 0 && (
             <DialogHeaderActions>
               {subDialogNames.map((name) => (
@@ -5596,9 +5629,9 @@ export function MasterDataTable({
                         hint={
                           templateLockedFields.has(f.key)
                             ? '🔒 Set by template'
-                            : lockHint(f)
+                            : lockHint(f) ?? f.hintFor?.(form)
                         }
-                        tooltip={f.helpText}
+                        tooltip={f.helpTextFor?.(form) ?? f.helpText}
                         className={
                           f.type === 'textarea' ||
                           f.type === 'json' ||
@@ -5710,9 +5743,9 @@ export function MasterDataTable({
                       hint={
                         templateLockedFields.has(f.key)
                           ? '🔒 Set by template'
-                          : lockHint(f)
+                          : lockHint(f) ?? f.hintFor?.(form)
                       }
-                      tooltip={f.helpText}
+                      tooltip={f.helpTextFor?.(form) ?? f.helpText}
                       className={
                         f.type === 'textarea' ||
                         f.type === 'json' ||
@@ -5737,6 +5770,17 @@ export function MasterDataTable({
           itemCode={editing.item_code}
           open={modalOpen && ratesOpen}
           onClose={() => setRatesOpen(false)}
+        />
+      )}
+
+      {config.key === 'item' && (
+        <QcSpecDialog
+          itemId={editing ? String(editing[config.idKey]) : null}
+          itemCode={editing?.item_code}
+          open={modalOpen && qcSpecOpen}
+          onClose={() => setQcSpecOpen(false)}
+          draft={pendingQcSpec}
+          onDraftChange={setPendingQcSpec}
         />
       )}
 
@@ -5770,7 +5814,7 @@ export function MasterDataTable({
                   key={f.key}
                   label={tLabel(currentLabel(f, form))}
                   htmlFor={`master-${config.key}-${f.key}`}
-                  tooltip={f.helpText}
+                  tooltip={f.helpTextFor?.(form) ?? f.helpText}
                 >
                   {renderField(f)}
                 </Field>

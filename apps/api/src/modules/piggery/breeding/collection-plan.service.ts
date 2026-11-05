@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { assertCollectors as assertCollectorList, collectorCodeSql } from './semen-collectors';
 import { and, asc, desc, eq, inArray, like, ne, gte, lte, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
@@ -54,7 +55,8 @@ export class CollectionPlanService {
         rfid_tag: schema.animalRegister.rfid_tag,
         batch_id: schema.animalRegister.current_batch_id,
         collector_id: schema.semenCollectionPlanLine.collector_id,
-        collector_code: schema.semenCollector.collector_code,
+        collector_code: collectorCodeSql,
+        collector_name: schema.userMaster.full_name,
         status: schema.semenCollectionPlanLine.status,
         skip_reason: schema.semenCollectionPlanLine.skip_reason,
         semen_batch_id: schema.semenCollectionPlanLine.semen_batch_id,
@@ -62,7 +64,7 @@ export class CollectionPlanService {
       })
       .from(schema.semenCollectionPlanLine)
       .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.semenCollectionPlanLine.boar_animal_id))
-      .leftJoin(schema.semenCollector, eq(schema.semenCollector.collector_id, schema.semenCollectionPlanLine.collector_id))
+      .leftJoin(schema.userMaster, eq(schema.userMaster.user_id, schema.semenCollectionPlanLine.collector_id))
       .where(inArray(schema.semenCollectionPlanLine.plan_id, plans.map((p) => p.plan_id)))
       .orderBy(asc(schema.semenCollectionPlanLine.sort_order));
     const breeds = await this.db
@@ -250,20 +252,7 @@ export class CollectionPlanService {
   }
 
   private async assertCollectors(ids: (string | null | undefined)[], tenantId: string, companyId: string | null) {
-    const wanted = [...new Set(ids.filter((id): id is string => !!id))];
-    if (!wanted.length) return;
-    const rows = await this.db
-      .select({ id: schema.semenCollector.collector_id })
-      .from(schema.semenCollector)
-      .where(
-        and(
-          eq(schema.semenCollector.tenant_id, tenantId),
-          eq(schema.semenCollector.is_active, true),
-          inArray(schema.semenCollector.collector_id, wanted),
-          ...(companyId ? [eq(schema.semenCollector.company_id, companyId)] : []),
-        ),
-      );
-    if (wanted.some((id) => !rows.some((r) => r.id === id))) throw new BadRequestException('Select active collectors of this company.');
+    await assertCollectorList(this.db, ids, tenantId, companyId);
   }
 
   /** A plan is COLLECTED when none of its boars is still to be tapped and one was; CANCELLED when none was. */

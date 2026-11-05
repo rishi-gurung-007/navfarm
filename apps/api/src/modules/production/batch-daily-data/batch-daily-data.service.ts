@@ -71,6 +71,8 @@ export interface MortalityEntry {
   dead_weight_kg: number;
   reason_id: string | null;
   reason_text: string | null;
+  /** Where the body went; null when not said. */
+  disposal_destination: string | null;
   /** The reason as shown in the movement log: the master's name, or the typed text. */
   reason_label: string;
   /** The animal's notes before death, so the typed cause can be appended rather than replace them. */
@@ -796,6 +798,7 @@ export class BatchDailyDataService {
                       dead_weight_kg: null as number | null,
                       reason_id: null,
                       reason_text: null,
+                      disposal_destination: null as string | null,
                       notes: null,
                     },
                   ];
@@ -813,12 +816,19 @@ export class BatchDailyDataService {
                     quantity: quantityEach,
                     uom: 'HEAD',
                     animal_id: e.animal_id ?? undefined,
-                    ...(e.reason_id || e.reason_text
+                    // The dead weight goes with the death: a costed breeding asset's write-off needs it (TDD row 10).
+                    ...(e.reason_id || e.reason_text || e.dead_weight_kg != null || e.disposal_destination
                       ? {
                           mortality_detail: {
                             ...(e.reason_id ? { reason_id: e.reason_id } : {}),
                             ...(e.reason_text
                               ? { cause_of_death: e.reason_text }
+                              : {}),
+                            ...(e.dead_weight_kg != null
+                              ? { weight_kg: e.dead_weight_kg }
+                              : {}),
+                            ...(e.disposal_destination
+                              ? { disposal_method: e.disposal_destination }
                               : {}),
                           },
                         }
@@ -2093,6 +2103,7 @@ export class BatchDailyDataService {
           dead_weight_kg: number;
           reason_id?: string | null;
           reason_text?: string | null;
+          disposal_destination?: string | null;
         }>
       | undefined;
     const supplied = chosen !== undefined;
@@ -2104,6 +2115,7 @@ export class BatchDailyDataService {
           dead_weight_kg: Number(r.dead_weight_kg),
           reason_id: r.reason_id,
           reason_text: r.reason_text,
+          disposal_destination: r.disposal_destination,
         }));
       }
     }
@@ -2207,6 +2219,7 @@ export class BatchDailyDataService {
           dead_weight_kg: number;
           reason_id?: string | null;
           reason_text?: string | null;
+          disposal_destination?: string | null;
         }>
       | undefined;
     const supplied = chosen !== undefined;
@@ -2222,6 +2235,7 @@ export class BatchDailyDataService {
           dead_weight_kg: Number(r.dead_weight_kg),
           reason_id: r.reason_id,
           reason_text: r.reason_text,
+          disposal_destination: r.disposal_destination,
         }));
       }
     }
@@ -2314,6 +2328,7 @@ export class BatchDailyDataService {
       dead_weight_kg: number;
       reason_id?: string | null;
       reason_text?: string | null;
+      disposal_destination?: string | null;
     },
     deadAnimalLabel: string,
     reasonById: Map<string, typeof schema.reasonMaster.$inferSelect>,
@@ -2354,6 +2369,7 @@ export class BatchDailyDataService {
       dead_weight_kg: Math.round(weight * 1000) / 1000,
       reason_id: c.reason_id ?? null,
       reason_text: text,
+      disposal_destination: c.disposal_destination?.trim() || null,
       reason_label: label,
       notes,
     };
@@ -2398,6 +2414,7 @@ export class BatchDailyDataService {
         dead_weight_kg: e.dead_weight_kg.toString(),
         reason_id: e.reason_id,
         reason_text: e.reason_text,
+        disposal_destination: e.disposal_destination,
         posted,
         created_by: userId || null,
       })),
@@ -2485,6 +2502,7 @@ export class BatchDailyDataService {
         dead_weight_kg: Number(d.dead_weight_kg),
         reason_id: d.reason_id,
         reason_text: d.reason_text,
+        disposal_destination: d.disposal_destination,
       })),
       already_posted:
         posted?.entered_value != null ? Number(posted.entered_value) : 0,

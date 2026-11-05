@@ -59,6 +59,7 @@ import {
   MatingType,
   MatingDefaultsQueryDto,
 } from './dto/breeding.dto';
+import { assertCollectors as assertCollectorList, collectorCodeSql, listCollectors } from './semen-collectors';
 import { bioEventCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 /** The stage a sow goes to when her litter is weaned (Stage Master seed code). */
@@ -2257,7 +2258,8 @@ export class BreedingService {
       doses_used_internal: String(dto.doses_used_internal || 0),
       doses_sold: String(dto.doses_sold || 0),
       output_item_id: dto.output_item_id || null,
-      inventory_posted: !!posted,
+      // Held back, not stock, while its QC inspection is open (see SemenLotService.postCollection).
+      inventory_posted: !!posted && !posted.qc_inspection_no,
       lot_no: posted?.lot_no ?? null,
       expiry_date: posted?.expiry_date ?? null,
       warehouse_id: posted?.warehouse_id ?? null,
@@ -2341,6 +2343,7 @@ export class BreedingService {
         ? allBoars.map((b) => b.animal_code)
         : undefined,
       qr_pack_no: posted?.pack_no ?? null,
+      qc_inspection_no: posted?.qc_inspection_no ?? null,
       warnings: [...ruleResult.warnings, ...(planCheck?.warnings ?? [])],
       message:
         `Semen collection logged${label ? ` as ${label}` : ''}: ${dosesCollected} doses collected${poolBoars.length ? ` as one pooled lot from ${allBoars.length} boars (${allBoars.map((b) => b.animal_code).join(', ')})` : ''} at computed unit cost of ${lotUnitCost.toFixed(4)}/dose` +
@@ -2348,36 +2351,26 @@ export class BreedingService {
           ? ` (worked out from ${poolBoars.length ? 'their' : 'his'} posted costs ${period.from} to ${period.to})`
           : '') +
         '.' +
-        (posted
+        (posted?.qc_inspection_no
+          ? ` The item is QC required: lot ${posted.lot_no} goes into stock when QC inspection ${posted.qc_inspection_no} is completed and accepted, and cannot be used in a mating before.`
+          : posted
           ? ` Posted to inventory as lot ${posted.lot_no}${posted.expiry_date ? ` (expires ${posted.expiry_date})` : ''}${posted.pack_no ? `, QR ${posted.pack_no}` : ', no QR — the boar is in no batch'}.`
           : ' Not posted to inventory — choose the semen item to hold the doses as stock.'),
     };
   }
 
-  /** Every collector named on a collection must be an active collector of the boar's company. */
+  /** The users who may be named as collectors: holders of the Semen Collector role. */
+  async semenCollectors(tenantId: string, companyId: string | null) {
+    return listCollectors(this.db, tenantId, companyId);
+  }
+
+  /** Every collector named on a collection must hold the Semen Collector role in the boar's company. */
   private async assertCollectors(
     ids: (string | null | undefined)[],
     companyId: string,
     tenantId: string,
   ) {
-    const wanted = [...new Set(ids.filter((id): id is string => !!id))];
-    if (!wanted.length) return;
-    const rows = await this.db
-      .select({ id: schema.semenCollector.collector_id })
-      .from(schema.semenCollector)
-      .where(
-        and(
-          eq(schema.semenCollector.tenant_id, tenantId),
-          eq(schema.semenCollector.company_id, companyId),
-          eq(schema.semenCollector.is_active, true),
-          inArray(schema.semenCollector.collector_id, wanted),
-        ),
-      );
-    if (wanted.some((id) => !rows.some((r) => r.id === id))) {
-      throw new BadRequestException(
-        'Select active collectors of this company.',
-      );
-    }
+    await assertCollectorList(this.db, ids, tenantId, companyId);
   }
 
   /**
@@ -2706,7 +2699,8 @@ export class BreedingService {
         boar_id: schema.semenBoarResult.boar_animal_id,
         boar_code: schema.animalRegister.animal_code,
         collector_id: schema.semenBoarResult.collector_id,
-        collector_code: schema.semenCollector.collector_code,
+        collector_code: collectorCodeSql,
+        collector_name: schema.userMaster.full_name,
         volume_ml: schema.semenBoarResult.volume_ml,
         doses: schema.semenBoarResult.doses,
         morphology_pct: schema.semenBoarResult.morphology_pct,
@@ -2721,8 +2715,8 @@ export class BreedingService {
         eq(schema.animalRegister.animal_id, schema.semenBoarResult.boar_animal_id),
       )
       .leftJoin(
-        schema.semenCollector,
-        eq(schema.semenCollector.collector_id, schema.semenBoarResult.collector_id),
+        schema.userMaster,
+        eq(schema.userMaster.user_id, schema.semenBoarResult.collector_id),
       )
       .where(inArray(schema.semenBoarResult.semen_batch_id, lotIds))
       .orderBy(schema.semenBoarResult.sort_order);

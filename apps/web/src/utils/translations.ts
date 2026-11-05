@@ -118,6 +118,7 @@ export const translations = {
     rolMedicines: 'Medicines',
     rolReasons: 'Reasons',
     rolFeedFormulas: 'Feed Formulas',
+    rolAnimalAiStation: 'Animal Register & AI Station',
     rolGlAccounts: 'GL Accounts',
     rolGlMappings: 'GL Mappings',
     rolCostCenters: 'Cost Centres',
@@ -1523,6 +1524,9 @@ export const translations = {
     invModuleTitle: 'Inventory & Procurement',
     invAccessDeniedTitle: "You don't have access to Inventory",
     invGoodsReceiptTitle: 'Procurement & GRN',
+    invQcInspection: 'QC Inspections',
+    invQcInspectionTitle: 'Incoming QC Inspections',
+    rolIncomingQc: 'Incoming QC Inspections',
     invTransfersTitle: 'Transfer Orders',
     invTransfersDesc:
       'Manage inter-location transfer orders, dispatch shipments, and in-transit receipts.',
@@ -5731,6 +5735,7 @@ export const translations = {
     deMortReason: 'Reason for death',
     deMortOther: 'Other — type the reason',
     deMortOtherText: 'Type the reason',
+    deMortDestination: 'Disposal destination (optional)',
     deMortDone: 'Done',
     deMortPostBlocked:
       'Enter the dead weight and the reason for each death (and choose the animals, where registered) before posting.',

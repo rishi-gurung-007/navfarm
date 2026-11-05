@@ -1653,6 +1653,62 @@
       "when": 1792000000106,
       "tag": "0238_boar_body_condition",
       "breakpoints": true
+    },
+    {
+      "idx": 236,
+      "version": "5",
+      "when": 1792000000107,
+      "tag": "0239_incoming_qc",
+      "breakpoints": true
+    },
+    {
+      "idx": 237,
+      "version": "5",
+      "when": 1792000000108,
+      "tag": "0240_qc_inspection_source_posting",
+      "breakpoints": true
+    },
+    {
+      "idx": 238,
+      "version": "5",
+      "when": 1792000000109,
+      "tag": "0241_qc_inspection_transfer_receipt",
+      "breakpoints": true
+    },
+    {
+      "idx": 239,
+      "version": "5",
+      "when": 1792000000110,
+      "tag": "0242_collectors_are_users",
+      "breakpoints": true
+    },
+    {
+      "idx": 240,
+      "version": "5",
+      "when": 1792000000111,
+      "tag": "0243_semen_collector_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 241,
+      "version": "5",
+      "when": 1792000000112,
+      "tag": "0244_semen_collector_role_editable",
+      "breakpoints": true
+    },
+    {
+      "idx": 242,
+      "version": "5",
+      "when": 1792000000113,
+      "tag": "0245_death_destination_and_book_value",
+      "breakpoints": true
+    },
+    {
+      "idx": 243,
+      "version": "5",
+      "when": 1792000000114,
+      "tag": "0246_item_fv_loss_gl",
+      "breakpoints": true
     }
   ]
 }

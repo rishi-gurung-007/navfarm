@@ -24,7 +24,7 @@ export interface MortalityInfo {
   dead_animals: DeadAnimal[];
   already_posted: number;
   /** The choice saved with a draft of this line and date. */
-  draft_animals: Array<{ animal_id: string | null; dead_weight_kg: number; reason_id: string | null; reason_text: string | null }>;
+  draft_animals: Array<{ animal_id: string | null; dead_weight_kg: number; reason_id: string | null; reason_text: string | null; disposal_destination?: string | null }>;
 }
 
 export interface DeadAnimal {
@@ -40,6 +40,7 @@ export function draftPicks(info: MortalityInfo | undefined): MortalityPick[] {
     dead_weight_kg: String(d.dead_weight_kg),
     reason_id: d.reason_id ?? (d.reason_text ? OTHER_REASON : ""),
     reason_text: d.reason_text ?? "",
+    disposal_destination: d.disposal_destination ?? "",
   }));
 }
 
@@ -128,7 +129,7 @@ export function MortalityAnimalsField({
   const pickOf = (id: string) => picks.find((p) => p.animal_id === id);
   const toggle = (id: string) => {
     if (pickOf(id)) onChange(picks.filter((p) => p.animal_id !== id));
-    else if (picks.length < required) onChange([...picks, { animal_id: id, dead_weight_kg: "", reason_id: "", reason_text: "" }]);
+    else if (picks.length < required) onChange([...picks, { animal_id: id, dead_weight_kg: "", reason_id: "", reason_text: "", disposal_destination: "" }]);
   };
   const patch = (index: number, change: Partial<MortalityPick>) =>
     onChange(picks.map((p, i) => (i === index ? { ...p, ...change } : p)));
@@ -240,9 +241,25 @@ export function MortalityAnimalsField({
                       className="h-9 w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] px-2 text-sm"
                     />
                   )}
+                  <input
+                    type="text"
+                    maxLength={100}
+                    list="mortality-destinations"
+                    value={p.disposal_destination ?? ""}
+                    onChange={(e) => patch(i, { disposal_destination: e.target.value })}
+                    placeholder={t("deMortDestination")}
+                    aria-label={`${labelOf(p, i)} - ${t("deMortDestination")}`}
+                    className="h-9 w-full rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface)] px-2 text-sm"
+                  />
                 </div>
               </div>
             ))}
+            <datalist id="mortality-destinations">
+              <option value="Burial" />
+              <option value="Incineration (Biosecure)" />
+              <option value="Rendering" />
+              <option value="Composting" />
+            </datalist>
           </div>
         )}
       </Dialog>

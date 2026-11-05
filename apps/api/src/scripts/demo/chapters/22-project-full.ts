@@ -5,9 +5,11 @@
  * weanings for every sow (parity 2), and four home-bred gilts selected from the first litters, with their own batch and fair value runs. Every step is posted
  * through the application's own services (Ruling 1), in date order, nothing in the future.
  *
- *   Items      02c-project-items: the 12 items of the Fixed Asset sheet (imported = amortised, local = fair value), their GL accounts by the sheet's names
- *              (codes are ours: 11xx, 41xx, 51xx), terms and fair value rates. Accumulated amortisation = 1065 and write-off = 5010 are OURS, standing in for the
- *              two accounts the sheet does not name.
+ *   Chart      02a-project-coa: the chart of accounts of NAVFarm_Dummy_COA.xlsx (project-coa.lib.ts): its 32 accounts with their codes and names, the starter
+ *              chart renumbered into its scheme, and the accounts the postings need that it lacks, marked ours. Vaccines and medicines are kept on their own
+ *              inventory accounts by category-level GL mappings.
+ *   Items      02c-project-items: the 12 items of the Fixed Asset sheet (imported = amortised, local = fair value), each given its accounts from that chart (one
+ *              acquisition, accumulated amortisation and expense per imported item; a fair value gain and loss per local item), terms and fair value rates.
  *   Timeline   purchase 6 Jan 2025 (females 20 weeks old, boars 22) -> costing starts: boars 3 Feb 2025 (26 wk), females 7 Apr 2025 (33 wk)
  *              group A (7 sows) served 24 Mar 2025, i.e. BEFORE her costing start (feed, overhead and semen are capitalised into her)
  *              group B (7 sows) served 21 Apr 2025, AFTER it (feed and semen are expensed)
@@ -18,10 +20,11 @@
  * Resume-safe by token (receipts by reference, animals by RFID, batches by remarks, matings by (sow, date), farrowings by (sow, date), lots by (boar, date),
  * runs by (item, period, batch)). Prices, ages, rations and litter sizes are demo facts, not real data.
  */
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import { AnimalService } from '../../../modules/piggery/animal/animal.service';
+import { FaConversionService } from '../../../modules/piggery/animal/fa-conversion/fa-conversion.service';
 import { BatchService } from '../../../modules/production/batch/batch.service';
 import { GoodsReceiptService } from '../../../modules/inventory/goods-receipt/goods-receipt.service';
 import { BreedingService } from '../../../modules/piggery/breeding/breeding.service';
@@ -35,6 +38,9 @@ import { MatingType, PregCheckMethod, ConceptionResult } from '../../../modules/
 import * as schema from '../../../core/database/schema';
 import { FIXED_ASSET_ITEMS } from '../../fixed-asset-items.lib';
 import { planSheetTerms } from '../../apply-item-terms.lib';
+import { CATEGORY_INVENTORY, FEED_INVENTORY, ITEM_ACCOUNTS, codesFor, planProjectCoa } from '../../project-coa.lib';
+import { randomUUID } from 'node:crypto';
+import { mappingDimensions } from '../../../modules/finance/gl-mapping/gl-mapping-fields';
 import type { DemoChapter, DemoContext } from '../chapter';
 import { pensForRole } from '../farms';
 import { createAnimalWiseBatchEnsurer, createItemLookup, shedForStage } from '../batch-helpers';
@@ -52,7 +58,7 @@ const REMATE_AFTER_WEANING_DAYS = 5;
 const FEMALE_AGE_WEEKS = 20;
 const BOAR_AGE_WEEKS = 22;
 
-export const PROJECT_ACCOUNTS = { accumulated: '1065', writeOff: '5010' } as const;
+export const PROJECT_ACCOUNTS = { writeOff: '610400' } as const;
 
 const FEED = { gest: 'Dry Sow Gestation Mash (14% CP)', lact: 'High-Density Lactation Diet (17.5% CP)', grower: 'Weaner Grower Mash (18% CP)' };
 const PIGLET_ITEM = 'Suckling Live Piglet (0-4 Wks)';
@@ -112,6 +118,69 @@ function tenantDb(ctx: DemoContext, chapter: string): MySql2Database<typeof sche
   return db;
 }
 
+/**
+ * 02a: the chart of accounts of NAVFarm_Dummy_COA.xlsx (project-coa.lib.ts). Renumbers and renames each starter account the chart replaces (in place, so every
+ * GL mapping follows), creates the rest, and adds the category-level mappings that keep vaccines and medicines on their own inventory accounts. Resume-safe:
+ * an account already at its code is only renamed to the chart's name, and a category mapping already made is not made twice.
+ */
+export const projectCoaChapter: DemoChapter = {
+  name: '02a-project-coa',
+
+  async run(ctx: DemoContext) {
+    const db = tenantDb(ctx, '02a-project-coa');
+    const accounts = ctx.app.get(GlAccountService);
+    const actor = { userId: ctx.actor.userId, userType: ctx.actor.userType, email: ctx.actor.email };
+    const G = schema.glAccountMaster;
+    const chart = await db.select().from(G).where(eq(G.company_id, ctx.companyId));
+    const anchor = chart.find((a) => codesFor('1050').includes(a.account_code));
+    if (!anchor) throw new Error('02a-project-coa: the starter chart has no 1050 to take the NOB and LOB from.');
+
+    let renamed = 0, created = 0;
+    for (const p of planProjectCoa(chart as any)) {
+      const a = p.account;
+      if (p.action === 'CREATE') {
+        await accounts.create({ company_id: ctx.companyId, account_code: a.code, account_name: a.name, account_type: a.type, nob_id: anchor.nob_id, lob_id: anchor.lob_id } as any, ctx.tenantId, actor);
+        created++;
+      } else if (p.from!.code !== a.code || p.from!.name !== a.name) {
+        await db.update(G).set({ account_code: a.code, account_name: a.name, account_type: a.type }).where(eq(G.gl_account_id, p.gl_account_id!));
+        if (p.action === 'RENAME') ctx.log(`  GL ${p.from!.code} ${p.from!.name} -> ${a.code} ${a.name}${a.source === 'OURS' ? ' (ours)' : ''}`);
+        renamed++;
+      }
+    }
+    ctx.log(`  chart: ${renamed} renumbered or renamed, ${created} created (NAVFarm_Dummy_COA.xlsx + ours)`);
+
+    // Vaccines and medicines on their own inventory accounts: a copy of each mapping that names Feed Inventory, for the category, with that side changed.
+    const after = await db.select({ id: G.gl_account_id, code: G.account_code }).from(G).where(eq(G.company_id, ctx.companyId));
+    const idOf = (code: string) => after.find((a) => a.code === code)?.id;
+    const feed = idOf(FEED_INVENTORY);
+    const M = schema.glMappingMaster;
+    const all = await db.select().from(M).where(and(eq(M.company_id, ctx.companyId), isNull(M.deleted_at)));
+    // Only a mapping an Inventory Ledger posting reads can be narrowed by category (gl-mapping-fields.ts); BATCH_* are in the starter chart but read by nothing.
+    const base = all.filter((m) => !m.item_category_id && (m.debit_gl_account_id === feed || m.credit_gl_account_id === feed) && mappingDimensions(m.transaction_type).includes('item_category_id'));
+    const categories = await db.select({ id: schema.itemCategoryMaster.category_id, code: schema.itemCategoryMaster.category_code }).from(schema.itemCategoryMaster)
+      .where(inArray(schema.itemCategoryMaster.category_code, CATEGORY_INVENTORY.map((c) => c.category_code)));
+    for (const c of CATEGORY_INVENTORY) {
+      const category = categories.find((x) => x.code === c.category_code);
+      const account = idOf(c.account);
+      if (!category || !account) { ctx.log(`  ${c.category_code} ${c.category_name}: no category or no account ${c.account} - its stock stays on Feed Inventory`); continue; }
+      let made = 0;
+      for (const m of base) {
+        if (all.some((x) => x.transaction_type === m.transaction_type && x.item_category_id === category.id && x.nob_id === m.nob_id && x.lob_id === m.lob_id && x.stage_id === m.stage_id)) continue;
+        // Written as the starter mappings are (the service takes only Inventory Ledger types, and the bio consumption mappings are not): the source row
+        // with the category set and its Feed Inventory side changed, nothing else.
+        const { mapping_id: _id, created_at: _c, updated_at: _u, mapping_code: _code, ...rest } = m;
+        await db.insert(M).values({
+          ...rest, mapping_id: randomUUID(), item_category_id: category.id,
+          debit_gl_account_id: m.debit_gl_account_id === feed ? account : m.debit_gl_account_id,
+          credit_gl_account_id: m.credit_gl_account_id === feed ? account : m.credit_gl_account_id,
+        } as any);
+        made++;
+      }
+      ctx.log(`  ${c.category_code} ${c.category_name} -> ${c.account}: ${made} category mapping(s)`);
+    }
+  },
+};
+
 /** 02c: the twelve items, their accounts, terms and rates. Does nothing on a database that already holds them. */
 export const projectItemsChapter: DemoChapter = {
   name: '02c-project-items',
@@ -124,32 +193,9 @@ export const projectItemsChapter: DemoChapter = {
     const G = schema.glAccountMaster;
     const chart = await db.select().from(G).where(eq(G.company_id, ctx.companyId));
     const byCode = new Map(chart.map((a) => [a.account_code, a]));
-    const anchor = byCode.get('1050');
-    if (!anchor) throw new Error('02c-project-items: the chart has no account 1050.');
-    for (const code of [PROJECT_ACCOUNTS.accumulated, PROJECT_ACCOUNTS.writeOff]) {
-      if (!byCode.get(code)) {
-        if (code !== PROJECT_ACCOUNTS.accumulated) throw new Error(`02c-project-items: the chart has no account ${code}.`);
-        await db.insert(G).values({ tenant_id: ctx.tenantId, company_id: ctx.companyId, nob_id: anchor.nob_id, lob_id: anchor.lob_id, account_code: '1065', account_name: 'Accumulated Amortisation - Bio Assets', account_type: 'ASSET' });
-        ctx.log('  GL 1065 Accumulated Amortisation - Bio Assets created');
-      }
-    }
-
-    // the accounts the sheet names (codes are ours)
-    const kindOf = (name: string) => (/fair value/i.test(name) ? 'fair_value' : /amortization/i.test(name) ? 'amortisation' : 'acquisition') as 'fair_value' | 'amortisation' | 'acquisition';
-    const first = { acquisition: 1101, fair_value: 4101, amortisation: 5101 };
-    const type = { acquisition: 'ASSET', fair_value: 'INCOME', amortisation: 'EXPENSE' } as const;
-    const names = [...new Set(FIXED_ASSET_ITEMS.flatMap((i) => [i.accounts.acquisition, i.accounts.result]).filter((x): x is string => !!x))];
-    const have = new Set(chart.map((a) => a.account_name.toLowerCase()));
-    const used = new Set(chart.map((a) => a.account_code));
-    for (const name of names) {
-      if (have.has(name.toLowerCase())) continue;
-      const k = kindOf(name);
-      while (used.has(String(first[k]))) first[k] += 1;
-      const code = String(first[k]++);
-      used.add(code);
-      await accounts.create({ company_id: ctx.companyId, account_code: code, account_name: name, account_type: type[k], nob_id: anchor.nob_id, lob_id: anchor.lob_id } as any, ctx.tenantId, actor);
-      ctx.log(`  GL ${code} ${name} created`);
-    }
+    const anchor = codesFor('1050').map((c) => byCode.get(c)).find(Boolean);
+    if (!anchor) throw new Error('02c-project-items: the chart has no Biological Assets - Pre-mature account (1050 / 152100).');
+    if (!byCode.get(PROJECT_ACCOUNTS.writeOff)) throw new Error(`02c-project-items: the chart has no account ${PROJECT_ACCOUNTS.writeOff} - run 02a-project-coa first.`);
 
     // the items
     const I = schema.itemMaster;
@@ -172,10 +218,8 @@ export const projectItemsChapter: DemoChapter = {
     const found = await db.select({ item_id: I.item_id, item_code: I.item_code, company_id: I.company_id, is_biological_asset: I.is_biological_asset, bio_costing_method: I.bio_costing_method }).from(I).where(eq(I.company_id, ctx.companyId));
     const chartNow = await db.select({ gl_account_id: G.gl_account_id, account_name: G.account_name, company_id: G.company_id }).from(G).where(eq(G.company_id, ctx.companyId));
     const plan = planSheetTerms({ items: found as any, accounts: chartNow as any, costingFrom: PROJECT_COSTING_FROM });
-    const accumulated = (await db.select().from(G).where(and(eq(G.company_id, ctx.companyId), eq(G.account_code, PROJECT_ACCOUNTS.accumulated))).limit(1))[0];
-    const writeOff = (await db.select().from(G).where(and(eq(G.company_id, ctx.companyId), eq(G.account_code, PROJECT_ACCOUNTS.writeOff))).limit(1))[0];
     for (const p of plan.filter((e) => e.status === 'READY' && e.terms)) {
-      const terms = { ...p.terms!, bio_accum_amort_gl_id: accumulated.gl_account_id, bio_writeoff_gl_id: writeOff.gl_account_id };
+      const terms = p.terms!;
       const stored = storedBioCosting(terms as any);
       await db.update(I).set({
         ...stored, bio_residual_fixed_amount: null,
@@ -191,10 +235,74 @@ export const projectItemsChapter: DemoChapter = {
       }
       ctx.log(`  ${p.item_code}: ${p.terms!.bio_costing_method} from week ${p.terms!.bio_start_age_weeks}, costing from ${PROJECT_COSTING_FROM}`);
     }
+
+    // Every item's accounts, by code from the project chart (02a-project-coa). PIGLETS and Finisher are not run (batch-tracked), but carry theirs.
+    const coded = await db.select({ gl_account_id: G.gl_account_id, account_code: G.account_code }).from(G).where(eq(G.company_id, ctx.companyId));
+    const idOf = (code?: string) => {
+      if (!code) return null;
+      const id = coded.find((a) => a.account_code === code)?.gl_account_id;
+      if (!id) throw new Error(`02c-project-items: the chart has no account ${code} - run 02a-project-coa first.`);
+      return id;
+    };
+    for (const [code, acc] of Object.entries(ITEM_ACCOUNTS)) {
+      const row = found.find((f) => f.item_code.toLowerCase() === code.toLowerCase());
+      if (!row) continue;
+      await db.update(I).set({
+        bio_acquisition_gl_id: idOf(acc.acquisition), bio_accum_amort_gl_id: idOf(acc.accumulated), bio_amort_expense_gl_id: idOf(acc.amortisation),
+        bio_fv_gain_loss_gl_id: idOf(acc.fv_gain), bio_fv_loss_gl_id: idOf(acc.fv_loss), bio_writeoff_gl_id: idOf(acc.writeoff),
+      } as any).where(eq(I.item_id, row.item_id));
+      ctx.log(`  ${code}: accounts ${[acc.acquisition, acc.accumulated, acc.amortisation, acc.fv_gain, acc.fv_loss, acc.writeoff].filter(Boolean).join(' / ')}`);
+    }
   },
 };
 
 interface Event { date: string; label: string; run: () => Promise<void> }
+
+/** The project's exits (demo facts): who leaves, how and when. All after the last costing run, so the runs before them are untouched. */
+export const PROJECT_EXITS = {
+  deaths: [
+    { tag: 'PF-SOW-05', date: '2026-10-12', weight_kg: 210, destination: 'Burial', note: 'Found dead in the pen' }, // P-Imp-F: amortised
+    { tag: 'PF-SOW-12', date: '2026-10-12', weight_kg: 195, destination: 'Incineration (Biosecure)', note: 'Found dead in the pen' }, // P-Loc-F: fair value
+  ],
+  cull: { tag: 'PF-BOAR-03', out_of_production: '2026-10-01', conversion: '2026-10-20', weight_kg: 230, market_value: 400 }, // P-Imp-M: amortised
+} as const;
+
+/** The deaths through the batch's mortality posting (weight, reason, destination), and the cull through FA to Inventory with Finance approval. Resume-safe. */
+async function projectExits(ctx: DemoContext, db: MySql2Database<typeof schema>, p: { batchId: string; idOf: (tag: string) => string; actor: { userId: string } }) {
+  const batches = ctx.app.get(BatchService);
+  const animals = ctx.app.get(AnimalService);
+  const conversions = ctx.app.get(FaConversionService);
+  const A = schema.animalRegister;
+  const R = schema.reasonMaster;
+  const reasons = await db.select({ id: R.reason_id, name: R.reason_name }).from(R).where(and(eq(R.category, 'MORTALITY'), eq(R.is_active, true)));
+  const reason = reasons.find((r) => !/^\s*(other|unknown)\b/i.test(r.name));
+  if (!reason) throw new Error('22-project-full: no MORTALITY reason in the Reason Master for the deaths.');
+  for (const d of PROJECT_EXITS.deaths) {
+    const [a] = await db.select({ active: A.is_active }).from(A).where(eq(A.animal_id, p.idOf(d.tag)));
+    if (!a?.active) { ctx.log(`  ${d.tag}: already dead - skipped`); continue; }
+    await batches.addTransaction(p.batchId, {
+      transaction_type: 'MORTALITY', transaction_date: d.date, quantity: 1, uom: 'HEAD', animal_id: p.idOf(d.tag), remarks: `PROJECT death: ${d.note}`,
+      mortality_detail: { reason_id: reason.id, weight_kg: d.weight_kg, disposal_method: d.destination },
+    } as any, ctx.tenantId, p.actor as any);
+    ctx.log(`  ${d.tag} died ${d.date} (${reason.name}, ${d.weight_kg} kg, ${d.destination})`);
+  }
+
+  const c = PROJECT_EXITS.cull;
+  const id = p.idOf(c.tag);
+  const [boar] = await db.select({ active: A.is_active, oop: A.out_of_production_date }).from(A).where(eq(A.animal_id, id));
+  if (!boar?.active) { ctx.log(`  ${c.tag}: already converted - skipped`); return; }
+  const [other] = await db.select({ id: schema.userMaster.user_id }).from(schema.userMaster).where(and(ne(schema.userMaster.user_id, p.actor.userId), eq(schema.userMaster.is_active, true))).limit(1);
+  if (!other) throw new Error('22-project-full: a second active user is needed to approve the cull (the requester cannot).');
+  if (!boar.oop) await animals.markOutOfProduction(id, { out_of_production_date: c.out_of_production } as any, ctx.tenantId, { userId: p.actor.userId });
+  const T = schema.faInventoryConversion;
+  let [conv] = await db.select({ id: T.conversion_id, status: T.status }).from(T).where(eq(T.animal_id, id)).limit(1);
+  if (!conv) { const made: any = await conversions.request({ animal_id: id, exit_weight_kg: c.weight_kg } as any, ctx.tenantId, p.actor.userId); conv = { id: made.conversion_id, status: made.status }; }
+  if (conv.status === 'REQUESTED') { await conversions.approve(conv.id, { market_value: c.market_value } as any, ctx.tenantId, other.id); conv.status = 'APPROVED'; }
+  if (conv.status === 'APPROVED') {
+    const posted: any = await conversions.post(conv.id, { conversion_date: c.conversion } as any, ctx.tenantId, other.id);
+    ctx.log(`  ${c.tag} culled ${c.conversion}: ${posted.conversion_no}, book value ${posted.nbv_at_conversion}, market value ${posted.market_value}, gain/loss ${posted.gain_loss}`);
+  }
+}
 
 export const projectFullChapter: DemoChapter = {
   name: '22-project-full',
@@ -330,9 +438,27 @@ export const projectFullChapter: DemoChapter = {
       const [done] = await db.select({ id: schema.animalMedicationLog.log_id }).from(schema.animalMedicationLog).where(and(eq(schema.animalMedicationLog.animal_id, idOf(tag)), eq(schema.animalMedicationLog.item_id, med.item_id), eq(schema.animalMedicationLog.administered_date, date))).limit(1);
       if (!done) await medicines.create(idOf(tag), { item_id: med.item_id, administered_date: date, dose_qty: dose, uom: 'ML', administered_by: 'Dr T. Moyo (vet)', notes: note } as any, ctx.tenantId, actor);
     };
-    on('2025-01-08', 'dewormer', async () => { for (const a of herd) await treat(a.tag, MEDICINES.dewormer, '2025-01-08', 5, 'Arrival dewormer'); });
-    on('2025-01-10', 'arrival vaccine', async () => { for (const a of herd) await treat(a.tag, MEDICINES.parvo, '2025-01-10', 2, 'Arrival vaccination'); });
-    on('2025-03-10', 'PRRS vaccine', async () => { for (const s of sows) await treat(s.tag, MEDICINES.prrs, '2025-03-10', 2, 'Pre-service PRRS vaccination'); });
+    // The health card records the treatment; the dose is also drawn from the store, in the stock's own unit, as feed is, so the medicine and the vaccines
+    // leave their own inventory accounts (02a-project-coa: Medicine Inventory, Veterinary Inventory) and go into each animal (or to expense after her start).
+    const issue = async (date: string, name: string, uom: string, tags: string[], perHead: number, remarks: string) => {
+      if (fed.has(`${date}|${remarks}`)) return;
+      const med = await item(name);
+      await batches.postConsumptionGroup(batchId, { item_id: med.item_id, uom, transaction_date: date, source_warehouse_id: store, remarks, shares: tags.map((t) => ({ animal_id: idOf(t), quantity: perHead })) }, ctx.tenantId, actor);
+      fed.add(`${date}|${remarks}`);
+    };
+    const all = herd.map((a) => a.tag);
+    on('2025-01-08', 'dewormer', async () => {
+      for (const a of herd) await treat(a.tag, MEDICINES.dewormer, '2025-01-08', 5, 'Arrival dewormer');
+      await issue('2025-01-08', MEDICINES.dewormer, 'VIAL', all, 0.05, 'PROJECT health issue: arrival dewormer (5 ml of a 100 ml vial)');
+    });
+    on('2025-01-10', 'arrival vaccine', async () => {
+      for (const a of herd) await treat(a.tag, MEDICINES.parvo, '2025-01-10', 2, 'Arrival vaccination');
+      await issue('2025-01-10', MEDICINES.parvo, 'DOSE', all, 1, 'PROJECT health issue: arrival parvo vaccination');
+    });
+    on('2025-03-10', 'PRRS vaccine', async () => {
+      for (const s of sows) await treat(s.tag, MEDICINES.prrs, '2025-03-10', 2, 'Pre-service PRRS vaccination');
+      await issue('2025-03-10', MEDICINES.prrs, 'DOSE', sows.map((x) => x.tag), 1, 'PROJECT health issue: pre-service PRRS vaccination');
+    });
 
     // semen, AI, pregnancy check, farrowing, weaning: per round, per group
     const semenItem = await item(SEMEN_ITEM);
@@ -443,6 +569,9 @@ export const projectFullChapter: DemoChapter = {
       if (giltBatchId) await runMonth(giltBatchId, m);
     }
     while (next < events.length) await events[next++].run();
+
+    // ── 6. Exits, after the last run (Sep 2026): two deaths and one cull, so the mortality and cull journals are in the seed (TDD rows 10 and 11).
+    await projectExits(ctx, db, { batchId, idOf, actor });
 
     const rows = await db.select({ code: schema.animalRegister.animal_code, parity: schema.animalRegister.parity_count, bv: schema.animalRegister.book_value }).from(schema.animalRegister).where(inArray(schema.animalRegister.rfid_tag, sows.map((s) => s.tag)));
     ctx.log(`  sows now: ${rows.map((r) => `${r.code} parity ${r.parity} book ${r.bv}`).join(' | ')}`);

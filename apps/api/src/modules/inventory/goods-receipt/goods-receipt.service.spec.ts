@@ -9,6 +9,7 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { QcInspectionService } from '../qc-inspection/qc-inspection.service';
 import { BadRequestException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
 import { plainToInstance } from 'class-transformer';
@@ -17,6 +18,13 @@ import { UpdateGoodsReceiptDto } from './dto/goods-receipt.dto';
 
 describe('GoodsReceiptService', () => {
   let service: GoodsReceiptService;
+
+  // Items are not QC-required in these tests; the QC path is proved against MySQL and in qc-inspection.rules.spec.ts.
+  const qcInspectionMock = {
+    qcRequiredItemIds: jest.fn().mockResolvedValue(new Set<string>()),
+    resolveSeries: jest.fn().mockResolvedValue('QC_INSPECTION'),
+    raiseForReceiptLine: jest.fn().mockResolvedValue({ inspection_id: 'insp-1', inspection_no: 'QC-000001' }),
+  };
 
   const numberSeriesMock = {
     generateNextNumberById: jest.fn().mockResolvedValue({ next_number: 'TEST-001' }),
@@ -98,6 +106,7 @@ describe('GoodsReceiptService', () => {
         { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}), hasMapping: jest.fn().mockResolvedValue(false), postBatchCostEntry: jest.fn() } },
         { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
         { provide: NumberSeriesService, useValue: numberSeriesMock },
+        { provide: QcInspectionService, useValue: qcInspectionMock },
       ],
     }).compile();
 
@@ -183,6 +192,7 @@ describe('GoodsReceiptService', () => {
             { provide: GlPostingService, useValue: glMock },
             { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
             { provide: NumberSeriesService, useValue: numberSeriesMock },
+        { provide: QcInspectionService, useValue: qcInspectionMock },
           ],
         }).compile();
         service = module.get<GoodsReceiptService>(GoodsReceiptService);
@@ -319,6 +329,7 @@ describe('GoodsReceiptService', () => {
           { provide: GlPostingService, useValue: glMock },
           { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
           { provide: NumberSeriesService, useValue: numberSeriesMock },
+        { provide: QcInspectionService, useValue: qcInspectionMock },
         ],
       }).compile();
       service = module.get<GoodsReceiptService>(GoodsReceiptService);
@@ -384,6 +395,7 @@ describe('GoodsReceiptService', () => {
           { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}), hasMapping: jest.fn().mockResolvedValue(false), postBatchCostEntry: jest.fn() } },
           { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
           { provide: NumberSeriesService, useValue: numberSeriesMock },
+        { provide: QcInspectionService, useValue: qcInspectionMock },
           { provide: FeedAlertService, useValue: feedAlerts },
         ],
       }).compile();
@@ -485,6 +497,7 @@ describe('GoodsReceiptService', () => {
           { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}), hasMapping: jest.fn().mockResolvedValue(false), postBatchCostEntry: jest.fn() } },
           { provide: SiloFeedService, useValue: { assertCanReceive: jest.fn().mockResolvedValue(undefined) } },
           { provide: NumberSeriesService, useValue: numberSeriesMock },
+        { provide: QcInspectionService, useValue: qcInspectionMock },
         ],
       }).compile();
 

@@ -51,3 +51,13 @@ describe('linkLedgerJournals for expensed postings', () => {
     expect(links.get('e1')?.journal_no).toBe('JE-expense');
   });
 });
+
+describe('linkLedgerJournals for a death', () => {
+  it('finds the mortality journal of the batch she died in that day, and never a feed journal of that batch', () => {
+    const death = row({ event: 'MORTALITY', document_no: 'PIG-1', batch_no: 'BATCH-1', cost_amount: '-352.5000' });
+    const feed = journal('feed', [['exp', 400]], { description: 'CONSUMPTION - ITEM (BATCH-1)' });
+    const mortality = journal('dead', [['loss', 352.5]], { description: 'Mortality - BATCH-1' });
+    expect(linkLedgerJournals([death], [feed, mortality], new Map(), accounts).get('e1')?.journal_no).toBe('JE-dead');
+    expect(linkLedgerJournals([death], [feed], new Map(), accounts).size).toBe(0);
+  });
+});

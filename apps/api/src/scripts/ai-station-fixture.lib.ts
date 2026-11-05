@@ -6,7 +6,7 @@
  * NAMED FIXTURE, NOT DEFAULTS. Nothing in the application assumes these values; this is one customer's documented set-up, applied on
  * request and editable afterwards. Where the documents say nothing the field is left empty, not filled in:
  *  - genetic-level thresholds (the sheets show levels, not the TSI bands behind them)  -> no bands
- *  - the Tempo label, rest days, motility floor, collector names, destination farms     -> not given
+ *  - the Tempo label, rest days, motility floor, destination farms     -> not given
  * What is OURS, not the client's, is marked [ours] in the plan the script prints.
  */
 
@@ -129,9 +129,6 @@ export const GENETIC_BAND_FIXTURE: GeneticBandFixture[] = [
   { level_name: 'Below average', tsi_from: null, tsi_to: 99.99, sort_order: 40 },
 ];
 
-/** The collectors on the client's sheets. Their names are not given: each is named by its own ID until someone renames it. */
-export const COLLECTOR_CODES = ['CM', 'AW', 'TA'] as const;
-
 export interface BcsScaleFixture {
   score: number;
   score_name: string;
@@ -157,14 +154,13 @@ export interface Existing {
   /** Breed ids that already have a setup row, and whether the company default does (key ''). */
   setupBreedIds: Set<string>;
   scaleScores: Set<number>;
-  collectorCodes: Set<string>;
   /** The company default setup's id and whether it has any grading weight, when it exists. */
   defaultSetup?: { id: string; hasWeights: boolean } | null;
   /** The level names of the company-default genetic bands (those with no breed). */
   defaultBandLevels?: Set<string>;
 }
 
-type Kind = 'setup' | 'default-setup' | 'scale' | 'collector' | 'band';
+type Kind = 'setup' | 'default-setup' | 'scale' | 'band';
 export type Action =
   | { kind: Kind; key: string; do: 'create'; path: string; body: Record<string, unknown>; notes?: LineFixture['notes'] }
   | { kind: Kind; key: string; do: 'update'; path: string; body: Record<string, unknown>; notes?: LineFixture['notes'] }
@@ -200,13 +196,6 @@ export function planFixture(existing: Existing, farms: FarmChoices): Action[] {
       existing.scaleScores.has(row.score)
         ? { kind: 'scale', key: `score ${row.score}`, do: 'exists', why: 'the default scale already has this score' }
         : { kind: 'scale', key: `score ${row.score}`, do: 'create', path: '/bcs-scale', body: { ...row } },
-    );
-  }
-  for (const code of COLLECTOR_CODES) {
-    out.push(
-      existing.collectorCodes.has(code)
-        ? { kind: 'collector', key: code, do: 'exists', why: 'the collector already exists' }
-        : { kind: 'collector', key: code, do: 'create', path: '/semen-collector', body: { collector_code: code, collector_name: code } },
     );
   }
   return out;

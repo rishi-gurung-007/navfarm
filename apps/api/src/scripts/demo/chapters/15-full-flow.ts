@@ -22,6 +22,8 @@
  * mating by (sow, date), the semen lot by (boar, date), a run by (item, period, batch). Prices, ages, rations and litter sizes are demo facts,
  * not client data.
  */
+import { codesFor } from '../../project-coa.lib';
+import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
@@ -387,23 +389,25 @@ function nextMonth(month: string): string {
 /** Account 1055 and the BIO_LITTER_BIRTH mapping (Dr 1055 / Cr 1050): the birth-cost journal is opt-in, so the demo switches it on. */
 export async function ensureBirthJournalMapping(ctx: DemoContext, db: MySql2Database<typeof schema>) {
   const G = schema.glAccountMaster;
-  const accounts = await db.select({ id: G.gl_account_id, code: G.account_code }).from(G).where(inArray(G.account_code, ['1050', '1055']));
-  const wip = accounts.find((a) => a.code === '1050');
-  const inventory = accounts.find((a) => a.code === '1055');
+  // By the starter code or the project chart's (02a-project-coa renumbers 1050 / 1055).
+  const accounts = await db.select({ id: G.gl_account_id, code: G.account_code }).from(G).where(inArray(G.account_code, [...codesFor('1050'), ...codesFor('1055')]));
+  const wip = accounts.find((a) => codesFor('1050').includes(a.code));
+  const inventory = accounts.find((a) => codesFor('1055').includes(a.code));
   if (!wip || !inventory) { ctx.log('  birth-cost journal not switched on: the chart lacks account 1050 or 1055 (the litter still gets its cost in the bio-asset ledger)'); return; }
   // The birth takes the sow's cost into Piglets Inventory; a gilt registered from the litter takes it back out into her own asset.
   const wanted = [
-    { type: 'BIO_LITTER_BIRTH', debit: inventory.id, credit: wip.id, said: 'Dr 1055 Piglets Inventory / Cr 1050 Biological Assets Pre-mature' },
-    { type: 'BIO_GILT_ACQUISITION', debit: wip.id, credit: inventory.id, said: 'Dr 1050 Biological Assets Pre-mature / Cr 1055 Piglets Inventory' },
+    { type: 'BIO_LITTER_BIRTH', debit: inventory.id, credit: wip.id, said: 'Dr Piglets / Weaners Inventory / Cr Biological Assets Pre-mature' },
+    { type: 'BIO_GILT_ACQUISITION', debit: wip.id, credit: inventory.id, said: 'Dr Biological Assets Pre-mature / Cr Piglets / Weaners Inventory' },
   ];
   for (const m of wanted) {
     const [mapped] = await db.select({ id: schema.glMappingMaster.mapping_id }).from(schema.glMappingMaster).where(eq(schema.glMappingMaster.transaction_type, m.type)).limit(1);
     if (mapped) continue;
-    try {
-      await ctx.app.get(GlMappingService).create({ company_id: ctx.companyId, transaction_type: m.type, debit_gl_account_id: m.debit, credit_gl_account_id: m.credit } as any, ctx.tenantId);
-      ctx.log(`  GL mapping ${m.type} created (${m.said})`);
-    } catch (error) {
-      ctx.log(`  ${m.type} journal not switched on: ${error instanceof Error ? error.message : error}`);
-    }
+    // Written as the starter mappings are: GlMappingService takes only Inventory Ledger transaction types (gl-mapping.rules.ts), and these two are bio
+    // postings, not Inventory Ledger ones.
+    await db.insert(schema.glMappingMaster).values({
+      mapping_id: randomUUID(), tenant_id: ctx.tenantId, company_id: ctx.companyId, transaction_type: m.type, debit_gl_account_id: m.debit, credit_gl_account_id: m.credit,
+      is_active: true, status: 'ACTIVE',
+    } as any);
+    ctx.log(`  GL mapping ${m.type} created (${m.said})`);
   }
 }

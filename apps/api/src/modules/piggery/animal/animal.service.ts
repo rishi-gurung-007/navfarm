@@ -1857,6 +1857,7 @@ export class AnimalService {
         exit_weight_kg:
           dto.exit_weight_kg != null ? String(dto.exit_weight_kg) : null,
         disposal_destination: dto.disposal_destination?.trim() || null,
+        ...(dto.disposal_type === 'DIED' && bookValue != null ? { book_value_at_death: String(bookValue) } : {}),
         ...(dto.disposal_type === 'CULLED'
           ? {
               out_of_production_date: outOfProductionDate,
@@ -2712,7 +2713,8 @@ export class AnimalService {
     if (!reason) return withJournals;
 
     return withJournals.map((entry) =>
-      ['MORTALITY', 'TRANSFORMATION'].includes(bioEventOf(entry) ?? '')
+      // `event` is on every row: read from a ledger row's codes, or EXPENSED_* on the feed charged to expense.
+      ['MORTALITY', 'TRANSFORMATION'].includes(String(entry.event ?? ''))
         ? {
             ...entry,
             disposal_reason_code: reason.reason_code,
@@ -2758,7 +2760,6 @@ export class AnimalService {
     return rows.map((r) => ({
       entry_id: `tx:${r.transaction_id}`,
       posting_date: r.date,
-      entry_type: 'NEGATIVE',
       transaction_type: r.type,
       document_type: 'BATCH',
       document_no: r.batch_no,
@@ -2776,7 +2777,7 @@ export class AnimalService {
   }
 
   /** Each ledger row with the journal it was posted with (`journal_id`, `journal_no`), or nulls where no journal was written. */
-  private async withJournals<T extends { entry_id: string; document_no: string | null; run_id: string | null; posting_date: unknown; cost_amount: unknown; bio_asset_item_id: string }>(
+  private async withJournals<T extends { entry_id: string; document_no: string | null; run_id: string | null; posting_date: unknown; cost_amount: unknown; bio_asset_item_id: string; event?: string | null; batch_no?: string | null }>(
     entries: T[],
   ) {
     const runIds = [...new Set(entries.map((e) => e.run_id).filter((v): v is string => !!v))];
@@ -2790,7 +2791,12 @@ export class AnimalService {
           ).map((r) => [r.run_id, r.run_no] as [string, string])
         : [],
     );
-    const documents = [...new Set([...entries.filter((e) => !e.run_id).map((e) => e.document_no), ...runNos.values()].filter((v): v is string => !!v))];
+    // A death row names the animal; its journal names the batch, so the batch is looked up too.
+    const documents = [...new Set([
+      ...entries.filter((e) => !e.run_id).map((e) => e.document_no),
+      ...entries.filter((e) => e.event === 'MORTALITY').map((e) => e.batch_no),
+      ...runNos.values(),
+    ].filter((v): v is string => !!v))];
     if (documents.length === 0) return entries.map((e) => ({ ...e, journal_id: null as string | null, journal_no: null as string | null }));
 
     const journals = await this.db
@@ -2799,6 +2805,7 @@ export class AnimalService {
         journal_no: schema.journalHeader.journal_no,
         posting_date: schema.journalHeader.posting_date,
         source_document_no: schema.journalHeader.source_document_no,
+        description: schema.journalHeader.description,
       })
       .from(schema.journalHeader)
       .where(and(inArray(schema.journalHeader.source_document_no, documents), isNull(schema.journalHeader.deleted_at)));

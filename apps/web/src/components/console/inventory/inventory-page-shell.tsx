@@ -12,6 +12,7 @@ const INVENTORY_SECTIONS = [
   { key: "balance", href: "/inventory/balance", labelKey: "invStockBalance" },
   { key: "feed-forecast", href: "/inventory/feed-forecast", labelKey: "invFeedForecast" },
   { key: "goods-receipt", href: "/inventory/goods-receipt", labelKey: "invGoodsReceipt" },
+  { key: "qc-inspection", href: "/inventory/qc-inspection", labelKey: "invQcInspection" },
   { key: "transfers", href: "/inventory/transfers", labelKey: "invTransfers" },
   { key: "stock-adjustment", href: "/inventory/stock-adjustment", labelKey: "invStockAdjustment" },
   { key: "ledger", href: "/inventory/ledger", labelKey: "invLedger" },
@@ -51,6 +52,7 @@ function useInventoryPageState() {
       user.userType === "TENANT_ADMIN" ||
       user.userType === "SYSTEM_ADMIN" ||
       hasPermission(user, "INVENTORY", "GOODS_RECEIPT", "can_view") ||
+      hasPermission(user, "INVENTORY", "QC_INSPECTION", "can_view") ||
       hasPermission(user, "INVENTORY", "STOCK_COUNT", "can_view") ||
       hasPermission(user, "INVENTORY", "STOCK_TRANSFER", "can_view") ||
       hasPermission(user, "INVENTORY", "STOCK_ADJUSTMENT", "can_view") ||
@@ -102,6 +104,7 @@ export function InventoryPageShell({
   const title = titleOverride ? titleOverride :
     activeKey === "feed-forecast" ? t("invFeedForecastTitle") :
     activeKey === "goods-receipt" ? t("invGoodsReceiptTitle") :
+    activeKey === "qc-inspection" ? t("invQcInspectionTitle") :
     activeKey === "transfers" ? t("invTransfersTitle") :
     activeKey === "stock-adjustment" ? t("invStockAdjustmentTitle") :
     activeKey === "ledger" ? t("invLedgerTitle") :

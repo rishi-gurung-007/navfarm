@@ -2587,6 +2587,20 @@ export class BatchService {
    * The one asset account the animals of a batch are carried in, where they agree (each one's profile acquisition account); undefined where they differ or
    * none has a profile, and the mapping's account is used. For the cost that belongs to the batch as a whole (its overhead).
    */
+  /** The account a farrowing's piglet lot is carried in (the birth journal's debit), or undefined for any other batch or when births are not journalled. */
+  private async litterLotAccount(
+    batch: { batch_id: string; company_id: string; nob_id?: string | null; lob_id?: string | null },
+    tenantId: string,
+  ): Promise<string | undefined> {
+    const [lot] = await this.db
+      .select({ id: schema.farrowingRecord.farrow_id })
+      .from(schema.farrowingRecord)
+      .where(eq(schema.farrowingRecord.piglet_batch_id, batch.batch_id))
+      .limit(1);
+    if (!lot) return undefined;
+    return this.glPostingService.mappedAccount(tenantId, batch.company_id, 'BIO_LITTER_BIRTH', 'debit', { nobId: batch.nob_id, lobId: batch.lob_id });
+  }
+
   private async batchClassAccount(
     batchId: string,
   ): Promise<string | undefined> {
@@ -3534,6 +3548,8 @@ export class BatchService {
           disposal_date: dto.transaction_date,
           disposal_reason_id: reason?.reason_id ?? null,
           ...(Number(dto.mortality_detail?.weight_kg) > 0 ? { exit_weight_kg: String(dto.mortality_detail!.weight_kg) } : {}),
+          // Where the body went (TDD row 10), on the animal as every other exit records it.
+          ...(dto.mortality_detail?.disposal_method?.trim() ? { disposal_destination: dto.mortality_detail.disposal_method.trim() } : {}),
           updated_by: userPayload?.userId || null,
           updated_at: toMysqlTimestamp(),
         })
@@ -3593,6 +3609,11 @@ export class BatchService {
           created_by: userPayload?.userId || null,
         });
         await this.animalBookValue.refreshCache([animal.animal_id]);
+        // What she stood at when she died, kept on the register (TDD row 10); the cache above is now nil.
+        await this.db
+          .update(schema.animalRegister)
+          .set({ book_value_at_death: bookValue.toString() })
+          .where(eq(schema.animalRegister.animal_id, animal.animal_id));
         // The accumulated-amortisation leg of the BBP's death entry: what the costing runs have amortised her to date is cleared
         // against the acquisition cost, so the account holds nothing for an animal that is gone. Nothing happens for an animal no
         // profile costs or that was never amortised.
@@ -4100,7 +4121,11 @@ export class BatchService {
         }
         rate = perUnitNca;
         amount = -nbvShare;
-        // A herd carried at nil (the piglets of a farrowing) loses nothing to journal.
+        // A herd carried at nil (the piglets of a farrowing) loses nothing to journal. A litter that carries its sow's cost holds it where the
+        // birth journal put it (BIO_LITTER_BIRTH's debit, Weaners Inventory: TDD "Mortality: Dr Impairment Loss / Cr Weaners Inventory"), so a
+        // piglet's death comes out of that account, not the pre-mature herd account.
+        if (glWriteOff >= 0.005 && !animalAssetAccount && !dto.animal_id)
+          animalAssetAccount = await this.litterLotAccount(batch, tenantId);
         if (glWriteOff >= 0.005)
           await this.glPostingService.postBatchCostEntry({
             tenantId,
@@ -4248,10 +4273,11 @@ export class BatchService {
         nobId: batch.nob_id || undefined,
         lobId: batch.lob_id,
         stageId: batch.stage_id || undefined,
-        // Capitalised overhead goes into the class account its animals are carried in.
+        // Capitalised overhead goes into the account its animal is carried in, as her feed does: her own acquisition account where the line
+        // names her (the ledger adds it to her book value), else the class account of a herd that has one.
         debitAccountId:
           isBioAsset && isCostCapitalised
-            ? await this.batchClassAccount(id)
+            ? (dto.animal_id ? await this.glPostingService.animalAssetAccountId(dto.animal_id) : undefined) ?? (await this.batchClassAccount(id))
             : undefined,
         userId: userPayload?.userId,
       });

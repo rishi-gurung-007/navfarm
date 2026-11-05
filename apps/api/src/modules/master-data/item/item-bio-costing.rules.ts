@@ -12,12 +12,12 @@ export const BIO_COSTING_COLUMNS = [
   'bio_costing_method', 'bio_gender', 'bio_start_age_weeks', 'bio_start_age_days', 'bio_useful_life_months',
   'bio_residual_rule', 'bio_residual_fixed_amount', 'bio_residual_weight_kg', 'bio_residual_price_per_kg',
   'bio_run_frequency', 'bio_day_basis', 'bio_effective_from', 'bio_auto_post',
-  'bio_acquisition_gl_id', 'bio_accum_amort_gl_id', 'bio_amort_expense_gl_id', 'bio_fv_gain_loss_gl_id', 'bio_writeoff_gl_id',
+  'bio_acquisition_gl_id', 'bio_accum_amort_gl_id', 'bio_amort_expense_gl_id', 'bio_fv_gain_loss_gl_id', 'bio_fv_loss_gl_id', 'bio_writeoff_gl_id',
 ] as const;
 export type BioCostingColumn = (typeof BIO_COSTING_COLUMNS)[number];
 
 export const BIO_GL_COLUMNS = [
-  'bio_acquisition_gl_id', 'bio_accum_amort_gl_id', 'bio_amort_expense_gl_id', 'bio_fv_gain_loss_gl_id', 'bio_writeoff_gl_id',
+  'bio_acquisition_gl_id', 'bio_accum_amort_gl_id', 'bio_amort_expense_gl_id', 'bio_fv_gain_loss_gl_id', 'bio_fv_loss_gl_id', 'bio_writeoff_gl_id',
 ] as const;
 
 /** Terms that must not change once an animal of the item has been costed (as the profile's did). Auto-post is a scheduling choice and stays editable. */
@@ -29,6 +29,7 @@ const PROFILE_COLUMN: Record<(typeof BIO_GL_COLUMNS)[number], string> = {
   bio_accum_amort_gl_id: 'accum_amort_gl_id',
   bio_amort_expense_gl_id: 'amort_expense_gl_id',
   bio_fv_gain_loss_gl_id: 'fv_gain_loss_gl_id',
+  bio_fv_loss_gl_id: 'fv_loss_gl_id',
   bio_writeoff_gl_id: 'writeoff_gl_id',
 };
 

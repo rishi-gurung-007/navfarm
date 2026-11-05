@@ -21,6 +21,7 @@ import {
   inArray,
 } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
+import { specProblems, specRowsToStore } from '../../inventory/qc-inspection/qc-inspection.rules';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import {
@@ -470,6 +471,13 @@ export class ItemService {
     const bioTerms: BioCostingTerms = { ...this.bioTermsOf(dto), is_biological_asset: dto.is_biological_asset || false };
     this.assertBioCosting(bioTerms);
     await this.assertBioGlAccounts(bioTerms, tenantId, companyId);
+    if (dto.is_qc_required && dto.is_biological_asset) {
+      throw new BadRequestException('A biological asset cannot be QC required: animals are registered, not received into stock.');
+    }
+    // The checks of a QC-required item travel with it; they are dropped for an item that is not QC required.
+    const qcSpecs = dto.is_qc_required ? (dto.qc_specs ?? []) : [];
+    const qcProblems = specProblems(qcSpecs);
+    if (qcProblems.length) throw new BadRequestException(qcProblems.join(' '));
 
     const itemId = randomUUID();
     const newItem = {
@@ -496,6 +504,7 @@ export class ItemService {
       is_biological_costing_method: dto.is_biological_costing_method || null,
       ...this.bioColumnsToWrite(bioTerms),
       is_inventoriable: dto.is_inventoriable ?? true,
+      is_qc_required: dto.is_qc_required ?? false,
       min_stock_level: dto.min_stock_level?.toString() || null,
       max_stock_level: dto.max_stock_level?.toString() || null,
       reorder_level: dto.reorder_level?.toString() || null,
@@ -524,6 +533,11 @@ export class ItemService {
     // Transactional save for item + attribute values mapping
     await this.db.transaction(async (tx) => {
       await tx.insert(schema.itemMaster).values(newItem);
+      if (qcSpecs.length) {
+        await tx.insert(schema.itemQcSpecLine).values(
+          specRowsToStore(qcSpecs, { tenantId, companyId, itemId, userId: userPayload?.userId, newId: randomUUID }),
+        );
+      }
 
       await this.recordUomConversion(tx, {
         tenantId,
@@ -1352,6 +1366,15 @@ export class ItemService {
       updates.is_biological_costing_method = dto.is_biological_costing_method;
     if (dto.is_inventoriable !== undefined)
       updates.is_inventoriable = dto.is_inventoriable;
+    if (
+      (dto.is_qc_required ?? item.is_qc_required) &&
+      (dto.is_biological_asset ?? item.is_biological_asset)
+    )
+      throw new BadRequestException(
+        'A biological asset cannot be QC required: animals are registered, not received into stock.',
+      );
+    if (dto.is_qc_required !== undefined)
+      updates.is_qc_required = dto.is_qc_required;
     if (dto.min_stock_level !== undefined)
       updates.min_stock_level = dto.min_stock_level?.toString() || null;
     if (dto.max_stock_level !== undefined)

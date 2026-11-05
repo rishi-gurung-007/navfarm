@@ -147,7 +147,9 @@ export function DeathRecord({ activity }: { activity: Row | null }) {
     ],
     ['Cause of death', dash(m.cause_of_death)],
     ['Post-mortem findings', dash(m.post_mortem_notes)],
-    ['Disposal method', dash(m.disposal_method)],
+    ['Weight at death', m.weight_kg != null ? `${m.weight_kg} kg` : NA],
+    ['Book value at death', m.book_value_at_death != null ? money(m.book_value_at_death) : NA],
+    ['Disposal destination', dash(m.disposal_method)],
     ['Pen', dash(m.pen)],
     ['Remarks', dash(m.remarks)],
   ];

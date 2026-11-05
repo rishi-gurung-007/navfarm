@@ -14,6 +14,7 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { QcInspectionService } from '../qc-inspection/qc-inspection.service';
 import { itemKindOf } from '../../../common/item-kinds';
 import { bioCodes, bioEventCondition } from '../bio-asset-ledger/bio-asset-ledger.types';
 
@@ -36,6 +37,8 @@ export class GoodsReceiptService {
     // SiloFeedService is the one home for them.
     private readonly siloFeedService: SiloFeedService,
     private readonly numberSeriesService: NumberSeriesService,
+    // An item marked QC required is not written to the ledger here: an inspection is raised and the entry is written when it is accepted.
+    private readonly qcInspections: QcInspectionService,
     @Optional() private readonly feedAlerts?: FeedAlertService,
   ) { }
 
@@ -444,12 +447,24 @@ export class GoodsReceiptService {
         owed.set(e.line, t);
       }
     }
+    // A line of a QC-required item has no ledger entry until its inspection is accepted: say where it stands.
+    const inspections = lines.length
+      ? await this.db
+          .select({ line: schema.qcInspection.source_line_id, id: schema.qcInspection.inspection_id, no: schema.qcInspection.inspection_no, status: schema.qcInspection.status, result: schema.qcInspection.result })
+          .from(schema.qcInspection)
+          .where(and(eq(schema.qcInspection.source_doc_type, 'GOODS_RECEIPT'), inArray(schema.qcInspection.source_line_id, lines.map((l) => l.line_id))))
+      : [];
+    const inspectionOf = new Map(inspections.map((i) => [i.line, i]));
     return {
       ...receipt,
       lines: lines.map((l) => ({
         ...l,
         animals_received: owed.get(l.line_id)?.received ?? null,
         animals_awaiting_registration: owed.get(l.line_id)?.awaiting ?? null,
+        qc_inspection_id: inspectionOf.get(l.line_id)?.id ?? null,
+        qc_inspection_no: inspectionOf.get(l.line_id)?.no ?? null,
+        qc_status: inspectionOf.get(l.line_id)?.status ?? null,
+        qc_result: inspectionOf.get(l.line_id)?.result ?? null,
       })),
     };
   }
@@ -669,6 +684,9 @@ export class GoodsReceiptService {
       // positive entry in the Bio Asset Ledger instead — the animals it brought in — which each animal registered
       // from this GRN is taken from (its remaining counts down).
       const lineItemIds = [...new Set(receipt.lines.map((l: { item_id: string }) => l.item_id))] as string[];
+      // Items marked QC required are not written to the ledger here: each line raises an inspection instead (see below).
+      const qcItemIds = await this.qcInspections.qcRequiredItemIds(lineItemIds);
+      let qcSeries: string | null = null;
       const bioItems = new Map((await this.db
         .select({ item_id: schema.itemMaster.item_id, nob_id: schema.itemMaster.nob_id, lob_id: schema.itemMaster.lob_id })
         .from(schema.itemMaster)
@@ -743,6 +761,14 @@ export class GoodsReceiptService {
             priceVariance = (stockRate - standard) * Number(line.quantity);
             stockRate = standard;
           }
+          if (qcItemIds.has(line.item_id)) {
+            // QC required: no ledger entry and no journal yet. The inspection carries the rate and variance worked out above, and the
+            // entry is written when it is completed and the quantity accepted. Inside this transaction the series is read on it too.
+            qcSeries ??= await this.qcInspections.resolveSeries(tenantId, receipt.company_id);
+            await this.qcInspections.raiseForReceiptLine({
+              tenantId, seriesCode: qcSeries, userId: userPayload?.userId, receipt, line, rate: stockRate, priceVariance,
+            });
+          } else {
           const ledgerEntry = await this.ledgerService.writePositiveEntry({
             tenantId,
             companyId: receipt.company_id,
@@ -765,6 +791,7 @@ export class GoodsReceiptService {
 
           await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
           if (priceVariance !== 0) await this.glPostingService.postPurchasePriceVariance(ledgerEntry, priceVariance, userPayload?.userId);
+          }
         }
 
         if (trackedItem?.tracking_series_id) {

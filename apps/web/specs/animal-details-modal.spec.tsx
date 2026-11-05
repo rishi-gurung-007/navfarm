@@ -130,7 +130,9 @@ describe('AnimalDetailsModal', () => {
     {
       ledger_id: 'led-1',
       posting_date: '2025-01-15',
-      entry_type: 'ACQUISITION',
+      entry_type: 'POSITIVE',
+      // What the API returns: the event the row is, read from its codes; the card names the posting by it.
+      event: 'ACQUISITION',
       unit_cost: '450.00',
       quantity: 1,
       computed_cost: '450.00',
@@ -307,7 +309,7 @@ describe('AnimalDetailsModal', () => {
 
     await waitFor(() => {
       expect(screen.getByText('GRN-2025-001')).toBeTruthy();
-      expect(screen.getByText('ACQUISITION')).toBeTruthy();
+      expect(screen.getAllByText('Acquisition').length).toBeGreaterThan(0);
     });
   });
 

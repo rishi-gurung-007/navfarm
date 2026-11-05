@@ -120,6 +120,7 @@ export const DOCUMENT_TABLES: Record<string, AnyMySqlTable> = {
   'item-application': schema.inventoryApplication,
   application: schema.inventoryApplication,
   'goods-receipt': schema.goodsReceipt,
+  'qc-inspection': schema.qcInspection,
   'batch-transfer': schema.batchTransfer,
   'stock-transfer': schema.stockTransfer,
   'stock-adjustment': schema.stockAdjustment,

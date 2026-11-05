@@ -2,7 +2,6 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { CreateBreedingLineSetupDto, QueryBreedingLineSetupDto } from './breeding-line-setup.dto';
 import { QueryGeneticLevelBandDto } from './genetic-level-band.dto';
-import { QuerySemenCollectorDto } from './semen-collector.dto';
 
 // The same options as the API's global ValidationPipe (main.ts): implicit conversion turns the text 'false' into true
 // (Boolean('false')) before a transform sees it, so a transform that tests that value never reads 'false'.
@@ -10,7 +9,6 @@ const asTheApiDoes = { enableImplicitConversion: true };
 
 describe("a boolean sent as text ('true' / 'false')", () => {
   it.each([
-    ['QuerySemenCollectorDto', QuerySemenCollectorDto],
     ['QueryBreedingLineSetupDto', QueryBreedingLineSetupDto],
     ['QueryGeneticLevelBandDto', QueryGeneticLevelBandDto],
   ])('is read as the boolean it says on %s.isActive', (_name, cls) => {

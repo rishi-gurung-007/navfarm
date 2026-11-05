@@ -1908,12 +1908,12 @@ describe('BreedingService', () => {
           ]);
         });
 
-        it('refuses a collector who is not an active collector of the boar\'s company', async () => {
+        it('refuses a collector who does not hold the Semen Collector role', async () => {
           rows.set(schema.animalRegister, [boar]);
-          rows.set(schema.semenCollector, []);
+          rows.set(schema.userMaster, []);
           await expect(
             service.recordSemenCollection(noDoses({ boar_results: [result('boar-1', { collector_id: 'c-1' })] }), 'tenant-1'),
-          ).rejects.toThrow('Select active collectors of this company.');
+          ).rejects.toThrow('Select active users with the Semen Collector role.');
         });
       });
 

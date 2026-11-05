@@ -423,7 +423,7 @@ function SortButton({
 }
 
 export default function GoodsReceiptPanel() {
-  const { t } = useLanguage();
+  const { t, tLabel } = useLanguage();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -711,6 +711,7 @@ export default function GoodsReceiptPanel() {
       // an existing receipt's company cannot change) and the global pipe
       // rejects any undeclared property, so the PUT payload must omit it.
       let receiptId = editingId;
+      let qcHeld = '';
       let receiptNo: string =
         rows.find((r) => r.receipt_id === editingId)?.receipt_no || '';
       if (editingId) {
@@ -740,7 +741,10 @@ export default function GoodsReceiptPanel() {
       if (postNow) {
         if (!receiptId) throw new Error(t('grpFailedToPostReceipt'));
         try {
-          await api.post(`/goods-receipt/${receiptId}/post`, {});
+          const postedRes: any = await api.post(`/goods-receipt/${receiptId}/post`, {});
+          // A QC-required line has no inventory entry yet: it waits on its QC inspection.
+          const held = ((postedRes?.data ?? postedRes)?.lines ?? []).filter((l: any) => l.qc_inspection_no).map((l: any) => l.qc_inspection_no);
+          if (held.length) qcHeld = held.join(', ');
         } catch (postErr: any) {
           // The draft is saved; only the posting failed. Close the form so a
           // retry does not create a duplicate, and say where the receipt is.
@@ -754,6 +758,11 @@ export default function GoodsReceiptPanel() {
         }
       }
       // Say which receipt it was, and show it: the list goes back to page one, newest first.
+      if (qcHeld) {
+        showToast.info(
+          `${receiptNo ? `${receiptNo}: ` : ''}${tLabel('QC required. Stock will be posted to inventory when the QC inspection is completed:')} ${qcHeld}`,
+        );
+      }
       showToast.success(
         t(
           postNow
@@ -1404,6 +1413,7 @@ export default function GoodsReceiptPanel() {
                         )}
                       </TableCell>
                       <TableCell className="px-2 py-1.5 min-w-[220px]">
+                        <div className="flex flex-wrap items-center gap-2">
                         {isLot || isSerial ? (
                           (() => {
                             const serialCount = String(line.serial_no || '')
@@ -1456,6 +1466,19 @@ export default function GoodsReceiptPanel() {
                             {t('grpTrkNo')}
                           </span>
                         )}
+                        {it?.is_qc_required && (
+                          <span
+                            className="shrink-0 rounded-[var(--radius-sm)] border px-1.5 py-0.5 text-[10px] font-bold uppercase"
+                            style={{
+                              color: 'var(--warning)',
+                              borderColor: 'var(--warning)',
+                            }}
+                            title={tLabel('QC required: stock is posted only when the QC inspection is accepted.')}
+                          >
+                            {tLabel('QC required')}
+                          </span>
+                        )}
+                        </div>
                       </TableCell>
                       <TableCell className="px-2 py-1.5 w-36">
                         <DateInput
@@ -1484,6 +1507,24 @@ export default function GoodsReceiptPanel() {
               </TableBody>
             </table>
           </div>
+          {(() => {
+            const qcLines = lines
+              .map((l) => items.find((i) => i.item_id === l.item_id))
+              .filter((i) => i?.is_qc_required);
+            if (qcLines.length === 0) return null;
+            return (
+              <div
+                className="rounded-[var(--radius-sm)] border px-3 py-2 text-xs"
+                style={{ borderColor: 'var(--warning)', color: 'var(--text-secondary)' }}
+              >
+                <span className="font-semibold" style={{ color: 'var(--warning)' }}>
+                  {tLabel('QC required')}:
+                </span>{' '}
+                {[...new Set(qcLines.map((i) => i!.item_code))].join(', ')}.{' '}
+                {tLabel('Posting this receipt does not put these items into stock yet. It raises a QC inspection for each; the stock is posted when the inspection is completed and accepted. You will find it under Inventory > QC Inspections.')}
+              </div>
+            );
+          })()}
           <div className="flex items-center justify-end gap-3 px-1 text-xs">
             <span style={S.sub}>{t('grpReceiptTotal')}</span>
             <span className="font-mono text-sm font-semibold" style={S.primary}>
@@ -1618,6 +1659,11 @@ export default function GoodsReceiptPanel() {
                     <TableHead className="h-auto px-3 py-2 min-w-[220px]">
                       {t('grpColTracking')}
                     </TableHead>
+                    {(viewing.lines || []).some((l: Row) => l.qc_inspection_no) && (
+                      <TableHead className="h-auto px-3 py-2 min-w-[180px]">
+                        {tLabel('QC Inspection')}
+                      </TableHead>
+                    )}
                     {hasAnimalLines && (
                       <TableHead className="h-auto px-3 py-2 w-40 min-w-[140px]">
                         {t('grpColRegistered')}
@@ -1686,6 +1732,32 @@ export default function GoodsReceiptPanel() {
                           <span style={S.muted}>{NA}</span>
                         )}
                       </TableCell>
+                      {(viewing.lines || []).some((x: Row) => x.qc_inspection_no) && (
+                        <TableCell className="px-3 py-2 text-xs" style={S.primary}>
+                          {l.qc_inspection_no ? (
+                            <a
+                              href={`/inventory/qc-inspection?recordId=${encodeURIComponent(l.qc_inspection_id)}`}
+                              className="underline"
+                              style={{ color: 'var(--accent)' }}
+                            >
+                              {l.qc_inspection_no}
+                            </a>
+                          ) : (
+                            <span style={S.muted}>{NA}</span>
+                          )}
+                          {l.qc_inspection_no && (
+                            <span className="ml-2" style={S.sub}>
+                              {l.qc_status === 'OPEN'
+                                ? tLabel('Awaiting QC')
+                                : l.qc_status === 'PENDING_APPROVAL'
+                                  ? tLabel('Deviation awaiting approval')
+                                  : l.qc_result === 'PASS'
+                                    ? tLabel('QC passed')
+                                    : tLabel('QC failed')}
+                            </span>
+                          )}
+                        </TableCell>
+                      )}
                       {hasAnimalLines && (
                         <TableCell className="px-3 py-2 text-xs" style={S.primary}>
                           {l.animals_received == null ? (

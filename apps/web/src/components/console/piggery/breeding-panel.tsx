@@ -573,7 +573,7 @@ export function BreedingPanel({
   useEffect(() => {
     if (!showSemenModal) return;
     api
-      .get('/semen-collector?isActive=true&limit=200')
+      .get('/piggery/breeding/semen-collectors')
       .then((res) => setCollectors(unwrap<Row[]>(res) ?? []))
       .catch(() => setCollectors([]));
   }, [showSemenModal]);
@@ -3578,7 +3578,9 @@ export function BreedingPanel({
                 [
                   'Into inventory',
                   semenItem && lotDosesOf(semenForm) > 0
-                    ? `+${lotDosesOf(semenForm)} × ${semenItem.item_name}`
+                    ? semenItem.is_qc_required
+                      ? `${lotDosesOf(semenForm)} × ${semenItem.item_name} — held until its QC inspection is accepted`
+                      : `+${lotDosesOf(semenForm)} × ${semenItem.item_name}`
                     : 'nothing — no item chosen',
                 ],
                 [
@@ -3847,6 +3849,18 @@ export function BreedingPanel({
                 columnHeaders={false}
                 remote={pagedSemenItems}
               />
+              {semenItem?.is_qc_required && (
+                <p
+                  className="mt-2 rounded-lg border px-3 py-2 text-xs"
+                  style={{ borderColor: 'var(--warning)', color: 'var(--text-secondary)' }}
+                >
+                  <span className="font-semibold" style={{ color: 'var(--warning)' }}>
+                    QC required.
+                  </span>{' '}
+                  Saving this collection does not put the doses into stock yet. It raises a QC inspection (Inventory &gt; QC Inspections); the doses are
+                  posted when it is completed and accepted, and the lot cannot be used in a mating before then.
+                </p>
+              )}
             </Field>
           </Step>
 

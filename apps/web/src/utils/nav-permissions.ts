@@ -17,6 +17,7 @@ const ROUTE_GRANTS: Array<[path: string, anyOf: Grant[]]> = [
   ['/livestock', [['PIGGERY', 'ANIMAL']]],
   ['/inventory/balance', [['INVENTORY', 'LEDGER']]],
   ['/inventory/goods-receipt', [['INVENTORY', 'GOODS_RECEIPT']]],
+  ['/inventory/qc-inspection', [['INVENTORY', 'QC_INSPECTION']]],
   ['/inventory/transfers', [['INVENTORY', 'STOCK_TRANSFER']]],
   ['/inventory/stock-adjustment', [['INVENTORY', 'STOCK_ADJUSTMENT']]],
   ['/inventory/ledger', [['INVENTORY', 'LEDGER']]],

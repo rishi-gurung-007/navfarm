@@ -62,6 +62,12 @@ export interface MasterDataField {
   helpText?: string;
   /** Static dropdown options, for type: "select" */
   options?: SelectOption[];
+  /** For type "select": narrows (or adds to) `options` from the form's live values, e.g. the entry types a chosen transaction type is written with. */
+  filterOptions?: (options: SelectOption[], form: Record<string, any>) => SelectOption[];
+  /** A line shown under the field, worked out from the form's live values (what the chosen type posts to). Shown when no lock or template hint applies. */
+  hintFor?: (form: Record<string, any>) => string | undefined;
+  /** The tooltip, worked out from the form's live values; falls back to `helpText`. */
+  helpTextFor?: (form: Record<string, any>) => string | undefined;
   /** API path to fetch related records from, for type: "select-entity". In "path" mode (default), include "{value}" as a placeholder for the (single) parent field's current value. */
   entityEndpoint?: string;
   /** Field on the related record to use as the option value (defaults to its idKey) */

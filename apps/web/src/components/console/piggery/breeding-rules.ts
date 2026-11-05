@@ -401,3 +401,7 @@ export function checkSemen({ form, boars, lots, rules, lineBoarIds }: SemenCheck
 
 export const errorsOf = (issues: Issue[]) => issues.filter((i) => i.level === "error");
 export const issueFor = (issues: Issue[], field: string) => issues.find((i) => i.field === field);
+
+/** How a collector reads in a list: his name, with his Employee ID in front when it differs (CM — Chris Moore). */
+export const collectorLabel = (c: { collector_code?: string | null; collector_name?: string | null }) =>
+  c.collector_code && c.collector_name && c.collector_code !== c.collector_name ? `${c.collector_code} — ${c.collector_name}` : (c.collector_name ?? c.collector_code ?? "");

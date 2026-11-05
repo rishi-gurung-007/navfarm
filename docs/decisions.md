@@ -4843,3 +4843,7 @@ The entry is in the Livestock menu again (Herd Analytics & Parity stays off, see
 ## 3 Nov 2026 — Pen Occupancy & Biosecurity drills down: farms → sheds → pens
 
 The page opens on the farms; a farm opens its sheds, a shed its pens and crates (breadcrumb to go back, search and status filter and paging at every level). The API gives only what stands directly in each place, so a shed or a farm read 0 while its pens were full; the figures are now added up from what is under each place (`facility-tree.ts`): head = animals + batch-wise head, capacity = the place's own head capacity, else the total of what is under it (a note says so, and when the places under it declare a different total). A store or a silo is listed apart and never counted as head; a shed whose capacity is written in doses is still a shed, with no head capacity. Nothing in the API changed.
+
+## 4 Nov 2026 — Semen collectors are users, not a master
+
+The Semen Collector master is removed. A collector is a user (User Management) who holds the `SEMEN_COLLECTOR` role of the company; the collection plan and collection forms list those users (`GET /piggery/breeding/semen-collectors`) and the save checks refuse anyone else. The Collector ID (CM, AW, TA) is the user's Employee ID, else the name. Migration 0242 repoints `semen_boar_result.collector_id` and `semen_collection_plan_line.collector_id` to `user_master`, drops `semen_collector` (a collector with no linked user leaves the field empty) and adds the role to every company; new companies get it from the default role seed.

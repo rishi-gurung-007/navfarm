@@ -2,7 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { Field, inputStyle } from "./breeding-form-parts";
-import { boarResultOf, type Issue, type Row, type SemenBoarResultForm } from "./breeding-rules";
+import { boarResultOf, collectorLabel, type Issue, type Row, type SemenBoarResultForm } from "./breeding-rules";
 
 const card: CSSProperties = { backgroundColor: "var(--surface)", borderColor: "var(--border)" };
 const muted: CSSProperties = { color: "var(--text-muted)" };
@@ -77,10 +77,10 @@ export function SemenBoarResults({
                       value={r.collector_id}
                       onChange={(e) => onChange(b.animal_id, { collector_id: e.target.value })}
                     >
-                      <option value="">Not recorded</option>
+                      <option value="">{collectors.length ? "Not recorded" : "No users hold the Semen Collector role"}</option>
                       {collectors.map((c) => (
                         <option key={c.collector_id} value={c.collector_id}>
-                          {c.collector_code} — {c.collector_name}
+                          {collectorLabel(c)}
                         </option>
                       ))}
                     </select>

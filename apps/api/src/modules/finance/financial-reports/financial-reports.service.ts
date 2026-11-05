@@ -352,11 +352,12 @@ export class FinancialReportsService {
       );
 
       // Each costed item's own acquisition account (the sheet's "GP-Imp-F Acquisition Cost" and the rest): an animal's cost, capitalised feed and fair value
-      // movement are posted there, so leaving them out reads as a variance as large as the herd.
+      // movement are posted there, so leaving them out reads as a variance as large as the herd. Its own accumulated amortisation account too (V1.3 names
+      // one per amortised item): the amortisation the ledger deducts is credited there.
       const itemAcquisitionIds = new Set(
-        (await this.db.select({ id: schema.itemMaster.bio_acquisition_gl_id }).from(schema.itemMaster)
+        (await this.db.select({ id: schema.itemMaster.bio_acquisition_gl_id, accum: schema.itemMaster.bio_accum_amort_gl_id }).from(schema.itemMaster)
           .where(and(eq(schema.itemMaster.company_id, companyId), eq(schema.itemMaster.is_biological_asset, true), isNotNull(schema.itemMaster.bio_acquisition_gl_id))))
-          .map((r) => r.id as string),
+          .flatMap((r) => [r.id, r.accum].filter((x): x is string => !!x)),
       );
       // The asset accounts and the accumulated amortisation deducted from them: the ledger's carrying value is net of the amortisation.
       const bioGlAccounts = glRows.filter((r) =>
@@ -423,7 +424,7 @@ export class FinancialReportsService {
     const ledgerRows = await this.db
       .select({
         entry_type: L.entry_type, transaction_type: L.transaction_type, document_type: L.document_type, posting_date: L.posting_date, amount: L.cost_amount, run_id: L.run_id, animal_id: L.animal_id,
-        item_method: I.bio_costing_method, item_code: I.item_code, expense_gl: I.bio_amort_expense_gl_id, accum_gl: I.bio_accum_amort_gl_id, fv_gl: I.bio_fv_gain_loss_gl_id,
+        item_method: I.bio_costing_method, item_code: I.item_code, expense_gl: I.bio_amort_expense_gl_id, accum_gl: I.bio_accum_amort_gl_id, fv_gl: I.bio_fv_gain_loss_gl_id, fv_loss_gl: I.bio_fv_loss_gl_id,
         died: sql<number>`(${A.is_active} = 0 AND ${A.disposal_type} = 'DIED' AND ${A.disposal_date} <= ${dateTo})`,
       })
       .from(L)
@@ -440,6 +441,7 @@ export class FinancialReportsService {
         expense_gl: costed ? r.expense_gl : null,
         accum_gl: costed ? r.accum_gl : null,
         fv_gl: costed ? r.fv_gl : null,
+        fv_loss_gl: costed ? r.fv_loss_gl : null,
         event: bioEventOf(r),
       };
     });
@@ -456,7 +458,7 @@ export class FinancialReportsService {
 
     const runRows = rows.filter((r) => r.run_id && r.posting_date <= dateTo);
     const accountIds = new Set<string>();
-    for (const r of runRows) for (const id of [r.expense_gl, r.accum_gl, r.fv_gl]) if (id) accountIds.add(id);
+    for (const r of runRows) for (const id of [r.expense_gl, r.accum_gl, r.fv_gl, r.fv_loss_gl]) if (id) accountIds.add(id);
     if (!accountIds.size) return { byProfile, costingTieOut: { available: true, reason: null, rows: [] as TieOutRow[] } };
 
     const JL = schema.journalLine, JH = schema.journalHeader, GA = schema.glAccountMaster;
@@ -492,10 +494,16 @@ export class FinancialReportsService {
       const glAmount = sum(id, (g) => Number(g.credit) - Number(g.debit));
       tie.push(tieOutRow('ACCUMULATED_AMORTISATION', await nameOf(id), 'TO_DATE', ledger, glAmount));
     }
-    for (const id of new Set(runRows.map((r) => r.fv_gl).filter((x): x is string => !!x))) {
-      const ledger = runRows.filter((r) => r.fv_gl === id && r.event === 'FAIR_VALUE_ADJMT' && inPeriod(r.posting_date)).reduce((n, r) => n + (Number(r.amount) || 0), 0);
-      const glAmount = sum(id, (g) => (g.source === 'BIO_COSTING_RUN' && inPeriod(g.posting_date) ? Number(g.credit) - Number(g.debit) : 0));
-      tie.push(tieOutRow('FAIR_VALUE_GAIN_LOSS', await nameOf(id), 'PERIOD', ledger, glAmount));
+    // An item that splits gain from loss (COA: FV Gain / FV Loss) ties out over the pair: gains are credited to one, losses debited to the other.
+    const fvPairs = new Map<string, { gain: string; loss: string | null }>();
+    for (const r of runRows) if (r.fv_gl) fvPairs.set(`${r.fv_gl}|${r.fv_loss_gl ?? ''}`, { gain: r.fv_gl, loss: r.fv_loss_gl && r.fv_loss_gl !== r.fv_gl ? r.fv_loss_gl : null });
+    for (const [key, pair] of fvPairs) {
+      const ledger = runRows.filter((r) => `${r.fv_gl}|${r.fv_loss_gl ?? ''}` === key && r.event === 'FAIR_VALUE_ADJMT' && inPeriod(r.posting_date)).reduce((n, r) => n + (Number(r.amount) || 0), 0);
+      const net = (id: string) => sum(id, (g) => (g.source === 'BIO_COSTING_RUN' && inPeriod(g.posting_date) ? Number(g.credit) - Number(g.debit) : 0));
+      const glAmount = net(pair.gain) + (pair.loss ? net(pair.loss) : 0);
+      const gainName = await nameOf(pair.gain);
+      const name = pair.loss ? { code: `${gainName.code} / ${(await nameOf(pair.loss)).code}`, name: `${gainName.name} / ${(await nameOf(pair.loss)).name}` } : gainName;
+      tie.push(tieOutRow('FAIR_VALUE_GAIN_LOSS', name, 'PERIOD', ledger, glAmount));
     }
     return { byProfile, costingTieOut: { available: true, reason: null, rows: tie } };
   }

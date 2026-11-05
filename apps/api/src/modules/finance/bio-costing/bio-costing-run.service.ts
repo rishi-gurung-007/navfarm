@@ -375,7 +375,8 @@ export class BioCostingRunService {
             { glAccountId: gl.fv_gain_loss_gl_id!, debitAmount: 0, creditAmount: gain, nobId: g.nob, lobId: g.lob, description: `Fair value gain ${run.period_key}` },
           );
           if (loss > 0) journalLines.push(
-            { glAccountId: gl.fv_gain_loss_gl_id!, debitAmount: loss, creditAmount: 0, nobId: g.nob, lobId: g.lob, description: `Fair value loss ${run.period_key}` },
+            // The item's loss account where it splits gain from loss (COA: FV Gain / FV Loss), else the one gain / loss account.
+            { glAccountId: (gl.fv_loss_gl_id ?? gl.fv_gain_loss_gl_id)!, debitAmount: loss, creditAmount: 0, nobId: g.nob, lobId: g.lob, description: `Fair value loss ${run.period_key}` },
             { glAccountId: gl.acquisition_gl_id!, debitAmount: 0, creditAmount: loss, nobId: g.nob, lobId: g.lob, description: `Fair value loss ${run.period_key}` },
           );
         }

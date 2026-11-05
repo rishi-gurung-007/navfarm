@@ -31,10 +31,12 @@ describe('the Fixed Asset sheet\'s figures, as data', () => {
     expect(byCode('Finisher')).toMatchObject({ classification: 'CURRENT', tracking: 'BATCH', costing_method: null, runnable: false });
   });
 
-  it('names the accounts as the sheet does, and none for accumulated amortisation or impairment', () => {
-    expect(byCode('GGP-Imp-F').accounts).toEqual({ acquisition: 'GGP-Imp-F Acquisition Cost', result: 'GGP-IMP-F Amortization' });
-    expect(byCode('P-Loc-M').accounts).toEqual({ acquisition: 'P-Loc-M Acquisition Cost', result: 'P-Loc-M Fair Value Gain/Loss' });
-    expect(byCode('PIGLETS').accounts).toEqual({ acquisition: 'Weaners Acquisition Cost', result: 'Weaners Fair Value Gain/Loss' });
+  it('names the accounts as the sheet does: an accumulated amortisation per amortised item (V1.3), Finisher\'s two, and none for impairment', () => {
+    expect(byCode('GGP-Imp-F').accounts).toEqual({ acquisition: 'GGP-Imp-F Acquisition Cost', result: 'GGP-IMP-F Amortization', accumulated: 'GGP-Imp-F Accumulated Amortization' });
+    expect(byCode('P-Imp-M').accounts.accumulated).toBe('P-Imp-M Accumulated Amortization');
+    expect(byCode('P-Loc-M').accounts).toEqual({ acquisition: 'P-Loc-M Acquisition Cost', result: 'P-Loc-M Fair Value Gain/Loss', accumulated: null });
+    expect(byCode('PIGLETS').accounts).toEqual({ acquisition: 'Weaners Acquisition Cost', result: 'Weaners Fair Value Gain/Loss', accumulated: null });
+    expect(byCode('Finisher').accounts).toEqual({ acquisition: 'Finisher Closing Stock', result: 'Finisher Fair Value Gain/Loss', accumulated: null });
   });
 });
 
@@ -66,13 +68,13 @@ describe('planSheetTerms — what putting them on the items that have been creat
   });
 
   it('uses the accounts the chart holds under the sheet\'s names (any case), reports the rest, and leaves what the sheet does not name for Finance', () => {
-    const accounts = [account('ggp-imp-f acquisition cost', 'g1'), account('GGP-IMP-F Amortization', 'g2')];
+    const accounts = [account('ggp-imp-f acquisition cost', 'g1'), account('GGP-IMP-F Amortization', 'g2'), account('GGP-Imp-F Accumulated Amortization', 'g3')];
     const e = entry(planSheetTerms({ items: allItems, accounts }), 'GGP-Imp-F');
-    expect(e.terms).toMatchObject({ bio_acquisition_gl_id: 'g1', bio_amort_expense_gl_id: 'g2', bio_accum_amort_gl_id: null, bio_writeoff_gl_id: null });
-    expect(e.accounts_set).toEqual(['GGP-Imp-F Acquisition Cost', 'GGP-IMP-F Amortization']);
-    expect(e.missing_for_run).toEqual(['accumulated amortisation', 'mortality / impairment loss']);
+    expect(e.terms).toMatchObject({ bio_acquisition_gl_id: 'g1', bio_amort_expense_gl_id: 'g2', bio_accum_amort_gl_id: 'g3', bio_writeoff_gl_id: null });
+    expect(e.accounts_set).toEqual(['GGP-Imp-F Acquisition Cost', 'GGP-Imp-F Accumulated Amortization', 'GGP-IMP-F Amortization']);
+    expect(e.missing_for_run).toEqual(['mortality / impairment loss']);
     const none = entry(planSheetTerms({ items: allItems, accounts: [] }), 'GGP-Imp-F');
-    expect(none.accounts_not_in_chart).toEqual(['GGP-Imp-F Acquisition Cost', 'GGP-IMP-F Amortization']);
+    expect(none.accounts_not_in_chart).toEqual(['GGP-Imp-F Acquisition Cost', 'GGP-Imp-F Accumulated Amortization', 'GGP-IMP-F Amortization']);
     expect(none.missing_for_run).toEqual(['acquisition cost', 'accumulated amortisation', 'amortisation expense', 'mortality / impairment loss']);
   });
 

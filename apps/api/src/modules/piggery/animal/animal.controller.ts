@@ -74,7 +74,9 @@ export class AnimalController {
   @ApiParam({ name: 'id', description: 'Animal UUID' })
   async findOne(@Param('id') id: string) {
     const result = await this.animalService.findOne(id);
-    return { success: true, message: 'Animal retrieved.', data: withExitDates(result) };
+    // The card's worked-out facts (amortisation window, litter lot and colour, birth and current weight) ride with the animal, so every card that opens her shows them.
+    const facts = await this.activityService.cardFacts(result);
+    return { success: true, message: 'Animal retrieved.', data: { ...withExitDates(result), ...facts } };
   }
 
   @Put(':id')

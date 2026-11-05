@@ -1626,10 +1626,14 @@ export const itemMaster = mysqlTable(
     bio_accum_amort_gl_id: varchar('bio_accum_amort_gl_id', { length: 36 }),
     bio_amort_expense_gl_id: varchar('bio_amort_expense_gl_id', { length: 36 }),
     bio_fv_gain_loss_gl_id: varchar('bio_fv_gain_loss_gl_id', { length: 36 }),
+    // A fair value LOSS goes here when set (the COA splits "FV Gain - Weaners" from "FV Loss - Weaners"); unset, the loss goes to bio_fv_gain_loss_gl_id too.
+    bio_fv_loss_gl_id: varchar('bio_fv_loss_gl_id', { length: 36 }),
     bio_writeoff_gl_id: varchar('bio_writeoff_gl_id', { length: 36 }),
     // The date costing should start for this item (0229): the scheduler never catches up before it, as a profile's effective_from did.
     bio_effective_from: date('bio_effective_from', { mode: 'string' }),
     is_inventoriable: boolean('is_inventoriable').default(true).notNull(),
+    // Incoming QC (0239): a received quantity is not written to the Inventory Ledger until its QC inspection is completed and accepted.
+    is_qc_required: boolean('is_qc_required').default(false).notNull(),
     min_stock_level: decimal('min_stock_level', { precision: 18, scale: 4 }),
     max_stock_level: decimal('max_stock_level', { precision: 18, scale: 4 }),
     reorder_level: decimal('reorder_level', { precision: 18, scale: 4 }),
@@ -5442,6 +5446,8 @@ export const batchMortalityAnimal = mysqlTable(
     }).notNull(),
     reason_id: varchar('reason_id', { length: 36 }),
     reason_text: varchar('reason_text', { length: 200 }),
+    // Where the body went (TDD row 10 "Disposal Destination"), kept with the draft until the death is posted.
+    disposal_destination: varchar('disposal_destination', { length: 100 }),
     posted: boolean('posted').default(false).notNull(),
     created_by: varchar('created_by', { length: 36 }),
     created_at: timestamp('created_at', { mode: 'string' })
@@ -6825,6 +6831,136 @@ export const goodsReceiptLine = mysqlTable('goods_receipt_line', {
   remarks: varchar('remarks', { length: 500 }),
 });
 
+// ==========================================
+// Incoming QC (0239). The checks an item must pass when it arrives, and the inspection that
+// holds a received quantity back from the Inventory Ledger until it has passed.
+// ==========================================
+
+/** What to check on a QC-required item: a VALUE has a min/max range, a DESCRIPTIVE has a rule in words (Business Central's QC Specification Master List). */
+export const itemQcSpecLine = mysqlTable(
+  'item_qc_spec_line',
+  {
+    spec_line_id: varchar('spec_line_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }),
+    item_id: varchar('item_id', { length: 36 })
+      .notNull()
+      .references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+    line_no: int('line_no').notNull(),
+    stage: varchar('stage', { length: 50 }).default('INCOMING').notNull(),
+    measurement_code: varchar('measurement_code', { length: 50 }).notNull(),
+    measurement_description: varchar('measurement_description', { length: 200 }),
+    sampling_type: varchar('sampling_type', { length: 15 }).notNull(), // VALUE, DESCRIPTIVE
+    uom: varchar('uom', { length: 20 }),
+    min_value: decimal('min_value', { precision: 18, scale: 4 }),
+    max_value: decimal('max_value', { precision: 18, scale: 4 }),
+    acceptance_text: varchar('acceptance_text', { length: 500 }),
+    is_mandatory: boolean('is_mandatory').default(true).notNull(),
+    is_active: boolean('is_active').default(true).notNull(),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  },
+  (table) => [index('idx_item_qc_spec_item').on(table.item_id)],
+);
+
+/**
+ * One received line of a QC-required item awaiting inspection. It carries everything the ledger entry needs, so the entry
+ * can be written at completion exactly as the receipt would have written it. `ledger_entry_id` is null until then
+ * (the "ILE No. 0" of the Business Central form).
+ */
+export const qcInspection = mysqlTable(
+  'qc_inspection',
+  {
+    inspection_id: varchar('inspection_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).notNull(),
+    inspection_no: varchar('inspection_no', { length: 50 }).notNull(),
+    inspection_date: date('inspection_date', { mode: 'string' }).notNull(),
+    status: varchar('status', { length: 20 }).default('OPEN').notNull(), // OPEN, PENDING_APPROVAL, CLOSED
+    result: varchar('result', { length: 15 }), // PASS, FAIL, DEVIATION
+    source_doc_type: varchar('source_doc_type', { length: 30 }).notNull(), // GOODS_RECEIPT
+    source_doc_no: varchar('source_doc_no', { length: 50 }).notNull(),
+    source_line_id: varchar('source_line_id', { length: 36 }).notNull(),
+    source_posting_date: date('source_posting_date', { mode: 'string' }).notNull(),
+    supplier_id: varchar('supplier_id', { length: 36 }),
+    po_no: varchar('po_no', { length: 50 }),
+    item_id: varchar('item_id', { length: 36 })
+      .notNull()
+      .references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+    lot_no: varchar('lot_no', { length: 50 }),
+    serial_no: text('serial_no'),
+    expiry_date: date('expiry_date', { mode: 'string' }),
+    quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
+    uom: varchar('uom', { length: 20 }).notNull(),
+    rate: decimal('rate', { precision: 18, scale: 6 }),
+    price_variance: decimal('price_variance', { precision: 18, scale: 4 }),
+    warehouse_id: varchar('warehouse_id', { length: 36 }).notNull(),
+    // What the ledger entry needs besides the above (0240): the G/L mapping and batch number the source would have posted under.
+    gl_mapping_type: varchar('gl_mapping_type', { length: 40 }),
+    batch_no: varchar('batch_no', { length: 50 }),
+    // A stock transfer receipt (0241): what it takes out of In Transit, how the entry is typed, the transfer it belongs to, and where a rejected quantity returns to.
+    amount: decimal('amount', { precision: 18, scale: 4 }),
+    entry_type: varchar('entry_type', { length: 20 }),
+    parent_doc_no: varchar('parent_doc_no', { length: 50 }),
+    return_warehouse_id: varchar('return_warehouse_id', { length: 36 }),
+    sample_qty: decimal('sample_qty', { precision: 18, scale: 4 }),
+    accepted_qty: decimal('accepted_qty', { precision: 18, scale: 4 }),
+    rejected_qty: decimal('rejected_qty', { precision: 18, scale: 4 }),
+    reason_id: varchar('reason_id', { length: 36 }),
+    deviation: boolean('deviation').default(false).notNull(),
+    posting_date: date('posting_date', { mode: 'string' }),
+    remarks: varchar('remarks', { length: 500 }),
+    inspected_by: varchar('inspected_by', { length: 36 }),
+    inspected_at: timestamp('inspected_at', { mode: 'string' }),
+    approved_by: varchar('approved_by', { length: 36 }),
+    approved_at: timestamp('approved_at', { mode: 'string' }),
+    ledger_entry_id: varchar('ledger_entry_id', { length: 36 }),
+    created_by: varchar('created_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_qc_inspection_no').on(table.tenant_id, table.company_id, table.inspection_no),
+    index('idx_qc_inspection_source').on(table.source_doc_type, table.source_doc_no, table.source_line_id),
+    index('idx_qc_inspection_status').on(table.tenant_id, table.company_id, table.status),
+  ],
+);
+
+/** The specification as it stood when the inspection was raised, with what the inspector found against each check. */
+export const qcInspectionLine = mysqlTable(
+  'qc_inspection_line',
+  {
+    line_id: varchar('line_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    inspection_id: varchar('inspection_id', { length: 36 })
+      .notNull()
+      .references(() => qcInspection.inspection_id, { onDelete: 'cascade' }),
+    line_no: int('line_no').notNull(),
+    spec_line_id: varchar('spec_line_id', { length: 36 }),
+    stage: varchar('stage', { length: 50 }).notNull(),
+    measurement_code: varchar('measurement_code', { length: 50 }).notNull(),
+    measurement_description: varchar('measurement_description', { length: 200 }),
+    sampling_type: varchar('sampling_type', { length: 15 }).notNull(),
+    uom: varchar('uom', { length: 20 }),
+    min_value: decimal('min_value', { precision: 18, scale: 4 }),
+    max_value: decimal('max_value', { precision: 18, scale: 4 }),
+    acceptance_text: varchar('acceptance_text', { length: 500 }),
+    is_mandatory: boolean('is_mandatory').default(true).notNull(),
+    actual_value: decimal('actual_value', { precision: 18, scale: 4 }),
+    actual_text: varchar('actual_text', { length: 500 }),
+    result: varchar('result', { length: 10 }), // PASS, FAIL
+    remarks: varchar('remarks', { length: 500 }),
+  },
+  (table) => [index('idx_qc_inspection_line_insp').on(table.inspection_id)],
+);
+
 // Individual animal lifetime identity — permanent record from entry to disposal, never
 // physically deleted (is_active=false + disposal_* fields mark disposal instead). Distinct
 // from bio_asset_ledger/batch_bio_asset_state, which are batch/cohort-scoped, not per-animal —
@@ -6946,6 +7082,8 @@ export const animalRegister = mysqlTable(
     cull_date: date('cull_date', { mode: 'string' }),
     exit_weight_kg: decimal('exit_weight_kg', { precision: 10, scale: 3 }),
     disposal_destination: varchar('disposal_destination', { length: 100 }),
+    // What her book value stood at when she died (TDD row 10: "Remaining Book Value at death recorded"); the write-off took exactly this out of her ledger.
+    book_value_at_death: decimal('book_value_at_death', { precision: 18, scale: 4 }),
     disposal_value: decimal('disposal_value', { precision: 18, scale: 4 }),
     gain_loss_on_disposal: decimal('gain_loss_on_disposal', {
       precision: 18,
@@ -7913,7 +8051,7 @@ export const semenBoarResult = mysqlTable(
       .references(() => animalRegister.animal_id, { onDelete: 'restrict' }),
     tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
     collector_id: varchar('collector_id', { length: 36 }).references(
-      () => semenCollector.collector_id,
+      () => userMaster.user_id,
       { onDelete: 'set null' },
     ),
     volume_ml: decimal('volume_ml', { precision: 10, scale: 2 }),
@@ -8079,7 +8217,7 @@ export const semenCollectionPlanLine = mysqlTable(
       .references(() => animalRegister.animal_id, { onDelete: 'restrict' }),
     tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
     collector_id: varchar('collector_id', { length: 36 }).references(
-      () => semenCollector.collector_id,
+      () => userMaster.user_id,
       { onDelete: 'set null' },
     ),
     status: varchar('status', { length: 12 }).default('PLANNED').notNull(), // PLANNED | COLLECTED | SKIPPED
@@ -8200,51 +8338,6 @@ export const boarConditionRecord = mysqlTable(
   },
   (t) => [
     uniqueIndex('uq_boar_condition_boar_day').on(t.boar_animal_id, t.assessed_on),
-  ],
-);
-
-/** The technicians who collect semen at the AI Station (Collector ID on the client's sheets: CM, AW, TA). */
-export const semenCollector = mysqlTable(
-  'semen_collector',
-  {
-    collector_id: varchar('collector_id', { length: 36 })
-      .primaryKey()
-      .$defaultFn(() => randomUUID()),
-    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
-    company_id: varchar('company_id', { length: 36 }).references(
-      () => companyMaster.company_id,
-      { onDelete: 'restrict' },
-    ),
-    nob_id: varchar('nob_id', { length: 36 }).references(
-      () => nobMaster.nob_id,
-      { onDelete: 'restrict' },
-    ),
-    lob_id: varchar('lob_id', { length: 36 }).references(
-      () => lobMaster.lob_id,
-      { onDelete: 'restrict' },
-    ),
-    collector_code: varchar('collector_code', { length: 20 }).notNull(),
-    collector_name: varchar('collector_name', { length: 100 }).notNull(),
-    // The system user, when the technician has a login.
-    user_id: varchar('user_id', { length: 36 }),
-    is_active: boolean('is_active').default(true).notNull(),
-    status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
-    created_by: varchar('created_by', { length: 36 }),
-    updated_by: varchar('updated_by', { length: 36 }),
-    created_at: timestamp('created_at', { mode: 'string' })
-      .defaultNow()
-      .notNull(),
-    updated_at: timestamp('updated_at', { mode: 'string' })
-      .defaultNow()
-      .notNull(),
-    deleted_at: timestamp('deleted_at', { mode: 'string' }),
-  },
-  (table) => [
-    uniqueIndex('uq_semen_collector_scope_code').on(
-      table.tenant_id,
-      sql`(coalesce(${table.company_id}, ''))`,
-      table.collector_code,
-    ),
   ],
 );
 

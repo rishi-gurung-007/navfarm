@@ -8,7 +8,7 @@ import * as schema from '../../../core/database/schema';
 import { CreateGlMappingDto, UpdateGlMappingDto, QueryGlMappingDto } from './dto/gl-mapping.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
-import { assertEntryTypeFits, assertMappableTransactionType } from './gl-mapping.rules';
+import { assertDimensionsFit, assertEntryTypeFits, assertMappableTransactionType } from './gl-mapping.rules';
 import { listFilterConditions, runMasterList } from '../../../common/master-list-query';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
@@ -36,6 +36,7 @@ export class GlMappingService {
     assertMappableTransactionType(dto.transaction_type);
     const entryType = dto.entry_type || null;
     assertEntryTypeFits(dto.transaction_type, entryType);
+    assertDimensionsFit(dto.transaction_type, { item_category_id: dto.item_category_id, nob_id: dto.nob_id, lob_id: dto.lob_id, stage_id: dto.stage_id, valuation_method: dto.valuation_method, entry_type: entryType });
 
     // 1. Verify company exists
     if (dto.company_id) {
@@ -288,6 +289,15 @@ export class GlMappingService {
 
     if (dto.transaction_type !== undefined) assertMappableTransactionType(dto.transaction_type, mapping.transaction_type);
     assertEntryTypeFits(transType, entryType);
+    // Only what this request sets is asked: a seeded row is never refused for a field it already holds.
+    assertDimensionsFit(transType, {
+      item_category_id: dto.item_category_id !== mapping.item_category_id ? dto.item_category_id : null,
+      nob_id: dto.nob_id !== mapping.nob_id ? dto.nob_id : null,
+      lob_id: dto.lob_id !== mapping.lob_id ? dto.lob_id : null,
+      stage_id: dto.stage_id !== mapping.stage_id ? dto.stage_id : null,
+      valuation_method: dto.valuation_method !== mapping.valuation_method ? dto.valuation_method : null,
+      entry_type: dto.entry_type !== undefined && (dto.entry_type || null) !== mapping.entry_type ? dto.entry_type || null : null,
+    });
 
     if (dto.item_category_id && dto.item_category_id !== mapping.item_category_id) {
       const [category] = await this.db

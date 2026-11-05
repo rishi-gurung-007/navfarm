@@ -15,10 +15,11 @@ import { AnimalModule } from '../animal/animal.module';
 import { LitterCostModule } from '../litter-cost/litter-cost.module';
 import { GiltSelectionModule } from '../gilt-selection/gilt-selection.module';
 import { AnimalBookValueModule } from '../../inventory/bio-asset-ledger/animal-book-value.module';
+import { QcInspectionModule } from '../../inventory/qc-inspection/qc-inspection.module';
 import { BreedingLineModule } from '../../master-data/breeding-line/breeding-line.module';
 
 @Module({
-  imports: [BatchModule, InventoryLedgerModule, JournalModule, NumberSeriesModule, QrCodeModule, AnimalModule, AnimalBookValueModule, GiltSelectionModule, LitterCostModule, BreedingLineModule],
+  imports: [BatchModule, InventoryLedgerModule, JournalModule, NumberSeriesModule, QrCodeModule, AnimalModule, AnimalBookValueModule, GiltSelectionModule, LitterCostModule, BreedingLineModule, QcInspectionModule],
   controllers: [BreedingController, BoarSelectionController, CollectionPlanController],
   providers: [BreedingService, SemenLotService, BoarSelectionService, CollectionPlanService],
   exports: [BreedingService],

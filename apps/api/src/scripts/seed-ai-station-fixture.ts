@@ -56,7 +56,6 @@ async function run() {
     breeds: new Map(breeds.map((b) => [String(b.breed_code), String(b.breed_id)])),
     setupBreedIds: new Set(setups.map((s) => (s.breed_id ?? '') as string)),
     scaleScores: new Set((await rows('/bcs-scale?limit=200')).filter((r) => !r.breed_id).map((r) => Number(r.score))),
-    collectorCodes: new Set((await rows('/semen-collector?limit=200')).map((c) => String(c.collector_code))),
     defaultSetup: (() => {
       const d = setups.find((x) => !x.breed_id);
       return d ? { id: String(d.setup_id), hasWeights: [d.grading_genetic_weight, d.grading_dose_weight, d.grading_morphology_weight].some((w) => w != null && Number(w) > 0) } : null;
@@ -77,7 +76,7 @@ async function run() {
     if (res.status >= 300) { refused += 1; console.log(`    REFUSED ${res.status} ${res.message}`); } else made += 1;
   }
   console.log(`${APPLY ? 'Done' : 'Plan only'}: ${made} created, ${refused} refused.${APPLY ? '' : ' Run with --apply to write.'}`);
-  console.log('Placeholders of ours, to confirm with the client: the company-default genetic-level TSI ranges and the default grading. Not set (the documents do not give them): the Tempo label, rest days, motility floor, collector names, any colorant stock item.');
+  console.log('Placeholders of ours, to confirm with the client: the company-default genetic-level TSI ranges and the default grading. Not set (the documents do not give them): the Tempo label, rest days, motility floor, any colorant stock item. Collectors are users: give the Semen Collector role (User Management) to each person who collects.');
   if (refused) process.exitCode = 1;
 }
 run().catch((e) => { console.error(e); process.exitCode = 1; });

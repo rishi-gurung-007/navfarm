@@ -17,6 +17,7 @@ import {
   sql,
   desc,
   inArray,
+  ne,
 } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
@@ -47,6 +48,7 @@ import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { SemenDestinationService } from '../../master-data/breeding-line/semen-destination.service';
 import { grossDoaRef, parseReceiptDoa, receiptSplit } from './receipt-doa';
+import { QcInspectionService } from '../qc-inspection/qc-inspection.service';
 import {
   OPEN_TRANSFER_STATUSES,
   transferStatusFor,
@@ -127,7 +129,47 @@ export class StockTransferService {
     @Optional() private readonly feedAlerts?: FeedAlertService,
     // A semen lot may only go where its line's setup says (Phase 5 of the AI Station plan).
     @Optional() private readonly semenDestination?: SemenDestinationService,
+    // An item marked QC required is not written to the ledger when it is received: an inspection is raised, and the entry is written when it is accepted.
+    @Optional() private readonly qcInspections?: QcInspectionService,
   ) {}
+
+  /** Which of these items are QC required: a receipt of them raises an inspection instead of writing the ledger. */
+  private async qcRequired(itemIds: string[]): Promise<Set<string>> {
+    return this.qcInspections ? this.qcInspections.qcRequiredItemIds([...new Set(itemIds)]) : new Set<string>();
+  }
+
+  /**
+   * Receipts waiting on their QC inspection, shaped like the ledger rows they will become, so a transfer's received and in-transit quantities count
+   * them: what has arrived and is being inspected is no longer in transit. Once the inspection is closed its real ledger rows take over.
+   */
+  private async pendingQcReceipts(transferNo: string, companyId: string, tenantId: string) {
+    const rows = await this.db
+      .select()
+      .from(schema.qcInspection)
+      .where(
+        and(
+          eq(schema.qcInspection.tenant_id, tenantId),
+          eq(schema.qcInspection.company_id, companyId),
+          eq(schema.qcInspection.source_doc_type, 'TRANSFER_RECEIPT'),
+          eq(schema.qcInspection.source_doc_no, transferNo),
+          ne(schema.qcInspection.status, 'CLOSED'),
+        ),
+      );
+    return rows.map((r) => ({
+      ledger_id: `qc:${r.inspection_id}`,
+      document_no: r.source_doc_no,
+      document_line_id: r.source_line_id,
+      item_id: r.item_id,
+      transaction_type: 'TRANSFER_RECEIPT',
+      quantity: r.quantity,
+      rate: r.rate,
+      amount: r.amount,
+      lot_no: r.lot_no,
+      serial_no: r.serial_no,
+      external_reference_no: null,
+      qc_pending: true,
+    }));
+  }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -759,6 +801,23 @@ export class StockTransferService {
     }
   }
 
+  /** What receipts against a shipment line that are still waiting on QC have taken out of In Transit. */
+  private async pendingQcAmount(receiptNos: string[], lineId: string): Promise<number> {
+    if (!receiptNos.length) return 0;
+    const [row] = await this.db
+      .select({ amount: sql<string>`COALESCE(SUM(${schema.qcInspection.amount}), 0)` })
+      .from(schema.qcInspection)
+      .where(
+        and(
+          eq(schema.qcInspection.source_doc_type, 'TRANSFER_EVENT'),
+          inArray(schema.qcInspection.source_doc_no, receiptNos),
+          eq(schema.qcInspection.source_line_id, lineId),
+          ne(schema.qcInspection.status, 'CLOSED'),
+        ),
+      );
+    return Number(row?.amount ?? 0);
+  }
+
   /**
    * Every Inventory Ledger row posted under this transfer's number, used to work out what has shipped and been received. Empty if the read fails.
    */
@@ -979,7 +1038,7 @@ export class StockTransferService {
     );
     const enrichedLines = this.enrichLinesWithQuantities(
       lines,
-      ledgerEntries,
+      [...ledgerEntries, ...(await this.pendingQcReceipts(transfer.transfer_no, transfer.company_id, transfer.tenant_id))],
       transfer.status,
     );
     const [shipped, received] = await Promise.all([
@@ -2104,6 +2163,12 @@ export class StockTransferService {
         status: 'POSTED',
         created_by: userPayload?.userId || null,
       });
+      const qcItems = await this.qcRequired(
+        dto.lines
+          .map((l) => transfer.lines.find((tl) => tl.line_id === l.line_id)?.item_id)
+          .filter((id): id is string => !!id),
+      );
+      let qcSeries: string | null = null;
       for (const input of dto.lines) {
         const shipmentLine = shipmentLines.find(
           (sl) => sl.line_id === input.line_id,
@@ -2180,7 +2245,7 @@ export class StockTransferService {
           lineId: line.line_id,
         });
         const closesShipmentLine = input.quantity >= leftOnShipment - 1e-9;
-        const amount = closesShipmentLine
+        const remainingValue = closesShipmentLine
           ? await this.ledgerService.transferShipmentRemainingValue({
               tenantId,
               shipmentNo: shipment.shipment_no,
@@ -2188,6 +2253,19 @@ export class StockTransferService {
               receiptNos: prior.receiptNos,
             })
           : undefined;
+        // Earlier receipts still waiting on a QC inspection have taken their value out of In Transit but are not in the ledger yet.
+        const amount =
+          remainingValue === undefined
+            ? undefined
+            : Math.max(
+                0,
+                Math.round(
+                  (remainingValue -
+                    (await this.pendingQcAmount(prior.receiptNos, line.line_id))) *
+                    10000,
+                ) / 10000,
+              );
+        const heldForQc = qcItems.has(line.item_id);
         // WP4a: several serials on one shipment line land as one layer PER
         // SERIAL (qty 1 each, the Goods Receipt's shape) — a single layer named
         // "SN1,SN2" matched no consumer. A partial receipt takes the next
@@ -2197,7 +2275,41 @@ export class StockTransferService {
           .map((v) => v.trim())
           .filter(Boolean);
         let receivedSerialNo = shipmentLine.serial_no;
-        if (shippedSerials.length > 1) {
+        if (heldForQc) {
+          // QC required: no ledger entry yet. The inspection holds the quantity (this receipt line still counts it as received) and writes the
+          // entry, one layer per serial where there are several, when it is accepted.
+          if (shippedSerials.length > 1) {
+            receivedSerialNo = serialsForReceipt(
+              shipmentLine.serial_no,
+              prior.qty,
+              input.quantity,
+            ).join(',');
+          }
+          qcSeries ??= await this.qcInspections!.resolveSeries(
+            tenantId,
+            transfer.company_id,
+          );
+          await this.qcInspections!.raise({
+            tenantId,
+            seriesCode: qcSeries,
+            userId: userPayload?.userId,
+            companyId: transfer.company_id,
+            sourceDocType: 'TRANSFER_EVENT',
+            sourceDocNo: receiptNo,
+            sourceLineId: line.line_id,
+            sourcePostingDate: dto.posting_date,
+            parentDocNo: transfer.transfer_no,
+            itemId: line.item_id,
+            lotNo: shipmentLine.lot_no,
+            serialNo: receivedSerialNo,
+            quantity: input.quantity,
+            uom: line.uom,
+            rate,
+            amount: amount ?? Math.round(input.quantity * rate * 10000) / 10000,
+            warehouseId: transfer.to_warehouse_id,
+            returnWarehouseId: transfer.from_warehouse_id,
+          });
+        } else if (shippedSerials.length > 1) {
           const serials = serialsForReceipt(
             shipmentLine.serial_no,
             prior.qty,
@@ -2720,11 +2832,19 @@ export class StockTransferService {
       }
 
       // Fetch existing shipment history for this transfer order
-      const existingLedger = await this.getLedgerHistory(
-        transfer.transfer_no,
-        transfer.company_id,
-        tenantId,
-      );
+      // Receipts waiting on a QC inspection count as received: they have left transit.
+      const existingLedger = [
+        ...(await this.getLedgerHistory(
+          transfer.transfer_no,
+          transfer.company_id,
+          tenantId,
+        )),
+        ...(await this.pendingQcReceipts(
+          transfer.transfer_no,
+          transfer.company_id,
+          tenantId,
+        )),
+      ];
       const enrichedLines = this.enrichLinesWithQuantities(
         transfer.lines,
         existingLedger,
@@ -2959,11 +3079,19 @@ export class StockTransferService {
       await this.assertSiloDestination(transfer, transfer.lines, tenantId);
 
       // Fetch the shipment and receipt entries previously posted for this transfer
-      const existingLedger = await this.getLedgerHistory(
-        transfer.transfer_no,
-        transfer.company_id,
-        tenantId,
-      );
+      // Receipts waiting on a QC inspection count as received: they have left transit.
+      const existingLedger = [
+        ...(await this.getLedgerHistory(
+          transfer.transfer_no,
+          transfer.company_id,
+          tenantId,
+        )),
+        ...(await this.pendingQcReceipts(
+          transfer.transfer_no,
+          transfer.company_id,
+          tenantId,
+        )),
+      ];
       const enrichedLines = this.enrichLinesWithQuantities(
         transfer.lines,
         existingLedger,
@@ -2984,6 +3112,7 @@ export class StockTransferService {
         lotNo?: string;
         serialNo?: string;
         doaSerialNo?: string;
+        goodSerialNo?: string;
       }> = [];
 
       for (const line of enrichedLines) {
@@ -3096,6 +3225,11 @@ export class StockTransferService {
               line.serial_no ||
               undefined,
             doaSerialNo: doaSerials || undefined,
+            goodSerialNo:
+              allocatedSerials ||
+              (rawShipSerials.length === 0
+                ? shipmentEntry?.serial_no || line.serial_no || undefined
+                : undefined),
           });
         }
       }
@@ -3106,64 +3240,101 @@ export class StockTransferService {
         );
       }
 
+      const qcItems = await this.qcRequired(
+        itemsToReceive.map((i) => i.line.item_id),
+      );
+      let qcSeries: string | null = null;
       for (const item of itemsToReceive) {
         // One receipt for everything that arrived, DOA included. The DOA is then written off against
         // this very receipt (not oldest-first across the location), so the receipt's remaining
         // quantity is the good stock left and the loss is costed at what this transfer brought in.
         const arrivedQty = item.receivedQty + item.doaQty;
-        const receipt = await this.ledgerService.writePositiveEntry({
-          tenantId,
-          companyId: transfer.company_id,
-          itemId: item.line.item_id,
-          documentType: 'STOCK_TRANSFER',
-          documentNo: transfer.transfer_no,
-          documentLineId: item.line.line_id,
-          postingDate: receiptPostingDate,
-          transactionType: 'TRANSFER_RECEIPT',
-          entryType: 'TRANSFER',
-          quantity: arrivedQty,
-          uom: item.line.uom,
-          rate: item.rate,
-          lotNo: item.lotNo,
-          serialNo: item.serialNo,
-          warehouseId: transfer.to_warehouse_id,
-          userId: userPayload?.userId,
-          externalReferenceNo:
-            item.doaQty > 0
-              ? grossDoaRef(item.doaQty)
-              : dto.remarks
-                ? dto.remarks.slice(0, 50)
-                : undefined,
-        });
-        await this.glPostingService.postInventoryLedgerEntry(
-          receipt,
-          userPayload?.userId,
-        );
-
-        if (item.doaQty > 0) {
-          const doaAdjustment = await this.ledgerService.writeNegativeEntry({
+        // QC required: the good quantity is not stock yet. An inspection holds it (it has left transit, so the transfer counts it as received),
+        // and its entry is written when the inspection is accepted. Only the DOA part, if any, is written now: it is received and written off at once.
+        const heldForQc = qcItems.has(item.line.item_id) && item.receivedQty > 0;
+        if (heldForQc) {
+          qcSeries ??= await this.qcInspections!.resolveSeries(
+            tenantId,
+            transfer.company_id,
+          );
+          await this.qcInspections!.raise({
+            tenantId,
+            seriesCode: qcSeries,
+            userId: userPayload?.userId,
+            companyId: transfer.company_id,
+            sourceDocType: 'TRANSFER_RECEIPT',
+            sourceDocNo: transfer.transfer_no,
+            sourceLineId: item.line.line_id,
+            sourcePostingDate: receiptPostingDate,
+            parentDocNo: transfer.transfer_no,
+            poNo: dto.remarks ? dto.remarks.slice(0, 50) : null,
+            itemId: item.line.item_id,
+            lotNo: item.lotNo,
+            serialNo: item.goodSerialNo,
+            quantity: item.receivedQty,
+            uom: item.line.uom,
+            rate: item.rate,
+            warehouseId: transfer.to_warehouse_id,
+            entryType: 'TRANSFER',
+            returnWarehouseId: transfer.from_warehouse_id,
+          });
+        }
+        const writeQty = heldForQc ? item.doaQty : arrivedQty;
+        if (writeQty > 0) {
+          const receipt = await this.ledgerService.writePositiveEntry({
             tenantId,
             companyId: transfer.company_id,
             itemId: item.line.item_id,
-            documentType: 'STOCK_ADJUSTMENT',
-            documentNo: `${transfer.transfer_no}-DOA`,
+            documentType: 'STOCK_TRANSFER',
+            documentNo: transfer.transfer_no,
             documentLineId: item.line.line_id,
             postingDate: receiptPostingDate,
-            transactionType: 'VARIANCE_NEGATIVE',
-            entryType: 'NEGATIVE',
-            quantity: item.doaQty,
+            transactionType: 'TRANSFER_RECEIPT',
+            entryType: 'TRANSFER',
+            quantity: writeQty,
             uom: item.line.uom,
+            rate: item.rate,
             lotNo: item.lotNo,
-            serialNo: item.doaSerialNo,
+            serialNo: heldForQc ? item.doaSerialNo : item.serialNo,
             warehouseId: transfer.to_warehouse_id,
             userId: userPayload?.userId,
-            externalReferenceNo: 'MRT-017',
-            sourceLedgerId: receipt.ledger_id,
+            externalReferenceNo:
+              item.doaQty > 0
+                ? grossDoaRef(item.doaQty)
+                : dto.remarks
+                  ? dto.remarks.slice(0, 50)
+                  : undefined,
           });
           await this.glPostingService.postInventoryLedgerEntry(
-            doaAdjustment,
+            receipt,
             userPayload?.userId,
           );
+
+          if (item.doaQty > 0) {
+            const doaAdjustment = await this.ledgerService.writeNegativeEntry({
+              tenantId,
+              companyId: transfer.company_id,
+              itemId: item.line.item_id,
+              documentType: 'STOCK_ADJUSTMENT',
+              documentNo: `${transfer.transfer_no}-DOA`,
+              documentLineId: item.line.line_id,
+              postingDate: receiptPostingDate,
+              transactionType: 'VARIANCE_NEGATIVE',
+              entryType: 'NEGATIVE',
+              quantity: item.doaQty,
+              uom: item.line.uom,
+              lotNo: item.lotNo,
+              serialNo: item.doaSerialNo,
+              warehouseId: transfer.to_warehouse_id,
+              userId: userPayload?.userId,
+              externalReferenceNo: 'MRT-017',
+              sourceLedgerId: receipt.ledger_id,
+            });
+            await this.glPostingService.postInventoryLedgerEntry(
+              doaAdjustment,
+              userPayload?.userId,
+            );
+          }
         }
       }
 
@@ -3241,11 +3412,19 @@ export class StockTransferService {
         );
       }
 
-      const existingLedger = await this.getLedgerHistory(
-        transfer.transfer_no,
-        transfer.company_id,
-        tenantId,
-      );
+      // Receipts waiting on a QC inspection count as received: they have left transit.
+      const existingLedger = [
+        ...(await this.getLedgerHistory(
+          transfer.transfer_no,
+          transfer.company_id,
+          tenantId,
+        )),
+        ...(await this.pendingQcReceipts(
+          transfer.transfer_no,
+          transfer.company_id,
+          tenantId,
+        )),
+      ];
       const enrichedLines = this.enrichLinesWithQuantities(
         transfer.lines,
         existingLedger,

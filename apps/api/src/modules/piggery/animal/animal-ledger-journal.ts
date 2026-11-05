@@ -7,6 +7,9 @@ export interface LedgerRowFacts {
   bio_asset_item_id: string;
   /** Feed or overhead charged to expense (the animal was past her costing start), so its journal debits an expense account, not her asset account. */
   expensed?: boolean;
+  /** What the row is (MORTALITY, AMORTIZATION ...): a death's ledger row names the animal, but its journal names the batch she died in. */
+  event?: string | null;
+  batch_no?: string | null;
 }
 
 export interface JournalFacts {
@@ -14,6 +17,7 @@ export interface JournalFacts {
   journal_no: string;
   posting_date: unknown;
   source_document_no: string | null;
+  description?: string | null;
   /** The accounts the journal debits, with what each is debited. */
   debits: Array<{ gl_account_id: string; amount: number }>;
 }
@@ -39,6 +43,13 @@ export function linkLedgerJournals(
 ): Map<string, JournalLink> {
   const links = new Map<string, JournalLink>();
   for (const row of rows) {
+    // A death is journalled against the batch she died in ("Mortality - BATCH-000001"), and only a mortality journal is hers: the batch's feed
+    // journals of that day are not.
+    if (row.event === 'MORTALITY') {
+      const death = journals.find((j) => j.source_document_no === row.batch_no && day(j.posting_date) === day(row.posting_date) && /^mortality/i.test(j.description ?? ''));
+      if (death) links.set(row.entry_id, { journal_id: death.journal_id, journal_no: death.journal_no });
+      continue;
+    }
     const document = row.run_id ? runNos.get(row.run_id) : row.document_no;
     if (!document) continue;
     const sameDocument = journals.filter((j) => j.source_document_no === document);

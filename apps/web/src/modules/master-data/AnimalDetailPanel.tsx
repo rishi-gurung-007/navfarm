@@ -47,6 +47,7 @@ const fmtQty = (v: any) =>
   v === null || v === undefined || v === '' ? '' : formatQuantity(v);
 const fmtAmount = (v: any) =>
   v === null || v === undefined || v === '' ? '' : formatAmount(v);
+const fmtDate = (v: any) => (v ? formatDate(v) : '');
 const asObject = (value: any): Row => {
   if (!value) return {};
   if (typeof value !== 'string') return value;
@@ -621,6 +622,8 @@ export default function AnimalDetailPanel({
 }) {
   const [tab, setTab] = useState<TabKey>('details');
   const [breeding, setBreeding] = useState<Row | null>(null);
+  // The card's worked-out facts (amortisation window, litter lot and colour, birth and current weight) come with `/animal/:id`; the list row has none of them.
+  const [facts, setFacts] = useState<Row | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [openEvent, setOpenEvent] = useState<string | null>(null);
@@ -645,6 +648,23 @@ export default function AnimalDetailPanel({
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [animalId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFacts(null);
+    if (!animalId) return;
+    api
+      .get(`/animal/${animalId}`)
+      .then((res) => {
+        if (!cancelled) setFacts(unwrap<Row>(res));
+      })
+      .catch(() => {
+        // The card still shows the register row; only these fields stay empty.
       });
     return () => {
       cancelled = true;
@@ -1157,6 +1177,54 @@ export default function AnimalDetailPanel({
               />
             )}
             <ReadField label="Book value" value={fmtAmount(row.book_value)} />
+            <ReadField
+              label="Amortization start date"
+              value={fmtDate(facts?.amortization_start_date)}
+            />
+            <ReadField
+              label="Amortization end date"
+              value={fmtDate(facts?.amortization_end_date)}
+            />
+            <ReadField
+              label="Out of production date"
+              value={fmtDate(
+                facts?.out_of_production_date ?? row.out_of_production_date,
+              )}
+            />
+            <ReadField
+              label="Colour code"
+              value={
+                facts?.colour_code ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span
+                      aria-hidden
+                      className="inline-block h-2.5 w-2.5 rounded-full border border-(--border)"
+                      style={{ background: String(facts.colour_code).toLowerCase() }}
+                    />
+                    {facts.colour_code}
+                  </span>
+                ) : (
+                  ''
+                )
+              }
+            />
+            <ReadField label="Lot no." mono value={fmt(facts?.lot_no)} />
+            <ReadField
+              label="Birth weight"
+              value={
+                facts?.birth_weight_kg != null
+                  ? `${Number(facts.birth_weight_kg).toFixed(2)} kg (litter average)`
+                  : ''
+              }
+            />
+            <ReadField
+              label="Current weight"
+              value={
+                facts?.current_weight_kg != null
+                  ? `${Number(facts.current_weight_kg).toFixed(1)} kg${facts.current_weight_date ? ` · ${formatDate(facts.current_weight_date)}` : ''}`
+                  : ''
+              }
+            />
             <ReadField
               label="Expected cull date"
               value={fmt(row.expected_cull_date)}

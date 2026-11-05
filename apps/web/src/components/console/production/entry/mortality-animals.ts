@@ -20,6 +20,8 @@ export interface MortalityPick {
   /** A Reason Master id, or OTHER_REASON, or '' while unchosen. */
   reason_id: string;
   reason_text: string;
+  /** Where the body went (burial, incineration, rendering ...); optional. */
+  disposal_destination?: string;
 }
 
 /** The deaths the entry adds beyond what the date already has posted; each needs a weight and reason. */
@@ -36,7 +38,7 @@ export function tooManyDeaths(required: number, aliveRegistered: number): boolea
 /** A count-only batch has one row per death, so the picks are padded or cut to exactly `required`. */
 export function countOnlyPicks(picks: MortalityPick[], required: number): MortalityPick[] {
   const rows = picks.slice(0, required);
-  while (rows.length < required) rows.push({ animal_id: '', dead_weight_kg: '', reason_id: '', reason_text: '' });
+  while (rows.length < required) rows.push({ animal_id: '', dead_weight_kg: '', reason_id: '', reason_text: '', disposal_destination: '' });
   return rows;
 }
 
@@ -57,6 +59,7 @@ export function mortalityPayload(picks: MortalityPick[]) {
     ...(p.animal_id ? { animal_id: p.animal_id } : {}),
     dead_weight_kg: Number(p.dead_weight_kg),
     ...(p.reason_id === OTHER_REASON ? { reason_text: p.reason_text.trim() } : { reason_id: p.reason_id }),
+    ...(p.disposal_destination?.trim() ? { disposal_destination: p.disposal_destination.trim() } : {}),
   }));
 }
 

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { collectorCodeSql } from './semen-collectors';
 import { and, asc, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
@@ -102,12 +103,12 @@ export class BoarSelectionService {
           doses: schema.semenBoarResult.doses,
           morphology_pct: schema.semenBoarResult.morphology_pct,
           motility_pct: schema.semenBoarResult.motility_pct,
-          collector_code: schema.semenCollector.collector_code,
+          collector_code: collectorCodeSql,
           collection_date: schema.semenBatch.collection_date,
         })
         .from(schema.semenBoarResult)
         .innerJoin(schema.semenBatch, eq(schema.semenBatch.semen_batch_id, schema.semenBoarResult.semen_batch_id))
-        .leftJoin(schema.semenCollector, eq(schema.semenCollector.collector_id, schema.semenBoarResult.collector_id))
+        .leftJoin(schema.userMaster, eq(schema.userMaster.user_id, schema.semenBoarResult.collector_id))
         .where(
           and(
             inArray(schema.semenBoarResult.boar_animal_id, ids),

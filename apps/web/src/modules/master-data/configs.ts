@@ -1,4 +1,5 @@
 import type { MasterDataConfig, MasterDataField } from './types';
+import { ANIMAL_ACCOUNT_NOTE, GL_MAPPING_TYPE_RULES, mappingDimensions, type MappingDimension, type MappingPath } from './gl-mapping-fields';
 
 const STATUS_OPTIONS = [
   { value: 'ACTIVE', label: 'Active' },
@@ -964,6 +965,7 @@ const numberSeries: MasterDataConfig = {
         { value: 'SERIAL', label: 'Serial' },
         { value: 'APPLICATION', label: 'Item Application' },
         { value: 'GOODS_RECEIPT', label: 'Goods Receipt (GRN)' },
+        { value: 'QC_INSPECTION', label: 'QC Inspection' },
         { value: 'BATCH_TRANSFER', label: 'Batch Transfer' },
         { value: 'STOCK_TRANSFER', label: 'Stock Transfer' },
         { value: 'STOCK_ADJUSTMENT', label: 'Stock Adjustment' },
@@ -2786,6 +2788,17 @@ const item: MasterDataConfig = {
         'Held as stock, with a balance and a valuation. Off for services and consumables that are expensed on receipt.',
       section: 'Inventory',
     },
+    // Incoming QC (3 Nov). A QC-required item is not written to the inventory ledger when it is received: an inspection is raised and the
+    // entry is posted when the inspection is completed and accepted. Its checks are on the QC Specification button of the item card.
+    {
+      key: 'is_qc_required',
+      label: 'QC Required',
+      type: 'boolean',
+      visibleWhen: { allOf: [{ key: 'is_biological_asset', notEquals: true }] },
+      helpText:
+        'Each received lot is inspected first. It enters stock only when the QC inspection is completed and accepted. Add the checks under QC Specification.',
+      section: 'Inventory',
+    },
     {
       key: 'min_stock_level',
       label: 'Min Stock Level',
@@ -3074,7 +3087,8 @@ const item: MasterDataConfig = {
     bioGl('bio_acquisition_gl_id', 'Acquisition Cost Account', 'GL account the animals of this item are carried in.', BIO_ANY),
     bioGl('bio_accum_amort_gl_id', 'Accumulated Amortization Account', 'Credited by each amortization charge.', BIO_AMORT),
     bioGl('bio_amort_expense_gl_id', 'Amortization Expense Account', 'Debited by each amortization charge.', BIO_AMORT),
-    bioGl('bio_fv_gain_loss_gl_id', 'Fair Value Gain / Loss Account', 'Takes a fair value gain or loss.', bioWhen(['FAIR_VALUE'])),
+    bioGl('bio_fv_gain_loss_gl_id', 'Fair Value Gain Account', 'Credited by a fair value gain; debited by a loss too when no loss account is set.', bioWhen(['FAIR_VALUE'])),
+    bioGl('bio_fv_loss_gl_id', 'Fair Value Loss Account', 'Debited by a fair value loss. Leave empty to post losses to the gain account.', bioWhen(['FAIR_VALUE'])),
     bioGl('bio_writeoff_gl_id', 'Mortality / Impairment Loss Account', 'Debited when an animal of this item dies.', BIO_ANY),
     {
       // A Mandatory attribute is on every item in scope, so the form opens with
@@ -5376,10 +5390,27 @@ const glAccount: MasterDataConfig = {
   ],
 };
 
+// What a GL Mapping of the chosen transaction type can be narrowed by, and what its accounts are for (gl-mapping-fields.ts, from the posting code).
+const glRule = (form: Record<string, any>) => GL_MAPPING_TYPE_RULES.find((r) => r.type === String(form.transaction_type ?? '').toUpperCase());
+const glMatchedOn = (dimension: MappingDimension): NonNullable<MasterDataField['visibleWhen']> => ({
+  anyOf: [{ key: 'transaction_type', equals: GL_MAPPING_TYPE_RULES.filter((r) => mappingDimensions(r.type).includes(dimension)).map((r) => r.type) }],
+});
+const GL_PATH_HINT: Record<MappingPath, string> = {
+  INVENTORY: 'Posted from an Inventory Ledger row: matched on Item Category, NOB, LOB, Stage, Valuation Method and Entry Type.',
+  BATCH: 'Posted as a batch or animal cost: matched on NOB, LOB and Stage only.',
+  UNUSED: 'In the starter chart, but no posting reads this type.',
+};
+const glSideHint = (side: 'debit' | 'credit') => (form: Record<string, any>) => {
+  const rule = glRule(form);
+  if (!rule) return undefined;
+  const role = side === 'debit' ? rule.debit : rule.credit;
+  return rule.replaced === side ? `${role}. Replaced by ${ANIMAL_ACCOUNT_NOTE}; this account is the fallback.` : role;
+};
+
 const glMapping: MasterDataConfig = {
   key: 'gl-mapping',
   label: 'GL Mappings',
-  description: 'Maps inventory transaction types to debit/credit GL accounts.',
+  description: 'Maps each posting\'s transaction type to its debit and credit GL accounts. The form shows only the fields that type is matched on.',
   apiBase: '/gl-mapping',
   idKey: 'mapping_id',
   group: 'Finance',
@@ -5405,6 +5436,8 @@ const glMapping: MasterDataConfig = {
       key: 'item_category_id',
       label: 'Item Category',
       type: 'select-entity',
+      visibleWhen: glMatchedOn('item_category_id'),
+      helpText: 'Leave blank to match every category. Set to send one category\'s stock to its own accounts (e.g. vaccines to Veterinary Inventory).',
       entityEndpoint: '/item-category',
       entityValueKey: 'category_id',
       entityLabelKeys: ['category_code', 'category_name'],
@@ -5417,6 +5450,7 @@ const glMapping: MasterDataConfig = {
       entityValueKey: 'nob_id',
       entityLabelKeys: ['nob_code', 'nob_name'],
       helpText: 'Leave blank to match all NOBs.',
+      visibleWhen: glMatchedOn('nob_id'),
     },
     {
       key: 'lob_id',
@@ -5427,6 +5461,7 @@ const glMapping: MasterDataConfig = {
       entityLabelKeys: ['lob_code', 'lob_name'],
       dependsOn: 'nob_id',
       helpText: 'Leave blank to match all LOBs under the selected NOB.',
+      visibleWhen: glMatchedOn('lob_id'),
     },
     {
       key: 'stage_id',
@@ -5437,6 +5472,7 @@ const glMapping: MasterDataConfig = {
       entityLabelKeys: ['stage_code', 'stage_name'],
       helpText:
         'Leave blank to match all stages (wildcard). Set to make this mapping win only when the batch/animal is in this specific stage.',
+      visibleWhen: glMatchedOn('stage_id'),
     },
     {
       key: 'valuation_method',
@@ -5446,6 +5482,7 @@ const glMapping: MasterDataConfig = {
       entityValueKey: 'method_code',
       entityLabelKeys: ['method_code', 'method_name'],
       helpText: 'Leave blank to match all costing methods.',
+      visibleWhen: glMatchedOn('valuation_method'),
     },
     {
       key: 'transaction_type',
@@ -5454,7 +5491,13 @@ const glMapping: MasterDataConfig = {
       required: true,
       // The Inventory Ledger's own transaction types (INVENTORY_TRANSACTION_TYPES in the API); gl-mapping-transaction-types.spec.ts holds the two together.
       helpText:
-        'Which ledger movement this mapping posts. Together with Entry Type it decides the debit and credit accounts.',
+        'Which posting this mapping answers. New mappings are made for the Inventory Ledger\'s own types; the BIO_*, mortality and variance types come from the setup seed and are edited only.',
+      // A seeded type (BIO_*, MORTALITY, the variances) is not offered for a new mapping, but one already held is shown as it is.
+      filterOptions: (options, form) => {
+        const held = String(form.transaction_type ?? '');
+        return held && !options.some((o) => o.value === held) ? [...options, { value: held, label: `${held} (system)` }] : options;
+      },
+      hintFor: (form) => { const rule = glRule(form); return rule ? GL_PATH_HINT[rule.path] : undefined; },
       options: [
         { value: 'PURCHASE', label: 'Purchase — goods receipt (GRN)' },
         { value: 'CONSUMPTION', label: 'Consumption — stock issued' },
@@ -5474,6 +5517,9 @@ const glMapping: MasterDataConfig = {
       type: 'select',
       helpText:
         'Leave blank to match every entry type. Set to make this mapping win only for ledger rows written with this entry type.',
+      visibleWhen: glMatchedOn('entry_type'),
+      // Only the entry types a row of the chosen transaction type is written with.
+      filterOptions: (options, form) => { const rule = glRule(form); return rule ? options.filter((o) => rule.entryTypes.includes(o.value)) : options; },
       options: [
         { value: 'POSITIVE', label: 'Positive — stock in' },
         { value: 'NEGATIVE', label: 'Negative — stock out' },
@@ -5490,6 +5536,7 @@ const glMapping: MasterDataConfig = {
       entityEndpoint: '/gl-account',
       entityValueKey: 'gl_account_id',
       entityLabelKeys: ['account_code', 'account_name'],
+      hintFor: glSideHint('debit'),
     },
     {
       key: 'credit_gl_account_id',
@@ -5499,6 +5546,7 @@ const glMapping: MasterDataConfig = {
       entityEndpoint: '/gl-account',
       entityValueKey: 'gl_account_id',
       entityLabelKeys: ['account_code', 'account_name'],
+      hintFor: glSideHint('credit'),
     },
   ],
 };
@@ -6291,55 +6339,6 @@ const bcsScale: MasterDataConfig = {
   ],
 };
 
-// The technicians who collect semen at the AI Station: the Collector ID on the client's boar sheets.
-const semenCollector: MasterDataConfig = {
-  key: 'semen-collector',
-  label: 'Semen Collectors',
-  singular: 'Semen Collector',
-  apiBase: '/semen-collector',
-  idKey: 'collector_id',
-  group: 'Piggery',
-  isPrimary: true,
-  description: 'The AI Station technicians who collect semen, by the short ID used on the boar sheets.',
-  columns: [
-    { key: 'collector_code', label: 'Collector ID' },
-    { key: 'collector_name', label: 'Name' },
-  ],
-  supportsNobLobFilter: true,
-  fields: [
-    {
-      key: 'nob_id',
-      label: 'Nature of Business',
-      type: 'select-entity',
-      entityEndpoint: '/setup/wizard/nobs',
-      entityValueKey: 'nob_id',
-      entityLabelKeys: ['nob_code', 'nob_name'],
-      helpText: 'Leave blank if this collector is shared across all business verticals.',
-    },
-    {
-      key: 'lob_id',
-      label: 'Line of Business',
-      type: 'select-entity',
-      entityEndpoint: '/setup/wizard/lobs/{value}',
-      entityValueKey: 'lob_id',
-      entityLabelKeys: ['lob_code', 'lob_name'],
-      dependsOn: 'nob_id',
-      helpText: 'Leave blank if this collector is shared across all LOBs under the selected NOB.',
-    },
-    { key: 'company_id', label: 'Company', type: 'text', hideInForm: true },
-    {
-      key: 'collector_code',
-      label: 'Collector ID',
-      type: 'text',
-      required: true,
-      createOnly: true,
-      maxLength: 20,
-      helpText: 'The short ID on the boar sheets. Fixed after create.',
-    },
-    { key: 'collector_name', label: 'Name', type: 'text', required: true, maxLength: 100 },
-  ],
-};
-
 export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   locationType,
   location,
@@ -6362,7 +6361,6 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   breedingLineSetup,
   geneticLevelBand,
   bcsScale,
-  semenCollector,
   alertRule,
   reportingPeriod,
   binDietAssignment,

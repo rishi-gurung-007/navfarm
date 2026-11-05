@@ -182,6 +182,24 @@ describe('FinancialReportsService', () => {
       expect(res.glReconciliation.isReconciled).toBe(true);
     });
 
+    it('counts each amortised item\'s own accumulated amortisation account (V1.3: one per item, not 1065) in the GL it reconciles to', async () => {
+      itemAcquisitionRows = [{ id: 'gl-item', accum: 'gl-item-accum' }];
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockResolvedValue([
+        { entry_id: 'e-1', ...bioCodesOfEvent('ACQUISITION'), posting_date: '2026-03-01', cost_amount: '850.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-1' },
+        { entry_id: 'e-2', ...bioCodesOfEvent('AMORTIZATION'), posting_date: '2026-04-30', cost_amount: '-50.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-1' },
+      ]) }) }) });
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ groupBy: jest.fn().mockResolvedValue([
+        { gl_account_id: 'gl-item', account_code: '1103', account_name: 'GP-Imp-F Acquisition Cost', account_type: 'ASSET', parent_account_id: null, total_debit: '850.0000', total_credit: '0.0000' },
+        { gl_account_id: 'gl-item-accum', account_code: '1123', account_name: 'GP-Imp-F Accumulated Amortization', account_type: 'ASSET', parent_account_id: null, total_debit: '0.0000', total_credit: '50.0000' },
+        { gl_account_id: 'gl-cash', account_code: '1010', account_name: 'Cash', account_type: 'ASSET', parent_account_id: null, total_debit: '999.0000', total_credit: '0.0000' },
+      ]) }) }) }) }) });
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(itemAcquisitionRows) }) });
+      mockDbSelect.mockReturnValueOnce(breakdownRows());
+      const res = await service.getBiologicalAssetRollForward('tenant-1', 'comp-1', '2026-01-01', '2026-12-31');
+      expect(res.glReconciliation.glAccounts.map((a: any) => a.account_code).sort()).toEqual(['1103', '1123']);
+      expect(res.glReconciliation.isReconciled).toBe(true);
+    });
+
     it('counts the accumulated amortisation account in the GL it reconciles to, since the ledger\'s carrying value is net of the amortisation', async () => {
       // 1. Mock bio_asset_ledger query
       mockDbSelect.mockReturnValueOnce({

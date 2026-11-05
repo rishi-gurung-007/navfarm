@@ -31,7 +31,7 @@ describe('costing subject: what a run is made for (a biological item)', () => {
       const s = subjectFromItem(item());
       expect(s).toMatchObject({ id: 'i1', code: 'GP-Imp-F', company_id: 'c', costing_method: 'AMORTIZATION', run_frequency: 'MONTHLY', day_basis: 'FREQUENCY_DAYS', auto_post: true, effective_from: '2026-03-01', not_runnable: null });
       expect(s.terms).toMatchObject({ start_age_weeks: 33, useful_life_months: 36, residual_rule: 'WEIGHT_X_PRICE', tracking: 'INDIVIDUAL', residual_applies_gender: null });
-      expect(s.gl).toEqual({ acquisition_gl_id: 'g-acq', accum_amort_gl_id: 'g-accum', amort_expense_gl_id: 'g-exp', fv_gain_loss_gl_id: null, writeoff_gl_id: 'g-w' });
+      expect(s.gl).toEqual({ acquisition_gl_id: 'g-acq', accum_amort_gl_id: 'g-accum', amort_expense_gl_id: 'g-exp', fv_gain_loss_gl_id: null, fv_loss_gl_id: null, writeoff_gl_id: 'g-w' });
     });
 
     it('defaults what the item left blank: monthly, frequency days, no residual', () => {

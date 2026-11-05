@@ -79,6 +79,8 @@ import { RequisitionModule } from './modules/procurement/requisition/requisition
 import { MilkModule } from './modules/production/milk/milk.module';
 import { QcParameterModule } from './modules/production/qc-parameter/qc-parameter.module';
 import { QcModule } from './modules/production/qc/qc.module';
+import { QcInspectionModule } from './modules/inventory/qc-inspection/qc-inspection.module';
+import { ItemQcSpecModule } from './modules/master-data/item-qc-spec/item-qc-spec.module';
 import { QrCodeModule } from './modules/production/qr-code/qr-code.module';
 import { AnimalModule } from './modules/piggery/animal/animal.module';
 import { BreedingModule } from './modules/piggery/breeding/breeding.module';
@@ -195,6 +197,8 @@ import { SystemController } from './system/system.controller';
     MilkModule,
     QcParameterModule,
     QcModule,
+    QcInspectionModule,
+    ItemQcSpecModule,
     QrCodeModule,
     AnimalModule,
     BreedingModule,

@@ -1,7 +1,7 @@
-import { lineFixtures as fixtures, BCS_SCALE_FIXTURE, COLLECTOR_CODES, COMPANY_DEFAULT_SETUP, Existing, GENETIC_BAND_FIXTURE, planFixture } from './ai-station-fixture.lib';
+import { lineFixtures as fixtures, BCS_SCALE_FIXTURE, COMPANY_DEFAULT_SETUP, Existing, GENETIC_BAND_FIXTURE, planFixture } from './ai-station-fixture.lib';
 import { lineSetupIssues } from '../modules/master-data/breeding-line/breeding-line.rules';
 
-const none: Existing = { breeds: new Map([['Tempo', 'b-t'], ['L-Line', 'b-l'], ['Z-Line', 'b-z']]), setupBreedIds: new Set(), scaleScores: new Set(), collectorCodes: new Set(), defaultSetup: null, defaultBandLevels: new Set() };
+const none: Existing = { breeds: new Map([['Tempo', 'b-t'], ['L-Line', 'b-l'], ['Z-Line', 'b-z']]), setupBreedIds: new Set(), scaleScores: new Set(), defaultSetup: null, defaultBandLevels: new Set() };
 const farms = { tempoFarmIds: ['f1', 'f2'], multiplierFarmId: 'fm' };
 
 describe('the AI Station fixture', () => {
@@ -52,30 +52,17 @@ describe('the AI Station fixture', () => {
     expect(BCS_SCALE_FIXTURE.filter((r) => r.medication_review).map((r) => r.score)).toEqual([1]);
   });
 
-  it('names the three collectors by their IDs, since no names were given', () => {
-    expect(COLLECTOR_CODES).toEqual(['CM', 'AW', 'TA']);
-  });
-});
-
-describe('planFixture', () => {
-  it('creates everything on an empty company', () => {
-    const plan = planFixture(none, farms);
-    expect(plan.filter((a) => a.do === 'create')).toHaveLength(3 + 1 + 4 + 5 + 3);
-    expect(plan.every((a) => a.do === 'create')).toBe(true);
-  });
-
   it('leaves what exists alone, so it can be run again', () => {
     const existing: Existing = {
       ...none,
       setupBreedIds: new Set(['b-l', '']),
       scaleScores: new Set([1, 2, 3, 4, 5]),
-      collectorCodes: new Set(['CM']),
       defaultSetup: { id: 'd1', hasWeights: true },
       defaultBandLevels: new Set(GENETIC_BAND_FIXTURE.map((b) => b.level_name)),
     };
     const plan = planFixture(existing, farms);
-    expect(plan.filter((a) => a.do === 'create').map((a) => a.key)).toEqual(['Tempo', 'Z-Line', 'AW', 'TA']);
-    expect(plan.filter((a) => a.do === 'exists')).toHaveLength(1 + 1 + 4 + 5 + 1);
+    expect(plan.filter((a) => a.do === 'create').map((a) => a.key)).toEqual(['Tempo', 'Z-Line']);
+    expect(plan.filter((a) => a.do === 'exists')).toHaveLength(1 + 1 + 4 + 5);
   });
 
   it('skips a line the company has no breed for, and says why', () => {

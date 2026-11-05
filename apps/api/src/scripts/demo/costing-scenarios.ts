@@ -39,7 +39,7 @@ export const COSTING_SCENARIOS: readonly CostingScenario[] = [
     proves: 'A culled breeding animal becomes inventory only through a request Finance approves: gain and loss, inventory receipt, the refusals',
   },
   {
-    key: 'project-full', flag: '--project-full', chapters: [...MASTERS, '02c-project-items', '22-project-full'], verify: 'verify-project-full.ts',
+    key: 'project-full', flag: '--project-full', chapters: [...MASTERS, '02a-project-coa', '02c-project-items', '22-project-full'], verify: 'verify-project-full.ts',
     proves: 'The whole project: the 12 items, a GRN of stock and 20 animals, a batch, feed and overhead, monthly runs, semen and AI, two parities for 14 sows, gilts and their fair value',
   },
 ];

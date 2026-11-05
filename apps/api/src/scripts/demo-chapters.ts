@@ -52,7 +52,7 @@ import { costingTwoAnimalsChapter } from './demo/chapters/18-costing-two-animals
 import { costingFairValueChapter } from './demo/chapters/19-costing-fair-value';
 import { costingFrequenciesChapter } from './demo/chapters/20-costing-frequencies';
 import { costingConversionChapter } from './demo/chapters/21-costing-conversion';
-import { projectFullChapter, projectItemsChapter } from './demo/chapters/22-project-full';
+import { projectCoaChapter, projectFullChapter, projectItemsChapter } from './demo/chapters/22-project-full';
 import { ledgerTypesChapter } from './demo/chapters/17-ledger-types';
 import { batchTransfersChapter } from './demo/chapters/10-batch-transfers';
 import { stockTransfersChapter } from './demo/chapters/11-stock-transfers';
@@ -65,12 +65,12 @@ import { COSTING_SCENARIOS } from './demo/costing-scenarios';
 const BATCH_CHAPTERS = new Set(['04-daily-entries', '05-breeding', '06-approvals', '08-bio-asset-exit', '10-batch-transfers', '12-mortality']);
 
 /** Chapters that touch no batch and are safe to run again on a tenant that already has its own batches. */
-const RESUME_SAFE_CHAPTERS = new Set(['09-costing-scenarios', '14-costing-walkthrough', '15-full-flow', '16-costing-test', '17-ledger-types', '18-costing-two-animals', '19-costing-fair-value', '20-costing-frequencies', '21-costing-conversion', '02c-project-items', '22-project-full']);
+const RESUME_SAFE_CHAPTERS = new Set(['09-costing-scenarios', '14-costing-walkthrough', '15-full-flow', '16-costing-test', '17-ledger-types', '18-costing-two-animals', '19-costing-fair-value', '20-costing-frequencies', '21-costing-conversion', '02a-project-coa', '02c-project-items', '22-project-full']);
 
 /** Chapters that run only when named with --chapter=, never as part of a rebuild or a full run. */
-const ON_DEMAND_CHAPTERS = new Set(['14-costing-walkthrough', '15-full-flow', '16-costing-test', '17-ledger-types', '18-costing-two-animals', '19-costing-fair-value', '20-costing-frequencies', '21-costing-conversion', '02c-project-items', '22-project-full']);
+const ON_DEMAND_CHAPTERS = new Set(['14-costing-walkthrough', '15-full-flow', '16-costing-test', '17-ledger-types', '18-costing-two-animals', '19-costing-fair-value', '20-costing-frequencies', '21-costing-conversion', '02a-project-coa', '02c-project-items', '22-project-full']);
 
-const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, costingPricesChapter, inventoryChapter, bioCostingItemsChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter, feedPlanningChapter, bioAssetExitChapter, batchTransfersChapter, stockTransfersChapter, mortalityChapter, costingScenariosChapter, bioCostingAssignChapter, costingWalkthroughChapter, fullFlowChapter, costingTestChapter, ledgerTypesChapter, costingTwoAnimalsChapter, costingFairValueChapter, costingFrequenciesChapter, costingConversionChapter, projectItemsChapter, projectFullChapter];
+const CHAPTERS: DemoChapter[] = [identityChapter, storesAndItemsChapter, costingPricesChapter, inventoryChapter, bioCostingItemsChapter, batchesAndAnimalsChapter, dailyEntriesChapter, breedingChapter, approvalsChapter, feedPlanningChapter, bioAssetExitChapter, batchTransfersChapter, stockTransfersChapter, mortalityChapter, costingScenariosChapter, bioCostingAssignChapter, costingWalkthroughChapter, fullFlowChapter, costingTestChapter, ledgerTypesChapter, costingTwoAnimalsChapter, costingFairValueChapter, costingFrequenciesChapter, costingConversionChapter, projectCoaChapter, projectItemsChapter, projectFullChapter];
 
 /** The costing scenarios' chapter lists (`--costing-test`, `--costing-two`, `--costing-fv`, `--costing-freq`, `--costing-conv`): the masters and one chapter each. See demo/costing-scenarios.ts. */
 const COSTING_CHAPTER_SETS = new Map(COSTING_SCENARIOS.map((sc) => [sc.flag, new Set(sc.chapters)]));

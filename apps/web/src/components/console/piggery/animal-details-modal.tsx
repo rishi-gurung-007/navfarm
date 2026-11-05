@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Loader2,
   Calendar,
+  CalendarClock,
   Tag,
   Dna,
   HeartPulse,
@@ -834,6 +835,93 @@ export default function AnimalDetailsModal({
                       <span className="font-mono text-[var(--text-primary)]">
                         {formatDate(animal?.dob)}
                       </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section: worked out by the API from her item, her gilt selection, her litter's farrowing and her posted weights. */}
+                <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
+                  <h4 className="mb-3 font-bold text-[var(--text-primary)] uppercase tracking-wider text-[11px] flex items-center gap-1.5 border-b border-[var(--border)] pb-2">
+                    <CalendarClock className="h-3.5 w-3.5 text-[var(--accent)]" />{' '}
+                    Production Life, Origin & Weight
+                  </h4>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Amortization Start Date
+                      </span>
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {formatDate(animal?.amortization_start_date)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Amortization End Date
+                      </span>
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {formatDate(animal?.amortization_end_date)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Out of Production Date
+                      </span>
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {formatDate(animal?.out_of_production_date)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Colour Code
+                      </span>
+                      <span className="flex items-center gap-1.5 font-medium text-[var(--text-primary)]">
+                        {animal?.colour_code && (
+                          <span
+                            aria-hidden
+                            className="inline-block h-2.5 w-2.5 rounded-full border border-[var(--border)]"
+                            style={{ background: String(animal.colour_code).toLowerCase() }}
+                          />
+                        )}
+                        {fmt(animal?.colour_code)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Lot No.
+                      </span>
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {fmt(animal?.lot_no)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Birth Weight
+                      </span>
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {animal?.birth_weight_kg != null
+                          ? `${Number(animal.birth_weight_kg).toFixed(2)} kg`
+                          : NA}
+                      </span>
+                      {animal?.birth_weight_kg != null && (
+                        <span className="block text-[10px] text-[var(--text-secondary)]">
+                          Litter average
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Current Weight
+                      </span>
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {animal?.current_weight_kg != null
+                          ? `${Number(animal.current_weight_kg).toFixed(1)} kg`
+                          : NA}
+                      </span>
+                      {animal?.current_weight_date && (
+                        <span className="block text-[10px] text-[var(--text-secondary)]">
+                          Recorded {formatDate(animal.current_weight_date)}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

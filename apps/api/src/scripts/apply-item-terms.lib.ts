@@ -55,7 +55,7 @@ function termsFor(c: FixedAssetItem, accountId: (name: string | null) => string 
     bio_effective_from: costingFrom,
     bio_auto_post: false,
     bio_acquisition_gl_id: accountId(c.accounts.acquisition),
-    bio_accum_amort_gl_id: null,
+    bio_accum_amort_gl_id: amortised ? accountId(c.accounts.accumulated) : null,
     bio_amort_expense_gl_id: amortised ? accountId(c.accounts.result) : null,
     bio_fv_gain_loss_gl_id: amortised ? null : accountId(c.accounts.result),
     bio_writeoff_gl_id: null,
@@ -99,5 +99,5 @@ export function planSheetTerms(input: { items: FoundItem[]; accounts: FoundAccou
   });
 }
 
-/** Said once for the report: the sheet names neither account for any item, so no item can post until Finance sets them. */
+/** Said once for the report: the sheet names no impairment account for any item, so no item can post until Finance sets one. */
 export const FINANCE_STILL_OWES = ACCOUNTS_NOT_IN_THE_SHEET;

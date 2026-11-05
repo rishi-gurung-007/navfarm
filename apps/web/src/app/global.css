@@ -1364,6 +1364,15 @@ textarea:focus-visible {
 
 .nf-embedded-input:focus-visible { outline: none; box-shadow: none; }
 
+/* An input embedded in a bordered wrapper (search bars) must not draw its own
+   box. The selector repeats the specificity of the generic input rule above,
+   which would otherwise win over the Tailwind border-0 / bg-transparent. */
+input.nf-embedded-input:not([type='checkbox']):not([type='radio']):not([type='submit']):not([type='button']) {
+  border: 0;
+  background-color: transparent;
+  box-shadow: none;
+}
+
 /* Control size classes matching Apple design spec.
    Wrapped in @layer components: Tailwind utilities always win over ANY
    unlayered CSS regardless of source order or specificity, so a plain

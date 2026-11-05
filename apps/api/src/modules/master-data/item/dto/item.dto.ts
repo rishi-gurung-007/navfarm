@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, MaxLength, IsNumber, IsArray, ValidateNested, IsIn } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
+import { ItemQcSpecLineDto } from '../../../inventory/qc-inspection/dto/qc-inspection.dto';
 
 export const FEED_FORMS = ['BULK', 'BAGGED'] as const;
 
@@ -92,6 +93,10 @@ export class ItemBioCostingDto {
   @ApiPropertyOptional({ description: 'GL account: fair value gain / loss', nullable: true })
   @IsOptional() @IsUUID()
   bio_fv_gain_loss_gl_id?: string | null;
+
+  @ApiPropertyOptional({ description: 'GL account: fair value loss. Left out, a loss goes to the fair value gain / loss account.', nullable: true })
+  @IsOptional() @IsUUID()
+  bio_fv_loss_gl_id?: string | null;
 
   @ApiPropertyOptional({ description: 'GL account: mortality / impairment loss', nullable: true })
   @IsOptional() @IsUUID()
@@ -200,6 +205,18 @@ export class CreateItemDto extends ItemBioCostingDto {
   @IsBoolean()
   @IsOptional()
   is_inventoriable?: boolean;
+
+  @ApiProperty({ description: 'QC required: a received quantity is written to the Inventory Ledger only when its QC inspection is completed and accepted. Needs a QC specification on the item.', default: false, required: false })
+  @IsBoolean()
+  @IsOptional()
+  is_qc_required?: boolean;
+
+  @ApiProperty({ type: [ItemQcSpecLineDto], description: 'The QC checks (QC Code, Description, QC Type, Min/Max) saved with a new QC-required item. Edit them later through /item-qc-spec.', required: false })
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => ItemQcSpecLineDto)
+  qc_specs?: ItemQcSpecLineDto[];
 
   @ApiProperty({ description: 'Minimum stock count limit', required: false })
   @IsNumber()
@@ -417,6 +434,11 @@ export class UpdateItemDto extends ItemBioCostingDto {
   @IsBoolean()
   @IsOptional()
   is_inventoriable?: boolean;
+
+  @ApiProperty({ description: 'QC required: a received quantity is written to the Inventory Ledger only when its QC inspection is completed and accepted. Needs a QC specification on the item.', default: false, required: false })
+  @IsBoolean()
+  @IsOptional()
+  is_qc_required?: boolean;
 
   @ApiProperty({ required: false })
   @IsNumber()

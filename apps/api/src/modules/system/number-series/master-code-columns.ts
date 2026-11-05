@@ -24,6 +24,7 @@ export const MASTER_CODE_COLUMNS: Record<string, string> = {
   BATCH: 'batch_no',
   SCHEDULER: 'scheduler_no',
   GOODS_RECEIPT: 'receipt_no',
+  QC_INSPECTION: 'inspection_no',
   BATCH_TRANSFER: 'transfer_no',
   STOCK_TRANSFER: 'transfer_no',
   STOCK_ADJUSTMENT: 'adjustment_no',

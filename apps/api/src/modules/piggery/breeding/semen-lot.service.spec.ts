@@ -7,6 +7,7 @@ import { InventoryLedgerService } from '../../inventory/inventory-ledger/invento
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { QrCodeService } from '../../production/qr-code/qr-code.service';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
+import { QcInspectionService } from '../../inventory/qc-inspection/qc-inspection.service';
 
 describe('SemenLotService', () => {
   const queue: unknown[][] = [];
@@ -28,6 +29,7 @@ describe('SemenLotService', () => {
   const gl = { postInventoryLedgerEntry: jest.fn(), hasMapping: jest.fn(), animalAssetAccountId: jest.fn() };
   const numberSeries = { generateNext: jest.fn() };
   const qr = { createForSemenLot: jest.fn() };
+  const qcInspections = { raise: jest.fn(), resolveSeries: jest.fn() };
   let service: SemenLotService;
 
   const boar = { animal_id: 'boar-1', animal_code: 'BOAR-1', company_id: 'co-1', current_location_id: 'pen-1' } as any;
@@ -43,6 +45,8 @@ describe('SemenLotService', () => {
     ledger.writePositiveEntry.mockResolvedValue({ ledger_id: 'led-1' });
     ledger.writeNegativeEntry.mockResolvedValue({ ledger_id: 'led-2' });
     qr.createForSemenLot.mockResolvedValue({ qr_id: 'qr-1', pack_no: 'PACK-000007' });
+    qcInspections.resolveSeries.mockResolvedValue('QC_INSPECTION');
+    qcInspections.raise.mockResolvedValue({ inspection_id: 'insp-1', inspection_no: 'QC-000001' });
     const moduleRef = await Test.createTestingModule({
       providers: [
         SemenLotService,
@@ -52,6 +56,7 @@ describe('SemenLotService', () => {
         { provide: NumberSeriesService, useValue: numberSeries },
         { provide: QrCodeService, useValue: qr },
         { provide: AnimalBookValueService, useValue: bookValue },
+        { provide: QcInspectionService, useValue: qcInspections },
       ],
     }).compile();
     service = moduleRef.get(SemenLotService);
@@ -73,7 +78,32 @@ describe('SemenLotService', () => {
         'tenant-1',
         { userId: 'u1' },
       );
-      expect(lot).toEqual({ lot_no: 'LOT-00011', expiry_date: '2026-10-14', warehouse_id: 'store-1', qr_id: 'qr-1', pack_no: 'PACK-000007', colorant_cost: 0 });
+      expect(lot).toEqual({ lot_no: 'LOT-00011', expiry_date: '2026-10-14', warehouse_id: 'store-1', qr_id: 'qr-1', pack_no: 'PACK-000007', colorant_cost: 0, qc_inspection_no: null });
+    });
+
+    it('QC required: raises an inspection for the doses instead of writing the ledger or the journal', async () => {
+      queue.push([{ ...item, is_qc_required: true }], [boarBatch], [{ location_id: 'store-1' }]);
+
+      const lot = await collect({ unitCost: 2 });
+
+      expect(ledger.writePositiveEntry).not.toHaveBeenCalled();
+      expect(gl.postInventoryLedgerEntry).not.toHaveBeenCalled();
+      expect(qcInspections.raise).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sourceDocType: 'SEMEN_COLLECTION', sourceDocNo: 'LOT-00011', sourceLineId: 'sb-1', sourcePostingDate: '2026-10-09', itemId: 'item-s',
+          lotNo: 'LOT-00011', expiryDate: '2026-10-14', quantity: 40, uom: 'DOSE', rate: 2, warehouseId: 'store-1', batchNo: 'BATCH-000001', glMappingType: null,
+        }),
+      );
+      expect(lot.qc_inspection_no).toBe('QC-000001');
+      expect(lot.lot_no).toBe('LOT-00011');
+    });
+
+    it('QC required and the recovery mapping set up: the entry will post under BIO_SEMEN_PRODUCTION, as an ordinary collection does', async () => {
+      gl.hasMapping.mockResolvedValue(true);
+      queue.push([{ ...item, is_qc_required: true }], [boarBatch], [{ location_id: 'store-1' }]);
+      await collect({ unitCost: 2 });
+      expect(qcInspections.raise).toHaveBeenCalledWith(expect.objectContaining({ glMappingType: 'BIO_SEMEN_PRODUCTION' }));
+      gl.hasMapping.mockReset();
     });
 
     it('has no expiry for an item with no shelf life, and no QR for a boar in no batch', async () => {
@@ -276,6 +306,25 @@ describe('SemenLotService', () => {
 
     it('is a BadRequest, so a mating is refused cleanly', async () => {
       await expect(service.issueDoses(lot({ doses_used_internal: '40' }), 1, 'b', '2026-10-09', 'tenant-1')).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('a lot waiting for QC', () => {
+    const lot = { semen_batch_id: 'sb-1', lot_no: 'LOT-00011', output_item_id: 'item-s', inventory_posted: false, doses_collected: '40', doses_used_internal: '0', doses_sold: '0' } as any;
+    const use = (over: object = {}) => service.issueDoses({ ...lot, ...over }, 1, 'br-1', '2026-10-10', 'tenant-1', { userId: 'u1' });
+
+    it('cannot be used while its inspection is open, or after it failed', async () => {
+      queue.push([{ no: 'QC-000001', status: 'OPEN', ledger: null }]);
+      await expect(use()).rejects.toThrow('waiting for its QC inspection (QC-000001)');
+      queue.push([{ no: 'QC-000001', status: 'CLOSED', ledger: null }]);
+      await expect(use()).rejects.toThrow('did not pass QC');
+      expect(ledger.writeNegativeEntry).not.toHaveBeenCalled();
+    });
+
+    it('is not held when it has no inspection (a lot from before QC, or an item that is not QC required), or once it is stock', async () => {
+      queue.push([]);
+      await expect(use()).resolves.toBeUndefined();
+      await expect(use({ inventory_posted: true, output_item_id: null })).resolves.toBeUndefined();
     });
   });
 });

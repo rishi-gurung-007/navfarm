@@ -2,6 +2,8 @@
  * Pure arithmetic for the animal card's activity: kept apart from the queries so it can be proved on its own.
  */
 
+import { addDays, birthDate, lifeEndDate } from '../../finance/bio-costing/bio-costing.engine';
+
 export interface Reading {
   date: string;
   value: number;
@@ -79,4 +81,18 @@ export function groupConsumption(rows: ConsumptionRow[]): ConsumptionByItem[] {
     groups.set(key, g);
   }
   return [...groups.values()].sort((a, b) => b.cost - a.cost);
+}
+
+/**
+ * The last day her amortisation can charge: birth + the item's useful life, the same rule the costing run applies (lifeEndDate is exclusive,
+ * so the last day is the one before it). Null when the item does not amortise her, has no useful life, or she has no age to count from.
+ * A run can stop earlier: at her residual, or when she leaves the herd.
+ */
+export function amortisationEndDate(
+  a: { dob?: string | null; entry_date: string; age_at_entry_weeks?: number | null },
+  item: { bio_costing_method?: string | null; bio_useful_life_months?: number | null } | null | undefined,
+): string | null {
+  if (!item || item.bio_costing_method !== 'AMORTIZATION' || !item.bio_useful_life_months) return null;
+  const birth = birthDate({ dob: a.dob ?? null, entry_date: a.entry_date, age_at_entry_weeks: a.age_at_entry_weeks ?? null });
+  return birth ? addDays(lifeEndDate(birth, Number(item.bio_useful_life_months)), -1) : null;
 }
