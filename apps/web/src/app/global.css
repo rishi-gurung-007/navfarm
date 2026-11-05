@@ -1340,11 +1340,23 @@ h5,
 h6 {
   color: var(--text-primary);
   font-weight: 600;
-  text-wrap: balance;
 }
 
-p {
-  text-wrap: pretty;
+/* The wrap styles sit in the base layer so utilities win: unlayered, the text-wrap shorthand (it also sets
+   text-wrap-mode) undid `truncate` and `whitespace-nowrap` on every heading and paragraph. */
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
 }
 
 button,

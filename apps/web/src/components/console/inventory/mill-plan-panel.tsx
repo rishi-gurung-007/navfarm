@@ -372,7 +372,17 @@ function DueFigure({
       {rows.map(([k, v]) => (
         <Fragment key={k}>
           <dt className="whitespace-nowrap text-(--text-secondary)">{k}</dt>
-          <dd className="m-0 tabular-nums">{v}</dd>
+          <dd className="m-0 tabular-nums">
+            {Array.isArray(v) ? (
+              <ul className="list-disc pl-4">
+                {v.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            ) : (
+              v
+            )}
+          </dd>
         </Fragment>
       ))}
     </dl>
@@ -453,7 +463,8 @@ function CardDetail({
   total,
   empty,
 }: {
-  rows: Array<[string, string]>;
+  /** A value given as a list shows one item per line. */
+  rows: Array<[string, string | string[]]>;
   total?: [string, string];
   empty: string;
 }) {
@@ -480,8 +491,12 @@ function CardDetail({
   );
 }
 /** The plain text of a CardDetail, for assistive tech. */
-const detailText = (rows: Array<[string, string]>, empty: string) =>
-  rows.length ? rows.map(([k, v]) => `${k}: ${v}`).join('; ') : empty;
+const detailText = (rows: Array<[string, string | string[]]>, empty: string) =>
+  rows.length
+    ? rows
+        .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+        .join('; ')
+    : empty;
 const dayLabel = (iso: string) =>
   `${weekday(iso)} ${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
 
@@ -1571,75 +1586,116 @@ export default function MillPlanPanel() {
                         : pct <= 35
                           ? 'bg-(--warning)'
                           : 'bg-(--success)';
+                  const stockLine =
+                    card.capacityKg !== null
+                      ? t('mplSiloStock', {
+                          stock: tonnes(card.stockKg),
+                          capacity: tonnes(card.capacityKg),
+                        })
+                      : `${t('mplSiloStockOnly', { stock: tonnes(card.stockKg) })} · ${t('mplCapacityNotSet')}`;
+                  // The card's hover: every field in full, one row each (Rishi, 5 Nov).
+                  const rows: Array<[string, string | string[]]> = [
+                    [t('mplSiloCode'), card.sourceCode],
+                    [t('mplSiloName'), card.sourceName ?? card.sourceCode],
+                    [t('mplSiloFarm'), card.farmName],
+                    [
+                      t('mplSiloFeeds'),
+                      card.items.length > 1
+                        ? card.items
+                        : (card.items[0] ?? '—'),
+                    ],
+                    [t('mplSiloStockLabel'), exactKg(card.stockKg) ?? '—'],
+                    [
+                      t('mplDayCapacity'),
+                      exactKg(card.capacityKg) ?? t('mplCapacityNotSet'),
+                    ],
+                    ...(card.capacityKg !== null
+                      ? ([
+                          [
+                            t('mplSiloSpace'),
+                            exactKg(
+                              Math.max(0, card.capacityKg - card.stockKg),
+                            ) ?? '—',
+                          ],
+                          [t('mplSiloFillLabel'), `${card.fillPct}%`],
+                        ] as Array<[string, string]>)
+                      : []),
+                    [
+                      t('mplSiloRunOut'),
+                      card.runOutDate
+                        ? `${weekday(card.runOutDate)} ${formatDateShort(card.runOutDate)}`
+                        : t('mplSiloNoRunOut'),
+                    ],
+                  ];
                   return (
-                    <div
+                    <HoverHint
                       key={`${card.farmId}|${card.sourceCode}`}
-                      data-silo-card={`${card.farmId}|${card.sourceCode}`}
-                      className="rounded-md border border-(--border) bg-(--surface) p-4"
+                      plain
+                      followCursor
+                      heading={card.sourceCode}
+                      hint={detailText(rows, '')}
+                      content={<CardDetail rows={rows} empty="" />}
+                      className="block h-full"
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
+                      <div
+                        data-silo-card={`${card.farmId}|${card.sourceCode}`}
+                        className="h-full rounded-md border border-(--border) bg-(--surface) p-4"
+                      >
+                        {/* One line each: code (with fill %), name, farm, feed types (Rishi, 5 Nov). */}
+                        <div className="flex items-baseline justify-between gap-2">
                           <p
                             data-silo-code
-                            className="text-sm font-semibold text-(--text-primary)"
+                            className="min-w-0 truncate text-sm font-semibold text-(--text-primary)"
                           >
                             {card.sourceCode}
                           </p>
-                          {card.sourceName &&
-                            card.sourceName !== card.sourceCode && (
-                              <p
-                                data-silo-name
-                                className="text-xs text-(--text-secondary)"
-                              >
-                                {card.sourceName}
-                              </p>
-                            )}
-                          <p className="mt-0.5 truncate text-[11px] text-(--text-muted)">
-                            {card.farmCode} — {card.farmName}
-                          </p>
+                          {pct !== null && (
+                            <span className="shrink-0 text-sm font-semibold tabular-nums text-(--text-primary)">
+                              {card.fillPct}%
+                            </span>
+                          )}
                         </div>
-                        {pct !== null && (
-                          <span className="text-sm font-semibold tabular-nums text-(--text-primary)">
-                            {card.fillPct}%
-                          </span>
+                        <p
+                          data-silo-name
+                          className="truncate text-xs text-(--text-secondary)"
+                        >
+                          {card.sourceName ?? card.sourceCode}
+                        </p>
+                        <p className="truncate text-[11px] text-(--text-muted)">
+                          {card.farmName}
+                        </p>
+                        <p className="mt-1 truncate text-[11px] uppercase tracking-wider text-(--text-muted)">
+                          {card.items.join(' · ')}
+                        </p>
+                        {pct !== null ? (
+                          <div
+                            role="progressbar"
+                            aria-label={t('mplSiloFill', {
+                              silo: card.sourceCode,
+                            })}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-valuenow={card.fillPct ?? 0}
+                            className="mt-3 h-2 w-full overflow-hidden rounded-full bg-(--surface-secondary)"
+                          >
+                            <div
+                              className={`h-full rounded-full ${tone}`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        ) : null}
+                        <p className="mt-2 text-xs tabular-nums text-(--text-secondary)">
+                          {stockLine}
+                        </p>
+                        {card.runOutDate && (
+                          <p className="mt-1 text-xs font-medium text-(--danger)">
+                            {t('mplSiloRunsOut', {
+                              date: `${weekday(card.runOutDate)} ${formatDateShort(card.runOutDate)}`,
+                            })}
+                          </p>
                         )}
                       </div>
-                      <p className="mt-1 truncate text-[11px] uppercase tracking-wider text-(--text-muted)">
-                        {card.items.join(' · ')}
-                      </p>
-                      {pct !== null ? (
-                        <div
-                          role="progressbar"
-                          aria-label={t('mplSiloFill', {
-                            silo: card.sourceCode,
-                          })}
-                          aria-valuemin={0}
-                          aria-valuemax={100}
-                          aria-valuenow={card.fillPct ?? 0}
-                          className="mt-3 h-2 w-full overflow-hidden rounded-full bg-(--surface-secondary)"
-                        >
-                          <div
-                            className={`h-full rounded-full ${tone}`}
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      ) : null}
-                      <p className="mt-2 text-xs tabular-nums text-(--text-secondary)">
-                        {card.capacityKg !== null
-                          ? t('mplSiloStock', {
-                              stock: tonnes(card.stockKg),
-                              capacity: tonnes(card.capacityKg),
-                            })
-                          : `${t('mplSiloStockOnly', { stock: tonnes(card.stockKg) })} · ${t('mplCapacityNotSet')}`}
-                      </p>
-                      {card.runOutDate && (
-                        <p className="mt-1 text-xs font-medium text-(--danger)">
-                          {t('mplSiloRunsOut', {
-                            date: `${weekday(card.runOutDate)} ${formatDateShort(card.runOutDate)}`,
-                          })}
-                        </p>
-                      )}
-                    </div>
+                    </HoverHint>
                   );
                 })}
               </div>
