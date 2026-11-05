@@ -913,3 +913,15 @@ it('shows a summary card detail on hover, one aligned row per day with the week 
   expect(tip.querySelectorAll('dt')).toHaveLength(dates.length + 1);
   expect(tip.textContent).toContain('mplCardWeek');
 });
+
+it('leaves a day chip with nothing to make uncoloured', async () => {
+  await renderPanel();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'mplGenerate' }));
+  });
+  for (const chip of document.querySelectorAll('[data-capacity-day]')) {
+    const day = chip.getAttribute('data-capacity-day');
+    const kg = plan.capacity.find((d) => d.date === day)?.productionKg ?? 0;
+    expect(chip.className.includes('muted)')).toBe(kg > 0);
+  }
+});

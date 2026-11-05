@@ -543,6 +543,8 @@ const DAY_CHIP: Record<DayStatus, string> = {
   OVER: 'bg-(--danger-muted) text-(--danger)',
   NO_CAPACITY: 'border border-(--border) text-(--text-secondary)',
 };
+// A day with nothing to make has no colour (Rishi, 4 Nov).
+const DAY_CHIP_EMPTY = 'border border-(--border) text-(--text-secondary)';
 
 const TH =
   'sticky top-0 border-b border-(--border) bg-(--surface-raised) px-3 py-2 text-xs font-semibold text-(--text-secondary)';
@@ -868,7 +870,7 @@ export default function MillPlanPanel() {
                           <span
                             data-capacity-day={day.date}
                             data-status={day.status}
-                            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-[11px] font-semibold tabular-nums ${DAY_CHIP[day.status]}`}
+                            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 font-mono text-[11px] font-semibold tabular-nums ${day.productionKg > 0 ? DAY_CHIP[day.status] : DAY_CHIP_EMPTY}`}
                           >
                             {weekday(day.date).toUpperCase()}:{' '}
                             {tonnes(day.productionKg)}t
