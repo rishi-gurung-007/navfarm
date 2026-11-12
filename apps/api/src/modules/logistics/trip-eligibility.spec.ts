@@ -104,10 +104,25 @@ describe('vehicleExclusions', () => {
     const busy = [{ trip_no: 'TRP-000007', start: '2026-11-12T06:00:00', end: '2026-11-12T14:00:00' }];
     expect(vehicleExclusions(vehicle(), trip, busy)).toEqual(['Already on trip TRP-000007 until 2026-11-12 14:00.']);
   });
-  it('back-to-back trips do not clash', () => {
-    const before = [{ trip_no: 'TRP-1', start: '2026-11-11T08:00:00', end: '2026-11-12T08:00:00' }];
-    const after = [{ trip_no: 'TRP-2', start: '2026-11-14T23:59:59.999', end: '2026-11-15T10:00:00' }];
-    expect(vehicleExclusions(vehicle(), trip, [...before, ...after])).toEqual([]);
+  describe('back-to-back trips on one day, by the exact return time', () => {
+    // A: out 06:00, back 10:00 on 2026-11-20. B: out 14:00, back 18:00 the same day.
+    const A = { trip_no: 'TRP-A', start: '2026-11-20T06:00:00', end: '2026-11-20T10:00:00' };
+    const B = { trip_no: 'TRP-B', start: '2026-11-20T14:00:00', end: '2026-11-20T18:00:00' };
+    const as = (t: typeof A) => ({ ...trip, departure: t.start, returnDate: t.end.slice(0, 10), returnAt: t.end });
+    it('A then B do not clash, in either planning order', () => {
+      expect(vehicleExclusions(vehicle(), as(A), [B])).toEqual([]);
+      expect(vehicleExclusions(vehicle(), as(B), [A])).toEqual([]);
+      expect(driverExclusions(driver(), as(A), [B])).toEqual([]);
+      expect(driverExclusions(driver(), as(B), [A])).toEqual([]);
+    });
+    it('a true overlap still clashes', () => {
+      const C = { trip_no: 'TRP-C', start: '2026-11-20T09:00:00', end: '2026-11-20T15:00:00' };
+      expect(vehicleExclusions(vehicle(), as(A), [C])).toEqual(['Already on trip TRP-C until 2026-11-20 15:00.']);
+      expect(driverExclusions(driver(), as(C), [B])).toEqual(['Already on trip TRP-B until 2026-11-20 18:00.']);
+    });
+    it('without returnAt the return day still counts to its end (documents-only callers)', () => {
+      expect(vehicleExclusions(vehicle(), { ...as(A), returnAt: undefined }, [B])).toEqual(['Already on trip TRP-B until 2026-11-20 18:00.']);
+    });
   });
   it('returns every reason, in order', () => {
     const v = vehicle({ is_active: false, status: 'BLOCKED', documents: [] });

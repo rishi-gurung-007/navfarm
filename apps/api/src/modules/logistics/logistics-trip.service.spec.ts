@@ -20,6 +20,7 @@ describe('LogisticsTripService', () => {
   const resolveConversionFactor = jest.fn();
 
   /** The where clause each table was last read with, rendered, so a test can check the scope made it in. */
+  const affected = new Map<unknown, number>();
   const lastWhere = new Map<unknown, { sql: string; params: unknown[] }>();
   /** Locations on each farm — stands in for the database answering locationOnFarm. */
   let farmLocations: Record<string, string[]> = {};
@@ -37,6 +38,9 @@ describe('LogisticsTripService', () => {
       // A vehicle read by its id answers with that vehicle only.
       if (table === schema.logisticsVehicle && where && all.some((v) => where!.params.includes(v.vehicle_id)))
         return all.filter((v) => where!.params.includes(v.vehicle_id));
+      // A location read by its id answers with that location only (farmOfLocation).
+      if (table === schema.locationMaster && where && all.some((l) => where!.params.includes(l.location_id)))
+        return all.filter((l) => where!.params.includes(l.location_id));
       return all;
     };
     const self: any = {
@@ -65,7 +69,8 @@ describe('LogisticsTripService', () => {
     update: jest.fn((table: unknown) => ({
       set: jest.fn((set: any) => {
         updates.push({ table, set });
-        return { where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) };
+        // A guarded UPDATE that finds the row already moved on changes nothing (affected.set(table, 0)).
+        return { where: jest.fn().mockResolvedValue([{ affectedRows: affected.get(table) ?? 1 }]) };
       }),
     })),
   };
@@ -108,6 +113,7 @@ describe('LogisticsTripService', () => {
   beforeEach(async () => {
     rows.clear();
     lastWhere.clear();
+    affected.clear();
     farmLocations = {};
     inserts.length = 0;
     updates.length = 0;
@@ -197,6 +203,43 @@ describe('LogisticsTripService', () => {
       expect(lastWhere.get(schema.logisticsTrip)!.sql).not.toContain('logistics_trip_line');
     });
 
+    it('warns when no line has a weight, beside any other note', async () => {
+      rows.set(schema.logisticsTrip, []);
+      rows.set(schema.stockTransferLine, [
+        { line_id: 'l-1', transfer_id: 'to-1', line_no: 1, item_id: 'feed-1', quantity: '0.0000', uom: 'KG' },
+        { line_id: 'l-2', transfer_id: 'to-1', line_no: 2, item_id: 'feed-1', quantity: '0.0000', uom: 'KG' },
+      ]);
+      await service.plan(planBody(), 't1');
+      const note = inserts.find((i) => i.table === schema.logisticsTrip)!.values.estimate_note;
+      expect(note).toContain('No line has a weight; cost shared equally between lines.');
+      expect(note).toContain('Assign a vehicle to estimate cost.');
+    });
+
+    it('two TOs to two farms: the farm shares add up to the estimate to the cent', async () => {
+      rows.set(schema.logisticsTrip, []);
+      rows.set(schema.logisticsTripLine, []);
+      rows.set(schema.stockTransfer, [to(), to({ transfer_id: 'to-2', transfer_no: 'TR-000002', to_warehouse_id: 'silo-2' })]);
+      rows.set(schema.stockTransferLine, [
+        { line_id: 'l-1', transfer_id: 'to-1', line_no: 1, item_id: 'feed-1', quantity: '10000.0000', uom: 'KG' },
+        { line_id: 'l-2', transfer_id: 'to-2', line_no: 1, item_id: 'feed-1', quantity: '3333.0000', uom: 'KG' },
+      ]);
+      rows.set(schema.locationMaster, [
+        { location_id: 'silo-1', parent: 'farm-1', farm_id: 'farm-1', location_name: 'Silo 1' },
+        { location_id: 'silo-2', parent: 'farm-2', farm_id: 'farm-2', location_name: 'Silo 2' },
+      ]);
+      rows.set(schema.supplierMaster, [{ supplier_id: 'sup-1' }]);
+      rows.set(schema.logisticsFreightRate, [{
+        rate_id: 'r-1', carrier_supplier_id: 'sup-1', route_id: 'rt-1', rate_basis: 'KM', rate: '10.0001', minimum_charge: null,
+        fuel_surcharge_pct: null, valid_from: '2026-01-01', valid_to: null, approval_status: 'APPROVED',
+      }]);
+      const planned: any = await service.plan(planBody({ transfer_ids: ['to-1', 'to-2'], carrier_supplier_id: 'sup-1' }), 't1');
+      expect(planned.estimated_cost).toBe('1000.01');
+      expect(planned.farm_shares.map((f: any) => f.farm_id).sort()).toEqual(['farm-1', 'farm-2']);
+      const cents = planned.farm_shares.reduce((a: number, f: any) => a + Math.round(Number(f.estimated_cost_share) * 100), 0);
+      expect(cents).toBe(100001);
+      expect(planned.farm_shares.find((f: any) => f.farm_id === 'farm-1').estimated_cost_share).toBe('750.03');
+    });
+
     it('requires the truck type', async () => {
       await expect(service.plan(planBody({ vehicle_type: undefined }), 't1')).rejects.toThrow(/Vehicle Type must be one of/);
     });
@@ -238,6 +281,55 @@ describe('LogisticsTripService', () => {
     it('refuses a 30,001 KG load on a 30,000 KG truck as over the limit', async () => {
       await expect(service.assign('trip-1', { vehicle_id: 'v-1', driver_id: 'dr-1' }, 't1')).rejects.toThrow(/over the limit/);
       expect(updates.filter((u) => u.table === schema.logisticsTrip)).toHaveLength(0);
+    });
+
+    it('a 30,000 KG load on a 30,000 KG truck assigns with a warning; 30,001 is refused', async () => {
+      rows.set(schema.logisticsTrip, [trip({ load_value: '30000.00' })]);
+      await service.assign('trip-1', { vehicle_id: 'v-1', driver_id: 'dr-1' }, 't1');
+      const set = updates.find((u) => u.table === schema.logisticsTrip)!.set;
+      expect(set).toMatchObject({ status: 'PLANNED', capacity_pct: '100.00' });
+      expect(set.estimate_note).toContain('Load is 100.0% of capacity.');
+      updates.length = 0;
+      rows.set(schema.logisticsTrip, [trip({ load_value: '30001.00' })]);
+      await expect(service.assign('trip-1', { vehicle_id: 'v-1', driver_id: 'dr-1' }, 't1')).rejects.toThrow(/over the limit/);
+      expect(updates.filter((u) => u.table === schema.logisticsTrip)).toHaveLength(0);
+    });
+
+    describe('the busy window ends when the truck is back, not at midnight', () => {
+      // This trip: departs 06:00, arrives 10:00, back at the mill 12:00 (100 km at 50 km/h).
+      const early = trip({ load_value: '1000.00' });
+      const late = (over: any = {}) => trip({
+        trip_id: 'trip-2', trip_no: 'TRP-000002', status: 'PLANNED', vehicle_id: 'v-1', driver_id: 'dr-1', load_value: '1000.00',
+        planned_departure: '2026-11-20 14:00:00', estimated_arrival: '2026-11-20 18:00:00', ...over,
+      });
+
+      it('a trip back at 12:00 and another leaving 14:00 the same day do not clash', async () => {
+        rows.set(schema.logisticsTrip, [early, late()]);
+        await service.assign('trip-1', { vehicle_id: 'v-1', driver_id: 'dr-1' }, 't1');
+        expect(updates.find((u) => u.table === schema.logisticsTrip)!.set.status).toBe('PLANNED');
+      });
+
+      it('nor in the other planning order', async () => {
+        rows.set(schema.logisticsTrip, [
+          late({ trip_id: 'trip-1', trip_no: 'TRP-000001', status: 'DRAFT', vehicle_id: null, driver_id: null }),
+          { ...early, trip_id: 'trip-2', trip_no: 'TRP-000002', status: 'PLANNED', vehicle_id: 'v-1', driver_id: 'dr-1' },
+        ]);
+        await service.assign('trip-1', { vehicle_id: 'v-1', driver_id: 'dr-1' }, 't1');
+        expect(updates.find((u) => u.table === schema.logisticsTrip)!.set.status).toBe('PLANNED');
+      });
+
+      it('a true overlap still clashes', async () => {
+        rows.set(schema.logisticsTrip, [early, late({ planned_departure: '2026-11-20 11:00:00', estimated_arrival: '2026-11-20 15:00:00' })]);
+        await expect(service.assign('trip-1', { vehicle_id: 'v-1', driver_id: 'dr-1' }, 't1')).rejects.toThrow('Already on trip TRP-000002');
+      });
+    });
+
+    it('refuses, and writes nothing more, when the trip moved on (e.g. shipped) while it was being assigned', async () => {
+      rows.set(schema.logisticsTrip, [trip({ load_value: '20000.00' })]);
+      affected.set(schema.logisticsTrip, 0);
+      await expect(service.assign('trip-1', { vehicle_id: 'v-1', driver_id: 'dr-1' }, 't1')).rejects.toThrow(/moved on/);
+      expect(updates.filter((u) => u.table !== schema.logisticsTrip)).toHaveLength(0);
+      expect(inserts).toHaveLength(0);
     });
 
     it('refuses an excluded vehicle, listing every reason', async () => {
@@ -352,6 +444,24 @@ describe('LogisticsTripService', () => {
       expect(updates).toHaveLength(0);
       await service.move('trip-1', { to: 'CONFIRMED', hq_approval_ref: 'HQ-77' }, 't1');
       expect(updates.find((u) => u.table === schema.logisticsTrip)!.set).toMatchObject({ status: 'CONFIRMED', hq_approval_ref: 'HQ-77' });
+    });
+
+    it('refuses ARRIVED (or later) while a TO on the trip has not shipped', async () => {
+      rows.set(schema.logisticsTrip, [trip({ status: 'IN_TRANSIT', vehicle_id: 'v-1', driver_id: 'dr-1' })]);
+      rows.set(schema.stockTransfer, [to({ trip_id: 'trip-1', status: 'IN_TRANSIT' }), to({ transfer_id: 'to-2', transfer_no: 'TR-000002', trip_id: 'trip-1', status: 'DRAFT' })]);
+      await expect(service.move('trip-1', { to: 'ARRIVED' }, 't1')).rejects.toThrow(
+        'Transfer order TR-000002 has not shipped yet; ship it or cancel the trip before marking it arrived.',
+      );
+      expect(updates).toHaveLength(0);
+      rows.set(schema.stockTransfer, [to({ trip_id: 'trip-1', status: 'IN_TRANSIT' }), to({ transfer_id: 'to-2', transfer_no: 'TR-000002', trip_id: 'trip-1', status: 'POSTED' })]);
+      await service.move('trip-1', { to: 'ARRIVED' }, 't1');
+      expect(updates.find((u) => u.table === schema.logisticsTrip)!.set).toMatchObject({ status: 'ARRIVED' });
+    });
+
+    it('cancel refuses, and frees no TO, when the trip moved on while it was being cancelled', async () => {
+      affected.set(schema.logisticsTrip, 0);
+      await expect(service.cancel('trip-1', { reason: 'Truck broke down' }, 't1')).rejects.toThrow(/moved on/);
+      expect(updates.filter((u) => u.table === schema.stockTransfer)).toHaveLength(0);
     });
 
     it('records the manual timestamp on IN_TRANSIT', async () => {

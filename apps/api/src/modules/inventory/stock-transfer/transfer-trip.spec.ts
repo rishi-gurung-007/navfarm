@@ -28,6 +28,8 @@ import { StockTransferService } from './stock-transfer.service';
 const SCOPE: FarmScope = { farmId: null, companyId: 'co-1', restricted: false, lobId: null };
 const ADMIN = { userId: 'u-admin', userType: 'COMPANY_ADMIN' };
 const REFUSAL = 'This transfer needs a planned trip before it can ship.';
+/** A trip is attached but its status does not allow shipping: the refusal names the trip (final review I1). */
+const tripRefusal = (status: string) => `Trip TRP-000001 is ${status}; a transfer can only ship on a planned, confirmed or in-transit trip.`;
 
 const TRANSFER = {
   transfer_id: 'tr-1', tenant_id: 'tenant-1', company_id: 'co-1', transfer_no: 'TR-2026-0001',
@@ -228,11 +230,13 @@ describe('Task 5 — (b) the setting on and no trip: refused before anything is 
   });
 });
 
-describe('Task 5 — (c) a trip that is not planned: the same refusal', () => {
-  for (const status of ['DRAFT', 'CANCELLED', 'CLOSED']) {
+describe('Task 5 — (c) a trip that is not planned: refused, naming the trip and its status', () => {
+  for (const status of ['DRAFT', 'CANCELLED', 'CLOSED', 'ARRIVED']) {
     it(`a ${status} trip`, async () => {
       const { service, trips, as, writes } = setup(withTrip(shipmentQueues(TRIPPED), { ...TRIP, status }, TRIPPED));
-      await expect(as(() => service.postShipment('tr-1', shipBody, 'tenant-1', ADMIN))).rejects.toThrow(REFUSAL);
+      const err = await as(() => service.postShipment('tr-1', shipBody, 'tenant-1', ADMIN)).catch((e) => e);
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect(err.message).toBe(tripRefusal(status));
       expect(trips.tripRequiredToShip).not.toHaveBeenCalled();
       expect(writes()).toHaveLength(0);
     });
@@ -240,7 +244,7 @@ describe('Task 5 — (c) a trip that is not planned: the same refusal', () => {
 
   it('ship() refuses a CANCELLED trip too', async () => {
     const { service, as, writes } = setup(withTrip(shipmentQueues(TRIPPED), { ...TRIP, status: 'CANCELLED' }, TRIPPED));
-    await expect(as(() => service.ship('tr-1', {}, 'tenant-1', ADMIN))).rejects.toThrow(REFUSAL);
+    await expect(as(() => service.ship('tr-1', {}, 'tenant-1', ADMIN))).rejects.toThrow(tripRefusal('CANCELLED'));
     expect(writes()).toHaveLength(0);
   });
 });
@@ -433,7 +437,7 @@ describe('Task 5 — (f) postDirectTransfer follows the same rule', () => {
     queues.get(schema.stockTransfer)!.splice(2, 0, [{ ...TRIPPED }]); // assertTripFor reads the TO after postShipment's load
     queues.set(schema.logisticsTrip, [[{ ...TRIP, status: 'CANCELLED' }]]);
     const { service, as, writes } = setup(queues);
-    await expect(as(() => service.postDirectTransfer('tr-1', { posting_date: '2026-10-02', lines: [] }, 'tenant-1', ADMIN))).rejects.toThrow(REFUSAL);
+    await expect(as(() => service.postDirectTransfer('tr-1', { posting_date: '2026-10-02', lines: [] }, 'tenant-1', ADMIN))).rejects.toThrow(tripRefusal('CANCELLED'));
     expect(writes()).toHaveLength(0);
   });
 

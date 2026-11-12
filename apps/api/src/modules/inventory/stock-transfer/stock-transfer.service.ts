@@ -149,8 +149,12 @@ export class StockTransferService {
       return null;
     }
     const trip = await this.logisticsTrips.assertTripFor(transfer.transfer_id, tenantId);
-    if (!trip || !['PLANNED', 'CONFIRMED', 'IN_TRANSIT'].includes(trip.status))
-      throw new BadRequestException(refusal);
+    if (!trip) throw new BadRequestException(refusal);
+    // A trip is attached but is past (or short of) shipping: say which, rather than that there is no trip.
+    if (!['PLANNED', 'CONFIRMED', 'IN_TRANSIT'].includes(trip.status))
+      throw new BadRequestException(
+        `Trip ${trip.trip_no} is ${trip.status}; a transfer can only ship on a planned, confirmed or in-transit trip.`,
+      );
     return { trip_id: trip.trip_id, vehicle_no: trip.vehicle_no };
   }
 

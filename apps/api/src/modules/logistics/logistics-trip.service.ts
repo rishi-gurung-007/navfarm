@@ -35,6 +35,9 @@ const TERMINAL: TripStatus[] = ['CANCELLED', 'CLOSED'];
 const LOCKED = 'This trip is closed and locked.';
 const NO_RATE = 'No approved freight rate.';
 const ASSIGN_FIRST = 'Assign a vehicle to estimate cost.';
+const NO_WEIGHT = 'No line has a weight; cost shared equally between lines.';
+/** Statuses that say the load has reached the farm; a TO still DRAFT on the trip cannot be there (final review I1). */
+const DELIVERED: TripStatus[] = ['ARRIVED', 'POD_RECEIVED', 'RETURNED', 'CLOSED'];
 
 /** What the planner says the load is (Ruling, 12 Nov): the truck type, and the measure its capacity is in. */
 const LOAD_UNIT: Record<VehicleType, 'KG' | 'BAGS' | 'HEAD'> = { BULK_FEED: 'KG', BAGGED_FEED: 'BAGS', LIVESTOCK: 'HEAD' };
@@ -350,7 +353,7 @@ export class LogisticsTripService {
       await this.db.insert(schema.logisticsTrip).values({
         trip_id: tripId, tenant_id: tenantId, company_id: companyId, trip_no: tripNo, route_id: route.route_id,
         carrier_supplier_id: carrierId, status: 'DRAFT', planned_departure: toDb(departure!), estimated_arrival: toDb(arrival),
-        load_value: dec(load.value), load_unit: unit, estimated_cost: dec(est.cost), estimate_note: notes(load.note, est.note),
+        load_value: dec(load.value), load_unit: unit, estimated_cost: dec(est.cost), estimate_note: notes(load.note, this.weightNote(lines), est.note),
         created_by: user?.userId, updated_by: user?.userId,
       } as never);
       if (lines.length)
@@ -402,6 +405,11 @@ export class LogisticsTripService {
   }
 
   // ── Estimate ──────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  /** Said when shares fall back to an equal split because no line weighs anything. */
+  private weightNote(lines: Row[]): string | null {
+    return lines.length && lines.every((l) => !(Number(l.weight_kg ?? 0) > 0)) ? NO_WEIGHT : null;
+  }
 
   /** Each line's share of the trip, by weight (equal when nothing is weighed), cents-exact to 100. */
   private sharePct(lines: Row[]): number[] {
@@ -465,7 +473,8 @@ export class LogisticsTripService {
       ))
       .limit(1);
     return {
-      type, departure, returnDate: day(end), warnPct: num(setting?.pct) ?? 95,
+      // returnAt (exact) bounds the busy check; returnDate (the day) is for document and licence expiry only.
+      type, departure, returnDate: day(end), returnAt: end, warnPct: num(setting?.pct) ?? 95,
       load: trip.load_value === null || trip.load_value === undefined ? null : Number(trip.load_value),
     };
   }
@@ -509,7 +518,7 @@ export class LogisticsTripService {
       capacity_kg: num(v.capacity_kg), capacity_head: num(v.capacity_head), capacity_bags: num(v.capacity_bags),
       documents: docs.filter((d) => d.vehicle_id === v.vehicle_id).map((d) => ({ document_type: d.document_type, expiry_date: day(d.expiry_date) })),
     };
-    const reasons = vehicleExclusions(facts, { type: ctx.type, load: 0, departure: ctx.departure, returnDate: ctx.returnDate, warnPct: ctx.warnPct }, busy);
+    const reasons = vehicleExclusions(facts, { type: ctx.type, load: 0, departure: ctx.departure, returnDate: ctx.returnDate, returnAt: ctx.returnAt, warnPct: ctx.warnPct }, busy);
     if (v.vehicle_type === ctx.type && ctx.load !== null) {
       const check = capacityCheck(ctx.load, this.capacityOf(v, ctx.type), ctx.warnPct);
       if (check.level === 'BLOCK' && check.message && !reasons.includes(check.message)) reasons.push(check.message);
@@ -521,12 +530,12 @@ export class LogisticsTripService {
     return Number(v[CAPACITY_BY_VEHICLE_TYPE[type].field] ?? 0);
   }
 
-  private driverReasons(d: Row, ctx: { departure: string; returnDate: string }, busy: Interval[]): string[] {
+  private driverReasons(d: Row, ctx: { departure: string; returnDate: string; returnAt: string }, busy: Interval[]): string[] {
     const facts: DriverFacts = {
       driver_name: d.driver_name, is_active: Boolean(d.is_active), licence_class: d.licence_class ?? null,
       licence_expiry: d.licence_expiry ? day(d.licence_expiry) : null,
     };
-    return driverExclusions(facts, { departure: ctx.departure, returnDate: ctx.returnDate }, busy);
+    return driverExclusions(facts, { departure: ctx.departure, returnDate: ctx.returnDate, returnAt: ctx.returnAt }, busy);
   }
 
   async findVehicle(id: string, tenantId: string) {
@@ -600,10 +609,17 @@ export class LogisticsTripService {
       const set = {
         vehicle_id: vehicle.vehicle_id, driver_id: driver.driver_id, status: 'PLANNED', carrier_supplier_id: carrierId ?? null,
         capacity_pct: check ? dec(check.pct) : null, estimated_cost: dec(est.cost),
-        estimate_note: notes(check?.level === 'WARN' ? check.message : null, ctx.load === null ? UNMEASURED[trip.load_unit] : null, est.note),
+        estimate_note: notes(
+          check?.level === 'WARN' ? check.message : null, ctx.load === null ? UNMEASURED[trip.load_unit] : null, this.weightNote(lines), est.note,
+        ),
         updated_by: user?.userId, updated_at: nowTs(),
       };
-      await this.db.update(schema.logisticsTrip).set(set as never).where(eq(schema.logisticsTrip.trip_id, id));
+      // Guarded: a shipment that committed meanwhile has moved the trip on, and must not be set back to PLANNED.
+      const T = schema.logisticsTrip;
+      const [res] = await this.db.update(T).set(set as never)
+        .where(and(eq(T.trip_id, id), inArray(T.status, ['DRAFT', 'PLANNED'])));
+      if ((res as { affectedRows?: number } | undefined)?.affectedRows === 0)
+        throw new BadRequestException('This trip has moved on since it was opened; it can no longer be assigned.');
       for (const [i, l] of lines.entries())
         await this.db.update(schema.logisticsTripLine)
           .set({ share_pct: dec(pct[i]), estimated_cost_share: dec(est.shares[i]), updated_by: user?.userId, updated_at: nowTs() } as never)
@@ -668,9 +684,26 @@ export class LogisticsTripService {
       const trip = await this.loadTrip(id, tenantId);
       const refused = canMove(trip.status as TripStatus, to);
       if (refused) throw new BadRequestException(refused);
+      if (DELIVERED.includes(to)) await this.assertAllShipped(trip, tenantId);
       await this.applyMove(trip, to, { at, hq: dto.hq_approval_ref, reason: dto.reason }, user);
       return this.findOne(id, tenantId);
     });
+  }
+
+  /**
+   * A trip marked arrived by hand while one of its TOs never shipped would strand that TO: it could no longer ship on
+   * the trip, the trip could not be cancelled, and the TO could not be planned again.
+   */
+  private async assertAllShipped(trip: Row, tenantId: string) {
+    const S = schema.stockTransfer;
+    const onTrip = (await this.db.select({ transfer_id: S.transfer_id, transfer_no: S.transfer_no, status: S.status, trip_id: S.trip_id }).from(S)
+      .where(and(eq(S.tenant_id, tenantId), eq(S.trip_id, trip.trip_id), isNull(S.deleted_at))))
+      .filter((t) => t.trip_id === trip.trip_id);
+    const unshipped = onTrip.find((t) => t.status === 'DRAFT');
+    if (unshipped)
+      throw new BadRequestException(
+        `Transfer order ${unshipped.transfer_no} has not shipped yet; ship it or cancel the trip before marking it arrived.`,
+      );
   }
 
   async cancel(id: string, dto: { reason?: string }, tenantId: string, user?: any) {
@@ -681,7 +714,12 @@ export class LogisticsTripService {
       const reason = String(dto?.reason ?? '').trim();
       if (!reason) throw new BadRequestException('A reason is required to cancel a trip.');
       const set = { status: 'CANCELLED', cancel_reason: reason.slice(0, 500), updated_by: user?.userId, updated_at: nowTs() };
-      await this.db.update(schema.logisticsTrip).set(set as never).where(eq(schema.logisticsTrip.trip_id, id));
+      // Guarded like assign: a trip that has left meanwhile is not cancelled, and its TOs stay on it.
+      const T = schema.logisticsTrip;
+      const [res] = await this.db.update(T).set(set as never)
+        .where(and(eq(T.trip_id, id), inArray(T.status, ['DRAFT', 'PLANNED', 'CONFIRMED'])));
+      if ((res as { affectedRows?: number } | undefined)?.affectedRows === 0)
+        throw new BadRequestException('This trip has moved on since it was opened; it can no longer be cancelled.');
       // The Transfer Orders are free to go on another trip.
       await this.db.update(schema.stockTransfer).set({ trip_id: null } as never)
         .where(and(eq(schema.stockTransfer.tenant_id, tenantId), eq(schema.stockTransfer.trip_id, id)));

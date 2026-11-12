@@ -44,9 +44,14 @@ const day = (s: string) => String(s).slice(0, 10);
 const startMs = (s: string) => Date.parse(s.length === 10 ? `${s}T00:00:00` : s);
 const endMs = (s: string) => Date.parse(s.length === 10 ? `${s}T23:59:59.999` : s);
 
-function busyReasons(departure: string, returnDate: string, busy: Interval[]): string[] {
+/**
+ * `returnAt` is the exact time the truck is back (naive local date-time). Without it the return day counts to its
+ * last millisecond, which makes a trip back at 10:00 clash with one leaving at 14:00 the same day — so callers that
+ * know the time pass it; `returnDate` stays for the document and licence expiry checks.
+ */
+function busyReasons(departure: string, returnDate: string, busy: Interval[], returnAt?: string): string[] {
   const aStart = startMs(departure);
-  const aEnd = endMs(returnDate);
+  const aEnd = returnAt ? Date.parse(returnAt) : endMs(returnDate);
   const out: string[] = [];
   for (const b of busy) {
     const bStart = Date.parse(b.start);
@@ -59,7 +64,7 @@ function busyReasons(departure: string, returnDate: string, busy: Interval[]): s
 
 export function vehicleExclusions(
   v: VehicleFacts,
-  trip: { type: VehicleType; load: number; departure: string; returnDate: string; warnPct?: number },
+  trip: { type: VehicleType; load: number; departure: string; returnDate: string; returnAt?: string; warnPct?: number },
   busy: Interval[],
 ): string[] {
   const out: string[] = [];
@@ -97,13 +102,13 @@ export function vehicleExclusions(
     }
   }
 
-  out.push(...busyReasons(trip.departure, trip.returnDate, busy));
+  out.push(...busyReasons(trip.departure, trip.returnDate, busy, trip.returnAt));
   return out;
 }
 
 export function driverExclusions(
   d: DriverFacts,
-  trip: { departure: string; returnDate: string; licenceClass?: string },
+  trip: { departure: string; returnDate: string; returnAt?: string; licenceClass?: string },
   busy: Interval[],
 ): string[] {
   const out: string[] = [];
@@ -114,6 +119,6 @@ export function driverExclusions(
   const want = (trip.licenceClass ?? '').trim();
   if (want && want.toLowerCase() !== String(d.licence_class ?? '').trim().toLowerCase())
     out.push(`Licence class ${d.licence_class ?? 'none'} does not cover class ${trip.licenceClass}.`);
-  out.push(...busyReasons(trip.departure, trip.returnDate, busy));
+  out.push(...busyReasons(trip.departure, trip.returnDate, busy, trip.returnAt));
   return out;
 }
