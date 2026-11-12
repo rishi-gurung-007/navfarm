@@ -1,11 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, count, desc, eq, inArray, isNull, ne, notInArray, sql, SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull, ne, notInArray, or, sql, SQL } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../core/database/schema';
 import { withTenantTransaction } from '../../common/tenant-transaction';
-import { assertCompanyInScope, farmOfLocation, farmScope, restrictedScopeConditions } from '../../common/farm-scope';
+import { assertCompanyInScope, farmOfLocation, farmScope, locationOnFarm, restrictedScopeConditions } from '../../common/farm-scope';
 import { companyCondition } from '../../common/master-data-scope';
 import { AuditLogService } from '../system/audit-log/audit-log.service';
 import { UomService } from '../master-data/uom/uom.service';
@@ -26,7 +26,7 @@ export type PlanTripInput = {
   vehicle_type: string;
   carrier_supplier_id?: string | null;
 };
-export type AssignTripInput = { vehicle_id: string; driver_id: string };
+export type AssignTripInput = { vehicle_id: string; driver_id: string; carrier_supplier_id?: string | null };
 export type MoveTripInput = { to: string; reason?: string; hq_approval_ref?: string; at?: string };
 export type TripListQuery = { status?: string; limit?: number | string; offset?: number | string };
 
@@ -100,8 +100,39 @@ export class LogisticsTripService {
 
   // ── Reads ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+  /**
+   * Which Transfer Orders the caller may see: the same rule as StockTransferService's findOne/loadForClose — a
+   * farm-bound or farm-selected caller sees TOs from or to their farm; a restricted caller, TOs touching their LOB.
+   * The company boundary is added by the caller of this, on whichever table it reads.
+   */
+  private transferScope(): SQL[] {
+    const scope = farmScope(this.cls);
+    const T = schema.stockTransfer;
+    const out: SQL[] = [];
+    if (scope.farmId) out.push(or(locationOnFarm(T.from_warehouse_id, scope.farmId), locationOnFarm(T.to_warehouse_id, scope.farmId))!);
+    if (scope.restricted && scope.lobId)
+      out.push(or(
+        sql`${T.from_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
+        sql`${T.to_warehouse_id} IN (SELECT lsl.location_id FROM location_master lsl WHERE lsl.lob_id = ${scope.lobId})`,
+      )!);
+    return out;
+  }
+
+  /**
+   * A trip is visible within the caller's company and, for a farm- or LOB-restricted caller, only when at least one
+   * of its TOs is (through its lines, which outlive a cancel that frees the TOs). Unrestricted callers see every trip.
+   */
   private scope(): SQL[] {
-    return restrictedScopeConditions(farmScope(this.cls), { companyId: schema.logisticsTrip.company_id });
+    const out = restrictedScopeConditions(farmScope(this.cls), { companyId: schema.logisticsTrip.company_id });
+    const onTransfers = this.transferScope();
+    if (onTransfers.length) {
+      const L = schema.logisticsTripLine;
+      const T = schema.stockTransfer;
+      out.push(sql`exists (select 1 from ${L} inner join ${T} on ${eq(T.transfer_id, L.transfer_id)} where ${and(
+        eq(L.trip_id, schema.logisticsTrip.trip_id), isNull(L.deleted_at), ...onTransfers,
+      )})`);
+    }
+    return out;
   }
 
   private async loadTrip(id: string, tenantId: string): Promise<Row> {
@@ -285,10 +316,18 @@ export class LogisticsTripService {
 
     return withTenantTransaction(this.cls, async () => {
       const transfers = await this.db.select().from(schema.stockTransfer)
-        .where(and(eq(schema.stockTransfer.tenant_id, tenantId), inArray(schema.stockTransfer.transfer_id, ids), isNull(schema.stockTransfer.deleted_at)))
+        .where(and(
+          eq(schema.stockTransfer.tenant_id, tenantId), inArray(schema.stockTransfer.transfer_id, ids), isNull(schema.stockTransfer.deleted_at),
+          ...restrictedScopeConditions(farmScope(this.cls), { companyId: schema.stockTransfer.company_id }), ...this.transferScope(),
+        ))
         // Locked so two planners cannot put one TO on two trips at once.
         .for('update');
-      if (ids.some((id) => !transfers.some((t) => t.transfer_id === id))) throw new NotFoundException('Transfer Order not found.');
+      // Out of the caller's scope reads as not found, as StockTransferService answers it.
+      const missing = ids.find((id) => !transfers.some((t) => t.transfer_id === id));
+      if (missing) throw new NotFoundException(`Transfer Order with ID '${missing}' not found.`);
+      // Ruling (12 Nov): only a TO not yet shipped, received or cancelled goes on a trip.
+      const notDraft = transfers.find((t) => t.status !== 'DRAFT');
+      if (notDraft) throw new BadRequestException(`This transfer order is ${notDraft.status} and cannot be planned onto a trip.`);
       if (new Set(transfers.map((t) => t.company_id)).size > 1)
         throw new BadRequestException('Transfer Orders of different companies cannot share a trip.');
       const companyId = transfers[0].company_id;
@@ -329,6 +368,27 @@ export class LogisticsTripService {
       await this.log('CREATE', created, user, undefined, { transfer_ids: ids });
       return created;
     });
+  }
+
+  /**
+   * The carrier a trip is priced on. A hired truck: its own carrier. Otherwise the carrier given with this assign;
+   * failing that, the carrier the trip already holds — but only while that is still the planner's, i.e. the trip has
+   * never had a hired truck put on it since (a hired truck's carrier is written over it, and an own truck must never
+   * be priced on the carrier of the truck it replaced). No column remembers the planner's carrier separately, so once a
+   * hired truck has been on the trip, an own truck needs the carrier in the assign body or is not estimated.
+   */
+  private async carrierFor(vehicle: Row, trip: Row, given: string | null | undefined, tenantId: string): Promise<string | null> {
+    if (vehicle.ownership === 'HIRED') return vehicle.carrier_supplier_id ?? null;
+    const carrier = given ? String(given).trim() || null : null;
+    if (carrier) {
+      await this.assertCarrier(carrier, trip.company_id, tenantId);
+      return carrier;
+    }
+    if (!trip.carrier_supplier_id) return null;
+    if (!trip.vehicle_id) return trip.carrier_supplier_id;
+    const [previous] = await this.db.select({ ownership: schema.logisticsVehicle.ownership }).from(schema.logisticsVehicle)
+      .where(and(eq(schema.logisticsVehicle.vehicle_id, trip.vehicle_id), eq(schema.logisticsVehicle.tenant_id, tenantId))).limit(1);
+    return previous?.ownership === 'HIRED' ? null : trip.carrier_supplier_id;
   }
 
   private async assertCarrier(carrierId: string, companyId: string, tenantId: string) {
@@ -533,7 +593,7 @@ export class LogisticsTripService {
         ));
 
       const check = ctx.load === null ? null : capacityCheck(ctx.load, this.capacityOf(vehicle, ctx.type), ctx.warnPct);
-      const carrierId = vehicle.ownership === 'HIRED' ? vehicle.carrier_supplier_id : trip.carrier_supplier_id;
+      const carrierId = await this.carrierFor(vehicle, trip, dto.carrier_supplier_id, tenantId);
       const lines = await this.linesOf(id, tenantId);
       const est = await this.estimate(route, ctx.departure, lines, carrierId ?? null, trip.company_id, tenantId);
       const pct = this.sharePct(lines);

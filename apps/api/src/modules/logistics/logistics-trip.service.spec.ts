@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
-import { transactionCls } from '../../test-utils/transaction-cls';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
+import { transactionCls, useFarmScope } from '../../test-utils/transaction-cls';
 import * as schema from '../../core/database/schema';
 import { AuditLogService } from '../system/audit-log/audit-log.service';
 import { UomService } from '../master-data/uom/uom.service';
@@ -18,16 +19,42 @@ describe('LogisticsTripService', () => {
   const audit = { log: jest.fn().mockResolvedValue({}) };
   const resolveConversionFactor = jest.fn();
 
-  const chain = (result: unknown[]) => {
+  /** The where clause each table was last read with, rendered, so a test can check the scope made it in. */
+  const lastWhere = new Map<unknown, { sql: string; params: unknown[] }>();
+  /** Locations on each farm — stands in for the database answering locationOnFarm. */
+  let farmLocations: Record<string, string[]> = {};
+  const render = (cond: any) => new MySqlDialect().sqlToQuery(cond);
+  const chain = (table: unknown) => {
+    let where: { sql: string; params: unknown[] } | undefined;
+    const result = () => {
+      const all = rows.get(table) ?? [];
+      // A Transfer Order read under a farm scope answers only for TOs from or to that farm, as MySQL would.
+      if (table === schema.stockTransfer && where?.sql.includes('farm_location_tree')) {
+        const farm = Object.keys(farmLocations).find((f) => where!.params.includes(f));
+        const on = farm ? farmLocations[farm] : [];
+        return all.filter((t) => on.includes(t.from_warehouse_id) || on.includes(t.to_warehouse_id));
+      }
+      // A vehicle read by its id answers with that vehicle only.
+      if (table === schema.logisticsVehicle && where && all.some((v) => where!.params.includes(v.vehicle_id)))
+        return all.filter((v) => where!.params.includes(v.vehicle_id));
+      return all;
+    };
     const self: any = {
-      from: () => self, innerJoin: () => self, leftJoin: () => self, where: () => self, orderBy: () => self,
+      from: () => self, innerJoin: () => self, leftJoin: () => self, orderBy: () => self,
+      where: (cond: unknown) => {
+        if (cond) {
+          where = render(cond);
+          lastWhere.set(table, where);
+        }
+        return self;
+      },
       limit: () => self, offset: () => self, for: () => self, groupBy: () => self,
-      then: (ok: any, err: any) => Promise.resolve(result).then(ok, err),
+      then: (ok: any, err: any) => Promise.resolve(result()).then(ok, err),
     };
     return self;
   };
   const db: any = {
-    select: jest.fn(() => ({ from: (t: unknown) => chain(rows.get(t) ?? []) })),
+    select: jest.fn(() => ({ from: (t: unknown) => chain(t) })),
     insert: jest.fn((table: unknown) => ({
       values: jest.fn(async (v: any) => {
         inserts.push({ table, values: v });
@@ -76,8 +103,12 @@ describe('LogisticsTripService', () => {
     transfer_ids: ['to-1'], planned_departure: '2026-11-20T06:00', route_id: 'rt-1', vehicle_type: 'BULK_FEED', ...over,
   });
 
+  let cls: ClsService;
+
   beforeEach(async () => {
     rows.clear();
+    lastWhere.clear();
+    farmLocations = {};
     inserts.length = 0;
     updates.length = 0;
     audit.log.mockClear();
@@ -105,7 +136,7 @@ describe('LogisticsTripService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LogisticsTripService,
-        { provide: ClsService, useValue: transactionCls(db) },
+        { provide: ClsService, useValue: (cls = transactionCls(db)) },
         { provide: AuditLogService, useValue: audit },
         { provide: UomService, useValue: { resolveConversionFactor } },
       ],
@@ -127,6 +158,43 @@ describe('LogisticsTripService', () => {
         'Transfer Orders of different companies cannot share a trip.',
       );
       expect(inserts).toHaveLength(0);
+    });
+
+    it('plans only DRAFT Transfer Orders', async () => {
+      for (const status of ['CANCELLED', 'POSTED', 'IN_TRANSIT', 'PARTIALLY_RECEIVED']) {
+        rows.set(schema.stockTransfer, [to({ status })]);
+        await expect(service.plan(planBody(), 't1')).rejects.toThrow(`This transfer order is ${status} and cannot be planned onto a trip.`);
+      }
+      expect(inserts).toHaveLength(0);
+      expect(updates).toHaveLength(0);
+    });
+
+    it("a farm-restricted caller cannot plan another farm's Transfer Order", async () => {
+      useFarmScope(cls, { farmId: 'farm-2', restricted: true, farmBound: true, companyId: company, lobId: null });
+      farmLocations = { 'farm-1': ['bin-1', 'silo-1'], 'farm-2': ['silo-2'] };
+      await expect(service.plan(planBody(), 't1')).rejects.toThrow("Transfer Order with ID 'to-1' not found.");
+      expect(lastWhere.get(schema.stockTransfer)!.sql).toContain('farm_location_tree');
+      expect(inserts).toHaveLength(0);
+      expect(updates).toHaveLength(0);
+    });
+
+    it('a farm-restricted caller can plan a Transfer Order to or from their farm, and sees trips only through their TOs', async () => {
+      rows.set(schema.logisticsTrip, []);
+      useFarmScope(cls, { farmId: 'farm-1', restricted: true, farmBound: true, companyId: company, lobId: null });
+      farmLocations = { 'farm-1': ['bin-1', 'silo-1'] };
+      await service.plan(planBody(), 't1');
+      expect(inserts.find((i) => i.table === schema.logisticsTrip)).toBeDefined();
+      const tripRead = lastWhere.get(schema.logisticsTrip)!;
+      expect(tripRead.sql).toContain('exists (select 1 from `logistics_trip_line`');
+      expect(tripRead.params).toContain('farm-1');
+    });
+
+    it('an unrestricted caller plans any Transfer Order of the tenant, and reads trips without a farm condition', async () => {
+      rows.set(schema.logisticsTrip, []);
+      await service.plan(planBody(), 't1');
+      expect(inserts.find((i) => i.table === schema.logisticsTrip)).toBeDefined();
+      expect(lastWhere.get(schema.stockTransfer)!.sql).not.toContain('farm_location_tree');
+      expect(lastWhere.get(schema.logisticsTrip)!.sql).not.toContain('logistics_trip_line');
     });
 
     it('requires the truck type', async () => {
@@ -203,6 +271,44 @@ describe('LogisticsTripService', () => {
         expect.objectContaining({ estimated_cost_share: '250.00', share_pct: '25.00' }),
       ]);
       expect(inserts.find((i) => i.table === schema.logisticsTripCost)!.values).toMatchObject({ cost_type: 'FREIGHT', amount: '1000.00', is_estimate: true });
+    });
+
+    describe('carrier on re-assign', () => {
+      const rate = (carrier: string, r: string) => ({
+        rate_id: `r-${carrier}`, carrier_supplier_id: carrier, route_id: 'rt-1', rate_basis: 'KM', rate: r, minimum_charge: null,
+        fuel_surcharge_pct: null, valid_from: '2026-01-01', valid_to: null, approval_status: 'APPROVED',
+      });
+      beforeEach(() => {
+        rows.set(schema.logisticsVehicle, [
+          truck({ vehicle_id: 'v-hired', ownership: 'HIRED', carrier_supplier_id: 'sup-A' }),
+          truck({ vehicle_id: 'v-own', registration_no: 'OWN 1', ownership: 'OWN' }),
+        ]);
+        rows.set(schema.logisticsFreightRate, [rate('sup-A', '10.0000'), rate('sup-B', '20.0000')]);
+        rows.set(schema.supplierMaster, [{ supplier_id: 'sup-B' }]);
+        rows.set(schema.logisticsVehicleDocument, [{ ...insurance, vehicle_id: 'v-hired' }, { ...insurance, vehicle_id: 'v-own' }]);
+      });
+      // The trip as the first assign (hired truck, carrier A) left it.
+      const afterHired = () => trip({ status: 'PLANNED', load_value: '20000.00', vehicle_id: 'v-hired', driver_id: 'dr-1', carrier_supplier_id: 'sup-A' });
+
+      it('an OWN truck after a hired one is not priced on the hired carrier', async () => {
+        rows.set(schema.logisticsTrip, [afterHired()]);
+        await service.assign('trip-1', { vehicle_id: 'v-own', driver_id: 'dr-1' }, 't1');
+        const set = updates.find((u) => u.table === schema.logisticsTrip)!.set;
+        expect(set).toMatchObject({ vehicle_id: 'v-own', carrier_supplier_id: null, estimated_cost: null });
+        expect(set.estimate_note).toContain('No approved freight rate.');
+      });
+
+      it('an OWN truck with a carrier in the assign body is priced on that carrier', async () => {
+        rows.set(schema.logisticsTrip, [afterHired()]);
+        await service.assign('trip-1', { vehicle_id: 'v-own', driver_id: 'dr-1', carrier_supplier_id: 'sup-B' }, 't1');
+        expect(updates.find((u) => u.table === schema.logisticsTrip)!.set).toMatchObject({ carrier_supplier_id: 'sup-B', estimated_cost: '2000.00' });
+      });
+
+      it("an OWN truck on a trip never given a hired one keeps the planner's carrier", async () => {
+        rows.set(schema.logisticsTrip, [trip({ load_value: '20000.00', carrier_supplier_id: 'sup-B' })]);
+        await service.assign('trip-1', { vehicle_id: 'v-own', driver_id: 'dr-1' }, 't1');
+        expect(updates.find((u) => u.table === schema.logisticsTrip)!.set).toMatchObject({ carrier_supplier_id: 'sup-B', estimated_cost: '2000.00' });
+      });
     });
 
     it('never estimates 0 when there is no approved rate', async () => {
