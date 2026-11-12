@@ -634,7 +634,9 @@ export class LogisticsTripService {
   }
 
   /** Writes one status step. Callers have already decided the step is allowed. */
-  private async applyMove(trip: Row, to: TripStatus, opts: { at?: string | null; hq?: string; reason?: string }, user?: any): Promise<Row> {
+  private async applyMove(
+    trip: Row, to: TripStatus, opts: { at?: string | null; hq?: string; reason?: string; onlyFrom?: TripStatus }, user?: any,
+  ): Promise<Row> {
     const set: Row = { status: to, updated_by: user?.userId, updated_at: nowTs() };
     if (to === 'CONFIRMED') {
       const given = String(opts.hq ?? '').trim();
@@ -646,7 +648,11 @@ export class LogisticsTripService {
     const stamp = STAMP[to];
     if (stamp) set[stamp] = opts.at ? toDb(opts.at) : localNow();
     if (to === 'CLOSED') set.closed_at = localNow();
-    await this.db.update(schema.logisticsTrip).set(set as never).where(eq(schema.logisticsTrip.trip_id, trip.trip_id));
+    const T = schema.logisticsTrip;
+    const [res] = await this.db.update(T).set(set as never)
+      .where(opts.onlyFrom ? and(eq(T.trip_id, trip.trip_id), eq(T.status, opts.onlyFrom)) : eq(T.trip_id, trip.trip_id));
+    // A guarded move that found the trip already moved on changes nothing, and logs nothing.
+    if (opts.onlyFrom && (res as { affectedRows?: number } | undefined)?.affectedRows === 0) return trip;
     const after = { ...trip, ...set };
     await this.log('STATUS_CHANGE', after, user, trip, opts.reason ? { reason: opts.reason } : undefined);
     return after;
@@ -692,13 +698,26 @@ export class LogisticsTripService {
   }
 
   /**
+   * The trip for the Transfer Order's own hooks: by tenant and id only. StockTransferService has already decided the
+   * caller may act on the TO (a requisition's shipment deliberately skips the caller's TO scope), so the caller's trip
+   * scope must not refuse it here, after the stock has moved. The HTTP-facing methods keep loadTrip's scope.
+   */
+  private async tripById(id: string, tenantId: string): Promise<Row | null> {
+    const T = schema.logisticsTrip;
+    const [trip] = await this.db.select().from(T)
+      .where(and(eq(T.trip_id, id), eq(T.tenant_id, tenantId), isNull(T.deleted_at))).limit(1);
+    return trip ?? null;
+  }
+
+  /**
    * The TO has shipped: the trip leaves. Service-internal, so it may take a PLANNED trip through CONFIRMED to
    * IN_TRANSIT in one go (Ruling, 12 Nov) — the Colcom approval rule still applies on the way. A trip already on the
    * road (a second, partial shipment) is left as it is.
    */
   async onShipped(tripId: string, tenantId: string, userPayload?: any): Promise<Row> {
     return withTenantTransaction(this.cls, async () => {
-      let trip = await this.loadTrip(tripId, tenantId);
+      let trip = await this.tripById(tripId, tenantId);
+      if (!trip) throw new NotFoundException('Trip not found.');
       this.assertLive(trip);
       if (trip.status === 'DRAFT') throw new BadRequestException('Assign a vehicle and a driver to this trip before it ships.');
       if (trip.status === 'PLANNED') trip = await this.applyMove(trip, 'CONFIRMED', {}, userPayload);
@@ -707,14 +726,22 @@ export class LogisticsTripService {
     });
   }
 
-  /** The TO is received in full: the trip has arrived. A trip already past arrival is left as it is. */
-  async onArrived(tripId: string, tenantId: string, userPayload?: any): Promise<Row> {
+  /**
+   * A TO on this trip has been received in full. Best-effort, and never refuses: a receipt must always post (Ruling,
+   * 12 Nov, Task 5 review). The trip moves IN_TRANSIT -> ARRIVED only when every live TO on it is received in full —
+   * RECEIVED (the two-step receive and close) or POSTED (the event receipts) — so a TO still to ship keeps the trip on
+   * the road. In any other state (closed, cancelled, already arrived, not yet left, gone) nothing happens. The update
+   * itself is guarded on the trip still being IN_TRANSIT.
+   */
+  async onArrived(tripId: string, tenantId: string, userPayload?: any): Promise<Row | null> {
     return withTenantTransaction(this.cls, async () => {
-      const trip = await this.loadTrip(tripId, tenantId);
-      this.assertLive(trip);
-      if (trip.status === 'IN_TRANSIT') return this.applyMove(trip, 'ARRIVED', {}, userPayload);
-      if (['DRAFT', 'PLANNED', 'CONFIRMED'].includes(trip.status)) throw new BadRequestException('This trip has not left yet.');
-      return trip;
+      const trip = await this.tripById(tripId, tenantId);
+      if (!trip || trip.status !== 'IN_TRANSIT') return trip;
+      const S = schema.stockTransfer;
+      const transfers = await this.db.select({ trip_id: S.trip_id, status: S.status }).from(S)
+        .where(and(eq(S.tenant_id, tenantId), eq(S.trip_id, tripId), isNull(S.deleted_at)));
+      if (transfers.some((t) => t.trip_id === tripId && !['RECEIVED', 'POSTED'].includes(String(t.status)))) return trip;
+      return this.applyMove(trip, 'ARRIVED', { onlyFrom: 'IN_TRANSIT' }, userPayload);
     });
   }
 

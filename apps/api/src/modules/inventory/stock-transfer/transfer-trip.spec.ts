@@ -9,7 +9,8 @@
  * Read order per call, as in transfer-execution.service.spec.ts, plus the trip's:
  *   tripRequiredToShip (untripped TO only) → logisticsSetting ×1 (then cached)
  *   assertTripFor                         → stockTransfer, logisticsTrip, logisticsVehicle, logisticsDriver
- *   onShipped / onArrived                 → logisticsTrip (loadTrip), logisticsRoute (Colcom check, on CONFIRMED)
+ *   onShipped                             → logisticsTrip (by tenant and id), logisticsRoute (Colcom check, on CONFIRMED)
+ *   onArrived                             → logisticsTrip (by tenant and id), stockTransfer (every TO on the trip)
  */
 import { BadRequestException } from '@nestjs/common';
 import type { ClsService } from 'nestjs-cls';
@@ -343,6 +344,67 @@ describe('Task 5 — (e) the receipt that completes the TO: the trip has arrived
   });
 });
 
+describe('Task 5 fix — a trip never blocks a receipt, and arrives only with all its TOs', () => {
+  const TO2 = { ...TRANSFER, transfer_id: 'tr-2', transfer_no: 'TR-2026-0002', trip_id: 'trip-1' };
+  /** postReceipt of the whole of tr-1 against SH-1; `onTrip` is what the arrival check finds on the trip. */
+  function fullReceipt(tripStatus: string, onTrip: Record<string, unknown>[] = []) {
+    const queues = shipmentQueues({ ...TRIPPED, status: 'IN_TRANSIT' });
+    queues.get(schema.stockTransfer)!.push(onTrip.map((t) => ({ ...t })));
+    queues.set(schema.transferShipment, [[{ ...SHIPMENT }]]);
+    queues.set(schema.transferShipmentLine, [[{ line_id: 'line-1', qty: '10' }], [{ ...SHIPMENT_LINE }]]);
+    queues.set(schema.transferReceiptLine, [[], []]);
+    queues.set(schema.logisticsTrip, [[{ ...TRIP, status: tripStatus }]]);
+    return queues;
+  }
+  const receiveAll = { posting_date: '2026-10-04', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 10 }] };
+
+  for (const status of ['CLOSED', 'CANCELLED', 'ARRIVED']) {
+    it(`postReceipt posts when the trip is ${status}, and leaves the trip as it is`, async () => {
+      const { service, as, updatesOf } = setup(fullReceipt(status));
+      const result = await as(() => service.postReceipt('tr-1', receiveAll, 'tenant-1', ADMIN));
+      expect(result.receipt_no).toMatch(/^RC-/);
+      expect(updatesOf(schema.stockTransfer).map((u) => u.status)).toEqual(['POSTED']);
+      expect(updatesOf(schema.logisticsTrip)).toHaveLength(0);
+    });
+
+    it(`receive() posts when the trip is ${status}`, async () => {
+      const transfer = { ...TRIPPED, status: 'IN_TRANSIT' };
+      const queues = shipmentQueues(transfer);
+      queues.set(schema.logisticsTrip, [[{ ...TRIP, status }]]);
+      const { service, as, updatesOf } = setup(queues);
+      jest.spyOn(service as any, 'getLedgerHistory').mockResolvedValue([
+        { document_line_id: 'line-1', item_id: 'item-1', transaction_type: 'TRANSFER_SHIPMENT', quantity: '-10', rate: '2.5', created_by: null },
+      ]);
+      jest.spyOn(service as any, 'assertSiloDestination').mockResolvedValue(undefined);
+      jest.spyOn(service, 'findOne').mockResolvedValue({ ...transfer } as any);
+      await as(() => service.receive('tr-1', { lines: [{ line_id: 'line-1', received_quantity: 10 }] } as any, 'tenant-1', ADMIN));
+      expect(updatesOf(schema.stockTransfer)[0].status).toBe('RECEIVED');
+      expect(updatesOf(schema.logisticsTrip)).toHaveLength(0);
+    });
+  }
+
+  it('two TOs on one trip: TO1 received leaves the trip IN_TRANSIT, TO2 still ships, and TO2 received makes it ARRIVED', async () => {
+    // 1. TO1 received in full while TO2 has not shipped: the trip stays on the road.
+    const first = setup(fullReceipt('IN_TRANSIT', [{ ...TRIPPED, status: 'POSTED' }, { ...TO2, status: 'DRAFT' }]));
+    await first.as(() => first.service.postReceipt('tr-1', receiveAll, 'tenant-1', ADMIN));
+    expect(first.updatesOf(schema.logisticsTrip)).toHaveLength(0);
+
+    // 2. TO2 ships on the trip, which is IN_TRANSIT: accepted, and the trip is left as it is.
+    const shipQueues = withTrip(shipmentQueues(TO2), { ...TRIP, status: 'IN_TRANSIT' }, TO2);
+    shipQueues.get(schema.stockTransferLine)![0] = [{ ...LINE, transfer_id: 'tr-2' }];
+    const second = setup(shipQueues);
+    const shipped = await second.as(() => second.service.postShipment('tr-2', shipBody, 'tenant-1', ADMIN));
+    expect(shipped.shipment_no).toMatch(/^SH-/);
+    expect(second.updatesOf(schema.logisticsTrip)).toHaveLength(0);
+    expect(second.updatesOf(schema.stockTransfer)).toContainEqual({ vehicle_no: 'ABC 123' });
+
+    // 3. TO2 received in full: every TO on the trip is received, so the trip has arrived.
+    const third = setup(fullReceipt('IN_TRANSIT', [{ ...TRIPPED, status: 'POSTED' }, { ...TO2, status: 'POSTED' }]));
+    await third.as(() => third.service.postReceipt('tr-1', receiveAll, 'tenant-1', ADMIN));
+    expect(third.updatesOf(schema.logisticsTrip).map((u) => u.status)).toEqual(['ARRIVED']);
+  });
+});
+
 describe('Task 5 — (f) postDirectTransfer follows the same rule', () => {
   /** transfer-execution.service.spec.ts's directQueues, for the whole order in one step. */
   function directQueues(transfer: Record<string, unknown>) {
@@ -386,8 +448,11 @@ describe('Task 5 — (f) postDirectTransfer follows the same rule', () => {
 
   it('a PLANNED trip: ships, takes the truck, and the trip goes IN_TRANSIT then ARRIVED', async () => {
     const queues = directQueues(TRIPPED);
-    // Reads of the TO: outer load, postShipment's load, assertTripFor, postReceipt's load, findOne (+ its trip).
-    queues.set(schema.stockTransfer, [[{ ...TRIPPED }], [{ ...TRIPPED }], [{ ...TRIPPED }], [{ ...TRIPPED }], [{ ...TRIPPED }], [{ ...TRIPPED }]]);
+    // Reads of the TO: outer load, postShipment's load, assertTripFor, postReceipt's load, onArrived's check of every
+    // TO on the trip (this one, now POSTED), findOne (+ its trip).
+    queues.set(schema.stockTransfer, [
+      [{ ...TRIPPED }], [{ ...TRIPPED }], [{ ...TRIPPED }], [{ ...TRIPPED }], [{ ...TRIPPED, status: 'POSTED' }], [{ ...TRIPPED }], [{ ...TRIPPED }],
+    ]);
     queues.set(schema.logisticsTrip, [
       [{ ...TRIP }],                            // assertTripFor
       [{ ...TRIP }],                            // onShipped's loadTrip

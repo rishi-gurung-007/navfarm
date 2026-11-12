@@ -387,6 +387,80 @@ describe('LogisticsTripService', () => {
       await expect(service.assertTripFor('to-1', 't1')).resolves.toBeNull();
     });
 
+    describe('onArrived never blocks a receipt (Task 5 fix)', () => {
+      const tripUpdates = () => updates.filter((u) => u.table === schema.logisticsTrip);
+
+      for (const status of ['CLOSED', 'CANCELLED', 'ARRIVED', 'POD_RECEIVED', 'PLANNED', 'CONFIRMED', 'DRAFT']) {
+        it(`a ${status} trip is left as it is, without an error`, async () => {
+          rows.set(schema.logisticsTrip, [trip({ status, vehicle_id: 'v-1' })]);
+          await expect(service.onArrived('trip-1', 't1')).resolves.not.toThrow();
+          expect(tripUpdates()).toHaveLength(0);
+        });
+      }
+
+      it('a missing trip is no error', async () => {
+        rows.set(schema.logisticsTrip, []);
+        await expect(service.onArrived('trip-1', 't1')).resolves.toBeNull();
+        expect(tripUpdates()).toHaveLength(0);
+      });
+
+      it('the trip arrives only when every live TO on it is received', async () => {
+        rows.set(schema.logisticsTrip, [trip({ status: 'IN_TRANSIT', vehicle_id: 'v-1' })]);
+        rows.set(schema.stockTransfer, [
+          to({ trip_id: 'trip-1', status: 'POSTED' }),
+          to({ transfer_id: 'to-2', transfer_no: 'TR-000002', trip_id: 'trip-1', status: 'IN_TRANSIT' }),
+        ]);
+        await service.onArrived('trip-1', 't1');
+        expect(tripUpdates()).toHaveLength(0);
+        const read = lastWhere.get(schema.stockTransfer)!;
+        expect(read.sql).toContain('`deleted_at` is null');
+        expect(read.params).toEqual(expect.arrayContaining(['t1', 'trip-1']));
+
+        rows.set(schema.stockTransfer, [
+          to({ trip_id: 'trip-1', status: 'POSTED' }),
+          to({ transfer_id: 'to-2', transfer_no: 'TR-000002', trip_id: 'trip-1', status: 'RECEIVED' }),
+        ]);
+        await service.onArrived('trip-1', 't1');
+        expect(tripUpdates().map((u) => u.set.status)).toEqual(['ARRIVED']);
+      });
+
+      it('the arrival update is guarded on the trip still being IN_TRANSIT', async () => {
+        rows.set(schema.logisticsTrip, [trip({ status: 'IN_TRANSIT', vehicle_id: 'v-1' })]);
+        await service.onArrived('trip-1', 't1');
+        // db.update is not cleared between tests: the trip update this test made is the last one.
+        const i = db.update.mock.calls.map((c: unknown[]) => c[0]).lastIndexOf(schema.logisticsTrip);
+        const where = db.update.mock.results[i].value.set.mock.results[0].value.where.mock.calls[0][0];
+        const q = render(where);
+        expect(q.sql).toContain('`status` = ?');
+        expect(q.params).toEqual(expect.arrayContaining(['trip-1', 'IN_TRANSIT']));
+      });
+    });
+
+    describe("the Transfer Order's hooks load the trip by tenant and id only (Task 5 fix)", () => {
+      beforeEach(() => {
+        useFarmScope(cls, { farmId: 'farm-2', restricted: true, farmBound: true, companyId: 'co-9', lobId: 'lob-9' });
+        farmLocations = { 'farm-1': ['bin-1', 'silo-1'], 'farm-2': ['silo-2'] };
+      });
+
+      it('onShipped', async () => {
+        rows.set(schema.logisticsTrip, [trip({ status: 'CONFIRMED', vehicle_id: 'v-1', driver_id: 'dr-1' })]);
+        await service.onShipped('trip-1', 't1');
+        const read = lastWhere.get(schema.logisticsTrip)!;
+        expect(read.sql).not.toContain('logistics_trip_line');
+        expect(read.params).not.toEqual(expect.arrayContaining(['co-9']));
+        expect(updates.filter((u) => u.table === schema.logisticsTrip).map((u) => u.set.status)).toEqual(['IN_TRANSIT']);
+      });
+
+      it('onArrived', async () => {
+        rows.set(schema.logisticsTrip, [trip({ status: 'IN_TRANSIT', vehicle_id: 'v-1' })]);
+        await service.onArrived('trip-1', 't1');
+        const read = lastWhere.get(schema.logisticsTrip)!;
+        expect(read.sql).not.toContain('logistics_trip_line');
+        expect(read.params).not.toEqual(expect.arrayContaining(['co-9']));
+        expect(updates.filter((u) => u.table === schema.logisticsTrip).map((u) => u.set.status)).toEqual(['ARRIVED']);
+      });
+    });
+
     describe('tripRequiredToShip', () => {
       const settingReads = () => db.select.mock.results.length; // every select in these tests is the setting read
       afterEach(() => jest.useRealTimers());
