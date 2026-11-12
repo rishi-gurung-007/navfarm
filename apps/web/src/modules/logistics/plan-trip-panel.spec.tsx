@@ -1,6 +1,6 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
-import { PlanTripPanel, TripFreeTextGate, resetTripSettingCache } from './plan-trip-panel';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { PlanTripPanel, TripFreeTextGate, resetTripSettingCache, tripRequiredToShip } from './plan-trip-panel';
 
 // The screen's own English strings, so the assertions read what the user reads.
 jest.mock('@/hooks/useLanguage', () => {
@@ -10,6 +10,18 @@ jest.mock('@/hooks/useLanguage', () => {
   return { useLanguage: () => ({ t }) };
 });
 jest.mock('@/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn(), put: jest.fn() } }));
+jest.mock('@/components/ui/toast', () => ({ showToast: { success: jest.fn(), error: jest.fn() } }));
+// The shared picker is a popover; a native select stands in for it so the form can be filled.
+jest.mock('@/components/ui/searchable-select', () => ({
+  SearchableSelect: ({ ariaLabel, value, onChange, options, valueKey = 'value', labelKey = 'label', getLabel }: any) => (
+    <select aria-label={ariaLabel} value={value ?? ''} onChange={(e) => onChange(e.target.value)}>
+      <option value="" />
+      {options.map((o: any) => (
+        <option key={o[valueKey]} value={o[valueKey]}>{getLabel ? getLabel(o) : o[labelKey]}</option>
+      ))}
+    </select>
+  ),
+}));
 
 const { api } = jest.requireMock('@/services/api-client') as { api: Record<'get' | 'post' | 'put', jest.Mock> };
 
@@ -85,5 +97,79 @@ describe('TripFreeTextGate', () => {
       Promise.resolve({ data: path.startsWith('/logistics/setting') ? [{ trip_required_to_ship: 1 }] : [] }));
     render(<TripFreeTextGate transfer={{ transfer_id: 'to-1', status: 'DRAFT', trip: null }}>{fields}</TripFreeTextGate>);
     await waitFor(() => expect(screen.queryByLabelText('Vehicle / Truck Plate #')).toBeNull());
+  });
+});
+
+describe('PlanTripPanel — planning and cancelling', () => {
+  const draftTo = { transfer_id: 'to-1', status: 'DRAFT', trip: null, to_warehouse_id: 'loc-dest' };
+  const withDestination = (location: Record<string, string>) =>
+    api.get.mockImplementation((path: string) => {
+      if (path.startsWith('/logistics/route')) return Promise.resolve({ data: [{ route_id: 'r-1', route_code: 'R-MILL-F1' }] });
+      if (path === '/location/loc-dest') return Promise.resolve({ data: location });
+      if (path.startsWith('/logistics/trip/')) return Promise.resolve({ data: tripDetail });
+      return Promise.resolve({ data: [] });
+    });
+
+  it('posts the plan with the TO, the route, the typed local departure and the truck type', async () => {
+    withDestination({ location_id: 'loc-dest', location_type: 'STORE', location_name: 'Farm 1 Feed Store' });
+    api.post.mockResolvedValue({ data: tripDetail });
+    const onChanged = jest.fn();
+    render(<PlanTripPanel transfer={draftTo} onChanged={onChanged} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Plan Trip' }));
+    await screen.findByRole('option', { name: 'R-MILL-F1' });
+    fireEvent.change(screen.getByLabelText('Route'), { target: { value: 'r-1' } });
+    fireEvent.change(screen.getByLabelText('Planned Departure'), { target: { value: '2026-11-13T06:30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Plan' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    expect(api.post).toHaveBeenCalledWith('/logistics/trip/plan', {
+      transfer_ids: ['to-1'],
+      planned_departure: '2026-11-13T06:30',
+      route_id: 'r-1',
+      vehicle_type: 'BAGGED_FEED',
+    });
+    await waitFor(() => expect(onChanged).toHaveBeenCalledWith(expect.objectContaining({ trip_id: 'trip-1', trip_no: 'TRP-000001' })));
+  });
+
+  it('guesses Bulk Feed for a silo destination and Bagged Feed otherwise', async () => {
+    withDestination({ location_id: 'loc-dest', location_type: 'SILO', location_name: 'Silo 3' });
+    const silo = render(<PlanTripPanel transfer={draftTo} onChanged={jest.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Plan Trip' }));
+    await waitFor(() => expect((screen.getByLabelText('Truck Type') as HTMLSelectElement).value).toBe('BULK_FEED'));
+    silo.unmount();
+
+    withDestination({ location_id: 'loc-dest', location_type: 'STORE', location_name: 'Farm 1 Feed Store' });
+    render(<PlanTripPanel transfer={draftTo} onChanged={jest.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Plan Trip' }));
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/location/loc-dest'));
+    await screen.findByRole('option', { name: 'R-MILL-F1' });
+    expect((screen.getByLabelText('Truck Type') as HTMLSelectElement).value).toBe('BAGGED_FEED');
+  });
+
+  it('sends no cancel while the reason is empty', async () => {
+    render(<PlanTripPanel transfer={{ transfer_id: 'to-1', status: 'DRAFT', trip }} onChanged={jest.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel Trip' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel the trip' }));
+    expect(await screen.findByText('Give a reason to cancel the trip.')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Reason for cancelling'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel the trip' }));
+    expect(api.post).not.toHaveBeenCalled();
+
+    api.post.mockResolvedValue({ data: { ...tripDetail, status: 'CANCELLED' } });
+    fireEvent.change(screen.getByLabelText('Reason for cancelling'), { target: { value: 'Mill breakdown' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel the trip' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/logistics/trip/trip-1/cancel', { reason: 'Mill breakdown' }));
+  });
+});
+
+describe('tripRequiredToShip', () => {
+  it('does not remember a failed read: the next read asks again', async () => {
+    api.get.mockRejectedValueOnce(new Error('Forbidden'));
+    await expect(tripRequiredToShip('co-1')).resolves.toBe(false);
+    api.get.mockResolvedValueOnce({ data: [{ company_id: 'co-1', trip_required_to_ship: true }] });
+    await expect(tripRequiredToShip('co-1')).resolves.toBe(true);
+    expect(api.get).toHaveBeenCalledTimes(2);
+    // A successful read is kept.
+    await expect(tripRequiredToShip('co-1')).resolves.toBe(true);
+    expect(api.get).toHaveBeenCalledTimes(2);
   });
 });

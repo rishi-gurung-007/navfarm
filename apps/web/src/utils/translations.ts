@@ -5731,7 +5731,7 @@ export const translations = {
     trpAt: 'When (optional)',
     trpAtHint: 'Leave blank for now.',
     trpHqApprovalRef: 'HQ Approval Ref.',
-    trpHqApprovalHint: 'A trip to Colcom needs the HQ approval reference before it is confirmed.',
+    trpHqApprovalHint: 'For a trip to Colcom: enter HQ\'s approval reference, then confirm again.',
     trpCancelReasonShown: 'Cancelled: {{reason}}',
     trpAccessDenied: 'You do not have access to Trips.',
   },

@@ -216,8 +216,9 @@ function TripDetail({ tripId, onBack }: { tripId: string; onBack: () => void }) 
     } catch (err) {
       const message = errorText(err);
       setError(message);
-      // The server refuses CONFIRMED on a trip to Colcom without HQ's reference: ask for it.
-      if (next.to === 'CONFIRMED' && /HQ approval/i.test(message)) setAskHq(true);
+      // Any refused Confirm offers the HQ approval reference (a trip to Colcom needs one); the server's own words stay
+      // above it, whatever they are, and the user may fill it in and try again.
+      if (next.to === 'CONFIRMED') setAskHq(true);
     } finally {
       setBusy(false);
     }
@@ -295,6 +296,7 @@ function TripDetail({ tripId, onBack }: { tripId: string; onBack: () => void }) 
                     value={hqRef}
                     onChange={(e) => setHqRef(e.target.value)}
                   />
+                  <span className="text-[11px] text-[var(--text-muted)]">{t('trpHqApprovalHint')}</span>
                 </div>
               )}
               <Button type="button" onClick={() => void move()} disabled={busy}>

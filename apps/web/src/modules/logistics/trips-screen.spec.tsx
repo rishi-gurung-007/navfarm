@@ -53,4 +53,16 @@ describe('TripsScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     await waitFor(() => expect(api.post).toHaveBeenLastCalledWith('/logistics/trip/trip-1/move', { to: 'CONFIRMED', hq_approval_ref: 'HQ-77' }));
   });
+
+  it('offers the HQ reference on any refused Confirm, whatever the server says', async () => {
+    api.post.mockRejectedValueOnce(new Error('The trip cannot be confirmed yet.'));
+    render(<TripsScreen />);
+    fireEvent.click(await screen.findByText('TRP-000001'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(screen.getByText('The trip cannot be confirmed yet.')).toBeTruthy());
+    fireEvent.change(screen.getByLabelText('HQ Approval Ref.'), { target: { value: 'HQ-12' } });
+    api.post.mockResolvedValueOnce({ data: { ...detail, status: 'CONFIRMED' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(api.post).toHaveBeenLastCalledWith('/logistics/trip/trip-1/move', { to: 'CONFIRMED', hq_approval_ref: 'HQ-12' }));
+  });
 });

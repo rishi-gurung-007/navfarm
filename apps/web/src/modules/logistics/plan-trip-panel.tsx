@@ -43,26 +43,27 @@ export function resetTripSettingCache() {
 }
 
 /**
- * logistics_setting.trip_required_to_ship for the TO's company, read once per page load. A user who may not read the
- * Logistics Settings is treated as "off": the server still refuses an untripped shipment when it is on.
+ * logistics_setting.trip_required_to_ship for the TO's company. A successful read is kept for the page's life; a
+ * failed one (a passing network fault, or no Logistics Settings view) answers false for that call only and is not
+ * kept, so the next mount asks again. The server still refuses an untripped shipment when the setting is on.
  */
-function tripRequiredToShip(companyId: string | null | undefined): Promise<boolean> {
+export function tripRequiredToShip(companyId: string | null | undefined): Promise<boolean> {
   const key = companyId ?? '';
-  let hit = settingCache.get(key);
-  if (!hit) {
-    hit = api
-      .get('/logistics/setting')
-      .then((res) => {
-        const rows = unwrap<Row[]>(res);
-        const list = Array.isArray(rows) ? rows : [];
-        const row = list.find((r) => companyId && r.company_id === companyId) ?? list[0];
-        const v = row?.trip_required_to_ship;
-        return v === true || v === 1 || v === '1' || v === 'true';
-      })
-      .catch(() => false);
-    settingCache.set(key, hit);
-  }
-  return hit;
+  const hit = settingCache.get(key);
+  if (hit) return hit;
+  const read = api.get('/logistics/setting').then((res) => {
+    const rows = unwrap<Row[]>(res);
+    const list = Array.isArray(rows) ? rows : [];
+    const row = list.find((r) => companyId && r.company_id === companyId) ?? list[0];
+    const v = row?.trip_required_to_ship;
+    return v === true || v === 1 || v === '1' || v === 'true';
+  });
+  // Cached while in flight so concurrent mounts share one request; dropped again if it fails.
+  settingCache.set(key, read);
+  return read.catch(() => {
+    if (settingCache.get(key) === read) settingCache.delete(key);
+    return false;
+  });
 }
 
 function useTripRequiredToShip(companyId: string | null | undefined): boolean {
