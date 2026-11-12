@@ -386,5 +386,40 @@ describe('LogisticsTripService', () => {
       rows.set(schema.stockTransfer, [to()]);
       await expect(service.assertTripFor('to-1', 't1')).resolves.toBeNull();
     });
+
+    describe('tripRequiredToShip', () => {
+      const settingReads = () => db.select.mock.results.length; // every select in these tests is the setting read
+      afterEach(() => jest.useRealTimers());
+
+      it('is false when the company has no setting row', async () => {
+        await expect(service.tripRequiredToShip(company, 't1')).resolves.toBe(false);
+      });
+
+      it("reads the company's flag, scoped to tenant and company", async () => {
+        rows.set(schema.logisticsSetting, [{ setting_id: 's-1', tenant_id: 't1', company_id: company, trip_required_to_ship: true }]);
+        await expect(service.tripRequiredToShip(company, 't1')).resolves.toBe(true);
+        const where = lastWhere.get(schema.logisticsSetting)!;
+        expect(where.params).toEqual(expect.arrayContaining(['t1', company]));
+      });
+
+      it('is read once per tenant and company for 60 seconds, then read again', async () => {
+        jest.useFakeTimers({ now: new Date('2026-11-12T08:00:00Z') });
+        rows.set(schema.logisticsSetting, [{ setting_id: 's-1', tenant_id: 't1', company_id: company, trip_required_to_ship: true }]);
+        await service.tripRequiredToShip(company, 't1');
+        await service.tripRequiredToShip(company, 't1');
+        expect(settingReads()).toBe(1);
+        // Another company (or tenant) is its own entry.
+        await service.tripRequiredToShip('co-2', 't1');
+        await service.tripRequiredToShip(company, 't2');
+        expect(settingReads()).toBe(3);
+        // A change made within the minute is not seen yet; after it, it is.
+        rows.set(schema.logisticsSetting, []);
+        jest.setSystemTime(new Date('2026-11-12T08:00:59Z'));
+        await expect(service.tripRequiredToShip(company, 't1')).resolves.toBe(true);
+        jest.setSystemTime(new Date('2026-11-12T08:01:01Z'));
+        await expect(service.tripRequiredToShip(company, 't1')).resolves.toBe(false);
+        expect(settingReads()).toBe(4);
+      });
+    });
   });
 });

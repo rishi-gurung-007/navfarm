@@ -718,6 +718,27 @@ export class LogisticsTripService {
     });
   }
 
+  /** tenant:company → whether shipping needs a trip, and when it was read. */
+  private readonly requiredCache = new Map<string, { value: boolean; at: number }>();
+
+  /**
+   * Whether this company ships a Transfer Order only on a trip (logistics_setting.trip_required_to_ship; false when
+   * the company has no setting row). Asked on every untripped shipment, so it is held for a minute per tenant and
+   * company: a change to the setting takes up to 60 seconds to apply.
+   */
+  async tripRequiredToShip(companyId: string | null, tenantId: string): Promise<boolean> {
+    const key = `${tenantId}:${companyId ?? ''}`;
+    const hit = this.requiredCache.get(key);
+    if (hit && Date.now() - hit.at < 60_000) return hit.value;
+    const S = schema.logisticsSetting;
+    const [setting] = await this.db.select({ trip_required_to_ship: S.trip_required_to_ship }).from(S)
+      .where(and(eq(S.tenant_id, tenantId), companyCondition(S.company_id, companyId), isNull(S.deleted_at)))
+      .limit(1);
+    const value = Boolean(setting?.trip_required_to_ship);
+    this.requiredCache.set(key, { value, at: Date.now() });
+    return value;
+  }
+
   /** The trip a Transfer Order is on, with its truck, or null when it is on none. */
   async assertTripFor(transferId: string, tenantId: string): Promise<{
     trip_id: string; trip_no: string; status: string; vehicle_no: string | null; driver_name: string | null; estimated_arrival: string | null;

@@ -44,6 +44,7 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
+import { LogisticsTripService } from '../../logistics/logistics-trip.service';
 import { grossDoaRef, parseReceiptDoa, receiptSplit } from './receipt-doa';
 import { quantityInKilograms } from './kilograms';
 import {
@@ -123,7 +124,51 @@ export class StockTransferService {
     private readonly siloFeedService: SiloFeedService,
     // Re-check feed thresholds only after the stock posting commits.
     @Optional() private readonly feedAlerts?: FeedAlertService,
+    // Logistics Phase 2: the trip a Transfer Order travels on. Optional, so a
+    // caller (or spec) built without Logistics ships exactly as before.
+    @Optional() private readonly logisticsTrips?: LogisticsTripService,
   ) {}
+
+  /**
+   * Logistics Phase 2, Task 5: may this Transfer Order ship? A TO on a trip
+   * ships only while the trip is PLANNED or CONFIRMED (or already IN_TRANSIT,
+   * for a further partial shipment). A TO on no trip ships as before unless
+   * the company's Logistics setting requires a trip. Returns the trip to move
+   * once the shipment has posted, or null. With no trip and the setting off
+   * this asks one cached question and reads nothing.
+   */
+  private async assertTripForShipment(
+    transfer: { transfer_id: string; company_id: string | null; trip_id?: string | null },
+    tenantId: string,
+  ): Promise<{ trip_id: string; vehicle_no: string | null } | null> {
+    if (!this.logisticsTrips) return null;
+    const refusal = 'This transfer needs a planned trip before it can ship.';
+    if (!transfer.trip_id) {
+      if (await this.logisticsTrips.tripRequiredToShip(transfer.company_id, tenantId))
+        throw new BadRequestException(refusal);
+      return null;
+    }
+    const trip = await this.logisticsTrips.assertTripFor(transfer.transfer_id, tenantId);
+    if (!trip || !['PLANNED', 'CONFIRMED', 'IN_TRANSIT'].includes(trip.status))
+      throw new BadRequestException(refusal);
+    return { trip_id: trip.trip_id, vehicle_no: trip.vehicle_no };
+  }
+
+  /** After the shipment has posted, in its transaction: the trip leaves, and the TO carries the trip's truck. */
+  private async tripShipped(
+    id: string,
+    trip: { trip_id: string; vehicle_no: string | null } | null,
+    tenantId: string,
+    userPayload?: any,
+  ) {
+    if (!trip || !this.logisticsTrips) return;
+    await this.logisticsTrips.onShipped(trip.trip_id, tenantId, userPayload);
+    if (trip.vehicle_no)
+      await this.db
+        .update(schema.stockTransfer)
+        .set({ vehicle_no: trip.vehicle_no })
+        .where(eq(schema.stockTransfer.transfer_id, id));
+  }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -938,9 +983,15 @@ export class StockTransferService {
     const source =
       (await this.sourceLinks([id], transfer.tenant_id)).get(id) ??
       EMPTY_SOURCE_LINK;
+    // Logistics Phase 2: the trip this TO travels on, read only when it is on one.
+    const trip =
+      transfer.trip_id && this.logisticsTrips
+        ? await this.logisticsTrips.assertTripFor(id, transfer.tenant_id)
+        : null;
     return {
       ...transfer,
       ...source,
+      trip,
       lines: enrichedLines.map((line: any) => ({
         ...line,
         qty_shipped: shipped.get(line.line_id) ?? 0,
@@ -1687,6 +1738,7 @@ export class StockTransferService {
         requisitionExecution,
       );
       this.assertOpen(transfer);
+      const trip = await this.assertTripForShipment(transfer, tenantId);
       if (transfer.from_warehouse_id === transfer.to_warehouse_id) {
         throw new BadRequestException(
           'A transfer needs two different warehouses.',
@@ -1912,6 +1964,7 @@ export class StockTransferService {
         await this.receivedQuantities(id, tenantId),
         userPayload,
       );
+      await this.tripShipped(id, trip, tenantId, userPayload);
 
       await this.auditService.log({
         tenantId,
@@ -2208,6 +2261,9 @@ export class StockTransferService {
         receivedAfter,
         userPayload,
       );
+      // Logistics Phase 2: the receipt that completes the TO means its trip has arrived.
+      if (status === 'POSTED' && transfer.trip_id && this.logisticsTrips)
+        await this.logisticsTrips.onArrived(transfer.trip_id, tenantId, userPayload);
 
       await this.auditService.log({
         tenantId,
@@ -2617,6 +2673,7 @@ export class StockTransferService {
           `Transfer Order cannot be shipped — it is ${transfer.status}.`,
         );
       }
+      const trip = await this.assertTripForShipment(transfer, tenantId);
       await this.assertWarehouses(
         transfer.from_warehouse_id,
         transfer.to_warehouse_id,
@@ -2766,7 +2823,8 @@ export class StockTransferService {
         .update(schema.stockTransfer)
         .set({
           status: 'IN_TRANSIT',
-          vehicle_no: dto.vehicle_no?.trim() || null,
+          // A TO on a trip carries the trip's truck, not a typed number.
+          vehicle_no: trip?.vehicle_no || dto.vehicle_no?.trim() || null,
           posting_date: shipmentPostingDate,
           remarks: formattedRemarks,
           posted_at: toMysqlTimestamp() as any,
@@ -2812,6 +2870,8 @@ export class StockTransferService {
           user?.userId,
         );
       }
+      if (trip && this.logisticsTrips)
+        await this.logisticsTrips.onShipped(trip.trip_id, tenantId, user);
 
       await this.auditService.log({
         tenantId,
@@ -3107,6 +3167,9 @@ export class StockTransferService {
           updated_by: userPayload?.userId || null,
         })
         .where(eq(schema.stockTransfer.transfer_id, id));
+      // Logistics Phase 2: received in full, the trip has arrived.
+      if (postReceiptStatus === 'RECEIVED' && transfer.trip_id && this.logisticsTrips)
+        await this.logisticsTrips.onArrived(transfer.trip_id, tenantId, userPayload);
 
       await this.auditService.log({
         tenantId,
