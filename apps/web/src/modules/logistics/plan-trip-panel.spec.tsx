@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { PlanTripPanel, TripFreeTextGate, resetTripSettingCache, tripRequiredToShip } from './plan-trip-panel';
 
 // The screen's own English strings, so the assertions read what the user reads.
@@ -137,12 +137,25 @@ describe('PlanTripPanel — planning and cancelling', () => {
     await waitFor(() => expect((screen.getByLabelText('Truck Type') as HTMLSelectElement).value).toBe('BULK_FEED'));
     silo.unmount();
 
-    withDestination({ location_id: 'loc-dest', location_type: 'STORE', location_name: 'Farm 1 Feed Store' });
+    // The store read is held until the test lets it land, so BAGGED_FEED is asserted only after the guess has run,
+    // not on the default it starts from.
+    let landStore: (value: unknown) => void = () => undefined;
+    const storeRead = new Promise((resolve) => {
+      landStore = resolve;
+    });
+    api.get.mockImplementation((path: string) => {
+      if (path.startsWith('/logistics/route')) return Promise.resolve({ data: [{ route_id: 'r-1', route_code: 'R-MILL-F1' }] });
+      if (path === '/location/loc-dest') return storeRead;
+      return Promise.resolve({ data: [] });
+    });
     render(<PlanTripPanel transfer={draftTo} onChanged={jest.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: 'Plan Trip' }));
     await waitFor(() => expect(api.get).toHaveBeenCalledWith('/location/loc-dest'));
-    await screen.findByRole('option', { name: 'R-MILL-F1' });
-    expect((screen.getByLabelText('Truck Type') as HTMLSelectElement).value).toBe('BAGGED_FEED');
+    await act(async () => {
+      landStore({ data: { location_id: 'loc-dest', location_type: 'STORE', location_name: 'Farm 1 Feed Store' } });
+      await storeRead;
+    });
+    await waitFor(() => expect((screen.getByLabelText('Truck Type') as HTMLSelectElement).value).toBe('BAGGED_FEED'));
   });
 
   it('sends no cancel while the reason is empty', async () => {
@@ -162,6 +175,24 @@ describe('PlanTripPanel — planning and cancelling', () => {
 });
 
 describe('tripRequiredToShip', () => {
+  it('answers false to every caller sharing a read that fails, and reads again afterwards', async () => {
+    let fail: (err: Error) => void = () => undefined;
+    api.get.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        fail = reject;
+      }),
+    );
+    const first = tripRequiredToShip('co-2');
+    const second = tripRequiredToShip('co-2');
+    expect(api.get).toHaveBeenCalledTimes(1);
+    fail(new Error('Network down'));
+    await expect(first).resolves.toBe(false);
+    await expect(second).resolves.toBe(false);
+    api.get.mockResolvedValueOnce({ data: [{ company_id: 'co-2', trip_required_to_ship: true }] });
+    await expect(tripRequiredToShip('co-2')).resolves.toBe(true);
+    expect(api.get).toHaveBeenCalledTimes(2);
+  });
+
   it('does not remember a failed read: the next read asks again', async () => {
     api.get.mockRejectedValueOnce(new Error('Forbidden'));
     await expect(tripRequiredToShip('co-1')).resolves.toBe(false);

@@ -44,7 +44,7 @@ export function resetTripSettingCache() {
 
 /**
  * logistics_setting.trip_required_to_ship for the TO's company. A successful read is kept for the page's life; a
- * failed one (a passing network fault, or no Logistics Settings view) answers false for that call only and is not
+ * failed one (a passing network fault, or no Logistics Settings view) answers false to the callers sharing it and is not
  * kept, so the next mount asks again. The server still refuses an untripped shipment when the setting is on.
  */
 export function tripRequiredToShip(companyId: string | null | undefined): Promise<boolean> {
@@ -58,12 +58,14 @@ export function tripRequiredToShip(companyId: string | null | undefined): Promis
     const v = row?.trip_required_to_ship;
     return v === true || v === 1 || v === '1' || v === 'true';
   });
-  // Cached while in flight so concurrent mounts share one request; dropped again if it fails.
-  settingCache.set(key, read);
-  return read.catch(() => {
-    if (settingCache.get(key) === read) settingCache.delete(key);
+  // Every caller, the first and any that arrive while the read is in flight, gets this promise, which never rejects:
+  // a failed read answers false and is dropped from the cache so the next mount asks again.
+  const shared: Promise<boolean> = read.catch(() => {
+    if (settingCache.get(key) === shared) settingCache.delete(key);
     return false;
   });
+  settingCache.set(key, shared);
+  return shared;
 }
 
 function useTripRequiredToShip(companyId: string | null | undefined): boolean {
