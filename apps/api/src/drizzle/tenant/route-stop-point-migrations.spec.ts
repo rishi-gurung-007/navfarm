@@ -16,7 +16,8 @@ describe('Tenant migration 0239 — a route stop carries its own name and point'
     const entry = journal.find((e) => e.tag === '0239_route_stop_point')!;
     expect(entry.when).toBe(1792000000107);
     expect(journal.filter((e) => e.when === entry.when)).toHaveLength(1);
-    expect(Math.max(...journal.map((e) => e.when))).toBe(entry.when);
+    // Not "it is the newest" any more — 0250 follows it. It must sit past Arun's …106.
+    expect(entry.when).toBeGreaterThan(1792000000106);
   });
 
   it('adds the stop name and point, and nothing else', () => {

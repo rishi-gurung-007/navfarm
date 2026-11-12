@@ -1513,6 +1513,13 @@
       "when": 1792000000107,
       "tag": "0239_route_stop_point",
       "breakpoints": true
+    },
+    {
+      "idx": 216,
+      "version": "5",
+      "when": 1792000000118,
+      "tag": "0250_logistics_trips",
+      "breakpoints": true
     }
   ]
 }

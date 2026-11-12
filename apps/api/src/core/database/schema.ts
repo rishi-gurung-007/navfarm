@@ -6886,6 +6886,8 @@ export const stockTransfer = mysqlTable(
     status: varchar('status', { length: 20 }).default('DRAFT').notNull(),
     posted_at: timestamp('posted_at', { mode: 'string' }),
     posted_by: varchar('posted_by', { length: 36 }),
+    // The logistics trip carrying this transfer (Logistics Phase 2); null until it is put on a trip.
+    trip_id: varchar('trip_id', { length: 36 }),
     created_by: varchar('created_by', { length: 36 }),
     updated_by: varchar('updated_by', { length: 36 }),
     created_at: timestamp('created_at', { mode: 'string' })
@@ -6897,6 +6899,7 @@ export const stockTransfer = mysqlTable(
     deleted_at: timestamp('deleted_at', { mode: 'string' }),
   },
   (table) => ({
+    idxTrip: index('idx_stock_transfer_trip').on(table.tenant_id, table.trip_id),
     fromWarehouseFk: foreignKey({
       columns: [table.from_warehouse_id],
       foreignColumns: [locationMaster.location_id],
@@ -8599,4 +8602,80 @@ export const logisticsSetting = mysqlTable(
     ...logisticsAudit(),
   },
   (t) => ({ uqCompany: uniqueIndex('uq_logistics_setting_company').on(t.tenant_id, t.company_id) }),
+);
+
+/** A trip: one vehicle and driver on one route carrying one or more Transfer Orders. */
+export const logisticsTrip = mysqlTable(
+  'logistics_trip',
+  {
+    trip_id: varchar('trip_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    trip_no: varchar('trip_no', { length: 50 }).notNull(),
+    vehicle_id: varchar('vehicle_id', { length: 36 }),
+    driver_id: varchar('driver_id', { length: 36 }),
+    route_id: varchar('route_id', { length: 36 }),
+    carrier_supplier_id: varchar('carrier_supplier_id', { length: 36 }),
+    status: varchar('status', { length: 20 }).default('DRAFT').notNull(),
+    planned_departure: datetime('planned_departure', { mode: 'string' }),
+    estimated_arrival: datetime('estimated_arrival', { mode: 'string' }),
+    actual_departure: datetime('actual_departure', { mode: 'string' }),
+    actual_arrival: datetime('actual_arrival', { mode: 'string' }),
+    pod_received_at: datetime('pod_received_at', { mode: 'string' }),
+    returned_at: datetime('returned_at', { mode: 'string' }),
+    load_value: decimal('load_value', { precision: 14, scale: 2 }),
+    load_unit: varchar('load_unit', { length: 20 }),
+    capacity_pct: decimal('capacity_pct', { precision: 6, scale: 2 }),
+    estimated_cost: decimal('estimated_cost', { precision: 14, scale: 2 }),
+    estimate_note: varchar('estimate_note', { length: 500 }),
+    hq_approval_ref: varchar('hq_approval_ref', { length: 100 }),
+    cancel_reason: varchar('cancel_reason', { length: 500 }),
+    closed_at: datetime('closed_at', { mode: 'string' }),
+    remarks: varchar('remarks', { length: 500 }),
+    ...logisticsAudit(),
+  },
+  (t) => ({
+    uqNo: uniqueIndex('uq_logistics_trip_no').on(t.tenant_id, t.company_id, t.trip_no),
+    idxStatus: index('idx_logistics_trip_status').on(t.tenant_id, t.company_id, t.status),
+  }),
+);
+
+/** A Transfer Order (or one of its lines) on a trip, with its share of the load and of the estimated cost. */
+export const logisticsTripLine = mysqlTable(
+  'logistics_trip_line',
+  {
+    trip_line_id: varchar('trip_line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    trip_id: varchar('trip_id', { length: 36 }).notNull(),
+    transfer_id: varchar('transfer_id', { length: 36 }).notNull(),
+    transfer_line_id: varchar('transfer_line_id', { length: 36 }),
+    weight_kg: decimal('weight_kg', { precision: 14, scale: 2 }),
+    head_count: int('head_count'),
+    bag_count: int('bag_count'),
+    share_pct: decimal('share_pct', { precision: 6, scale: 2 }),
+    estimated_cost_share: decimal('estimated_cost_share', { precision: 14, scale: 2 }),
+    ...logisticsAudit(),
+  },
+  (t) => ({
+    idxTrip: index('idx_logistics_trip_line_trip').on(t.tenant_id, t.trip_id),
+    idxTransfer: index('idx_logistics_trip_line_transfer').on(t.tenant_id, t.transfer_id),
+  }),
+);
+
+/** A cost against a trip: an estimate made at planning or an actual recorded as the trip runs. */
+export const logisticsTripCost = mysqlTable(
+  'logistics_trip_cost',
+  {
+    cost_id: varchar('cost_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    trip_id: varchar('trip_id', { length: 36 }).notNull(),
+    cost_type: varchar('cost_type', { length: 30 }).notNull(),
+    amount: decimal('amount', { precision: 14, scale: 2 }).notNull(),
+    is_estimate: boolean('is_estimate').default(false).notNull(),
+    remarks: varchar('remarks', { length: 500 }),
+    ...logisticsAudit(),
+  },
+  (t) => ({ idxTrip: index('idx_logistics_trip_cost_trip').on(t.tenant_id, t.trip_id) }),
 );
