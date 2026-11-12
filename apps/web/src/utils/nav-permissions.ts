@@ -43,6 +43,7 @@ const ROUTE_GRANTS: Array<[path: string, anyOf: Grant[]]> = [
     '/inventory/feed-forecast?tab=physical-count',
     [['INVENTORY', 'STOCK_COUNT']],
   ],
+  ['/logistics/trips', [['LOGISTICS', 'TRIP']]],
   ['/requisitions', [['PROCUREMENT', 'REQUISITION']]],
   ['/finance', [['FINANCE', 'REPORTS']]],
   ['/finance/journal', [['FINANCE', 'JOURNAL']]],

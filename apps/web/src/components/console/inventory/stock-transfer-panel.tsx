@@ -57,6 +57,7 @@ import {
   warehouseCodeOf,
 } from './stock-transfer-display';
 import { formatQuantity } from '@/lib/utils';
+import { PlanTripPanel, TripFreeTextGate, type TripTransfer } from '@/modules/logistics/plan-trip-panel';
 
 const PAGE_SIZE = 25;
 
@@ -2272,6 +2273,16 @@ export default function StockTransferPanel() {
                   </span>
                 </div>
 
+                {/* Logistics Phase 2: the trip this TO travels on, once it is saved. */}
+                {editingTransfer && (
+                  <PlanTripPanel
+                    transfer={editingTransfer as TripTransfer}
+                    onChanged={(trip) =>
+                      setEditingTransfer((prev) => (prev ? { ...prev, trip } : prev))
+                    }
+                  />
+                )}
+
                 <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
                   {/* Transport Mode */}
                   <div className="flex flex-col gap-1">
@@ -2308,6 +2319,8 @@ export default function StockTransferPanel() {
                     />
                   </div>
 
+                  {/* Free-text truck fields: read-only on a trip, hidden when shipping needs one. */}
+                  <TripFreeTextGate transfer={editingTransfer as TripTransfer | null}>
                   {/* Vehicle / Truck No */}
                   <div className="flex flex-col gap-1">
                     <label className="nf-text-label" style={S.sub}>
@@ -2412,6 +2425,7 @@ export default function StockTransferPanel() {
                       style={S.input}
                     />
                   </div>
+                  </TripFreeTextGate>
 
                   {/* General Dispatch Remarks */}
                   <div className="flex flex-col gap-1 sm:col-span-2 lg:col-span-4">
