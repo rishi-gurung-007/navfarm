@@ -155,7 +155,13 @@ describe('PlanTripPanel — planning and cancelling', () => {
       landStore({ data: { location_id: 'loc-dest', location_type: 'STORE', location_name: 'Farm 1 Feed Store' } });
       await storeRead;
     });
-    await waitFor(() => expect((screen.getByLabelText('Truck Type') as HTMLSelectElement).value).toBe('BAGGED_FEED'));
+    // The routes and the guess are read in the same effect; once the route option is on screen and a further turn
+    // has passed, the guess's own .then has run, so BAGGED_FEED below is its answer and not the starting default.
+    await screen.findByRole('option', { name: 'R-MILL-F1' });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect((screen.getByLabelText('Truck Type') as HTMLSelectElement).value).toBe('BAGGED_FEED');
   });
 
   it('sends no cancel while the reason is empty', async () => {
