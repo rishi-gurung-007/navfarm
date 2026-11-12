@@ -1,0 +1,694 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { and, asc, count, desc, eq, inArray, isNull, ne, notInArray, sql, SQL } from 'drizzle-orm';
+import { MySql2Database } from 'drizzle-orm/mysql2';
+import { ClsService } from 'nestjs-cls';
+import { randomUUID } from 'node:crypto';
+import * as schema from '../../core/database/schema';
+import { withTenantTransaction } from '../../common/tenant-transaction';
+import { assertCompanyInScope, farmOfLocation, farmScope, restrictedScopeConditions } from '../../common/farm-scope';
+import { companyCondition } from '../../common/master-data-scope';
+import { AuditLogService } from '../system/audit-log/audit-log.service';
+import { UomService } from '../master-data/uom/uom.service';
+import { quantityInKilograms } from '../inventory/stock-transfer/kilograms';
+import { CAPACITY_BY_VEHICLE_TYPE, VEHICLE_TYPES } from './logistics.rules';
+import {
+  baseFreight, canMove, capacityCheck, estimateArrival, pickRate, shareByWeight, TRIP_STATUSES, type RateRow, type TripStatus,
+} from './trip.rules';
+import { driverExclusions, vehicleExclusions, type DriverFacts, type Interval, type VehicleFacts, type VehicleType } from './trip-eligibility';
+
+type Row = Record<string, any>;
+type RouteRow = typeof schema.logisticsRoute.$inferSelect;
+
+export type PlanTripInput = {
+  transfer_ids: string[];
+  planned_departure: string;
+  route_id: string;
+  vehicle_type: string;
+  carrier_supplier_id?: string | null;
+};
+export type AssignTripInput = { vehicle_id: string; driver_id: string };
+export type MoveTripInput = { to: string; reason?: string; hq_approval_ref?: string; at?: string };
+export type TripListQuery = { status?: string; limit?: number | string; offset?: number | string };
+
+/** A trip's place in no truck's or driver's diary once it is over. */
+const TERMINAL: TripStatus[] = ['CANCELLED', 'CLOSED'];
+const LOCKED = 'This trip is closed and locked.';
+const NO_RATE = 'No approved freight rate.';
+const ASSIGN_FIRST = 'Assign a vehicle to estimate cost.';
+
+/** What the planner says the load is (Ruling, 12 Nov): the truck type, and the measure its capacity is in. */
+const LOAD_UNIT: Record<VehicleType, 'KG' | 'BAGS' | 'HEAD'> = { BULK_FEED: 'KG', BAGGED_FEED: 'BAGS', LIVESTOCK: 'HEAD' };
+const TYPE_OF_UNIT: Record<string, VehicleType> = { KG: 'BULK_FEED', BAGS: 'BAGGED_FEED', HEAD: 'LIVESTOCK' };
+const LINE_MEASURE: Record<string, 'weight_kg' | 'bag_count' | 'head_count'> = { KG: 'weight_kg', BAGS: 'bag_count', HEAD: 'head_count' };
+/** Said when a line cannot be put in the trip's measure: capacity is then not checked, never guessed. */
+const UNMEASURED: Record<string, string> = {
+  KG: 'Some lines have no conversion to KG, so the load cannot be checked against the truck capacity.',
+  BAGS: 'Bag size is not set for this feed, so the load in bags cannot be checked against the truck capacity.',
+  HEAD: 'Some lines are not counted in HEAD, so the load cannot be checked against the truck capacity.',
+};
+
+// Times. A trip's times are the farm's local wall-clock ('YYYY-MM-DDTHH:mm:ss', no zone); arithmetic treats them as
+// UTC only so that the server's own zone never shifts them.
+const NAIVE = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(:\d{2})?$/;
+const naive = (v: unknown): string | null => {
+  const m = typeof v === 'string' ? NAIVE.exec(v.trim()) : null;
+  return m ? `${m[1]}T${m[2]}${m[3] ?? ':00'}` : null;
+};
+const fromDb = (v: unknown): string | null => (v ? naive(String(v).slice(0, 19)) : null);
+const toDb = (v: string) => v.replace('T', ' ');
+const asDate = (v: string) => new Date(Date.parse(`${v}Z`));
+const fromDate = (d: Date) => d.toISOString().slice(0, 19);
+const addMinutes = (v: string, minutes: number) => fromDate(new Date(asDate(v).getTime() + Math.round(minutes * 60000)));
+const day = (v: unknown) => String(v ?? '').slice(0, 10);
+/** Audit columns, written the way the Phase 1 masters write them. */
+const nowTs = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
+/** The server's local wall-clock, for a status time the user did not give. */
+const localNow = () => {
+  const d = new Date();
+  const p = (x: number) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
+const num = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : Number(v));
+const dec = (v: number | null) => (v === null || !Number.isFinite(v) ? null : v.toFixed(2));
+const notes = (...xs: (string | null | undefined)[]) => xs.filter(Boolean).join(' ') || null;
+
+/** The time a truck going to a stamp field on a status move. */
+const STAMP: Partial<Record<TripStatus, string>> = {
+  IN_TRANSIT: 'actual_departure', ARRIVED: 'actual_arrival', POD_RECEIVED: 'pod_received_at', RETURNED: 'returned_at',
+};
+
+/**
+ * Logistics Phase 2 trips (NAVFarm TDD: Logistics Module): plan a trip from Transfer Orders, find and assign a truck and
+ * driver, and move it through its statuses. A company document like the Phase 1 masters: tenant- and company-scoped,
+ * never deleted (cancelled, with a reason), every write audited. The rules live in trip.rules.ts and trip-eligibility.ts;
+ * this file only gathers their inputs and writes their answers. Vehicle status is not touched in Phase 2 (Ruling, 12
+ * Nov): two trips are kept off one truck by their time windows overlapping.
+ */
+@Injectable()
+export class LogisticsTripService {
+  constructor(
+    private readonly cls: ClsService,
+    private readonly audit: AuditLogService,
+    private readonly uomService: UomService,
+  ) {}
+
+  private get db() {
+    const db = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
+    if (!db) throw new Error('Tenant database connection context not established.');
+    return db;
+  }
+
+  // ── Reads ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  private scope(): SQL[] {
+    return restrictedScopeConditions(farmScope(this.cls), { companyId: schema.logisticsTrip.company_id });
+  }
+
+  private async loadTrip(id: string, tenantId: string): Promise<Row> {
+    const [trip] = await this.db.select().from(schema.logisticsTrip)
+      .where(and(eq(schema.logisticsTrip.trip_id, id), eq(schema.logisticsTrip.tenant_id, tenantId), isNull(schema.logisticsTrip.deleted_at), ...this.scope()))
+      .limit(1);
+    if (!trip) throw new NotFoundException('Trip not found.');
+    return trip;
+  }
+
+  private async routeOf(routeId: string | null, companyId: string | null, tenantId: string): Promise<RouteRow> {
+    const [route] = routeId
+      ? await this.db.select().from(schema.logisticsRoute)
+        .where(and(
+          eq(schema.logisticsRoute.route_id, routeId), eq(schema.logisticsRoute.tenant_id, tenantId),
+          companyCondition(schema.logisticsRoute.company_id, companyId), isNull(schema.logisticsRoute.deleted_at),
+        ))
+        .limit(1)
+      : [];
+    if (!route) throw new NotFoundException('Route is not available in this company.');
+    return route;
+  }
+
+  async findAll(query: TripListQuery, tenantId: string) {
+    const conditions: SQL[] = [eq(schema.logisticsTrip.tenant_id, tenantId), isNull(schema.logisticsTrip.deleted_at), ...this.scope()];
+    if (query.status) conditions.push(eq(schema.logisticsTrip.status, String(query.status)));
+    const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 200);
+    const offset = Math.max(Number(query.offset) || 0, 0);
+    const where = and(...conditions);
+    const data = await this.db.select().from(schema.logisticsTrip).where(where)
+      .orderBy(desc(schema.logisticsTrip.created_at)).limit(limit).offset(offset);
+    const [{ total }] = await this.db.select({ total: count() }).from(schema.logisticsTrip).where(where);
+    return { data, total: Number(total), limit, offset };
+  }
+
+  /** The trip with its lines, estimate rows, truck, driver, route, and the estimate split by destination farm. */
+  async findOne(id: string, tenantId: string) {
+    const trip = await this.loadTrip(id, tenantId);
+    const lines = await this.linesOf(id, tenantId);
+    const costs = await this.db.select().from(schema.logisticsTripCost)
+      .where(and(eq(schema.logisticsTripCost.tenant_id, tenantId), eq(schema.logisticsTripCost.trip_id, id), isNull(schema.logisticsTripCost.deleted_at)));
+    const [vehicle] = trip.vehicle_id
+      ? await this.db.select({ registration_no: schema.logisticsVehicle.registration_no }).from(schema.logisticsVehicle)
+        .where(and(eq(schema.logisticsVehicle.vehicle_id, trip.vehicle_id), eq(schema.logisticsVehicle.tenant_id, tenantId))).limit(1)
+      : [];
+    const [driver] = trip.driver_id
+      ? await this.db.select({ driver_name: schema.logisticsDriver.driver_name }).from(schema.logisticsDriver)
+        .where(and(eq(schema.logisticsDriver.driver_id, trip.driver_id), eq(schema.logisticsDriver.tenant_id, tenantId))).limit(1)
+      : [];
+    const [route] = trip.route_id
+      ? await this.db.select({ route_code: schema.logisticsRoute.route_code }).from(schema.logisticsRoute)
+        .where(and(eq(schema.logisticsRoute.route_id, trip.route_id), eq(schema.logisticsRoute.tenant_id, tenantId))).limit(1)
+      : [];
+
+    const transferIds = [...new Set(lines.map((l) => l.transfer_id))];
+    const transfers = transferIds.length
+      ? await this.db.select({ transfer_id: schema.stockTransfer.transfer_id, transfer_no: schema.stockTransfer.transfer_no, to_warehouse_id: schema.stockTransfer.to_warehouse_id })
+        .from(schema.stockTransfer).where(and(eq(schema.stockTransfer.tenant_id, tenantId), inArray(schema.stockTransfer.transfer_id, transferIds)))
+      : [];
+    const farmOf = new Map<string, string | null>();
+    for (const t of transfers) farmOf.set(t.transfer_id, await farmOfLocation(this.db, t.to_warehouse_id));
+    const farmIds = [...new Set([...farmOf.values()].filter((f): f is string => !!f))];
+    const farms = farmIds.length
+      ? await this.db.select({ location_id: schema.locationMaster.location_id, location_name: schema.locationMaster.location_name })
+        .from(schema.locationMaster).where(inArray(schema.locationMaster.location_id, farmIds))
+      : [];
+    const byFarm = new Map<string, Row>();
+    for (const l of lines) {
+      const farmId = farmOf.get(l.transfer_id) ?? null;
+      const key = farmId ?? '';
+      const f = byFarm.get(key) ?? {
+        farm_id: farmId, farm_name: farms.find((x) => x.location_id === farmId)?.location_name ?? null,
+        weight_kg: 0, share_pct: 0, estimated_cost_share: trip.estimated_cost === null ? null : 0,
+      };
+      f.weight_kg += Number(l.weight_kg ?? 0);
+      f.share_pct += Number(l.share_pct ?? 0);
+      if (f.estimated_cost_share !== null) f.estimated_cost_share += Number(l.estimated_cost_share ?? 0);
+      byFarm.set(key, f);
+    }
+    const farm_shares = [...byFarm.values()].map((f) => ({
+      ...f, weight_kg: dec(f.weight_kg), share_pct: dec(f.share_pct), estimated_cost_share: dec(f.estimated_cost_share),
+    }));
+
+    return {
+      ...trip,
+      vehicle_no: vehicle?.registration_no ?? null,
+      driver_name: driver?.driver_name ?? null,
+      route_code: route?.route_code ?? null,
+      lines: lines.map((l) => ({ ...l, transfer_no: transfers.find((t) => t.transfer_id === l.transfer_id)?.transfer_no ?? null })),
+      costs,
+      farm_shares,
+    };
+  }
+
+  private linesOf(tripId: string, tenantId: string): Promise<Row[]> {
+    return this.db.select().from(schema.logisticsTripLine)
+      .where(and(eq(schema.logisticsTripLine.tenant_id, tenantId), eq(schema.logisticsTripLine.trip_id, tripId), isNull(schema.logisticsTripLine.deleted_at)))
+      .orderBy(asc(schema.logisticsTripLine.created_at));
+  }
+
+  // ── Plan ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  /** Row-locked like generateTransferNo in stock-transfer.service.ts: called inside the transaction that inserts. */
+  private async generateTripNo(tenantId: string, companyId: string): Promise<string> {
+    const [row] = await this.db
+      .select({ maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.logisticsTrip.trip_no}, 5) AS UNSIGNED)), 0)` })
+      .from(schema.logisticsTrip)
+      .where(and(eq(schema.logisticsTrip.tenant_id, tenantId), eq(schema.logisticsTrip.company_id, companyId)))
+      .for('update');
+    return `TRP-${String(Number(row?.maxSeq || 0) + 1).padStart(6, '0')}`;
+  }
+
+  /** A Transfer Order may be on one open trip only. */
+  private async assertNotOnOpenTrip(transfers: Row[], tenantId: string) {
+    const tripIds = [...new Set(transfers.map((t) => t.trip_id).filter(Boolean))] as string[];
+    if (!tripIds.length) return;
+    const trips = await this.db.select({ trip_id: schema.logisticsTrip.trip_id, trip_no: schema.logisticsTrip.trip_no, status: schema.logisticsTrip.status })
+      .from(schema.logisticsTrip)
+      .where(and(eq(schema.logisticsTrip.tenant_id, tenantId), inArray(schema.logisticsTrip.trip_id, tripIds), isNull(schema.logisticsTrip.deleted_at)));
+    for (const t of transfers) {
+      const open = trips.find((x) => x.trip_id === t.trip_id && !TERMINAL.includes(x.status as TripStatus));
+      if (open) throw new BadRequestException(`Transfer Order ${t.transfer_no} is already on trip ${open.trip_no}.`);
+    }
+  }
+
+  /**
+   * Every TO line in the three measures: KG through the UOM conversions (the stock-transfer silo check's own), HEAD
+   * when counted in HEAD, bags when counted in BAG or else KG ÷ the destination farm's bag size (Feed Planning
+   * Settings, farm row before company row). A measure that cannot be worked out is null, never guessed.
+   */
+  private async measure(transfers: Row[], companyId: string, tenantId: string) {
+    const ids = transfers.map((t) => t.transfer_id);
+    const lines = await this.db.select().from(schema.stockTransferLine)
+      .where(inArray(schema.stockTransferLine.transfer_id, ids))
+      .orderBy(asc(schema.stockTransferLine.transfer_id), asc(schema.stockTransferLine.line_no));
+    const settings = await this.db
+      .select({ farm_id: schema.feedPlanningSetting.farm_id, bag_size_kg: schema.feedPlanningSetting.bag_size_kg })
+      .from(schema.feedPlanningSetting)
+      .where(and(eq(schema.feedPlanningSetting.tenant_id, tenantId), eq(schema.feedPlanningSetting.company_id, companyId), eq(schema.feedPlanningSetting.is_active, true)));
+    const companyBag = settings.find((s) => s.farm_id === null)?.bag_size_kg ?? null;
+    const farmOf = new Map<string, string | null>();
+    for (const t of transfers) farmOf.set(t.transfer_id, await farmOfLocation(this.db, t.to_warehouse_id));
+
+    const out: Row[] = [];
+    for (const l of lines) {
+      const qty = Number(l.quantity);
+      const uom = String(l.uom ?? '').toUpperCase().trim();
+      const kg = await quantityInKilograms(this.uomService, qty, uom, l.item_id, companyId, tenantId).catch(() => null);
+      const farmId = farmOf.get(l.transfer_id) ?? null;
+      const bagSize = num(settings.find((s) => farmId && s.farm_id === farmId)?.bag_size_kg ?? companyBag);
+      const bags = uom === 'BAG' ? Math.round(qty) : kg !== null && bagSize && bagSize > 0 ? Math.round(kg / bagSize) : null;
+      out.push({
+        transfer_id: l.transfer_id,
+        transfer_line_id: l.line_id,
+        weight_kg: kg === null || !Number.isFinite(kg) ? null : Math.round(kg * 100) / 100,
+        head_count: uom === 'HEAD' ? Math.round(qty) : null,
+        bag_count: bags,
+      });
+    }
+    return out;
+  }
+
+  /** The trip's load in its own measure; null (with the reason) when a line cannot be measured. */
+  private load(lines: Row[], unit: string): { value: number | null; note: string | null } {
+    const field = LINE_MEASURE[unit];
+    if (!lines.length) return { value: 0, note: null };
+    if (lines.some((l) => l[field] === null || l[field] === undefined)) return { value: null, note: UNMEASURED[unit] };
+    return { value: lines.reduce((a, l) => a + Number(l[field]), 0), note: null };
+  }
+
+  async plan(dto: PlanTripInput, tenantId: string, user?: any) {
+    const ids = [...new Set((Array.isArray(dto?.transfer_ids) ? dto.transfer_ids : []).filter((x) => typeof x === 'string' && x.trim()))];
+    const departure = naive(dto?.planned_departure);
+    const problems: string[] = [];
+    if (!ids.length) problems.push('Choose at least one Transfer Order.');
+    if (!(VEHICLE_TYPES as readonly string[]).includes(String(dto?.vehicle_type ?? ''))) problems.push(`Vehicle Type must be one of ${VEHICLE_TYPES.join(', ')}.`);
+    if (!departure) problems.push('Planned departure must be a local date and time (YYYY-MM-DDTHH:mm).');
+    if (!dto?.route_id) problems.push('Route is required.');
+    if (problems.length) throw new BadRequestException(problems.join(' '));
+    const unit = LOAD_UNIT[dto.vehicle_type as VehicleType];
+
+    return withTenantTransaction(this.cls, async () => {
+      const transfers = await this.db.select().from(schema.stockTransfer)
+        .where(and(eq(schema.stockTransfer.tenant_id, tenantId), inArray(schema.stockTransfer.transfer_id, ids), isNull(schema.stockTransfer.deleted_at)))
+        // Locked so two planners cannot put one TO on two trips at once.
+        .for('update');
+      if (ids.some((id) => !transfers.some((t) => t.transfer_id === id))) throw new NotFoundException('Transfer Order not found.');
+      if (new Set(transfers.map((t) => t.company_id)).size > 1)
+        throw new BadRequestException('Transfer Orders of different companies cannot share a trip.');
+      const companyId = transfers[0].company_id;
+      assertCompanyInScope(farmScope(this.cls), companyId);
+      await this.assertNotOnOpenTrip(transfers, tenantId);
+
+      const route = await this.routeOf(dto.route_id, companyId, tenantId);
+      const carrierId = dto.carrier_supplier_id ? String(dto.carrier_supplier_id).trim() || null : null;
+      if (carrierId) await this.assertCarrier(carrierId, companyId, tenantId);
+      const lines = await this.measure(transfers, companyId, tenantId);
+      const load = this.load(lines, unit);
+      const arrival = fromDate(estimateArrival(asDate(departure!), route));
+      const est = carrierId
+        ? await this.estimate(route, departure!, lines, carrierId, companyId, tenantId)
+        : { cost: null, note: ASSIGN_FIRST, shares: lines.map(() => null) };
+      const pct = this.sharePct(lines);
+
+      const tripId = randomUUID();
+      const tripNo = await this.generateTripNo(tenantId, companyId);
+      await this.db.insert(schema.logisticsTrip).values({
+        trip_id: tripId, tenant_id: tenantId, company_id: companyId, trip_no: tripNo, route_id: route.route_id,
+        carrier_supplier_id: carrierId, status: 'DRAFT', planned_departure: toDb(departure!), estimated_arrival: toDb(arrival),
+        load_value: dec(load.value), load_unit: unit, estimated_cost: dec(est.cost), estimate_note: notes(load.note, est.note),
+        created_by: user?.userId, updated_by: user?.userId,
+      } as never);
+      if (lines.length)
+        await this.db.insert(schema.logisticsTripLine).values(lines.map((l, i) => ({
+          trip_line_id: randomUUID(), tenant_id: tenantId, company_id: companyId, trip_id: tripId,
+          transfer_id: l.transfer_id, transfer_line_id: l.transfer_line_id, weight_kg: dec(l.weight_kg),
+          head_count: l.head_count, bag_count: l.bag_count, share_pct: dec(pct[i]), estimated_cost_share: dec(est.shares[i]),
+          created_by: user?.userId, updated_by: user?.userId,
+        })) as never);
+      if (est.cost !== null) await this.writeEstimateCost(tripId, companyId, tenantId, est.cost, user);
+      await this.db.update(schema.stockTransfer).set({ trip_id: tripId } as never)
+        .where(and(eq(schema.stockTransfer.tenant_id, tenantId), inArray(schema.stockTransfer.transfer_id, ids)));
+
+      const created = await this.findOne(tripId, tenantId);
+      await this.log('CREATE', created, user, undefined, { transfer_ids: ids });
+      return created;
+    });
+  }
+
+  private async assertCarrier(carrierId: string, companyId: string, tenantId: string) {
+    const [found] = await this.db.select({ id: schema.supplierMaster.supplier_id }).from(schema.supplierMaster)
+      .where(and(
+        eq(schema.supplierMaster.supplier_id, carrierId), eq(schema.supplierMaster.tenant_id, tenantId),
+        isNull(schema.supplierMaster.deleted_at), companyCondition(schema.supplierMaster.company_id, companyId),
+      ))
+      .limit(1);
+    if (!found) throw new BadRequestException('Carrier is not available in this company.');
+  }
+
+  // ── Estimate ──────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  /** Each line's share of the trip, by weight (equal when nothing is weighed), cents-exact to 100. */
+  private sharePct(lines: Row[]): number[] {
+    return shareByWeight(100, lines.map((l) => Number(l.weight_kg ?? 0)));
+  }
+
+  /** The freight estimate from the carrier's approved rate; null with the reason when there is none — never 0. */
+  private async estimate(route: RouteRow, departure: string, lines: Row[], carrierId: string | null, companyId: string, tenantId: string) {
+    const none = (note: string) => ({ cost: null as number | null, note, shares: lines.map(() => null as number | null) });
+    if (!carrierId) return none(NO_RATE);
+    const rates = await this.db.select().from(schema.logisticsFreightRate)
+      .where(and(
+        eq(schema.logisticsFreightRate.tenant_id, tenantId), companyCondition(schema.logisticsFreightRate.company_id, companyId),
+        eq(schema.logisticsFreightRate.carrier_supplier_id, carrierId), eq(schema.logisticsFreightRate.is_active, true),
+        isNull(schema.logisticsFreightRate.deleted_at),
+      ));
+    const rate = pickRate(
+      rates.map((r) => ({ ...r, valid_from: day(r.valid_from), valid_to: r.valid_to ? day(r.valid_to) : null }) as RateRow),
+      { carrierId, routeId: route.route_id, on: day(departure) },
+    );
+    if (!rate) return none(NO_RATE);
+    const kg = lines.reduce((a, l) => a + Number(l.weight_kg ?? 0), 0);
+    const head = lines.reduce((a, l) => a + Number(l.head_count ?? 0), 0);
+    const cost = baseFreight(
+      rate,
+      { distance_km: route.distance_km, return_leg_charged: Boolean(route.return_leg_charged), tolls: route.tolls },
+      { tonnes: kg / 1000, head },
+    );
+    return { cost, note: null, shares: shareByWeight(cost, lines.map((l) => Number(l.weight_kg ?? 0))) as (number | null)[] };
+  }
+
+  private async writeEstimateCost(tripId: string, companyId: string, tenantId: string, amount: number, user?: any) {
+    await this.db.insert(schema.logisticsTripCost).values({
+      cost_id: randomUUID(), tenant_id: tenantId, company_id: companyId, trip_id: tripId, cost_type: 'FREIGHT',
+      amount: dec(amount), is_estimate: true, remarks: 'Freight estimate from the approved rate.',
+      created_by: user?.userId, updated_by: user?.userId,
+    } as never);
+  }
+
+  // ── Find vehicle / assign ─────────────────────────────────────────────────────────────────────────────────────────
+
+  /** The trip's time window: departure to arrival plus the drive back empty (Ruling, 12 Nov). */
+  private windowEnd(trip: Row, route: RouteRow | undefined): string | null {
+    const departure = fromDb(trip.planned_departure);
+    if (!departure) return null;
+    const arrival = fromDb(trip.estimated_arrival) ?? (route ? fromDate(estimateArrival(asDate(departure), route)) : departure);
+    const speed = Number(route?.speed_kmh ?? 0);
+    const back = speed > 0 ? (Number(route?.distance_km ?? 0) / speed) * 60 : 0;
+    return addMinutes(arrival, back);
+  }
+
+  private async context(trip: Row, route: RouteRow, tenantId: string) {
+    const type = TYPE_OF_UNIT[String(trip.load_unit)];
+    const departure = fromDb(trip.planned_departure);
+    const end = this.windowEnd(trip, route);
+    if (!type || !departure || !end) throw new BadRequestException('This trip has no load type or departure time.');
+    const [setting] = await this.db.select({ pct: schema.logisticsSetting.capacity_warning_pct }).from(schema.logisticsSetting)
+      .where(and(
+        eq(schema.logisticsSetting.tenant_id, tenantId), companyCondition(schema.logisticsSetting.company_id, trip.company_id),
+        isNull(schema.logisticsSetting.deleted_at),
+      ))
+      .limit(1);
+    return {
+      type, departure, returnDate: day(end), warnPct: num(setting?.pct) ?? 95,
+      load: trip.load_value === null || trip.load_value === undefined ? null : Number(trip.load_value),
+    };
+  }
+
+  /** Every other live trip of these trucks or drivers, as the windows they are busy in. */
+  private async busy(column: 'vehicle_id' | 'driver_id', ids: string[], trip: Row, tenantId: string): Promise<Map<string, Interval[]>> {
+    const out = new Map<string, Interval[]>();
+    if (!ids.length) return out;
+    const T = schema.logisticsTrip;
+    const others = (await this.db.select().from(T).where(and(
+      eq(T.tenant_id, tenantId), inArray(T[column], ids), ne(T.trip_id, trip.trip_id), notInArray(T.status, TERMINAL), isNull(T.deleted_at),
+    ))).filter((o) => o.trip_id !== trip.trip_id && !TERMINAL.includes(o.status as TripStatus) && o[column] && ids.includes(o[column] as string));
+    const routeIds = [...new Set(others.map((o) => o.route_id).filter(Boolean))] as string[];
+    const routes = routeIds.length
+      ? await this.db.select().from(schema.logisticsRoute).where(and(eq(schema.logisticsRoute.tenant_id, tenantId), inArray(schema.logisticsRoute.route_id, routeIds)))
+      : [];
+    for (const o of others) {
+      const start = fromDb(o.planned_departure);
+      const end = this.windowEnd(o, routes.find((r) => r.route_id === o.route_id));
+      if (!start || !end) continue;
+      const key = o[column] as string;
+      out.set(key, [...(out.get(key) ?? []), { trip_no: o.trip_no, start, end }]);
+    }
+    return out;
+  }
+
+  private async documentsOf(vehicleIds: string[], tenantId: string): Promise<Row[]> {
+    if (!vehicleIds.length) return [];
+    const D = schema.logisticsVehicleDocument;
+    return this.db.select().from(D)
+      .where(and(eq(D.tenant_id, tenantId), inArray(D.vehicle_id, vehicleIds), eq(D.is_active, true), isNull(D.deleted_at)));
+  }
+
+  /**
+   * Why this truck cannot take the trip. Capacity is checked here with capacityCheck (so the refusal says "over the
+   * limit", and a trip whose load cannot be measured is not refused for it); trip-eligibility checks everything else.
+   */
+  private vehicleReasons(v: Row, docs: Row[], ctx: Awaited<ReturnType<LogisticsTripService['context']>>, busy: Interval[]): string[] {
+    const facts: VehicleFacts = {
+      registration_no: v.registration_no, status: v.status, is_active: Boolean(v.is_active), vehicle_type: v.vehicle_type,
+      capacity_kg: num(v.capacity_kg), capacity_head: num(v.capacity_head), capacity_bags: num(v.capacity_bags),
+      documents: docs.filter((d) => d.vehicle_id === v.vehicle_id).map((d) => ({ document_type: d.document_type, expiry_date: day(d.expiry_date) })),
+    };
+    const reasons = vehicleExclusions(facts, { type: ctx.type, load: 0, departure: ctx.departure, returnDate: ctx.returnDate, warnPct: ctx.warnPct }, busy);
+    if (v.vehicle_type === ctx.type && ctx.load !== null) {
+      const check = capacityCheck(ctx.load, this.capacityOf(v, ctx.type), ctx.warnPct);
+      if (check.level === 'BLOCK' && check.message && !reasons.includes(check.message)) reasons.push(check.message);
+    }
+    return reasons;
+  }
+
+  private capacityOf(v: Row, type: VehicleType): number {
+    return Number(v[CAPACITY_BY_VEHICLE_TYPE[type].field] ?? 0);
+  }
+
+  private driverReasons(d: Row, ctx: { departure: string; returnDate: string }, busy: Interval[]): string[] {
+    const facts: DriverFacts = {
+      driver_name: d.driver_name, is_active: Boolean(d.is_active), licence_class: d.licence_class ?? null,
+      licence_expiry: d.licence_expiry ? day(d.licence_expiry) : null,
+    };
+    return driverExclusions(facts, { departure: ctx.departure, returnDate: ctx.returnDate }, busy);
+  }
+
+  async findVehicle(id: string, tenantId: string) {
+    const trip = await this.loadTrip(id, tenantId);
+    const route = await this.routeOf(trip.route_id, trip.company_id, tenantId);
+    const ctx = await this.context(trip, route, tenantId);
+    const V = schema.logisticsVehicle;
+    const vehicles = await this.db.select().from(V)
+      .where(and(eq(V.tenant_id, tenantId), companyCondition(V.company_id, trip.company_id), isNull(V.deleted_at)))
+      .orderBy(asc(V.registration_no));
+    const docs = await this.documentsOf(vehicles.map((v) => v.vehicle_id), tenantId);
+    const busyV = await this.busy('vehicle_id', vehicles.map((v) => v.vehicle_id), trip, tenantId);
+    const DR = schema.logisticsDriver;
+    const drivers = await this.db.select().from(DR)
+      .where(and(eq(DR.tenant_id, tenantId), companyCondition(DR.company_id, trip.company_id), isNull(DR.deleted_at)))
+      .orderBy(asc(DR.driver_name));
+    const busyD = await this.busy('driver_id', drivers.map((d) => d.driver_id), trip, tenantId);
+
+    const split = <T extends Row>(rows: T[], reasonsOf: (r: T) => string[], key: 'vehicle' | 'driver') => {
+      const eligible: T[] = [];
+      const excluded: Row[] = [];
+      for (const r of rows) {
+        const reasons = reasonsOf(r);
+        if (reasons.length) excluded.push({ [key]: r, reasons });
+        else eligible.push(r);
+      }
+      return { eligible, excluded };
+    };
+    const v = split(vehicles, (r) => this.vehicleReasons(r, docs, ctx, busyV.get(r.vehicle_id) ?? []), 'vehicle');
+    const d = split(drivers, (r) => this.driverReasons(r, ctx, busyD.get(r.driver_id) ?? []), 'driver');
+    return { eligible: v.eligible, excluded: v.excluded, drivers: d };
+  }
+
+  async assign(id: string, dto: AssignTripInput, tenantId: string, user?: any) {
+    if (!dto?.vehicle_id || !dto?.driver_id) throw new BadRequestException('Choose a vehicle and a driver.');
+    return withTenantTransaction(this.cls, async () => {
+      const trip = await this.loadTrip(id, tenantId);
+      if (trip.status === 'CLOSED') throw new BadRequestException(LOCKED);
+      if (!['DRAFT', 'PLANNED'].includes(trip.status))
+        throw new BadRequestException(`A vehicle can be assigned only while the trip is DRAFT or PLANNED; this trip is ${trip.status}.`);
+      const route = await this.routeOf(trip.route_id, trip.company_id, tenantId);
+      const ctx = await this.context(trip, route, tenantId);
+
+      const V = schema.logisticsVehicle;
+      const [vehicle] = await this.db.select().from(V)
+        .where(and(eq(V.vehicle_id, dto.vehicle_id), eq(V.tenant_id, tenantId), companyCondition(V.company_id, trip.company_id), isNull(V.deleted_at)))
+        .limit(1);
+      if (!vehicle) throw new NotFoundException('Vehicle is not available in this company.');
+      const DR = schema.logisticsDriver;
+      const [driver] = await this.db.select().from(DR)
+        .where(and(eq(DR.driver_id, dto.driver_id), eq(DR.tenant_id, tenantId), companyCondition(DR.company_id, trip.company_id), isNull(DR.deleted_at)))
+        .limit(1);
+      if (!driver) throw new NotFoundException('Driver is not available in this company.');
+
+      const docs = await this.documentsOf([vehicle.vehicle_id], tenantId);
+      const busyV = await this.busy('vehicle_id', [vehicle.vehicle_id], trip, tenantId);
+      const busyD = await this.busy('driver_id', [driver.driver_id], trip, tenantId);
+      const vr = this.vehicleReasons(vehicle, docs, ctx, busyV.get(vehicle.vehicle_id) ?? []);
+      const dr = this.driverReasons(driver, ctx, busyD.get(driver.driver_id) ?? []);
+      if (vr.length || dr.length)
+        throw new BadRequestException(notes(
+          vr.length ? `${vehicle.registration_no}: ${vr.join(' ')}` : null,
+          dr.length ? `${driver.driver_name}: ${dr.join(' ')}` : null,
+        ));
+
+      const check = ctx.load === null ? null : capacityCheck(ctx.load, this.capacityOf(vehicle, ctx.type), ctx.warnPct);
+      const carrierId = vehicle.ownership === 'HIRED' ? vehicle.carrier_supplier_id : trip.carrier_supplier_id;
+      const lines = await this.linesOf(id, tenantId);
+      const est = await this.estimate(route, ctx.departure, lines, carrierId ?? null, trip.company_id, tenantId);
+      const pct = this.sharePct(lines);
+      const set = {
+        vehicle_id: vehicle.vehicle_id, driver_id: driver.driver_id, status: 'PLANNED', carrier_supplier_id: carrierId ?? null,
+        capacity_pct: check ? dec(check.pct) : null, estimated_cost: dec(est.cost),
+        estimate_note: notes(check?.level === 'WARN' ? check.message : null, ctx.load === null ? UNMEASURED[trip.load_unit] : null, est.note),
+        updated_by: user?.userId, updated_at: nowTs(),
+      };
+      await this.db.update(schema.logisticsTrip).set(set as never).where(eq(schema.logisticsTrip.trip_id, id));
+      for (const [i, l] of lines.entries())
+        await this.db.update(schema.logisticsTripLine)
+          .set({ share_pct: dec(pct[i]), estimated_cost_share: dec(est.shares[i]), updated_by: user?.userId, updated_at: nowTs() } as never)
+          .where(eq(schema.logisticsTripLine.trip_line_id, l.trip_line_id));
+      // The estimate is recomputed on every assign: the one before it is retired, never left beside it.
+      await this.db.update(schema.logisticsTripCost).set({ deleted_at: nowTs(), updated_by: user?.userId, updated_at: nowTs() } as never)
+        .where(and(
+          eq(schema.logisticsTripCost.tenant_id, tenantId), eq(schema.logisticsTripCost.trip_id, id), eq(schema.logisticsTripCost.cost_type, 'FREIGHT'),
+          eq(schema.logisticsTripCost.is_estimate, true), isNull(schema.logisticsTripCost.deleted_at),
+        ));
+      if (est.cost !== null) await this.writeEstimateCost(id, trip.company_id, tenantId, est.cost, user);
+
+      await this.log('ASSIGN', { ...trip, ...set }, user, trip);
+      return this.findOne(id, tenantId);
+    });
+  }
+
+  // ── Status moves ──────────────────────────────────────────────────────────────────────────────────────────────────
+
+  private async toColcom(trip: Row, tenantId: string): Promise<boolean> {
+    if (!trip.route_id) return false;
+    const [route] = await this.db.select({ to_zone_id: schema.logisticsRoute.to_zone_id }).from(schema.logisticsRoute)
+      .where(and(eq(schema.logisticsRoute.route_id, trip.route_id), eq(schema.logisticsRoute.tenant_id, tenantId))).limit(1);
+    if (!route?.to_zone_id) return false;
+    const [zone] = await this.db.select({ zone_type: schema.logisticsDeliveryZone.zone_type }).from(schema.logisticsDeliveryZone)
+      .where(and(eq(schema.logisticsDeliveryZone.zone_id, route.to_zone_id), eq(schema.logisticsDeliveryZone.tenant_id, tenantId))).limit(1);
+    return zone?.zone_type === 'COLCOM';
+  }
+
+  /** Writes one status step. Callers have already decided the step is allowed. */
+  private async applyMove(trip: Row, to: TripStatus, opts: { at?: string | null; hq?: string; reason?: string }, user?: any): Promise<Row> {
+    const set: Row = { status: to, updated_by: user?.userId, updated_at: nowTs() };
+    if (to === 'CONFIRMED') {
+      const given = String(opts.hq ?? '').trim();
+      // Slaughter rule: a trip to Colcom goes only with HQ's approval reference.
+      if (!given && !String(trip.hq_approval_ref ?? '').trim() && (await this.toColcom(trip, trip.tenant_id)))
+        throw new BadRequestException('A trip to Colcom needs the HQ approval reference before it is confirmed.');
+      if (given) set.hq_approval_ref = given.slice(0, 100);
+    }
+    const stamp = STAMP[to];
+    if (stamp) set[stamp] = opts.at ? toDb(opts.at) : localNow();
+    if (to === 'CLOSED') set.closed_at = localNow();
+    await this.db.update(schema.logisticsTrip).set(set as never).where(eq(schema.logisticsTrip.trip_id, trip.trip_id));
+    const after = { ...trip, ...set };
+    await this.log('STATUS_CHANGE', after, user, trip, opts.reason ? { reason: opts.reason } : undefined);
+    return after;
+  }
+
+  async move(id: string, dto: MoveTripInput, tenantId: string, user?: any) {
+    const to = String(dto?.to ?? '') as TripStatus;
+    if (!TRIP_STATUSES.includes(to)) throw new BadRequestException(`Status must be one of ${TRIP_STATUSES.join(', ')}.`);
+    if (to === 'CANCELLED') return this.cancel(id, { reason: dto.reason ?? '' }, tenantId, user);
+    const at = dto.at ? naive(dto.at) : null;
+    if (dto.at && !at) throw new BadRequestException('The time must be a local date and time (YYYY-MM-DDTHH:mm).');
+    return withTenantTransaction(this.cls, async () => {
+      const trip = await this.loadTrip(id, tenantId);
+      const refused = canMove(trip.status as TripStatus, to);
+      if (refused) throw new BadRequestException(refused);
+      await this.applyMove(trip, to, { at, hq: dto.hq_approval_ref, reason: dto.reason }, user);
+      return this.findOne(id, tenantId);
+    });
+  }
+
+  async cancel(id: string, dto: { reason?: string }, tenantId: string, user?: any) {
+    return withTenantTransaction(this.cls, async () => {
+      const trip = await this.loadTrip(id, tenantId);
+      const refused = canMove(trip.status as TripStatus, 'CANCELLED');
+      if (refused) throw new BadRequestException(refused);
+      const reason = String(dto?.reason ?? '').trim();
+      if (!reason) throw new BadRequestException('A reason is required to cancel a trip.');
+      const set = { status: 'CANCELLED', cancel_reason: reason.slice(0, 500), updated_by: user?.userId, updated_at: nowTs() };
+      await this.db.update(schema.logisticsTrip).set(set as never).where(eq(schema.logisticsTrip.trip_id, id));
+      // The Transfer Orders are free to go on another trip.
+      await this.db.update(schema.stockTransfer).set({ trip_id: null } as never)
+        .where(and(eq(schema.stockTransfer.tenant_id, tenantId), eq(schema.stockTransfer.trip_id, id)));
+      await this.log('CANCEL', { ...trip, ...set }, user, trip);
+      return this.findOne(id, tenantId);
+    });
+  }
+
+  // ── For the Transfer Order (Task 5) ───────────────────────────────────────────────────────────────────────────────
+
+  private assertLive(trip: Row) {
+    if (trip.status === 'CLOSED') throw new BadRequestException(LOCKED);
+    if (trip.status === 'CANCELLED') throw new BadRequestException('This trip is cancelled.');
+  }
+
+  /**
+   * The TO has shipped: the trip leaves. Service-internal, so it may take a PLANNED trip through CONFIRMED to
+   * IN_TRANSIT in one go (Ruling, 12 Nov) — the Colcom approval rule still applies on the way. A trip already on the
+   * road (a second, partial shipment) is left as it is.
+   */
+  async onShipped(tripId: string, tenantId: string, userPayload?: any): Promise<Row> {
+    return withTenantTransaction(this.cls, async () => {
+      let trip = await this.loadTrip(tripId, tenantId);
+      this.assertLive(trip);
+      if (trip.status === 'DRAFT') throw new BadRequestException('Assign a vehicle and a driver to this trip before it ships.');
+      if (trip.status === 'PLANNED') trip = await this.applyMove(trip, 'CONFIRMED', {}, userPayload);
+      if (trip.status === 'CONFIRMED') trip = await this.applyMove(trip, 'IN_TRANSIT', {}, userPayload);
+      return trip;
+    });
+  }
+
+  /** The TO is received in full: the trip has arrived. A trip already past arrival is left as it is. */
+  async onArrived(tripId: string, tenantId: string, userPayload?: any): Promise<Row> {
+    return withTenantTransaction(this.cls, async () => {
+      const trip = await this.loadTrip(tripId, tenantId);
+      this.assertLive(trip);
+      if (trip.status === 'IN_TRANSIT') return this.applyMove(trip, 'ARRIVED', {}, userPayload);
+      if (['DRAFT', 'PLANNED', 'CONFIRMED'].includes(trip.status)) throw new BadRequestException('This trip has not left yet.');
+      return trip;
+    });
+  }
+
+  /** The trip a Transfer Order is on, with its truck, or null when it is on none. */
+  async assertTripFor(transferId: string, tenantId: string): Promise<{
+    trip_id: string; trip_no: string; status: string; vehicle_no: string | null; driver_name: string | null; estimated_arrival: string | null;
+  } | null> {
+    const [transfer] = await this.db.select({ trip_id: schema.stockTransfer.trip_id }).from(schema.stockTransfer)
+      .where(and(eq(schema.stockTransfer.transfer_id, transferId), eq(schema.stockTransfer.tenant_id, tenantId))).limit(1);
+    if (!transfer?.trip_id) return null;
+    const T = schema.logisticsTrip;
+    const [trip] = await this.db.select().from(T)
+      .where(and(eq(T.trip_id, transfer.trip_id), eq(T.tenant_id, tenantId), isNull(T.deleted_at))).limit(1);
+    if (!trip) return null;
+    const [vehicle] = trip.vehicle_id
+      ? await this.db.select({ registration_no: schema.logisticsVehicle.registration_no }).from(schema.logisticsVehicle)
+        .where(and(eq(schema.logisticsVehicle.vehicle_id, trip.vehicle_id), eq(schema.logisticsVehicle.tenant_id, tenantId))).limit(1)
+      : [];
+    const [driver] = trip.driver_id
+      ? await this.db.select({ driver_name: schema.logisticsDriver.driver_name }).from(schema.logisticsDriver)
+        .where(and(eq(schema.logisticsDriver.driver_id, trip.driver_id), eq(schema.logisticsDriver.tenant_id, tenantId))).limit(1)
+      : [];
+    return {
+      trip_id: trip.trip_id, trip_no: trip.trip_no, status: trip.status, vehicle_no: vehicle?.registration_no ?? null,
+      driver_name: driver?.driver_name ?? null, estimated_arrival: trip.estimated_arrival ?? null,
+    };
+  }
+
+  // ── Audit ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  private async log(action: string, row: Row, user: any, oldValues?: unknown, extra?: Row) {
+    await this.audit.log({
+      tenantId: row.tenant_id, companyId: row.company_id || undefined, userId: user?.userId, action,
+      entityName: 'logistics_trip', entityId: row.trip_id, oldValues, newValues: extra ? { ...row, ...extra } : row,
+    });
+  }
+}

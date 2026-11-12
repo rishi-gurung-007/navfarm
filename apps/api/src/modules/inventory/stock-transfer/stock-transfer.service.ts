@@ -45,6 +45,7 @@ import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { grossDoaRef, parseReceiptDoa, receiptSplit } from './receipt-doa';
+import { quantityInKilograms } from './kilograms';
 import {
   OPEN_TRANSFER_STATUSES,
   transferStatusFor,
@@ -702,14 +703,14 @@ export class StockTransferService {
   ): Promise<number> {
     const unit = (uom || '').toUpperCase().trim();
     try {
-      const factor = await this.uomService.resolveConversionFactor(
+      return await quantityInKilograms(
+        this.uomService,
+        quantity,
         unit,
-        'KG',
         itemId,
         companyId,
         tenantId,
       );
-      return quantity * factor;
     } catch {
       throw new BadRequestException(
         `Cannot post this Transfer Order — silo '${siloName}' has its capacity in KG and there is no conversion from '${unit}' to KG. Record the conversion in UOM Conversion before transferring this item into a silo.`,

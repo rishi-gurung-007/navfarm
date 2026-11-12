@@ -42,6 +42,7 @@ import { WarehouseController } from '../modules/master-data/warehouse/warehouse.
 import { BinDietAssignmentController } from '../modules/master-data/bin-diet-assignment/bin-diet-assignment.controller';
 import { BreedLifecycleStageController } from '../modules/master-data/breed/breed-lifecycle-stage.controller';
 import { FarmController } from '../modules/master-data/farm/farm.controller';
+import { LogisticsTripController } from '../modules/logistics/logistics-trip.controller';
 
 /**
  * Farm scope is opt-in per controller, and a controller that forgets it reads
@@ -102,6 +103,7 @@ const SCOPED = {
   BinDietAssignmentController,
   BreedLifecycleStageController,
   FarmController,
+  LogisticsTripController,
 };
 
 const EXEMPT: Record<string, string> = {

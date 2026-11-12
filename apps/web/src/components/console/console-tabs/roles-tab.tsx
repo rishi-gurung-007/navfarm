@@ -186,6 +186,13 @@ const DEFAULT_RESOURCES = [
     name: 'Logistics Settings',
     nameKey: 'rolLogSettings',
   },
+  // LOGISTICS (Phase 2 trips, logistics-trip.controller.ts)
+  {
+    module_code: 'LOGISTICS',
+    resource: 'TRIP',
+    name: 'Trips',
+    nameKey: 'rolLogTrips',
+  },
   // MASTER_DATA (Phase 2)
   {
     module_code: 'MASTER_DATA',

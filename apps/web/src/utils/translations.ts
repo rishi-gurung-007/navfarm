@@ -1580,6 +1580,7 @@ export const translations = {
     rolLogFreightRates: 'Freight Rates',
     rolLogServicePlans: 'Service Plans',
     rolLogSettings: 'Logistics Settings',
+    rolLogTrips: 'Trips',
     rqFarm: 'Farm',
     rhFarm: 'Farm',
     rhAllFarms: 'All farms',
