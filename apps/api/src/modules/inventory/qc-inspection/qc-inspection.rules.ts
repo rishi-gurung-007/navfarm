@@ -17,6 +17,8 @@ export type InspectionStatus = 'OPEN' | 'PENDING_APPROVAL' | 'CLOSED';
 const QTY_TOLERANCE = 0.00005;
 
 export interface SpecLineInput {
+  /** The QC Parameter Master row the check was taken from (0248). */
+  param_id?: string | null;
   sampling_type: string;
   measurement_code: string;
   measurement_description?: string | null;
@@ -24,9 +26,46 @@ export interface SpecLineInput {
   uom?: string | null;
   min_value?: number | null;
   max_value?: number | null;
+  target_value?: number | null;
   acceptance_text?: string | null;
   is_mandatory?: boolean;
   is_active?: boolean;
+}
+
+/** A QC Parameter Master row, as far as a specification line needs it. */
+export interface QcParameterForSpec {
+  param_id: string;
+  param_code: string;
+  param_name: string;
+  param_type: string;
+  uom: string | null;
+  min_value: string | number | null;
+  max_value: string | number | null;
+  target_value: string | number | null;
+  is_mandatory: boolean;
+  is_active: boolean;
+}
+
+const decimal = (v: string | number | null) => (v === null || v === undefined ? null : Number(v));
+
+/**
+ * The specification line for a QC parameter: its QC Code, Description, Unit, Min / Max / Target and Mandatory, as the master holds them. A Numeric
+ * parameter is a Value check judged against Min..Max; a Yes / No parameter is a Descriptive check, the inspector confirms its Description.
+ */
+export function specLineFromParameter(param: QcParameterForSpec): SpecLineInput {
+  const value = param.param_type === 'NUMERIC';
+  return {
+    param_id: param.param_id,
+    measurement_code: param.param_code,
+    measurement_description: param.param_name,
+    sampling_type: value ? 'VALUE' : 'DESCRIPTIVE',
+    uom: value ? param.uom : null,
+    min_value: value ? decimal(param.min_value) : null,
+    max_value: value ? decimal(param.max_value) : null,
+    target_value: value ? decimal(param.target_value) : null,
+    is_mandatory: param.is_mandatory,
+    is_active: param.is_active,
+  };
 }
 
 /**
@@ -45,6 +84,10 @@ export function specLineProblem(line: SpecLineInput): string | null {
     if (!hasMin && !hasMax) return `'${code}': a Value check needs a Min Value, a Max Value, or both.`;
     if (hasMin && hasMax && Number(line.min_value) > Number(line.max_value)) {
       return `'${code}': Min Value cannot be greater than Max Value.`;
+    }
+    if (line.target_value != null) {
+      if (hasMin && Number(line.target_value) < Number(line.min_value)) return `'${code}': Target Value cannot be below Min Value.`;
+      if (hasMax && Number(line.target_value) > Number(line.max_value)) return `'${code}': Target Value cannot be above Max Value.`;
     }
   } else if (!line.measurement_description?.trim()) {
     return `'${code}': a Descriptive check needs a Description: the rule the inspector confirms.`;
@@ -77,6 +120,7 @@ export function specRowsToStore(
     const description = line.measurement_description?.trim() || null;
     return {
       spec_line_id: ids.newId(),
+      param_id: line.param_id ?? null,
       tenant_id: ids.tenantId,
       company_id: ids.companyId,
       item_id: ids.itemId,
@@ -88,6 +132,7 @@ export function specRowsToStore(
       uom: value ? line.uom?.trim() || null : null,
       min_value: value && line.min_value != null ? String(line.min_value) : null,
       max_value: value && line.max_value != null ? String(line.max_value) : null,
+      target_value: value && line.target_value != null ? String(line.target_value) : null,
       // A Descriptive check's rule is its description; it is copied to the inspection as the thing to confirm.
       acceptance_text: value ? null : description,
       is_mandatory: line.is_mandatory ?? true,
@@ -191,6 +236,78 @@ export function decideOutcome(input: OutcomeInput): { outcome: Outcome } | { err
   if (!input.hasReason) return { error: 'A Reason Code is required to accept stock with a deviation.' };
   if (acceptedQty <= QTY_TOLERANCE) return { error: 'A deviation accepts stock: enter an Accepted Qty, or reject the whole quantity.' };
   return { outcome: { result: 'DEVIATION', status: 'PENDING_APPROVAL', postNow: 0, postOnApproval: acceptedQty } };
+}
+
+/**
+ * What becomes of a rejected quantity (0249). Recorded on the inspection only: nothing is posted for it, because how a rejection is
+ * accounted for is Finance's decision. RETURN_TO_SOURCE is what a transfer's rejection already does (the inspection writes the
+ * return to the sending location), so it is recorded, never chosen.
+ */
+export const REJECTION_DISPOSITIONS = ['RETURN_TO_SUPPLIER', 'SCRAP', 'HOLD', 'RETURN_TO_SOURCE'] as const;
+export type RejectionDisposition = (typeof REJECTION_DISPOSITIONS)[number];
+
+export const DISPOSITION_LABEL: Record<RejectionDisposition, string> = {
+  RETURN_TO_SUPPLIER: 'Return to supplier',
+  SCRAP: 'Scrap',
+  HOLD: 'Hold for a decision',
+  RETURN_TO_SOURCE: 'Returned to the sending location',
+};
+
+const TRANSFER_SOURCE_TYPES = ['TRANSFER_RECEIPT', 'TRANSFER_EVENT'];
+const choices = (list: RejectionDisposition[]) => list.map((d) => DISPOSITION_LABEL[d]).join(' or ');
+
+/** The dispositions open to a source. Only a goods receipt has a supplier to return to; a transfer's rejection always goes back where it came from. */
+export function dispositionsFor(sourceDocType: string): RejectionDisposition[] {
+  if (TRANSFER_SOURCE_TYPES.includes(sourceDocType)) return ['RETURN_TO_SOURCE'];
+  return sourceDocType === 'GOODS_RECEIPT' ? ['RETURN_TO_SUPPLIER', 'SCRAP', 'HOLD'] : ['SCRAP', 'HOLD'];
+}
+
+/**
+ * The disposition and reference to store for a rejected quantity, or why they cannot be stored. Nothing rejected stores neither; a transfer
+ * stores RETURN_TO_SOURCE; any other source must say which of its dispositions applies.
+ */
+export function resolveDisposition(input: {
+  sourceDocType: string;
+  rejectedQty: number;
+  disposition?: string | null;
+  ref?: string | null;
+}): { disposition: RejectionDisposition | null; ref: string | null } | { error: string } {
+  if (!(input.rejectedQty > QTY_TOLERANCE)) return { disposition: null, ref: null };
+  const ref = input.ref?.trim() || null;
+  const allowed = dispositionsFor(input.sourceDocType);
+  if (TRANSFER_SOURCE_TYPES.includes(input.sourceDocType)) {
+    if (input.disposition && input.disposition !== 'RETURN_TO_SOURCE') {
+      return { error: "A transfer's rejected quantity goes back to the location it was sent from; it cannot be given another disposition." };
+    }
+    return { disposition: 'RETURN_TO_SOURCE', ref };
+  }
+  if (!input.disposition) return { error: `Say what becomes of the rejected quantity: ${choices(allowed)}.` };
+  if (!(allowed as string[]).includes(input.disposition)) {
+    const name = DISPOSITION_LABEL[input.disposition as RejectionDisposition] ?? input.disposition;
+    return { error: `${name} is not open to this inspection's rejected quantity: choose ${choices(allowed)}.` };
+  }
+  return { disposition: input.disposition as RejectionDisposition, ref };
+}
+
+/**
+ * Why a rejected quantity cannot be settled as `next`, or null. Only a closed inspection's rejection is settled, only while it is held (or was
+ * closed before dispositions were recorded), and only to a final disposition: holding it again settles nothing.
+ */
+export function settleProblem(input: {
+  status: string;
+  sourceDocType: string;
+  rejectedQty: number;
+  current: string | null;
+  next: string;
+}): string | null {
+  if (input.status !== 'CLOSED') return 'Only a closed inspection has a rejected quantity to settle.';
+  if (!(input.rejectedQty > QTY_TOLERANCE)) return 'Nothing was rejected on this inspection.';
+  if (input.current && input.current !== 'HOLD') {
+    return `The rejected quantity is already settled: ${DISPOSITION_LABEL[input.current as RejectionDisposition] ?? input.current}.`;
+  }
+  const final = dispositionsFor(input.sourceDocType).filter((d) => d !== 'HOLD');
+  if (!(final as string[]).includes(input.next)) return `Choose ${choices(final)}.`;
+  return null;
 }
 
 /** The 10000-step line numbers the rest of the application uses. */

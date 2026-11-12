@@ -35,6 +35,16 @@ const SOURCE_LABEL: Record<string, string> = {
   TRANSFER_EVENT: "Transfer receipt",
 };
 const STATUS_LABEL: Record<string, string> = { OPEN: "Open", PENDING_APPROVAL: "Pending approval", CLOSED: "Closed" };
+const TRANSFER_SOURCES = ["TRANSFER_RECEIPT", "TRANSFER_EVENT"];
+const DISPOSITION_LABEL: Record<string, string> = {
+  RETURN_TO_SUPPLIER: "Return to supplier",
+  SCRAP: "Scrap",
+  HOLD: "Hold for a decision",
+  RETURN_TO_SOURCE: "Returned to the sending location",
+};
+/** What may become of a rejected quantity: the same rule the API applies (qc-inspection.rules.ts, dispositionsFor). */
+const dispositionsFor = (source: string): string[] =>
+  TRANSFER_SOURCES.includes(source) ? ["RETURN_TO_SOURCE"] : source === "GOODS_RECEIPT" ? ["RETURN_TO_SUPPLIER", "SCRAP", "HOLD"] : ["SCRAP", "HOLD"];
 const STATUS_FILTERS = [
   { value: "", label: "All" },
   { value: "OPEN", label: "Open" },
@@ -56,7 +66,7 @@ function judge(line: Row, entry: { value: string; verdict: string }): "PASS" | "
 
 const specOf = (l: Row) =>
   l.sampling_type === "VALUE"
-    ? [l.min_value != null ? `Min ${Number(l.min_value)}` : "", l.max_value != null ? `Max ${Number(l.max_value)}` : ""].filter(Boolean).join("  ·  ") +
+    ? [l.min_value != null ? `Min ${Number(l.min_value)}` : "", l.max_value != null ? `Max ${Number(l.max_value)}` : "", l.target_value != null ? `Target ${Number(l.target_value)}` : ""].filter(Boolean).join("  ·  ") +
       (l.uom ? ` ${l.uom}` : "")
     : l.acceptance_text || "";
 
@@ -91,12 +101,17 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
   const [deviation, setDeviation] = useState(false);
   const [postingDate, setPostingDate] = useState(todayStr());
   const [remarks, setRemarks] = useState("");
+  // What becomes of the rejected quantity: chosen on completion, on refusing a deviation, or later for one held for a decision.
+  const [disposition, setDisposition] = useState("");
+  const [rejectionRef, setRejectionRef] = useState("");
 
   const load = useCallback(async () => {
     setError("");
     try {
       const data = unwrap<Row>(await api.get(`/qc-inspection/${id}`));
       setInsp(data);
+      setDisposition(data.rejection_disposition && data.rejection_disposition !== "HOLD" ? data.rejection_disposition : "");
+      setRejectionRef(data.rejection_ref || "");
       setEntries(Object.fromEntries((data.lines || []).map((l: Row) => [l.line_id, {
         value: l.actual_value != null ? String(Number(l.actual_value)) : "", verdict: l.sampling_type === "DESCRIPTIVE" ? l.result || "" : "", text: l.actual_text || "",
       }])));
@@ -115,6 +130,17 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
   const rejectedQty = Math.round((quantity - acceptedQty) * 1e4) / 1e4;
   const needsReason = failed || rejectedQty > 0;
   const editable = open && canEdit;
+  const source = String(insp?.source_doc_type ?? "");
+  const fromTransferReceipt = TRANSFER_SOURCES.includes(source);
+  const choices = dispositionsFor(source);
+  // A transfer records its return to the sender itself; any other rejection needs a disposition.
+  const needsDisposition = rejectedQty > 0 && !fromTransferReceipt;
+  // Refusing a deviation rejects the whole lot: it needs a disposition when the inspector did not record one.
+  const refuseNeedsDisposition = insp?.status === "PENDING_APPROVAL" && !fromTransferReceipt && !insp?.rejection_disposition;
+  // A closed rejection that is held, or that was closed before dispositions were recorded, can be settled for good.
+  const settlable = insp?.status === "CLOSED" && canEdit && !fromTransferReceipt && Number(insp?.rejected_qty ?? 0) > 0
+    && (!insp?.rejection_disposition || insp.rejection_disposition === "HOLD");
+  const finalChoices = choices.filter((d) => d !== "HOLD");
 
   const complete = async () => {
     setBusy(true);
@@ -136,6 +162,7 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
         deviation: failed && deviation,
         posting_date: postingDate,
         remarks: remarks.trim() || undefined,
+        ...(needsDisposition ? { rejection_disposition: disposition, rejection_ref: rejectionRef.trim() || undefined } : {}),
       });
       showToast.success(tLabel("QC inspection completed."));
       onChanged();
@@ -148,13 +175,42 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
     setBusy(true);
     setError("");
     try {
-      await api.post(`/qc-inspection/${id}/${approve ? "approve-deviation" : "reject-deviation"}`, { posting_date: postingDate });
+      await api.post(`/qc-inspection/${id}/${approve ? "approve-deviation" : "reject-deviation"}`, {
+        posting_date: postingDate,
+        ...(!approve && !fromTransferReceipt && disposition ? { rejection_disposition: disposition, rejection_ref: rejectionRef.trim() || undefined } : {}),
+      });
       showToast.success(tLabel(approve ? "Deviation approved." : "Deviation refused."));
       onChanged();
       await load();
     } catch (e: any) { setError(e?.message || String(e)); }
     finally { setBusy(false); }
   };
+
+  const settle = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/qc-inspection/${id}/settle-rejection`, { rejection_disposition: disposition, rejection_ref: rejectionRef.trim() || undefined });
+      showToast.success(tLabel("Rejected quantity settled."));
+      onChanged();
+      await load();
+    } catch (e: any) { setError(e?.message || String(e)); }
+    finally { setBusy(false); }
+  };
+
+  /** The disposition picker and its reference, for whichever step is choosing it. */
+  const dispositionFields = (options: string[], required: boolean) => (
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      {labelled(required ? "Rejected Qty goes to *" : "Rejected Qty goes to",
+        <select className={control} value={disposition} onChange={(e) => setDisposition(e.target.value)} aria-label={tLabel("Rejected Qty goes to")}>
+          <option value="">{tLabel("Select...")}</option>
+          {options.map((d) => <option key={d} value={d}>{tLabel(DISPOSITION_LABEL[d] || d)}</option>)}
+        </select>,
+        tLabel("Recorded only: nothing is posted for the rejected quantity."))}
+      {labelled("Return / scrap document No.", <input className={control} value={rejectionRef} maxLength={100} onChange={(e) => setRejectionRef(e.target.value)} />,
+        tLabel("Optional: the return note, debit note or write-off that carries it out."))}
+    </div>
+  );
 
   const control = "nf-input-sm h-9 w-full";
   const read = (label: string, value: React.ReactNode) => (
@@ -185,12 +241,15 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
             <Button size="sm" variant="outline" onClick={onClose}>{tLabel("Close")}</Button>
             {insp?.status === "PENDING_APPROVAL" && canApprove && (
               <>
-                <Button size="sm" variant="outline" disabled={busy} onClick={() => decide(false)}>{tLabel("Refuse deviation")}</Button>
+                <Button size="sm" variant="outline" disabled={busy || (refuseNeedsDisposition && !disposition)} onClick={() => decide(false)}>{tLabel("Refuse deviation")}</Button>
                 <Button size="sm" disabled={busy} onClick={() => decide(true)}>{tLabel("Approve deviation")}</Button>
               </>
             )}
+            {settlable && (
+              <Button size="sm" disabled={busy || !disposition} onClick={settle}>{busy ? tLabel("Saving...") : tLabel("Record disposition")}</Button>
+            )}
             {editable && (
-              <Button size="sm" disabled={busy || missing || (needsReason && !reasonId)} onClick={complete}>
+              <Button size="sm" disabled={busy || missing || (needsReason && !reasonId) || (needsDisposition && !disposition)} onClick={complete}>
                 {busy ? tLabel("Saving...") : tLabel("Complete inspection")}
               </Button>
             )}
@@ -301,21 +360,43 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
                   <span>{tLabel("Accept with a deviation. A different user must approve it before any stock is posted.")}</span>
                 </label>
               )}
+              {needsDisposition && <div className="mt-4">{dispositionFields(choices, true)}</div>}
               <p className="mt-4 rounded-[var(--radius-sm)] border px-3 py-2 text-xs" style={{ borderColor: failed ? "var(--warning)" : "var(--border)", color: "var(--text-secondary)" }}>
                 {failed
                   ? tLabel("This lot fails a mandatory check. Without a deviation the whole quantity is rejected and nothing is posted to inventory.")
                   : tLabel("On completion the accepted quantity is posted to the inventory ledger. The rejected quantity is not posted.")}
+                {rejectedQty > 0 && fromTransferReceipt ? ` ${tLabel("The rejected quantity goes back to the location it was sent from.")}` : ""}
               </p>
             </section>
           ) : (
-            (insp.remarks || insp.reason_code) && (
+            (insp.remarks || insp.reason_code || insp.rejection_disposition) && (
               <section>
                 <SectionTitle>{tLabel("Outcome")}</SectionTitle>
                 <div className="grid grid-cols-1 gap-4 rounded-[var(--radius-md)] border p-4 md:grid-cols-2" style={S.surface}>
                   {read("Reason Code", insp.reason_code)}{read("Remarks", insp.remarks)}
+                  {insp.rejection_disposition ? read("Rejected Qty goes to", tLabel(DISPOSITION_LABEL[insp.rejection_disposition] || insp.rejection_disposition)) : null}
+                  {insp.rejection_disposition ? read("Return / scrap document No.", insp.rejection_ref) : null}
                 </div>
               </section>
             )
+          )}
+          {insp.status === "PENDING_APPROVAL" && canApprove && !fromTransferReceipt && (
+            <section>
+              <SectionTitle>{tLabel("If the deviation is refused")}</SectionTitle>
+              <p className="mb-3 text-xs" style={S.sub}>{tLabel("Refusing rejects the whole lot.")}</p>
+              {dispositionFields(choices, refuseNeedsDisposition)}
+            </section>
+          )}
+          {settlable && (
+            <section>
+              <SectionTitle>{tLabel("Settle the rejected quantity")}</SectionTitle>
+              <p className="mb-3 text-xs" style={S.sub}>
+                {insp.rejection_disposition === "HOLD"
+                  ? tLabel("The rejected quantity is held for a decision. Record what became of it.")
+                  : tLabel("No disposition was recorded when this inspection was closed. Record what became of the rejected quantity.")}
+              </p>
+              {dispositionFields(finalChoices, true)}
+            </section>
           )}
           {error && <p className="rounded-[var(--radius-sm)] border p-3 text-sm" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}>{error}</p>}
         </div>
@@ -431,6 +512,11 @@ export default function QcInspectionPanel() {
                   <TableCell className="whitespace-nowrap"><StatusBadge status={r.status} label={tLabel(STATUS_LABEL[r.status] || r.status)} /></TableCell>
                   <TableCell className="whitespace-nowrap">
                     {r.result ? <StatusBadge status={r.result === "PASS" ? "COMPLETED" : r.result === "DEVIATION" ? "PENDING" : "REJECTED"} label={tLabel(r.result === "PASS" ? "Pass" : r.result === "FAIL" ? "Fail" : "Deviation")} /> : <span style={S.muted}>–</span>}
+                    {r.rejection_disposition && (
+                      <div className="mt-1 text-[11px]" style={r.rejection_disposition === "HOLD" ? { color: "var(--warning)" } : S.muted}>
+                        {tLabel(DISPOSITION_LABEL[r.rejection_disposition] || r.rejection_disposition)}
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     <button type="button" title={tLabel("Open")} className="rounded-lg p-1.5 transition hover:bg-(--surface-raised)" style={S.sub}

@@ -77,6 +77,7 @@ const ROUTE_GRANTS: Array<[path: string, anyOf: Grant[]]> = [
 /** Master-data screens whose grant is not MASTER_DATA/<KEY IN CAPITALS>. */
 const MASTER_DATA_GRANTS: Record<string, Grant> = {
   stage: ['PRODUCTION', 'STAGE'],
+  'qc-parameter': ['PRODUCTION', 'QC_PARAMETER'],
   'number-series': ['SYSTEM', 'NUMBER_SERIES'],
   animal: ['PIGGERY', 'ANIMAL'],
   'alert-rule': ['NOTIFICATION', 'ALERT_RULE'],

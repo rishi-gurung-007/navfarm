@@ -937,6 +937,9 @@ export default function GoodsReceiptPanel() {
                     />
                   </TableHead>
                 ))}
+                <TableHead className="whitespace-nowrap">
+                  {tLabel('QC Inspection')}
+                </TableHead>
                 <TableHead
                   className="text-right"
                   aria-sort={
@@ -964,7 +967,7 @@ export default function GoodsReceiptPanel() {
               {loading ? (
                 <tr>
                   <TableCell
-                    colSpan={6}
+                    colSpan={7}
                     className="py-10 text-center"
                     style={S.sub}
                   >
@@ -978,7 +981,7 @@ export default function GoodsReceiptPanel() {
               ) : rows.length === 0 ? (
                 <tr>
                   <TableCell
-                    colSpan={6}
+                    colSpan={7}
                     className="py-10 text-center"
                     style={S.sub}
                   >
@@ -1004,8 +1007,35 @@ export default function GoodsReceiptPanel() {
                     <TableCell className="whitespace-nowrap" style={S.sub}>
                       {row.external_reference_no || NA}
                     </TableCell>
+                    {/* The QC inspection holding a QC-required item's stock, opened straight from the row. */}
+                    <TableCell className="whitespace-nowrap text-xs" style={S.sub}>
+                      {(row.qc_inspections ?? []).length
+                        ? (row.qc_inspections as Row[]).map((qc, at) => (
+                            <span key={qc.inspection_id}>
+                              {at > 0 && ', '}
+                              <a
+                                href={`/inventory/qc-inspection?recordId=${encodeURIComponent(qc.inspection_id)}`}
+                                className="font-semibold underline"
+                                style={{ color: 'var(--accent)' }}
+                              >
+                                {qc.inspection_no}
+                              </a>
+                            </span>
+                          ))
+                        : NA}
+                    </TableCell>
                     <TableCell className="text-right">
-                      <StatusBadge status={row.status} />
+                      <div className="flex items-center justify-end gap-1.5">
+                        {(() => {
+                          const qcs: Row[] = row.qc_inspections ?? [];
+                          if (qcs.some((q) => q.status === 'OPEN'))
+                            return <StatusBadge status="PENDING" label={tLabel('Awaiting QC')} />;
+                          if (qcs.some((q) => q.status === 'PENDING_APPROVAL'))
+                            return <StatusBadge status="PENDING" label={tLabel('QC deviation awaiting approval')} />;
+                          return null;
+                        })()}
+                        <StatusBadge status={row.status} />
+                      </div>
                     </TableCell>
                     <TableCell className="text-right">
                       <button

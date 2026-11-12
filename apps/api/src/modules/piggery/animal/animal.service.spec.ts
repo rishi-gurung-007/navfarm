@@ -238,6 +238,7 @@ describe('AnimalService', () => {
             addTransaction: jest.fn().mockResolvedValue({}),
             syncSchedulerCounts: jest.fn().mockResolvedValue(undefined),
             alignSchedulerToStageEntry: jest.fn().mockResolvedValue(null),
+            openSchedulerForAnimalStage: jest.fn().mockResolvedValue(undefined),
             recordAnimalExit: jest
               .fn()
               .mockResolvedValue({ valueRelieved: null, batch: null }),
@@ -2455,32 +2456,33 @@ describe('AnimalService', () => {
   });
 
   describe('lookupByTag', () => {
+    // breed, stage, batch, pen, and the pen's farm
+    const lookupQuery = (rows: any[]) => {
+      const query: any = {
+        leftJoin: jest.fn(() => query),
+        where: jest.fn(() => query),
+        limit: jest.fn().mockResolvedValue(rows),
+      };
+      return { from: jest.fn(() => query), query };
+    };
+
     it('resolves an animal matching RFID tag and returns active withdrawal checks', async () => {
+      const lookup = lookupQuery([
+        {
+          animal: {
+            animal_id: 'a-1',
+            rfid_tag: 'RFID-12345',
+            animal_code: 'PIG-2026-0001',
+          },
+          breed: { breed_name: 'Yorkshire' },
+          stage: { stage_name: 'Gilt' },
+          batch: { batch_no: 'BATCH-01' },
+          pen: { code: 'PEN-04', name: 'Farrowing pen 4' },
+          farm: { code: 'FARM-01', name: 'Home farm' },
+        },
+      ]);
       mockDbSelect
-        .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({
-            leftJoin: jest.fn().mockReturnValue({
-              leftJoin: jest.fn().mockReturnValue({
-                leftJoin: jest.fn().mockReturnValue({
-                  where: jest.fn().mockReturnValue({
-                    limit: jest.fn().mockResolvedValue([
-                      {
-                        animal: {
-                          animal_id: 'a-1',
-                          rfid_tag: 'RFID-12345',
-                          animal_code: 'PIG-2026-0001',
-                        },
-                        breed: { breed_name: 'Yorkshire' },
-                        stage: { stage_name: 'Gilt' },
-                        batch: { batch_no: 'BATCH-01' },
-                      },
-                    ]),
-                  }),
-                }),
-              }),
-            }),
-          }),
-        })
+        .mockReturnValueOnce({ from: lookup.from })
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             innerJoin: jest.fn().mockReturnValue({
@@ -2496,6 +2498,50 @@ describe('AnimalService', () => {
       expect(res.breed_name).toBe('Yorkshire');
       expect(res.stage_name).toBe('Gilt');
       expect(res.hasActiveWithdrawal).toBe(false);
+      expect(lookup.query.leftJoin).toHaveBeenCalledTimes(5);
+      // A scanned label says where to find her: the pen and its farm.
+      expect(res).toMatchObject({
+        batch_no: 'BATCH-01',
+        location_code: 'PEN-04',
+        location_name: 'Farrowing pen 4',
+        farm_name: 'Home farm',
+      });
+    });
+
+    it('returns no pen or farm for an animal with no location', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: lookupQuery([
+            {
+              animal: { animal_id: 'a-2', animal_code: 'PIG-2026-0002' },
+              breed: null,
+              stage: null,
+              batch: null,
+              pen: null,
+              farm: null,
+            },
+          ]).from,
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            innerJoin: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        })
+        .mockReturnValueOnce(joinedTreatmentRows([]));
+
+      const res = await service.lookupByTag('PIG-2026-0002', 'tenant-123');
+
+      expect(res).toMatchObject({ location_code: null, location_name: null, farm_name: null });
+    });
+
+    it('refuses a code that matches no animal in scope with a 404', async () => {
+      mockDbSelect.mockReturnValueOnce({ from: lookupQuery([]).from });
+
+      await expect(service.lookupByTag('NOPE-1', 'tenant-123')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('rejects an empty tag string', async () => {
@@ -2904,6 +2950,13 @@ describe('AnimalService', () => {
 
       expect(res.current_stage_id).toBe('st-flush');
       expect(res.current_location_id).toBe('loc-1');
+      // The stage moved to gets the batch's scheduler, or it has no data entry and is missing from the strip.
+      expect(module.get(BatchService).openSchedulerForAnimalStage).toHaveBeenCalledWith(
+        'batch-1',
+        'st-flush',
+        'tenant-123',
+        { userId: 'user-1' },
+      );
     });
 
     it('refuses a stage that is set to the other sex', async () => {

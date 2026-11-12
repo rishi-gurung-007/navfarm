@@ -2,7 +2,7 @@ import { Controller, Get, Post, Put, Patch, Param, Body, Query, Req, UseGuards }
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { AnimalService } from './animal.service';
 import { AnimalActivityService } from './animal-activity.service';
-import { BulkTransitionAnimalStageDto, CreateAnimalDto, UpdateAnimalDto, DisposeAnimalDto, MarkOutOfProductionDto, QueryAnimalDto, TransitionAnimalStageDto } from './dto/animal.dto';
+import { BulkTransitionAnimalStageDto, MoveAnimalLocationDto, CreateAnimalDto, UpdateAnimalDto, DisposeAnimalDto, MarkOutOfProductionDto, QueryAnimalDto, TransitionAnimalStageDto } from './dto/animal.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -101,6 +101,15 @@ export class AnimalController {
       ? `${result.moved} animal(s) moved, ${result.failed.length} could not be moved.`
       : `${result.moved} animal(s) moved.`;
     return { success: true, message, data: result };
+  }
+
+  @Post('move-location')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'edit')
+  @ApiOperation({ summary: 'Move animals to another pen, crate or shed on the farm of their batch — batch, stage and value stay as they are' })
+  async moveLocation(@Body() dto: MoveAnimalLocationDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.animalService.moveLocation(dto, tenantId, req.user);
+    return { success: true, message: `${result.moved} animal(s) moved to ${result.to_location_code ?? 'the new location'}.`, data: result };
   }
 
   @Post(':id/transition-stage')

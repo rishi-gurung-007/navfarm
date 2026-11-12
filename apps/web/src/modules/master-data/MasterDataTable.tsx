@@ -5022,7 +5022,7 @@ export function MasterDataTable({
           <div
             className={
               selectedRow
-                ? 'grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]'
+                ? 'grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_480px]'
                 : undefined
             }
           >
@@ -5472,7 +5472,7 @@ export function MasterDataTable({
               )}
             </div>
             {selectedRow && detailFor === 'animal' && (
-              <div className="min-w-0 xl:sticky xl:top-4 xl:max-h-[calc(100dvh-8rem)]">
+              <div className="flex min-h-0 min-w-0 max-h-[calc(100dvh-8rem)] flex-col lg:sticky lg:top-4">
                 <AnimalDetailPanel
                   row={selectedRow}
                   onClose={() => setSelectedId(null)}

@@ -8,7 +8,7 @@ import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Toast } from '@/components/ui/toast';
 import { Pagination } from '@/components/ui/pagination';
-import { getActiveCompanyId } from '@/hooks/useAuth';
+import { getActiveCompanyId, getStoredUser, hasPermission } from '@/hooks/useAuth';
 import {
   TableHeader,
   TableBody,
@@ -19,6 +19,7 @@ import {
 import { useLanguage } from '@/hooks/useLanguage';
 import { formatQuantity } from '@/lib/utils';
 import { Select } from '@/components/ui/select';
+import type { TranslationKeys } from '@/utils/translations';
 
 const PAGE_SIZE = 25;
 
@@ -43,21 +44,27 @@ function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 }
 
-const PARAM_TYPES = ['NUMERIC', 'BOOLEAN', 'GRADE'];
+// The client's QC Parameter Master: QC Code, Description, QC Type, Unit of Measurement, Min / Max / Target Value, Mandatory, Active.
+const PARAM_TYPES: Array<{ value: string; labelKey: TranslationKeys }> = [
+  { value: 'NUMERIC', labelKey: 'qcpTypeNumeric' },
+  { value: 'BOOLEAN', labelKey: 'qcpTypeBoolean' },
+];
 
 const emptyForm = () => ({
-  lob_id: '',
   param_code: '',
   param_name: '',
   param_type: 'NUMERIC',
   uom: '',
   min_value: '',
   max_value: '',
-  pass_criteria: '',
-  fail_criteria: '',
-  grade_scale: '',
+  target_value: '',
   is_mandatory: true,
+  is_active: true,
 });
+
+const asInput = (v: unknown) =>
+  v === null || v === undefined ? '' : String(Number(v));
+const asNumber = (v: string) => (v === '' ? null : Number(v));
 
 export default function QcParameterPanel() {
   const { t } = useLanguage();
@@ -68,12 +75,12 @@ export default function QcParameterPanel() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
 
-  const [nobs, setNobs] = useState<Row[]>([]);
-  const [lobs, setLobs] = useState<Row[]>([]);
   const [uoms, setUoms] = useState<Row[]>([]);
-  const [nobId, setNobId] = useState('');
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const canEdit = hasPermission(getStoredUser(), 'PRODUCTION', 'QC_PARAMETER', 'can_edit');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [form, setForm] = useState<Row>(emptyForm());
@@ -111,65 +118,91 @@ export default function QcParameterPanel() {
     const params = new URLSearchParams();
     if (companyId) params.set('companyId', companyId);
     params.set('limit', '500');
-    const qs = params.toString();
     api
-      .get(`/setup/wizard/nobs?${qs}`)
-      .then((r) => setNobs(unwrap<Row[]>(r) || []))
-      .catch(() => {});
-    api
-      .get(`/uom?${qs}`)
+      .get(`/uom?${params.toString()}`)
       .then((r) => setUoms(unwrap<Row[]>(r) || []))
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (!nobId) {
-      setLobs([]);
-      return;
-    }
-    api
-      .get(`/setup/wizard/lobs/${nobId}`)
-      .then((r) => setLobs(unwrap<Row[]>(r) || []))
-      .catch(() => setLobs([]));
-  }, [nobId]);
-
   const openCreate = () => {
-    setNobId('');
+    setEditingId(null);
     setForm(emptyForm());
     setFormError('');
     setModalOpen(true);
+  };
+
+  const openEdit = (row: Row) => {
+    setEditingId(row.param_id);
+    setForm({
+      param_code: row.param_code,
+      param_name: row.param_name,
+      param_type: row.param_type,
+      uom: row.uom || '',
+      min_value: asInput(row.min_value),
+      max_value: asInput(row.max_value),
+      target_value: asInput(row.target_value),
+      is_mandatory: !!row.is_mandatory,
+      is_active: !!row.is_active,
+    });
+    setFormError('');
+    setModalOpen(true);
+  };
+
+  const isNumeric = form.param_type === 'NUMERIC';
+
+  // The Active switch in the list, as on the other masters: saved at once, without opening the form.
+  const toggleActive = async (row: Row) => {
+    setTogglingId(row.param_id);
+    try {
+      await api.put(`/qc-parameter/${row.param_id}`, { is_active: !row.is_active });
+      setRows((all) =>
+        all.map((r) => (r.param_id === row.param_id ? { ...r, is_active: !row.is_active } : r)),
+      );
+    } catch (err: any) {
+      setError(err?.message || t('qcpFailedToSave'));
+    } finally {
+      setTogglingId(null);
+    }
   };
 
   const handleSave = async () => {
     setSaving(true);
     setFormError('');
     try {
-      if (!form.lob_id) throw new Error(t('qcpLobRequired'));
-      if (!form.param_code || !form.param_name)
+      if (!form.param_code.trim() || !form.param_name.trim())
         throw new Error(t('qcpCodeNameRequired'));
-      let gradeScale: Record<string, string> | undefined;
-      if (form.param_type === 'GRADE' && form.grade_scale) {
-        try {
-          gradeScale = JSON.parse(form.grade_scale);
-        } catch {
-          throw new Error(t('qcpGradeScaleInvalidJson'));
-        }
-      }
-      await api.post('/qc-parameter', {
-        company_id: companyId,
-        lob_id: form.lob_id,
-        param_code: form.param_code,
-        param_name: form.param_name,
+      const min = isNumeric ? asNumber(form.min_value) : null;
+      const max = isNumeric ? asNumber(form.max_value) : null;
+      const target = isNumeric ? asNumber(form.target_value) : null;
+      if (min !== null && max !== null && min > max)
+        throw new Error(t('qcpMinAboveMax'));
+      if (
+        target !== null &&
+        ((min !== null && target < min) || (max !== null && target > max))
+      )
+        throw new Error(t('qcpTargetOutsideRange'));
+      const body = {
+        param_name: form.param_name.trim(),
         param_type: form.param_type,
-        uom: form.uom || undefined,
-        min_value: form.min_value !== '' ? Number(form.min_value) : undefined,
-        max_value: form.max_value !== '' ? Number(form.max_value) : undefined,
-        pass_criteria: form.pass_criteria || undefined,
-        fail_criteria: form.fail_criteria || undefined,
-        grade_scale: gradeScale,
+        uom: isNumeric ? form.uom || null : null,
+        min_value: min,
+        max_value: max,
+        target_value: target,
         is_mandatory: form.is_mandatory,
-      });
+        is_active: form.is_active,
+      };
+      if (editingId) {
+        await api.put(`/qc-parameter/${editingId}`, body);
+      } else {
+        // A create leaves an empty value out rather than sending null.
+        const created: Row = {
+          company_id: companyId,
+          param_code: form.param_code.trim(),
+        };
+        for (const [k, v] of Object.entries(body)) if (v !== null) created[k] = v;
+        await api.post('/qc-parameter', created);
+      }
       setModalOpen(false);
       load();
     } catch (err: any) {
@@ -230,10 +263,22 @@ export default function QcParameterPanel() {
                   {t('qcpType')}
                 </TableHead>
                 <TableHead className="whitespace-nowrap">
-                  {t('qcpRangeScale')}
+                  {t('qcpUom')}
                 </TableHead>
                 <TableHead className="whitespace-nowrap text-right">
+                  {t('qcpMinValue')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-right">
+                  {t('qcpMaxValue')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap text-right">
+                  {t('qcpTargetValue')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap">
                   {t('qcpMandatory')}
+                </TableHead>
+                <TableHead className="whitespace-nowrap">
+                  {t('qcpActive')}
                 </TableHead>
               </tr>
             </TableHeader>
@@ -241,7 +286,7 @@ export default function QcParameterPanel() {
               {loading ? (
                 <tr>
                   <TableCell
-                    colSpan={5}
+                    colSpan={9}
                     className="py-10 text-center"
                     style={S.sub}
                   >
@@ -255,7 +300,7 @@ export default function QcParameterPanel() {
               ) : rows.length === 0 ? (
                 <tr>
                   <TableCell
-                    colSpan={5}
+                    colSpan={9}
                     className="py-10 text-center"
                     style={S.sub}
                   >
@@ -264,37 +309,92 @@ export default function QcParameterPanel() {
                   </TableCell>
                 </tr>
               ) : (
-                pagedRows.map((row) => (
-                  <TableRow key={row.param_id}>
-                    <TableCell
-                      className="whitespace-nowrap font-semibold"
-                      style={S.primary}
+                pagedRows.map((row) => {
+                  const typeKey = PARAM_TYPES.find(
+                    (tp) => tp.value === row.param_type,
+                  )?.labelKey;
+                  const num = (v: unknown) =>
+                    v != null ? formatQuantity(v as number) : NA;
+                  return (
+                    <TableRow
+                      key={row.param_id}
+                      onClick={() => openEdit(row)}
+                      className="cursor-pointer"
                     >
-                      {row.param_code}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap" style={S.primary}>
-                      {row.param_name}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap" style={S.sub}>
-                      {row.param_type}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap" style={S.sub}>
-                      {row.param_type === 'NUMERIC'
-                        ? `${row.min_value != null ? formatQuantity(row.min_value) : NA} – ${row.max_value != null ? formatQuantity(row.max_value) : NA} ${row.uom || ''}`
-                        : row.param_type === 'GRADE'
-                          ? row.grade_scale
-                            ? Object.keys(row.grade_scale).join(', ')
-                            : NA
-                          : t('qcpTrueFalse')}
-                    </TableCell>
-                    <TableCell
-                      className="whitespace-nowrap text-right"
-                      style={S.primary}
-                    >
-                      {row.is_mandatory ? t('qcpYes') : t('qcpNo')}
-                    </TableCell>
-                  </TableRow>
-                ))
+                      <TableCell
+                        className="whitespace-nowrap font-semibold"
+                        style={S.primary}
+                      >
+                        {row.param_code}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap" style={S.primary}>
+                        {row.param_name}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap" style={S.sub}>
+                        {typeKey ? t(typeKey) : row.param_type}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap" style={S.sub}>
+                        {row.uom || NA}
+                      </TableCell>
+                      <TableCell
+                        className="whitespace-nowrap text-right"
+                        style={S.sub}
+                      >
+                        {num(row.min_value)}
+                      </TableCell>
+                      <TableCell
+                        className="whitespace-nowrap text-right"
+                        style={S.sub}
+                      >
+                        {num(row.max_value)}
+                      </TableCell>
+                      <TableCell
+                        className="whitespace-nowrap text-right"
+                        style={S.sub}
+                      >
+                        {num(row.target_value)}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap" style={S.primary}>
+                        {row.is_mandatory ? t('qcpYes') : t('qcpNo')}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap" style={S.primary}>
+                        {canEdit ? (
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={!!row.is_active}
+                            aria-label={row.param_code}
+                            title={row.is_active ? t('deactivate') : t('restore')}
+                            disabled={togglingId === row.param_id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleActive(row);
+                            }}
+                            className="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition disabled:opacity-50"
+                            style={{
+                              backgroundColor: row.is_active
+                                ? 'var(--success)'
+                                : 'var(--border)',
+                            }}
+                          >
+                            <span
+                              className="inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform"
+                              style={{
+                                transform: row.is_active
+                                  ? 'translateX(1.15rem)'
+                                  : 'translateX(0.2rem)',
+                              }}
+                            />
+                          </button>
+                        ) : row.is_active ? (
+                          t('qcpYes')
+                        ) : (
+                          t('qcpNo')
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </table>
@@ -318,7 +418,7 @@ export default function QcParameterPanel() {
       <Dialog
         open={modalOpen}
         onClose={() => !saving && setModalOpen(false)}
-        title={t('qcpNewQcParameter')}
+        title={editingId ? t('qcpEditQcParameter') : t('qcpNewQcParameter')}
         footer={
           <Button onClick={handleSave} disabled={saving}>
             {saving ? t('qcpSaving') : t('qcpSave')}
@@ -334,54 +434,6 @@ export default function QcParameterPanel() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>
-                {t('qcpNatureOfBusiness')}{' '}
-                <span className="text-(--danger)">*</span>
-              </label>
-              <Select
-                value={nobId}
-                onChange={(e) => {
-                  setNobId(e.target.value);
-                  setForm((f) => ({ ...f, lob_id: '' }));
-                }}
-                className={`${inputCls} nf-select`}
-                style={S.input}
-              >
-                <option value="">{t('qcpSelectEllipsis')}</option>
-                {nobs.map((n) => (
-                  <option key={n.nob_id} value={n.nob_id}>
-                    {n.nob_name || n.nob_code}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="nf-text-label" style={S.sub}>
-                {t('qcpLineOfBusiness')}{' '}
-                <span className="text-(--danger)">*</span>
-              </label>
-              <Select
-                value={form.lob_id}
-                onChange={(e) =>
-                  setForm((f: Row) => ({ ...f, lob_id: e.target.value }))
-                }
-                className={`${inputCls} nf-select`}
-                style={S.input}
-                disabled={!nobId}
-              >
-                <option value="">
-                  {nobId
-                    ? t('qcpSelectEllipsis')
-                    : t('qcpSelectNatureOfBusinessFirst')}
-                </option>
-                {lobs.map((l) => (
-                  <option key={l.lob_id} value={l.lob_id}>
-                    {l.lob_name || l.lob_code}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="nf-text-label" style={S.sub}>
                 {t('qcpCode')} <span className="text-(--danger)">*</span>
               </label>
               <input
@@ -389,9 +441,11 @@ export default function QcParameterPanel() {
                 onChange={(e) =>
                   setForm((f: Row) => ({ ...f, param_code: e.target.value }))
                 }
-                placeholder="QC_BIRD_WEIGHT"
+                placeholder="QC-MOISTURE-001"
                 className={inputCls}
                 style={S.input}
+                disabled={!!editingId}
+                maxLength={50}
               />
             </div>
             <div className="flex flex-col gap-1.5">
@@ -406,11 +460,12 @@ export default function QcParameterPanel() {
                 placeholder={t('qcpNamePlaceholder')}
                 className={inputCls}
                 style={S.input}
+                maxLength={100}
               />
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>
-                {t('qcpType')}
+                {t('qcpType')} <span className="text-(--danger)">*</span>
               </label>
               <Select
                 value={form.param_type}
@@ -420,13 +475,60 @@ export default function QcParameterPanel() {
                 className={`${inputCls} nf-select`}
                 style={S.input}
               >
+                {!PARAM_TYPES.some((tp) => tp.value === form.param_type) && (
+                  <option value={form.param_type}>{form.param_type}</option>
+                )}
                 {PARAM_TYPES.map((tp) => (
-                  <option key={tp} value={tp}>
-                    {tp}
+                  <option key={tp.value} value={tp.value}>
+                    {t(tp.labelKey)}
                   </option>
                 ))}
               </Select>
             </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="nf-text-label" style={S.sub}>
+                {t('qcpUom')}
+              </label>
+              <Select
+                value={isNumeric ? form.uom : ''}
+                onChange={(e) =>
+                  setForm((f: Row) => ({ ...f, uom: e.target.value }))
+                }
+                className={`${inputCls} nf-select`}
+                style={S.input}
+                disabled={!isNumeric}
+              >
+                <option value="">{t('qcpSelectEllipsis')}</option>
+                {uoms.map((u) => (
+                  <option key={u.uom_id || u.uom_code} value={u.uom_code}>
+                    {u.uom_name ? `${u.uom_code} — ${u.uom_name}` : u.uom_code}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            {(
+              [
+                ['min_value', 'qcpMinValue'],
+                ['max_value', 'qcpMaxValue'],
+                ['target_value', 'qcpTargetValue'],
+              ] as const
+            ).map(([key, labelKey]) => (
+              <div key={key} className="flex flex-col gap-1.5">
+                <label className="nf-text-label" style={S.sub}>
+                  {t(labelKey)}
+                </label>
+                <input
+                  type="number"
+                  value={isNumeric ? form[key] : ''}
+                  onChange={(e) =>
+                    setForm((f: Row) => ({ ...f, [key]: e.target.value }))
+                  }
+                  className={inputCls}
+                  style={S.input}
+                  disabled={!isNumeric}
+                />
+              </div>
+            ))}
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>
                 {t('qcpMandatory')}
@@ -446,102 +548,24 @@ export default function QcParameterPanel() {
                 <option value="no">{t('qcpMandatoryNoOption')}</option>
               </Select>
             </div>
-
-            {form.param_type === 'NUMERIC' && (
-              <>
-                <div className="flex flex-col gap-1.5">
-                  <label className="nf-text-label" style={S.sub}>
-                    {t('qcpMinValue')}
-                  </label>
-                  <input
-                    type="number"
-                    value={form.min_value}
-                    onChange={(e) =>
-                      setForm((f: Row) => ({ ...f, min_value: e.target.value }))
-                    }
-                    className={inputCls}
-                    style={S.input}
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="nf-text-label" style={S.sub}>
-                    {t('qcpMaxValue')}
-                  </label>
-                  <input
-                    type="number"
-                    value={form.max_value}
-                    onChange={(e) =>
-                      setForm((f: Row) => ({ ...f, max_value: e.target.value }))
-                    }
-                    className={inputCls}
-                    style={S.input}
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="nf-text-label" style={S.sub}>
-                    {t('qcpUom')}
-                  </label>
-                  <Select
-                    value={form.uom}
-                    onChange={(e) =>
-                      setForm((f: Row) => ({ ...f, uom: e.target.value }))
-                    }
-                    className={`${inputCls} nf-select`}
-                    style={S.input}
-                  >
-                    <option value="">{t('qcpSelectEllipsis')}</option>
-                    {uoms.map((u) => (
-                      <option key={u.uom_code} value={u.uom_code}>
-                        {u.uom_code}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              </>
-            )}
-
-            {form.param_type === 'GRADE' && (
-              <div className="flex flex-col gap-1.5 sm:col-span-2">
-                <label className="nf-text-label" style={S.sub}>
-                  {t('qcpGradeScaleJson')}
-                </label>
-                <input
-                  value={form.grade_scale}
-                  onChange={(e) =>
-                    setForm((f: Row) => ({ ...f, grade_scale: e.target.value }))
-                  }
-                  placeholder='{"A":"2.0-2.5kg","B":"1.8-2.0kg"}'
-                  className={inputCls}
-                  style={S.input}
-                />
-              </div>
-            )}
-
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>
-                {t('qcpPassCriteria')}
+                {t('qcpActive')}
               </label>
-              <input
-                value={form.pass_criteria}
+              <Select
+                value={form.is_active ? 'yes' : 'no'}
                 onChange={(e) =>
-                  setForm((f: Row) => ({ ...f, pass_criteria: e.target.value }))
+                  setForm((f: Row) => ({
+                    ...f,
+                    is_active: e.target.value === 'yes',
+                  }))
                 }
-                className={inputCls}
+                className={`${inputCls} nf-select`}
                 style={S.input}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="nf-text-label" style={S.sub}>
-                {t('qcpFailCriteria')}
-              </label>
-              <input
-                value={form.fail_criteria}
-                onChange={(e) =>
-                  setForm((f: Row) => ({ ...f, fail_criteria: e.target.value }))
-                }
-                className={inputCls}
-                style={S.input}
-              />
+              >
+                <option value="yes">{t('qcpYes')}</option>
+                <option value="no">{t('qcpNo')}</option>
+              </Select>
             </div>
           </div>
         </div>

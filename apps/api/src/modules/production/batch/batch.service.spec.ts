@@ -4694,6 +4694,143 @@ describe('BatchService', () => {
     });
   });
 
+  describe("a piglet lot's capitalised feed and overhead go into the account its birth cost and deaths are in", () => {
+    // LIT-000022 on nf_devco, 11 Nov 2026: its weaner feed was debited to the pre-mature herd account (152100) while a piglet's death
+    // is credited to the BIO_LITTER_BIRTH debit (170400 Weaners Inventory), so a death took out of 170400 value that had gone into 152100.
+    const lot = {
+      ...activeBatch,
+      batch_no: 'LIT-000022',
+      costing_method: 'BIO_ASSET',
+      tracking_mode: 'BATCH_WISE',
+      input_lines: [],
+    };
+    const setup = (stage: 'PREMATURE' | 'MATURE', madeByFarrowing = true) => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(lot as any);
+      jest.spyOn(service as any, 'ensureBioState').mockResolvedValue({
+        current_quantity: '12',
+        nca_book_value: '0',
+        stage,
+      });
+      jest
+        .spyOn(service as any, 'animalsPastCostingStart')
+        .mockResolvedValue(new Set());
+      jest.spyOn(service as any, 'evaluateKpi').mockResolvedValue(undefined);
+      jest
+        .spyOn(service as any, 'batchClassAccount')
+        .mockResolvedValue(undefined);
+      // The farrowing that made the batch, if one did.
+      mockDbSelect.mockReturnValue({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue(madeByFarrowing ? [{ id: 'farrow-1' }] : []),
+          }),
+        }),
+      });
+      (service as any).ledgerService = {
+        writeNegativeEntry: jest.fn().mockResolvedValue({
+          ledger_id: 'L1',
+          amount: '-5.5200',
+          rate: '0.575',
+        }),
+      };
+      const gl = {
+        postInventoryLedgerEntry: jest.fn().mockResolvedValue({}),
+        postBatchCostEntry: jest.fn().mockResolvedValue({}),
+        mappedAccount: jest.fn().mockResolvedValue('acct-weaners'),
+        animalAssetAccountId: jest.fn().mockResolvedValue(undefined),
+        animalAssetAccountIds: jest.fn().mockResolvedValue(new Map()),
+      };
+      (service as any).glPostingService = gl;
+      mockDbInsert.mockImplementation(() => ({
+        values: jest.fn().mockResolvedValue({}),
+      }));
+      mockDbUpdate.mockImplementation(() => ({
+        set: jest.fn(() => ({ where: jest.fn().mockResolvedValue({}) })),
+      }));
+      return gl;
+    };
+    // What a posted day issues for a batch-wise batch: one share, no animal.
+    const postDay = () =>
+      service.postConsumptionGroup(
+        'batch-1',
+        {
+          item_id: 'feed',
+          uom: 'KG',
+          transaction_date: '2026-01-11',
+          shares: [{ quantity: 9.6 }],
+        },
+        'tenant-123',
+      );
+    const debitOf = (gl: ReturnType<typeof setup>) =>
+      gl.postInventoryLedgerEntry.mock.calls[0][2];
+
+    it("debits a posted day's feed to the BIO_LITTER_BIRTH debit account", async () => {
+      const gl = setup('PREMATURE');
+      await postDay();
+      expect(gl.mappedAccount).toHaveBeenCalledWith(
+        'tenant-123',
+        'comp-1',
+        'BIO_LITTER_BIRTH',
+        'debit',
+        expect.anything(),
+      );
+      expect(debitOf(gl)).toEqual({ debitAccountId: 'acct-weaners' });
+    });
+
+    it('debits a feed entry recorded on its own there too', async () => {
+      const gl = setup('PREMATURE');
+      await service.addTransaction(
+        'batch-1',
+        {
+          transaction_date: '2026-01-11',
+          transaction_type: 'CONSUMPTION',
+          item_id: 'feed',
+          quantity: 9.6,
+          uom: 'KG',
+        } as any,
+        'tenant-123',
+      );
+      expect(debitOf(gl)).toEqual({ debitAccountId: 'acct-weaners' });
+    });
+
+    it('debits capitalised overhead there too', async () => {
+      const gl = setup('PREMATURE');
+      await service.addTransaction(
+        'batch-1',
+        {
+          transaction_date: '2026-01-11',
+          transaction_type: 'OVERHEAD',
+          quantity: 2,
+          rate: 3,
+          uom: 'HOUR',
+        } as any,
+        'tenant-123',
+      );
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionType: 'BIO_OVERHEAD_PREMATURE',
+          amount: 6,
+          debitAccountId: 'acct-weaners',
+        }),
+      );
+    });
+
+    it("leaves a batch no farrowing made to the mapping's account", async () => {
+      const gl = setup('PREMATURE', false);
+      await postDay();
+      expect(debitOf(gl).debitAccountId).toBeUndefined();
+    });
+
+    it('leaves expensed feed to the mapping: nothing is capitalised into the lot', async () => {
+      const gl = setup('MATURE');
+      await postDay();
+      expect(debitOf(gl)).toEqual({});
+      expect(gl.mappedAccount).not.toHaveBeenCalled();
+    });
+  });
+
   describe('releaseHeadToAnimals (gilt selection, Phase 5)', () => {
     const lot = {
       ...activeBatch,
@@ -4905,7 +5042,8 @@ describe('BatchService', () => {
   });
 
   describe("a pre-mature herd's exits leave the pre-mature asset account", () => {
-    const prime = (stage: string) => {
+    // farrowings: the farrowing that made the batch, if one did (a piglet lot).
+    const prime = (stage: string, farrowings: object[] = []) => {
       jest.spyOn(service, 'findOne').mockResolvedValue({
         ...activeBatch,
         batch_no: 'BATCH-000001',
@@ -4917,12 +5055,21 @@ describe('BatchService', () => {
       const gl = {
         postInventoryLedgerEntry: jest.fn().mockResolvedValue({}),
         postBatchCostEntry: jest.fn().mockResolvedValue({}),
-        mappedAccount: jest.fn().mockResolvedValue('acct-1050'),
+        mappedAccount: jest.fn(async (_t: string, _c: string, type: string) =>
+          type === 'BIO_LITTER_BIRTH' ? 'acct-weaners' : 'acct-1050',
+        ),
       };
       (service as any).glPostingService = gl;
       (service as any).ledgerService = {
         writePositiveEntry: jest.fn().mockResolvedValue({ ledger_id: 'l-1' }),
       };
+      mockDbSelect.mockReturnValue({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue(farrowings),
+          }),
+        }),
+      });
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
           where: jest.fn().mockReturnValue({
@@ -4980,6 +5127,32 @@ describe('BatchService', () => {
       );
     });
 
+    it("takes a piglet lot's sale out of the lot's own account, where its birth cost and feed went", async () => {
+      const gl = prime('PREMATURE', [{ id: 'farrow-1' }]);
+      await service.disposeBioAsset(
+        'batch-1',
+        {
+          disposal_type: 'SOLD',
+          quantity: 4,
+          posting_date: '2026-10-01',
+          sale_proceeds: 5000,
+        } as any,
+        'tenant-123',
+      );
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionType: 'BIO_SALE_PROCEEDS',
+          creditAccountId: 'acct-weaners',
+        }),
+      );
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionType: 'BIO_DISPOSAL_SOLD',
+          debitAccountId: 'acct-weaners',
+        }),
+      );
+    });
+
     it("leaves a mature herd to the mapping's mature account", async () => {
       const gl = prime('MATURE');
       await service.disposeBioAsset(
@@ -5020,6 +5193,14 @@ describe('BatchService', () => {
           .mockResolvedValue({ journal_id: 'j-1' }),
         mappedAccount: jest.fn().mockResolvedValue('acct-1050'),
       };
+      // Not a piglet lot: no farrowing made it (herd-account.ts).
+      mockDbSelect.mockReturnValue({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
           where: jest.fn().mockReturnValue({

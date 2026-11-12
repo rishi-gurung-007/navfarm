@@ -11,7 +11,6 @@ import {
   Eye,
   AlertCircle,
   ChevronRight,
-  Scan,
 } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { Dialog } from '@/components/ui/dialog';
@@ -22,7 +21,6 @@ import { getActiveCompanyId } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
 import type { TranslationKeys } from '@/utils/translations';
 import { StatusBadge } from '@/components/ui/status-badge';
-import RfidScannerModal from '@/components/console/piggery/rfid-scanner-modal';
 import AnimalStageTransitionModal from '@/components/console/piggery/animal-stage-transition-modal';
 import AnimalDetailsModal from '@/components/console/piggery/animal-details-modal';
 import { ReasonSelect } from '@/components/ui/reason-select';
@@ -200,7 +198,6 @@ export default function AnimalPanel() {
   // Company-wide breed lookup for the list table, loaded once on mount.
   const [breedLookup, setBreedLookup] = useState<Record<string, string>>({});
   const breedName = (id?: string | null) => (id && breedLookup[id]) || id || NA;
-  const [medItems, setMedItems] = useState<Row[]>([]); // MEDICINE + VACCINE filtered
   const [batches, setBatches] = useState<Row[]>([]);
   const [stages, setStages] = useState<Row[]>([]);
   const [locations, setLocations] = useState<Row[]>([]);
@@ -208,7 +205,6 @@ export default function AnimalPanel() {
   const [customers, setCustomers] = useState<Row[]>([]);
 
   // ── Fast Scanner Modal ──────────────────────────────────────────────────
-  const [scannerOpen, setScannerOpen] = useState(false);
 
   // ── Stage Transition Modal ──────────────────────────────────────────────
   const [transitionOpen, setTransitionOpen] = useState(false);
@@ -366,20 +362,6 @@ export default function AnimalPanel() {
         ),
       )
       .catch(() => setCustomers([]));
-    api
-      .get(`/item${qs.replace(/^\?/, '?isActive=true&isBlocked=false&')}`)
-      .then((r) => {
-        const all = unwrap<Row[]>(r) || [];
-        setMedItems(
-          all.filter(
-            (i: Row) =>
-              !i.is_blocked &&
-              i.is_active !== false &&
-              ['MEDICINE', 'VACCINE'].includes(i.item_type),
-          ),
-        );
-      })
-      .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Company-wide breed names for the list table (see breedLookup above).
@@ -520,14 +502,6 @@ export default function AnimalPanel() {
           />
           {t('anpIncludeDisposed')}
         </label>
-
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setScannerOpen(true)}
-        >
-          <Scan className="mr-1.5 h-3.5 w-3.5" /> {t('anpRfidFastScanner')}
-        </Button>
       </div>
 
       <Toast variant="danger" message={error} onClose={() => setError('')} />
@@ -1028,15 +1002,6 @@ export default function AnimalPanel() {
           onChange={(e) => setOopDate(e.target.value)}
         />
       </Dialog>
-
-      {/* ── RFID / Barcode Fast Scanner Modal ── */}
-      <RfidScannerModal
-        open={scannerOpen}
-        onClose={() => setScannerOpen(false)}
-        onAnimalUpdated={load}
-        medItems={medItems}
-        onOpenAnimalDetails={(animalId) => setDetailsAnimalId(animalId)}
-      />
 
       {/* ── Animal Stage & Pen Transition Modal ── */}
       <AnimalStageTransitionModal

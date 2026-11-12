@@ -8,6 +8,7 @@ import { masterScopeConditions } from '../../../common/master-data-scope';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { ReplaceItemQcSpecDto } from '../../inventory/qc-inspection/dto/qc-inspection.dto';
 import { specProblems, specRowsToStore } from '../../inventory/qc-inspection/qc-inspection.rules';
+import { linesFromQcParameters } from './qc-parameter-lines';
 
 /** The QC Specification tab of the Item card: what an incoming lot of a QC-required item is checked against. */
 @Injectable()
@@ -46,14 +47,15 @@ export class ItemQcSpecService {
   /** Saves the item's whole specification. Inspections already raised keep the copy they were raised with. */
   async replace(itemId: string, dto: ReplaceItemQcSpecDto, tenantId: string, user?: { userId?: string }) {
     const item = await this.scopedItem(itemId);
-    const problems = specProblems(dto.lines);
+    const lines = await linesFromQcParameters(this.db, dto.lines, { tenantId, companyId: item.company_id });
+    const problems = specProblems(lines);
     if (problems.length) throw new BadRequestException(problems.join(' '));
 
     await this.db.transaction(async (tx) => {
       await tx.delete(schema.itemQcSpecLine).where(eq(schema.itemQcSpecLine.item_id, itemId));
-      if (!dto.lines.length) return;
+      if (!lines.length) return;
       await tx.insert(schema.itemQcSpecLine).values(
-        specRowsToStore(dto.lines, { tenantId, companyId: item.company_id, itemId, userId: user?.userId, newId: randomUUID }),
+        specRowsToStore(lines, { tenantId, companyId: item.company_id, itemId, userId: user?.userId, newId: randomUUID }),
       );
     });
 

@@ -18,6 +18,8 @@ import { ShieldAlert } from "lucide-react";
  */
 export const LIVESTOCK_SECTIONS = [
   { key: "register", href: "/livestock", labelKey: "navLivestockRegister" },
+  // Scan an animal's QR code or barcode (printed from her register card) and open her details.
+  { key: "scan", href: "/livestock/scan", labelKey: "navLivestockScan" },
   // A page route, not the API path. The breeding controller lives at
   // 'piggery/breeding'; the screen lives at /livestock/breeding. Conflating the
   // two pointed this nav item at a route that does not exist and, because the

@@ -23,6 +23,7 @@ import {
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { api } from '@/services/api-client';
+import { AnimalCodeLabel } from '@/components/console/piggery/animal-code-label';
 
 type Row = Record<string, any>;
 
@@ -1073,6 +1074,9 @@ export default function AnimalDetailsModal({
                     </div>
                   )}
                 </div>
+
+                {/* Her QR code and barcode, to print for a card or an ear-tag sheet and scan on Livestock › Scan Animal. */}
+                {animal && <AnimalCodeLabel animal={animal} breedName={current.breed || animal.breed_name} />}
               </div>
             )}
 

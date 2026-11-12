@@ -270,4 +270,34 @@ describe('GlPostingService', () => {
       expect(mockDbSelect).toHaveBeenCalledTimes(2);
     });
   });
+
+  describe('postAccountTransfer — value moved from one account to another, with no mapping', () => {
+    const params = {
+      tenantId: 'tenant-1',
+      companyId: 'company-1',
+      postingDate: '2026-11-11',
+      sourceDocumentType: 'BATCH_TRANSFER',
+      documentNo: 'BTR-0002',
+      description: 'Transfer BTR-0002',
+      debitAccountId: 'acct-premature',
+      creditAccountId: 'acct-weaners',
+      amount: 1.9236,
+    };
+
+    it('posts Dr the account the value goes to / Cr the one it leaves, for the amount', async () => {
+      await service.postAccountTransfer(params);
+      const journal = mockJournalService.createAndPostSystemJournal.mock.calls[0][0] as any;
+      expect(journal).toMatchObject({ sourceDocumentType: 'BATCH_TRANSFER', sourceDocumentNo: 'BTR-0002', postingDate: '2026-11-11' });
+      expect(journal.lines.map((l: any) => [l.glAccountId, l.debitAmount, l.creditAmount])).toEqual([
+        ['acct-premature', 1.9236, 0],
+        ['acct-weaners', 0, 1.9236],
+      ]);
+    });
+
+    it('posts nothing from an account to itself, or for a nil amount', async () => {
+      await expect(service.postAccountTransfer({ ...params, debitAccountId: 'acct-weaners' })).resolves.toBeNull();
+      await expect(service.postAccountTransfer({ ...params, amount: 0.004 })).resolves.toBeNull();
+      expect(mockJournalService.createAndPostSystemJournal).not.toHaveBeenCalled();
+    });
+  });
 });

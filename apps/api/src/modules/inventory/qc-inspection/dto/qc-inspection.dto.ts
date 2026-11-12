@@ -3,6 +3,7 @@ import {
   ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Matches, MaxLength, Min, ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { REJECTION_DISPOSITIONS } from '../qc-inspection.rules';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -50,6 +51,12 @@ export class CompleteQcInspectionDto {
   @IsOptional() @Matches(DATE, { message: 'posting_date must be YYYY-MM-DD.' }) posting_date?: string;
 
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(500) remarks?: string;
+
+  @ApiPropertyOptional({ description: 'What becomes of the rejected quantity. Required when anything is rejected (a transfer records its return to the sender itself). Recorded only: nothing is posted.', enum: REJECTION_DISPOSITIONS })
+  @IsOptional() @IsIn(REJECTION_DISPOSITIONS) rejection_disposition?: string;
+
+  @ApiPropertyOptional({ description: 'The document that carries the disposition out, e.g. a return note or debit note no.' })
+  @IsOptional() @IsString() @MaxLength(100) rejection_ref?: string;
 }
 
 export class ApproveQcDeviationDto {
@@ -58,7 +65,24 @@ export class ApproveQcDeviationDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(500) remarks?: string;
 }
 
+export class RefuseQcDeviationDto extends ApproveQcDeviationDto {
+  @ApiPropertyOptional({ description: 'Refusing rejects the whole lot: what becomes of it. Defaults to what the inspector recorded for the part rejected on completion.', enum: REJECTION_DISPOSITIONS })
+  @IsOptional() @IsIn(REJECTION_DISPOSITIONS) rejection_disposition?: string;
+
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) rejection_ref?: string;
+}
+
+export class SettleQcRejectionDto {
+  @ApiProperty({ description: 'The final disposition of a rejected quantity that was held for a decision', enum: REJECTION_DISPOSITIONS })
+  @IsIn(REJECTION_DISPOSITIONS) rejection_disposition: string;
+
+  @ApiPropertyOptional({ description: 'The document that carries it out, e.g. a return note or debit note no.' })
+  @IsOptional() @IsString() @MaxLength(100) rejection_ref?: string;
+}
+
 export class ItemQcSpecLineDto {
+  @ApiPropertyOptional({ description: 'The QC Parameter Master row to take this check from: its code, description, type, range and Mandatory replace what is sent' })
+  @IsOptional() @IsUUID() param_id?: string | null;
   @ApiProperty({ example: 'Ni' }) @IsString() @IsNotEmpty() @MaxLength(50) measurement_code: string;
   @ApiPropertyOptional({ example: 'Nickel' }) @IsOptional() @IsString() @MaxLength(200) measurement_description?: string | null;
   @ApiProperty({ enum: ['VALUE', 'DESCRIPTIVE'] }) @IsString() sampling_type: string;
@@ -66,6 +90,7 @@ export class ItemQcSpecLineDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(20) uom?: string | null;
   @ApiPropertyOptional({ description: 'VALUE only' }) @IsOptional() @IsNumber() min_value?: number | null;
   @ApiPropertyOptional({ description: 'VALUE only' }) @IsOptional() @IsNumber() max_value?: number | null;
+  @ApiPropertyOptional({ description: 'VALUE only: the ideal value' }) @IsOptional() @IsNumber() target_value?: number | null;
   @ApiPropertyOptional({ description: 'DESCRIPTIVE only: the rule the inspector checks against' }) @IsOptional() @IsString() @MaxLength(500) acceptance_text?: string | null;
   @ApiPropertyOptional({ default: true }) @IsOptional() @IsBoolean() is_mandatory?: boolean;
   @ApiPropertyOptional({ default: true }) @IsOptional() @IsBoolean() is_active?: boolean;

@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, count, sql, inArray, desc } from 'drizzle-orm';
+import { eq, and, like, or, isNull, count, sql, inArray, desc, asc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -529,7 +529,7 @@ export class GoodsReceiptService {
         }));
     }
 
-    return this.db
+    const receipts = await this.db
       .select()
       .from(schema.goodsReceipt)
       .where(and(...conditions))
@@ -538,6 +538,30 @@ export class GoodsReceiptService {
       .orderBy(desc(schema.goodsReceipt.created_at), desc(schema.goodsReceipt.receipt_no))
       .limit(limit)
       .offset(offset);
+
+    // A posted receipt of a QC-required item has its stock held on a QC inspection: the list names each one, so the receipt can be
+    // seen to be awaiting QC and its inspection opened from the row (client, 9 Nov).
+    const posted = receipts.filter((r) => r.status === 'POSTED').map((r) => r.receipt_id);
+    const inspections = posted.length
+      ? await this.db
+          .select({
+            receipt_id: schema.goodsReceiptLine.receipt_id,
+            inspection_id: schema.qcInspection.inspection_id,
+            inspection_no: schema.qcInspection.inspection_no,
+            status: schema.qcInspection.status,
+            result: schema.qcInspection.result,
+          })
+          .from(schema.qcInspection)
+          .innerJoin(schema.goodsReceiptLine, eq(schema.goodsReceiptLine.line_id, schema.qcInspection.source_line_id))
+          .where(and(eq(schema.qcInspection.source_doc_type, 'GOODS_RECEIPT'), inArray(schema.goodsReceiptLine.receipt_id, posted)))
+          .orderBy(asc(schema.qcInspection.inspection_no))
+      : [];
+    return receipts.map((r) => ({
+      ...r,
+      qc_inspections: inspections
+        .filter((i) => i.receipt_id === r.receipt_id)
+        .map(({ receipt_id: _receipt, ...i }) => i),
+    }));
   }
 
   /**

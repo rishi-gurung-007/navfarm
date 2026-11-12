@@ -5750,31 +5750,47 @@ export const notificationAlertLogRelations = relations(
 // (a QR can exist with or without a linked QC record).
 // ==========================================
 
-export const qcParameterMaster = mysqlTable('qc_parameter_master', {
-  param_id: varchar('param_id', { length: 36 })
-    .primaryKey()
-    .$defaultFn(() => randomUUID()),
-  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
-  company_id: varchar('company_id', { length: 36 }), // null = tenant-wide template
-  lob_id: varchar('lob_id', { length: 36 })
-    .notNull()
-    .references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
-  param_code: varchar('param_code', { length: 50 }).notNull(),
-  param_name: varchar('param_name', { length: 100 }).notNull(),
-  param_type: varchar('param_type', { length: 20 }).notNull(), // NUMERIC, BOOLEAN, GRADE
-  uom: varchar('uom', { length: 20 }),
-  min_value: decimal('min_value', { precision: 18, scale: 4 }),
-  max_value: decimal('max_value', { precision: 18, scale: 4 }),
-  pass_criteria: text('pass_criteria'),
-  fail_criteria: text('fail_criteria'),
-  grade_scale: json('grade_scale'), // GRADE type: { "A": "2.0-2.5kg", "B": "1.8-2.0kg" }
-  is_mandatory: boolean('is_mandatory').default(true).notNull(),
-  is_active: boolean('is_active').default(true).notNull(),
-  created_by: varchar('created_by', { length: 36 }),
-  created_at: timestamp('created_at', { mode: 'string' })
-    .defaultNow()
-    .notNull(),
-});
+// The client's QC Parameter Master (0247): QC Code (param_code), Description (param_name), QC Type (param_type), Unit of Measurement (uom),
+// Min / Max / Target Value, Mandatory, Active. lob_id, pass_criteria, fail_criteria and grade_scale are not on that list: kept for rows
+// that carry them, no longer entered on the form.
+export const qcParameterMaster = mysqlTable(
+  'qc_parameter_master',
+  {
+    param_id: varchar('param_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }), // null = tenant-wide template
+    // null = applies to every line of business
+    lob_id: varchar('lob_id', { length: 36 }).references(
+      () => lobMaster.lob_id,
+      { onDelete: 'restrict' },
+    ),
+    param_code: varchar('param_code', { length: 50 }).notNull(),
+    param_name: varchar('param_name', { length: 100 }).notNull(),
+    param_type: varchar('param_type', { length: 20 }).notNull(), // NUMERIC, BOOLEAN (GRADE on older rows)
+    uom: varchar('uom', { length: 20 }),
+    min_value: decimal('min_value', { precision: 18, scale: 4 }),
+    max_value: decimal('max_value', { precision: 18, scale: 4 }),
+    target_value: decimal('target_value', { precision: 18, scale: 4 }),
+    pass_criteria: text('pass_criteria'),
+    fail_criteria: text('fail_criteria'),
+    grade_scale: json('grade_scale'), // GRADE type: { "A": "2.0-2.5kg", "B": "1.8-2.0kg" }
+    is_mandatory: boolean('is_mandatory').default(true).notNull(),
+    is_active: boolean('is_active').default(true).notNull(),
+    created_by: varchar('created_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_qc_parameter_company_code').on(
+      table.tenant_id,
+      table.company_id,
+      table.param_code,
+    ),
+  ],
+);
 
 export const qcBatchDetail = mysqlTable('qc_batch_detail', {
   qc_id: varchar('qc_id', { length: 36 })
@@ -6850,12 +6866,15 @@ export const itemQcSpecLine = mysqlTable(
       .references(() => itemMaster.item_id, { onDelete: 'restrict' }),
     line_no: int('line_no').notNull(),
     stage: varchar('stage', { length: 50 }).default('INCOMING').notNull(),
+    // The QC parameter the check was taken from (0248); its code, description, type, range and Mandatory/Active are copied here and kept in step.
+    param_id: varchar('param_id', { length: 36 }).references(() => qcParameterMaster.param_id, { onDelete: 'restrict' }),
     measurement_code: varchar('measurement_code', { length: 50 }).notNull(),
     measurement_description: varchar('measurement_description', { length: 200 }),
     sampling_type: varchar('sampling_type', { length: 15 }).notNull(), // VALUE, DESCRIPTIVE
     uom: varchar('uom', { length: 20 }),
     min_value: decimal('min_value', { precision: 18, scale: 4 }),
     max_value: decimal('max_value', { precision: 18, scale: 4 }),
+    target_value: decimal('target_value', { precision: 18, scale: 4 }),
     acceptance_text: varchar('acceptance_text', { length: 500 }),
     is_mandatory: boolean('is_mandatory').default(true).notNull(),
     is_active: boolean('is_active').default(true).notNull(),
@@ -6913,6 +6932,9 @@ export const qcInspection = mysqlTable(
     accepted_qty: decimal('accepted_qty', { precision: 18, scale: 4 }),
     rejected_qty: decimal('rejected_qty', { precision: 18, scale: 4 }),
     reason_id: varchar('reason_id', { length: 36 }),
+    // What becomes of the rejected quantity (0249), and the document that carries it out. Recorded only: nothing is posted for it.
+    rejection_disposition: varchar('rejection_disposition', { length: 25 }), // RETURN_TO_SUPPLIER, SCRAP, HOLD, RETURN_TO_SOURCE
+    rejection_ref: varchar('rejection_ref', { length: 100 }),
     deviation: boolean('deviation').default(false).notNull(),
     posting_date: date('posting_date', { mode: 'string' }),
     remarks: varchar('remarks', { length: 500 }),
@@ -6951,6 +6973,7 @@ export const qcInspectionLine = mysqlTable(
     uom: varchar('uom', { length: 20 }),
     min_value: decimal('min_value', { precision: 18, scale: 4 }),
     max_value: decimal('max_value', { precision: 18, scale: 4 }),
+    target_value: decimal('target_value', { precision: 18, scale: 4 }),
     acceptance_text: varchar('acceptance_text', { length: 500 }),
     is_mandatory: boolean('is_mandatory').default(true).notNull(),
     actual_value: decimal('actual_value', { precision: 18, scale: 4 }),

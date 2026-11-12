@@ -690,6 +690,39 @@ export class TransitionAnimalStageDto {
   remarks?: string;
 }
 
+/**
+ * Moves animals from one location (pen, crate, shed) to another without changing batch or stage. It never changes the
+ * farm: that is a batch transfer, which moves the animals' value with them (animal-placement.rules.ts).
+ */
+export class MoveAnimalLocationDto {
+  @ApiProperty({ description: 'Animals to move (one or more)', type: [String] })
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsUUID('4', { each: true })
+  animal_ids: string[];
+
+  @ApiProperty({ description: 'The pen, crate or shed they move to, on the farm of their batch' })
+  @IsUUID()
+  to_location_id: string;
+
+  @ApiProperty({ description: 'Date of the move; default today, never in the future', required: false, example: '2026-11-10' })
+  @IsOptional()
+  @IsDateString()
+  move_date?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reason?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  remarks?: string;
+}
+
 export class BulkTransitionAnimalStageDto extends TransitionAnimalStageDto {
   @ApiProperty({
     description:

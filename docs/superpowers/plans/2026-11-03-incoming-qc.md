@@ -108,7 +108,7 @@ the document type and the ledger parameters), but wiring each is its own verifie
 ## Questions for Triple C / Rishi (not answered by us)
 
 - Is incoming QC in scope for the piggery programme, and for which inbound sources beyond the GRN?
-- Rejected stock: back to the supplier (what we do now — no entry), or held in a rejected location as BC did?
+- Rejected stock: back to the supplier (what we do now — no entry), or held in a rejected location as BC did? *(12 Nov: until answered, the inspection records Return to supplier / Scrap / Hold for a decision, posting nothing; decisions.md 12 Nov.)*
 - Deviation: who approves, and is a reason mandatory?
 - Are specifications ever per supplier or per grade (BC had a Customer column and two `Si` rows with different ranges)?
 - Is sample quantity a rule (a % or a count per lot) or typed by the inspector?

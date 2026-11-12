@@ -347,6 +347,46 @@ describe('SchedulerHeaderService', () => {
     });
   });
 
+  describe('openForAnimalStageMove', () => {
+    const row = (value: object | undefined) => ({
+      from: jest.fn().mockReturnValue({
+        where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(value ? [value] : []) }),
+      }),
+    });
+
+    // BATCH-000001, 12 Nov 2026: PIG-2024-0001 moved to Gestation and the batch had no Gestation scheduler.
+    it("opens the scheduler of the stage an animal-wise batch's animal moved to", async () => {
+      const create = jest.spyOn(service, 'createForStage').mockResolvedValue({});
+      mockDbSelect
+        .mockReturnValueOnce(row({ tracking_mode: 'ANIMAL_WISE' }))
+        .mockReturnValueOnce(row({ scheduler_auto_create: true }));
+
+      await service.openForAnimalStageMove('batch-1', 'stage-gest', 'tenant-123', { userId: 'user-1' });
+
+      expect(create).toHaveBeenCalledWith('batch-1', 'stage-gest', 'tenant-123', { userId: 'user-1' });
+    });
+
+    it("leaves a batch-wise batch alone: its one stage is the batch's own", async () => {
+      const create = jest.spyOn(service, 'createForStage').mockResolvedValue({});
+      mockDbSelect.mockReturnValueOnce(row({ tracking_mode: 'BATCH_WISE' }));
+
+      await service.openForAnimalStageMove('batch-1', 'stage-gest', 'tenant-123');
+
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    it('creates nothing for a stage whose Scheduler Auto Create is off', async () => {
+      const create = jest.spyOn(service, 'createForStage').mockResolvedValue({});
+      mockDbSelect
+        .mockReturnValueOnce(row({ tracking_mode: 'ANIMAL_WISE' }))
+        .mockReturnValueOnce(row({ scheduler_auto_create: false }));
+
+      await service.openForAnimalStageMove('batch-1', 'stage-gest', 'tenant-123');
+
+      expect(create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('createForStage — a stage the builder cannot read', () => {
     it('answers a feed row with an unknown period unit as a 400 naming the stage and the unit', async () => {
       mockDbInsert.mockImplementation(() => ({ values: jest.fn().mockResolvedValue({}) }));

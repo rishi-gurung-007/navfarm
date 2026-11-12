@@ -8,7 +8,10 @@ import {
   assertCompanyInScope,
   assertLobInScope,
   locationReferenceScopeConditions,
+  assertLocationOnActiveFarm,
 } from '../../../common/farm-scope';
+import { checkLocationMove } from './animal-placement.rules';
+import { loadPlaces } from './animal-placement.places';
 import {
   Injectable,
   Logger,
@@ -26,6 +29,7 @@ import * as schema from '../../../core/database/schema';
 import {
   BulkTransitionAnimalStageDto,
   CreateAnimalDto,
+  MoveAnimalLocationDto,
   UpdateAnimalDto,
   DisposeAnimalDto,
   MarkOutOfProductionDto,
@@ -1184,12 +1188,17 @@ export class AnimalService {
       );
     }
 
+    // The pen she stands in and the farm it belongs to, so a scanned label says where to find her.
+    const pen = aliasedTable(schema.locationMaster, 'pen');
+    const farm = aliasedTable(schema.locationMaster, 'farm');
     const rows = await this.db
       .select({
         animal: schema.animalRegister,
         breed: schema.breedMaster,
         stage: schema.stageMaster,
         batch: schema.batchHeader,
+        pen: { code: pen.location_code, name: pen.location_name },
+        farm: { code: farm.location_code, name: farm.location_name },
       })
       .from(schema.animalRegister)
       .leftJoin(
@@ -1204,9 +1213,13 @@ export class AnimalService {
         schema.batchHeader,
         eq(schema.animalRegister.current_batch_id, schema.batchHeader.batch_id),
       )
+      .leftJoin(pen, eq(schema.animalRegister.current_location_id, pen.location_id))
+      .leftJoin(farm, eq(pen.farm_id, farm.location_id))
       .where(
         and(
           eq(schema.animalRegister.tenant_id, tenantId),
+          // The same company/area boundary the register list applies, so a code scanned here never opens an animal the list would not show.
+          ...masterScopeConditions(this.cls, schema.animalRegister),
           ...animalScopeConditions(farmScope(this.cls)),
           or(
             eq(schema.animalRegister.rfid_tag, trimmed),
@@ -1223,7 +1236,7 @@ export class AnimalService {
       );
     }
 
-    const { animal, breed, stage, batch } = rows[0];
+    const { animal, breed, stage, batch, pen: penRow, farm: farmRow } = rows[0];
 
     const activeWithdrawals = await this.activeWithdrawalPeriods(
       animal.animal_id,
@@ -1237,6 +1250,9 @@ export class AnimalService {
       // batch_header's column is batch_no — `batch_code` does not exist on it,
       // so this field was always undefined and the animal never showed its batch.
       batch_no: batch?.batch_no,
+      location_code: penRow?.code ?? null,
+      location_name: penRow?.name ?? null,
+      farm_name: farmRow?.name ?? null,
       hasActiveWithdrawal: activeWithdrawals.length > 0,
       activeWithdrawals,
     };
@@ -2877,6 +2893,96 @@ export class AnimalService {
     return { moved, failed };
   }
 
+  /**
+   * Moves animals from one location to another (pen, crate or shed) inside their batch's farm. Nothing of value moves,
+   * so nothing posts: the animals' location changes, each move is logged (RELOCATE) and audited. All or nothing.
+   * Before 10 Nov 2026 there was no way to do this: the stage route, an edit of the animal and a batch transfer to the
+   * same batch all refused a location change.
+   */
+  async moveLocation(dto: MoveAnimalLocationDto, tenantId: string, userPayload?: any) {
+    const today = toMysqlTimestamp().slice(0, 10);
+    const moveDate = dto.move_date?.slice(0, 10) ?? today;
+    if (moveDate > today) throw new BadRequestException(`A move cannot be dated in the future (${moveDate}).`);
+    const ids = [...new Set(dto.animal_ids)];
+
+    return withTenantTransaction(this.cls, async () => {
+      const A = schema.animalRegister;
+      const animals = await this.db
+        .select()
+        .from(A)
+        .where(and(eq(A.tenant_id, tenantId), inArray(A.animal_id, ids), ...animalScopeConditions(farmScope(this.cls))))
+        .for('update');
+      if (animals.length !== ids.length) throw new NotFoundException(`${ids.length - animals.length} of the animals were not found.`);
+      const gone = animals.filter((a) => !a.is_active || ['DEAD', 'SOLD', 'CULLED', 'SLAUGHTERED', 'CONVERTED_INV'].includes(a.status));
+      if (gone.length) throw new BadRequestException(`${gone.map((a) => a.animal_code).join(', ')} ${gone.length === 1 ? 'has' : 'have'} left the herd and cannot be moved.`);
+      // A restricted user moves animals only to a location of the farm in scope.
+      await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.to_location_id, 'Location');
+
+      const batchIds = [...new Set(animals.map((a) => a.current_batch_id).filter((id): id is string => !!id))];
+      const batches = batchIds.length
+        ? await this.db
+            .select({ batch_id: schema.batchHeader.batch_id, farm_id: schema.batchHeader.farm_id })
+            .from(schema.batchHeader)
+            .where(inArray(schema.batchHeader.batch_id, batchIds))
+        : [];
+      const farmOfBatch = new Map(batches.map((b) => [b.batch_id, b.farm_id] as const));
+      const places = await loadPlaces(this.db, [
+        dto.to_location_id,
+        ...animals.map((a) => a.current_location_id),
+        ...batches.map((b) => b.farm_id),
+      ]);
+      const target = places.get(dto.to_location_id) ?? null;
+      const problems = animals
+        .map((a) => {
+          const batchFarmId = a.current_batch_id ? (farmOfBatch.get(a.current_batch_id) ?? null) : null;
+          return checkLocationMove({
+            animal_code: a.animal_code,
+            company_id: a.company_id,
+            current: a.current_location_id ? (places.get(a.current_location_id) ?? null) : null,
+            batchFarm: batchFarmId ? { farm_id: batchFarmId, farm_code: places.get(batchFarmId)?.location_code ?? null } : null,
+            target,
+          });
+        })
+        .filter((p): p is string => !!p);
+      if (problems.length) throw new BadRequestException([...new Set(problems)].join(' '));
+
+      const stamp = toMysqlTimestamp();
+      for (const a of animals) {
+        await this.db
+          .update(A)
+          .set({ current_location_id: dto.to_location_id, updated_by: userPayload?.userId ?? null, updated_at: stamp })
+          .where(eq(A.animal_id, a.animal_id));
+        await this.movementLog.record({
+          tenantId,
+          companyId: a.company_id,
+          animalId: a.animal_id,
+          movementType: 'RELOCATE',
+          eventDate: moveDate,
+          fromBatchId: a.current_batch_id,
+          toBatchId: a.current_batch_id,
+          fromStageId: a.current_stage_id,
+          toStageId: a.current_stage_id,
+          fromLocationId: a.current_location_id,
+          toLocationId: dto.to_location_id,
+          reason: dto.reason ?? null,
+          remarks: dto.remarks ?? null,
+          userId: userPayload?.userId,
+        });
+        await this.auditService.log({
+          tenantId,
+          companyId: a.company_id,
+          userId: userPayload?.userId,
+          action: 'UPDATE',
+          entityName: 'animal_register',
+          entityId: a.animal_id,
+          oldValues: { current_location_id: a.current_location_id },
+          newValues: { current_location_id: dto.to_location_id, move_date: moveDate, reason: dto.reason ?? null },
+        });
+      }
+      return { moved: animals.length, to_location_id: dto.to_location_id, to_location_code: target?.location_code ?? null, move_date: moveDate };
+    });
+  }
+
   async transitionStage(
     id: string,
     dto: TransitionAnimalStageDto,
@@ -3012,8 +3118,15 @@ export class AnimalService {
       userId: userPayload?.userId,
     });
 
-    // The stage's scheduler, if it was set up before anyone arrived, starts on the day they moved
-    // in. Run after the movement above, which is what records that day.
+    // The stage the animal moved to gets the batch's scheduler if it has none, or it has no data entry and is missing
+    // from the Daily Data Entry strip. Then that scheduler — new, or set up before anyone arrived — starts on the day
+    // they moved in. Both after the movement above, which is what records that day.
+    await this.batchService.openSchedulerForAnimalStage(
+      animal.current_batch_id,
+      dto.to_stage_id,
+      tenantId,
+      userPayload,
+    );
     await this.batchService.alignSchedulerToStageEntry(
       animal.current_batch_id,
       dto.to_stage_id,

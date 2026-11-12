@@ -415,4 +415,40 @@ export class GlPostingService {
       userId: params.userId,
     });
   }
+
+  /**
+   * Moves an amount from one account to another with no mapping in between: Dr the account it goes to / Cr the one it leaves. A
+   * reclassification, such as head transferred between herds carried in different accounts. Posts nothing (null) for a nil amount or
+   * from an account to itself.
+   */
+  async postAccountTransfer(params: {
+    tenantId: string;
+    companyId: string;
+    postingDate: string;
+    sourceDocumentType: string;
+    documentNo: string;
+    description: string;
+    debitAccountId: string;
+    creditAccountId: string;
+    amount: number;
+    nobId?: string;
+    lobId?: string;
+    userId?: string;
+  }) {
+    const amount = Math.abs(params.amount);
+    if (amount < 0.005 || params.debitAccountId === params.creditAccountId) return null;
+    return this.journalService.createAndPostSystemJournal({
+      tenantId: params.tenantId,
+      companyId: params.companyId,
+      postingDate: params.postingDate,
+      sourceDocumentType: params.sourceDocumentType,
+      sourceDocumentNo: params.documentNo,
+      description: params.description,
+      lines: [
+        { glAccountId: params.debitAccountId, debitAmount: amount, creditAmount: 0, nobId: params.nobId, lobId: params.lobId },
+        { glAccountId: params.creditAccountId, debitAmount: 0, creditAmount: amount, nobId: params.nobId, lobId: params.lobId },
+      ],
+      userId: params.userId,
+    });
+  }
 }

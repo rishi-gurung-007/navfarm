@@ -38,8 +38,9 @@ import {
 } from '../batch-daily-data/animal-membership';
 import { entryBlockedReason } from '../batch-daily-data/entry-blocked';
 import { masterScopeConditions } from '../../../common/master-data-scope';
-import { stageFitsGender } from '../stage/stage-gender';
+import { assertStageFitsAnimal, stageFitsGender } from '../stage/stage-gender';
 import { farmStoreOf } from '../../../common/farm-store';
+import { herdCarryingAccount, pigletLotAccount } from './herd-account';
 import { BatchDayReversalService } from './batch-day-reversal.service';
 import {
   animalOutputEvent,
@@ -470,6 +471,11 @@ export class BatchService {
         );
       }
       initialStage = stage;
+      // The animals of an animal-wise batch enter the stage chosen for it (below): refuse one it does not fit before
+      // anything is written.
+      if (trackingMode === 'ANIMAL_WISE') {
+        for (const animal of animalWiseAnimals) assertStageFitsAnimal(stage, animal);
+      }
     } else if (dto.lob_id && !dto.animal_ids?.length) {
       try {
         const selectObj = this.db.select?.();
@@ -670,8 +676,36 @@ export class BatchService {
         }
       }
 
+      // A stage chosen for the batch is the stage its animals enter. Before 11 Nov 2026 it was recorded on the batch only:
+      // each animal kept the stage it was registered at (QUARANTINE), so the schedulers, and the data-entry page, offered
+      // QUARANTINE instead of the stage chosen. With no stage chosen, each animal keeps its own, as before.
+      const chosenStageId = initialStage?.stage_id ?? null;
       let entryStageId: string | null | undefined;
       for (const animal of animalWiseAnimals) {
+        if (chosenStageId) {
+          const fromStageId = animal.current_stage_id;
+          if (fromStageId !== chosenStageId) {
+            await this.db
+              .update(schema.animalRegister)
+              .set({ current_stage_id: chosenStageId })
+              .where(eq(schema.animalRegister.animal_id, animal.animal_id));
+            animal.current_stage_id = chosenStageId;
+          }
+          await this.movementLog.record({
+            tenantId,
+            companyId: dto.company_id,
+            animalId: animal.animal_id,
+            movementType: 'ASSIGN',
+            eventDate: dto.start_date,
+            toBatchId: batchId,
+            fromStageId,
+            toStageId: chosenStageId,
+            fromLocationId: animal.current_location_id,
+            toLocationId: animal.current_location_id,
+            userId: userPayload?.userId,
+          });
+          continue;
+        }
         // An animal with no stage of her own (a gilt selected but not yet placed) would sit in the batch counted at no stage, so the stage
         // schedulers would read 0 head for animals that are there: she starts at the batch's own stage, which is the Line of Business's first
         // one (as loadCurrentSchedulerHeader resolves a batch that was given none).
@@ -718,12 +752,14 @@ export class BatchService {
       const distinctStageIds = Array.from(
         new Set(Array.from(stageCodeToCanonicalId.values())),
       );
-      const stageIdsToSchedule = [
-        ...new Set([
-          ...(distinctStageIds.length ? distinctStageIds : rawStageIds),
-          ...(entryStageId ? [entryStageId] : []),
-        ]),
-      ];
+      const stageIdsToSchedule = chosenStageId
+        ? [chosenStageId]
+        : [
+            ...new Set([
+              ...(distinctStageIds.length ? distinctStageIds : rawStageIds),
+              ...(entryStageId ? [entryStageId] : []),
+            ]),
+          ];
 
       for (const stageId of stageIdsToSchedule) {
         await this.schedulerHeaderService.createForStage(
@@ -2565,42 +2601,34 @@ export class BatchService {
     });
   }
 
-  /** The pre-mature biological asset account (what the pre-mature mortality rule credits): where a pre-mature herd's value sits. */
+  /**
+   * Where a pre-mature herd's value sits, which its sale, harvest and output credit: a piglet lot's own account, else the pre-mature
+   * biological asset account (what the pre-mature mortality rule credits). See herd-account.ts.
+   */
   private async prematureAssetAccount(
     batch: {
+      batch_id: string;
       company_id: string;
       nob_id?: string | null;
       lob_id?: string | null;
     },
     tenantId: string,
   ): Promise<string | undefined> {
-    return this.glPostingService.mappedAccount(
-      tenantId,
-      batch.company_id,
-      'BIO_MORTALITY_PREMATURE',
-      'credit',
-      { nobId: batch.nob_id, lobId: batch.lob_id },
-    );
+    return herdCarryingAccount(this.db, this.glPostingService, batch, 'PREMATURE', tenantId);
+  }
+
+  /** The account a farrowing's piglet lot is carried in (the birth journal's debit), or undefined for any other batch or when births are not journalled. */
+  private async litterLotAccount(
+    batch: { batch_id: string; company_id: string; nob_id?: string | null; lob_id?: string | null },
+    tenantId: string,
+  ): Promise<string | undefined> {
+    return pigletLotAccount(this.db, this.glPostingService, batch, tenantId);
   }
 
   /**
    * The one asset account the animals of a batch are carried in, where they agree (each one's profile acquisition account); undefined where they differ or
    * none has a profile, and the mapping's account is used. For the cost that belongs to the batch as a whole (its overhead).
    */
-  /** The account a farrowing's piglet lot is carried in (the birth journal's debit), or undefined for any other batch or when births are not journalled. */
-  private async litterLotAccount(
-    batch: { batch_id: string; company_id: string; nob_id?: string | null; lob_id?: string | null },
-    tenantId: string,
-  ): Promise<string | undefined> {
-    const [lot] = await this.db
-      .select({ id: schema.farrowingRecord.farrow_id })
-      .from(schema.farrowingRecord)
-      .where(eq(schema.farrowingRecord.piglet_batch_id, batch.batch_id))
-      .limit(1);
-    if (!lot) return undefined;
-    return this.glPostingService.mappedAccount(tenantId, batch.company_id, 'BIO_LITTER_BIRTH', 'debit', { nobId: batch.nob_id, lobId: batch.lob_id });
-  }
-
   private async batchClassAccount(
     batchId: string,
   ): Promise<string | undefined> {
@@ -2621,6 +2649,21 @@ export class BatchService {
     return distinct.size === 1 && !distinct.has('')
       ? [...distinct][0]
       : undefined;
+  }
+
+  /**
+   * Where a herd's capitalised feed and overhead go when no animal is named: its animals' class account, else (a farrowing's piglet lot) the
+   * account its birth cost went into, which its deaths come out of. Undefined: the mapping's account. Before 11 Nov 2026 a piglet lot's feed went
+   * to the mapping's pre-mature account, so a piglet's death took out of Weaners Inventory value that had been put into the herd account.
+   */
+  private async herdAssetAccount(
+    batch: { batch_id: string; company_id: string; nob_id?: string | null; lob_id?: string | null },
+    tenantId: string,
+  ): Promise<string | undefined> {
+    return (
+      (await this.batchClassAccount(batch.batch_id)) ??
+      (await this.litterLotAccount(batch, tenantId))
+    );
   }
 
   /**
@@ -2748,8 +2791,8 @@ export class BatchService {
       serialNo: params.serial_no,
       userId: userPayload?.userId,
     });
-    // Capitalised feed goes into each animal's own class account (her profile's acquisition account), a part for each animal fed; an animal with no profile, or a
-    // batch of head only, takes the mapping's account.
+    // Capitalised feed goes into each animal's own class account (her profile's acquisition account), a part for each animal fed; an animal with no profile
+    // takes the mapping's account, and a batch of head only its herd account (herdAssetAccount).
     const feedSplit =
       isCostCapitalised && params.shares.some((x) => x.animal_id)
         ? await (async () => {
@@ -2767,7 +2810,11 @@ export class BatchService {
     await this.glPostingService.postInventoryLedgerEntry(
       ledgerEntry,
       userPayload?.userId,
-      feedSplit ? { debitSplit: feedSplit } : {},
+      feedSplit
+        ? { debitSplit: feedSplit }
+        : isCostCapitalised
+          ? { debitAccountId: await this.herdAssetAccount(batch, tenantId) }
+          : {},
     );
 
     const amount = Number(ledgerEntry.amount); // negative
@@ -2926,6 +2973,21 @@ export class BatchService {
   /** Recounts an animal-wise batch's stage headcounts from the register (no-op for a batch-wise batch). */
   async syncSchedulerCounts(batchId: string): Promise<void> {
     await this.schedulerHeaderService.syncAnimalWiseCounts(batchId);
+  }
+
+  /** See SchedulerHeaderService.openForAnimalStageMove: the stage an animal was moved to gets the batch's scheduler. */
+  async openSchedulerForAnimalStage(
+    batchId: string,
+    stageId: string,
+    tenantId: string,
+    userPayload?: { userId?: string },
+  ): Promise<void> {
+    await this.schedulerHeaderService.openForAnimalStageMove(
+      batchId,
+      stageId,
+      tenantId,
+      userPayload,
+    );
   }
 
   /** See SchedulerHeaderService.alignToStageEntry: a stage's unused scheduler starts when its animals entered it. */
@@ -3831,7 +3893,7 @@ export class BatchService {
                 ? await this.glPostingService.animalAssetAccountId(
                     dto.animal_id,
                   )
-                : await this.batchClassAccount(id),
+                : await this.herdAssetAccount(batch, tenantId),
             }
           : {},
       );
@@ -4274,10 +4336,10 @@ export class BatchService {
         lobId: batch.lob_id,
         stageId: batch.stage_id || undefined,
         // Capitalised overhead goes into the account its animal is carried in, as her feed does: her own acquisition account where the line
-        // names her (the ledger adds it to her book value), else the class account of a herd that has one.
+        // names her (the ledger adds it to her book value), else the herd's own account (herdAssetAccount).
         debitAccountId:
           isBioAsset && isCostCapitalised
-            ? (dto.animal_id ? await this.glPostingService.animalAssetAccountId(dto.animal_id) : undefined) ?? (await this.batchClassAccount(id))
+            ? (dto.animal_id ? await this.glPostingService.animalAssetAccountId(dto.animal_id) : undefined) ?? (await this.herdAssetAccount(batch, tenantId))
             : undefined,
         userId: userPayload?.userId,
       });
@@ -5659,7 +5721,7 @@ export class BatchService {
     // A scheduler is never created from here (Rishi, 15 Oct). Reading this screen used to open one for every stage
     // the batch's live animals stood in, so creating a scheduler for one batch and stage was followed by schedulers
     // for all the others. A scheduler is created where the user asks for one: the Create Scheduler form, batch
-    // creation, or a stage transfer. A stage with none simply has no data entry here — it is not in batchSchedulers,
+    // creation, a stage transfer, or an animal moved to a stage. A stage with none simply has no data entry here — it is not in batchSchedulers,
     // and only stages that have a scheduler are read below.
 
     const scheduledStageIds = [

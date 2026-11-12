@@ -47,6 +47,10 @@ const LABELS: Record<string, string> = {
   tenantId: 'Tenant',
   email: 'Email',
   password: 'Password',
+  // The client's QC Parameter Master labels (only that master uses these names).
+  param_code: 'QC Code',
+  param_name: 'Description',
+  param_type: 'QC Type',
 };
 
 const isIdProperty = (property: string) => /(_id|Id)$/.test(property);

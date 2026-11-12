@@ -5,7 +5,7 @@ import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { FarmScoped } from '../../../common/farm-scope';
 import { QcInspectionService } from './qc-inspection.service';
-import { ApproveQcDeviationDto, CompleteQcInspectionDto, QueryQcInspectionDto } from './dto/qc-inspection.dto';
+import { ApproveQcDeviationDto, CompleteQcInspectionDto, QueryQcInspectionDto, RefuseQcDeviationDto, SettleQcRejectionDto } from './dto/qc-inspection.dto';
 
 @ApiTags('QC Inspection')
 @ApiBearerAuth()
@@ -53,9 +53,18 @@ export class QcInspectionController {
   @Post(':id/reject-deviation')
   @RequirePermission('INVENTORY', 'QC_INSPECTION', 'approve')
   @ApiOperation({ summary: 'Refuse a deviation: the lot is failed whole and nothing is posted.' })
-  async reject(@Param('id', new ParseUUIDPipe()) id: string, @Body() dto: ApproveQcDeviationDto, @Req() req: any) {
+  async reject(@Param('id', new ParseUUIDPipe()) id: string, @Body() dto: RefuseQcDeviationDto, @Req() req: any) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.service.rejectDeviation(id, dto, tenantId, req.user);
     return { success: true, message: 'Deviation refused.', data };
+  }
+
+  @Post(':id/settle-rejection')
+  @RequirePermission('INVENTORY', 'QC_INSPECTION', 'edit')
+  @ApiOperation({ summary: 'Record the final disposition of a rejected quantity held for a decision (return to supplier or scrap). Recorded only: nothing is posted.' })
+  async settleRejection(@Param('id', new ParseUUIDPipe()) id: string, @Body() dto: SettleQcRejectionDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.service.settleRejection(id, dto, tenantId, req.user);
+    return { success: true, message: 'Rejected quantity settled.', data };
   }
 }

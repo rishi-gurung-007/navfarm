@@ -473,6 +473,13 @@ export default function ConsoleLayout({
       return ai - bi;
     })
     .map((c) => ({ label: tLabel(c.label), href: `/master-data/${c.key}` }));
+  // QC Parameters is a master the item card's QC Specification picks from (client, 9 Nov), so it is listed with the masters, right after
+  // Item. Its page is its own panel, not a config-driven table, so it is not in MASTER_DATA_CONFIGS.
+  {
+    const qcParameters = { label: t('navQcParameters'), href: '/master-data/qc-parameter' };
+    const afterItem = masterDataChildren.findIndex((c) => c.href === '/master-data/item');
+    masterDataChildren.splice(afterItem === -1 ? masterDataChildren.length : afterItem + 1, 0, qcParameters);
+  }
 
   let navItems: AppShellNavItem[] = [];
 
@@ -732,7 +739,6 @@ export default function ConsoleLayout({
         children: [
           { label: t('navSettingsArea'), href: '/settings/area' },
           { label: t('navParameters'), href: '/settings/parameters' },
-          { label: t('navQcParameters'), href: '/settings/qc' },
         ],
       },
     ];

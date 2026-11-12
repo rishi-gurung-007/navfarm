@@ -1709,6 +1709,27 @@
       "when": 1792000000114,
       "tag": "0246_item_fv_loss_gl",
       "breakpoints": true
+    },
+    {
+      "idx": 244,
+      "version": "5",
+      "when": 1792000000115,
+      "tag": "0247_qc_parameter_client_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 245,
+      "version": "5",
+      "when": 1792000000116,
+      "tag": "0248_item_qc_spec_from_parameter",
+      "breakpoints": true
+    },
+    {
+      "idx": 246,
+      "version": "5",
+      "when": 1792000000117,
+      "tag": "0249_qc_inspection_disposition",
+      "breakpoints": true
     }
   ]
 }

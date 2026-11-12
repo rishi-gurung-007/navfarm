@@ -37,6 +37,7 @@ import PiggeryLifecycleStepper, {
   type PiggeryStage,
 } from '../piggery/piggery-lifecycle-stepper';
 import { buildLifecycleStages } from '../piggery/build-lifecycle-stages';
+import { dataEntryStrip } from './data-entry-stage-strip';
 import {
   resolvePiggeryStageId,
   computeStageDay,
@@ -1070,12 +1071,16 @@ export default function OperationalBatchDataEntry() {
           // to a different stage because THIS one is locked is exactly
           // backwards. Keep whatever stage they had selected; only fall back
           // if that stage genuinely isn't part of this date at all.
+          // Only a stage the strip shows can stay selected: one with animals on this date or now.
+          const onStrip = new Set(dataEntryStrip(progress).map((x) => x.stage.stage_id));
+          const firstOnStrip = progress.find((p: Row) => onStrip.has(p.stage_id))?.stage_id;
           setSelectedStageId((prev) => {
-            const prevStage = prev
-              ? stages.find((s) => s.stage_id === prev)
-              : undefined;
+            const prevStage =
+              prev && onStrip.has(prev)
+                ? stages.find((s) => s.stage_id === prev)
+                : undefined;
             if (userPickedDateRef.current)
-              return prevStage ? prev : stages[0]?.stage_id || null;
+              return prevStage ? prev : firstOnStrip || stages[0]?.stage_id || null;
             if (prevStage && prevStage.lock_status !== 'LOCKED') return prev;
             const nextOpen = progress.find(
               (p: Row) =>
@@ -2582,7 +2587,8 @@ export default function OperationalBatchDataEntry() {
   const animalListJoinedLater = animalListDayIds.size
     ? animalListRows.filter((a) => !animalListDayIds.has(a.animal_id))
     : [];
-  const stageHeadCount = (p: Row) => p.current_animal_count ?? p.animal_count;
+  // The stages the animal-wise strip shows: only those with animals on the posting date or now (data-entry-stage-strip.ts).
+  const stripStages = dataEntryStrip(dataEntryProgress);
 
   return (
     <div className="space-y-6 animate-fade-in text-[var(--text-primary)]">
@@ -3474,19 +3480,19 @@ export default function OperationalBatchDataEntry() {
               actually there. Clicking a circle/label selects that stage for
               data entry; clicking the headcount specifically opens the
               animal-list popup instead. */}
-              {dataEntryProgress.length > 0 && (
+              {stripStages.length > 0 && (
                 <div className="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-5 overflow-x-auto shadow-2xs">
                   <div
                     className="relative"
                     style={{
-                      minWidth: `${Math.max(780, dataEntryProgress.length * 108)}px`,
+                      minWidth: `${Math.max(780, stripStages.length * 108)}px`,
                     }}
                   >
                     <div className="absolute top-4 left-6 right-6 h-[3px] bg-[var(--border)] z-0 rounded-full" />
                     <div className="flex items-start justify-between relative z-10">
-                      {dataEntryProgress.map((p) => {
+                      {stripStages.map(({ stage: p, head, onDateOnly }) => {
                         const selected = p.stage_id === selectedStageId;
-                        const hasAnimals = stageHeadCount(p) > 0;
+                        const hasAnimals = head > 0;
                         const stageLocked =
                           dataEntryStages.find((s) => s.stage_id === p.stage_id)
                             ?.lock_status === 'LOCKED';
@@ -3516,7 +3522,7 @@ export default function OperationalBatchDataEntry() {
                                 hasAnimals ? 'View animal list' : undefined
                               }
                             >
-                              {hasAnimals ? stageHeadCount(p) : '•'}
+                              {hasAnimals ? head : '•'}
                             </button>
                             <div className="mt-2.5 text-center flex flex-col items-center w-full px-0.5">
                               <p
@@ -3537,7 +3543,14 @@ export default function OperationalBatchDataEntry() {
                                     POSTED
                                   </span>
                                 ) : hasAnimals ? (
-                                  <span className="px-2 py-0.5 rounded-full bg-[var(--accent)] text-white text-[9px] font-bold uppercase tracking-wider shadow-2xs">
+                                  <span
+                                    className="px-2 py-0.5 rounded-full bg-[var(--accent)] text-white text-[9px] font-bold uppercase tracking-wider shadow-2xs"
+                                    title={
+                                      onDateOnly
+                                        ? `${head} animal(s) were in ${p.stage_code} on ${formatDate(selectedDate)}, so this date has entries due; none are there now.`
+                                        : undefined
+                                    }
+                                  >
                                     ACTIVE
                                   </span>
                                 ) : (

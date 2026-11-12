@@ -15,6 +15,7 @@ import { useLanguage } from "@/hooks/useLanguage";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { ReasonSelect } from "@/components/ui/reason-select";
 import type { ReasonRow } from "@/hooks/useReasons";
+import { animalLocationOptions, farmIdOf, useCompanyLocations } from "./animal-locations";
 
 export interface AnimalTransitionModalAnimal {
   animal_id?: string;
@@ -82,6 +83,8 @@ export default function AnimalStageTransitionModal({
   // counted from the day it joined the farm, so an animal long on the farm never looked premature.
   const [stageEnteredOn, setStageEnteredOn] = useState<string | null>(null);
   const [toBatchId, setToBatchId]       = useState("");
+  // The pen, crate or shed it moves to. Empty keeps the one it is in.
+  const [toLocationId, setToLocationId] = useState("");
   const [transitionDate, setTransitionDate] = useState(new Date().toISOString().slice(0, 10));
   const [reason, setReason]             = useState("");
   const [remarks, setRemarks]           = useState("");
@@ -90,6 +93,7 @@ export default function AnimalStageTransitionModal({
   const [error, setError]               = useState("");
 
   const { t } = useLanguage();
+  const allLocations = useCompanyLocations(open, animal?.company_id ? String(animal.company_id) : null);
 
   // When animal opens, auto-suggest next stage if configured on current stage,
   // and default the batch field to the animal's current batch — optional, so a
@@ -102,6 +106,7 @@ export default function AnimalStageTransitionModal({
     setReason("");
     setRemarks("");
     setToBatchId(String(animal.current_batch_id || ""));
+    setToLocationId("");
     setBatchMoveStageId("");
     setStageEnteredOn(null);
     let cancelled = false;
@@ -143,13 +148,28 @@ export default function AnimalStageTransitionModal({
   // different batch switches this whole action to the batch-transfer
   // endpoint instead, and the manual stage pick becomes moot for that case.
   const isBatchMove = !!toBatchId && toBatchId !== String(animal.current_batch_id || "");
+  // A location move stays on the farm of the animal's batch; a batch move goes to the destination batch's farm.
+  const locationsById = new Map(allLocations.map((l) => [l.location_id, l]));
+  const currentLocation = animal.current_location_id ? locationsById.get(animal.current_location_id) : undefined;
+  const batchFarmId = (id: string) => (batches || []).find((b) => b.batch_id === id)?.farm_id ?? null;
+  const targetFarmId = isBatchMove
+    ? batchFarmId(toBatchId)
+    : batchFarmId(String(animal.current_batch_id || "")) ?? (currentLocation ? farmIdOf(currentLocation, locationsById) : null);
+  const changesFarm = isBatchMove && !!targetFarmId && !!currentLocation && farmIdOf(currentLocation, locationsById) !== targetFarmId;
+  const locationOptions = animalLocationOptions(allLocations, targetFarmId, isBatchMove ? null : animal.current_location_id);
+  const stageChange = !isBatchMove && !!toStageId && toStageId !== String(animal.current_stage_id || "");
+  const locationChange = !isBatchMove && !!toLocationId && toLocationId !== String(animal.current_location_id || "");
 
   const handleSubmit = async () => {
-    if (!isBatchMove && !toStageId) {
-      setError(t("astmSelectDestinationStageError"));
+    if (!isBatchMove && !stageChange && !locationChange) {
+      setError(toStageId ? "Choose a different stage or a new location." : t("astmSelectDestinationStageError"));
       return;
     }
-    if (!isBatchMove && isPrematureMove && !reason.trim()) {
+    if (changesFarm && !toLocationId) {
+      setError("This batch is on another farm. Choose the location on that farm the animal moves to.");
+      return;
+    }
+    if (stageChange && isPrematureMove && !reason.trim()) {
       setError(t("astmMinDurationOverrideError", { minDays, daysInStage }));
       return;
     }
@@ -165,16 +185,29 @@ export default function AnimalStageTransitionModal({
           transfer_type: "PARTIAL",
           animal_ids: [animal.animal_id],
           to_stage_id: batchMoveStageId || undefined,
+          to_location_id: toLocationId || undefined,
           reason: reason || undefined,
           remarks: remarks || undefined,
         });
       } else {
-        await api.post(`/animal/${animal.animal_id}/transition-stage`, {
-          to_stage_id: toStageId,
-          transition_date: transitionDate,
-          reason: reason || undefined,
-          remarks: remarks || undefined,
-        });
+        // The location first: it is the one that can be refused for the farm, and it changes nothing of value.
+        if (locationChange) {
+          await api.post(`/animal/move-location`, {
+            animal_ids: [animal.animal_id],
+            to_location_id: toLocationId,
+            move_date: transitionDate,
+            reason: reason || undefined,
+            remarks: remarks || undefined,
+          });
+        }
+        if (stageChange) {
+          await api.post(`/animal/${animal.animal_id}/transition-stage`, {
+            to_stage_id: toStageId,
+            transition_date: transitionDate,
+            reason: reason || undefined,
+            remarks: remarks || undefined,
+          });
+        }
       }
       onSuccess();
       onClose();
@@ -194,9 +227,16 @@ export default function AnimalStageTransitionModal({
       maxWidth="lg"
       footer={
         <div className="flex w-full items-center justify-end gap-2">
-          <Button onClick={handleSubmit} disabled={saving || (!isBatchMove && !toStageId)}>
+          <Button onClick={handleSubmit} disabled={saving || (!isBatchMove && !stageChange && !locationChange)}>
             {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="mr-1.5 h-3.5 w-3.5" />}
-            {t("astmConfirmTransition")}
+            {/* Says what will happen, so a pen move is not mistaken for a stage change (the stage field pre-fills the next stage). */}
+            {isBatchMove
+              ? "Transfer to batch"
+              : stageChange && locationChange
+                ? "Change stage and move"
+                : locationChange
+                  ? "Move location"
+                  : t("astmConfirmTransition")}
           </Button>
         </div>
       }
@@ -217,6 +257,10 @@ export default function AnimalStageTransitionModal({
             <span className="font-semibold" style={S.primary}>{animal.stage_name || currentStage?.stage_name || t("astmDefaultStageQuarantine")}</span>
           </div>
           <div className="flex items-center justify-between text-xs">
+            <span style={S.muted}>Current location</span>
+            <span className="font-mono font-semibold" style={S.primary}>{currentLocation?.location_code || animal.location_code || "—"}</span>
+          </div>
+          <div className="flex items-center justify-between text-xs">
             <span style={S.muted}>{t("astmTimeInCurrentStageLabel")}</span>
             <span className="font-mono font-semibold" style={isPrematureMove ? S.warning : S.primary}>
               {t("astmDaysCount", { days: daysInStage })} {minDays > 0 ? t("astmMinRequiredSuffix", { minDays }) : ""}
@@ -225,7 +269,7 @@ export default function AnimalStageTransitionModal({
         </div>
 
         {/* Premature Move Notice */}
-        {!isBatchMove && isPrematureMove && (
+        {stageChange && isPrematureMove && (
           <div className="rounded-[var(--radius-md)] border p-3 flex items-start gap-2 text-xs" style={S.warning}>
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
             <div>
@@ -277,20 +321,47 @@ export default function AnimalStageTransitionModal({
               />
             </Field>
           ) : (
-            <Field label={t("astmDestinationStageLabel")} required className="sm:col-span-6">
+            <Field
+              label={t("astmDestinationStageLabel").replace(/\s*\*$/, "")}
+              className="sm:col-span-6"
+              tooltip="Clear it to keep the stage the animal is in, for example when it only moves to another pen."
+            >
               <SearchableSelect
-                ariaLabel={t("astmDestinationStageLabel")}
+                ariaLabel={t("astmDestinationStageLabel").replace(/\s*\*$/, "")}
                 value={toStageId}
                 onChange={(val) => setToStageId(val)}
                 options={stages.map((s) => ({
                   value: s.stage_id,
                   label: `${s.stage_name} (${s.stage_code}) — ${s.stage_category}`,
                 }))}
-                placeholder={t("astmSelectDestinationStagePlaceholder")}
+                placeholder="Keep the current stage"
                 searchPlaceholder="Search stages…"
+                onClear={() => setToStageId("")}
               />
             </Field>
           )}
+
+          <Field
+            label={isBatchMove ? "Destination location" : "Move to location"}
+            required={changesFarm}
+            className="sm:col-span-6"
+            hint={changesFarm ? "The batch is on another farm: choose the pen, crate or shed there." : undefined}
+            tooltip={
+              isBatchMove
+                ? "The pen, crate or shed on the destination batch's farm the animal moves to. Leave it empty to keep its location, when the batch is on the same farm."
+                : "Another pen, crate or shed on the same farm. The animal stays in its batch and nothing of value moves; a move to another farm is a batch transfer."
+            }
+          >
+            <SearchableSelect
+              ariaLabel={isBatchMove ? "Destination location" : "Move to location"}
+              value={toLocationId}
+              onChange={(val) => setToLocationId(val)}
+              options={locationOptions}
+              placeholder={isBatchMove ? "Keep its location" : "Keep the current location"}
+              searchPlaceholder="Search pens, crates, sheds…"
+              onClear={() => setToLocationId("")}
+            />
+          </Field>
 
           <Field label={t("astmTransitionDateLabel")} required className="sm:col-span-6">
             <DateInput
@@ -302,7 +373,7 @@ export default function AnimalStageTransitionModal({
 
           <Field
             label={t("astmReasonLabel")}
-            required={isPrematureMove && !isBatchMove}
+            required={isPrematureMove && stageChange}
             className="sm:col-span-6"
           >
             <ReasonSelect

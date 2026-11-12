@@ -6,6 +6,8 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
+import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
+import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import * as schema from '../../../core/database/schema';
 
 describe('BatchTransferService', () => {
@@ -16,6 +18,12 @@ describe('BatchTransferService', () => {
   const mockDbUpdate = jest.fn();
   const mockDbInsert = jest.fn();
   const mockDbTransaction = jest.fn();
+  // An animal with no ledger rows by default; a test that cares sets its own.
+  const mockValuesFor = jest.fn(async (ids: string[]) => new Map(ids.map((id) => [id, { bookValue: 0, hasRows: false }])));
+  const mockGl = {
+    mappedAccount: jest.fn(),
+    postAccountTransfer: jest.fn().mockResolvedValue({ journal_id: 'j-1' }),
+  };
 
   const mockDb = {
     select: mockDbSelect,
@@ -52,6 +60,7 @@ describe('BatchTransferService', () => {
     mockDbInsert.mockReset();
     mockDbTransaction.mockReset();
     mockDbTransaction.mockImplementation(async (cb: any) => cb(mockDb));
+    mockGl.postAccountTransfer.mockClear();
 
     module = await Test.createTestingModule({
       providers: [
@@ -91,6 +100,11 @@ describe('BatchTransferService', () => {
           provide: AnimalMovementLogService,
           useValue: { record: jest.fn().mockResolvedValue('movement-1') },
         },
+        {
+          provide: AnimalBookValueService,
+          useValue: { valuesFor: mockValuesFor },
+        },
+        { provide: GlPostingService, useValue: mockGl },
       ],
     }).compile();
 
@@ -197,6 +211,53 @@ describe('BatchTransferService', () => {
     });
   });
 
+  describe('each animal moves at its own book value', () => {
+    // BTR-0001 on nf_devco (10 Nov 2026, undone): two boars bought at 1,200 and amortised to 0 moved at 1,200, because a
+    // book value of 0 was read as "no value". Three boars at 352.50 moved correctly.
+    const boars = [
+      { animal_id: 'b-amortised', animal_code: 'PIG-2024-0015', current_stage_id: 'st-q', gender: 'M', book_value: '0.0000', total_opening_asset_value: '1200.0000', acquisition_cost: '1200.0000' },
+      { animal_id: 'b-valued', animal_code: 'PIG-2024-0018', current_stage_id: 'st-q', gender: 'M', book_value: '352.5000', total_opening_asset_value: '700.0000', acquisition_cost: '700.0000' },
+    ];
+    let inserted: any[];
+    beforeEach(() => {
+      inserted = [];
+      const batch = (over: object) => ({ tenant_id: 'tenant-123', company_id: 'comp-1', status: 'ACTIVE', tracking_mode: 'ANIMAL_WISE', lob_id: 'lob-pig', stage_id: null, ...over });
+      jest
+        .spyOn(service as any, 'loadBatch')
+        .mockResolvedValueOnce(batch({ batch_id: 'src', batch_no: 'BATCH-000001' }))
+        .mockResolvedValueOnce(batch({ batch_id: 'dst', batch_no: 'BATCH-000003', status: 'DRAFT' }));
+      jest.spyOn(service, 'listTransferableAnimals').mockResolvedValue(boars as any);
+      jest.spyOn(service, 'findOne').mockResolvedValue({} as any);
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ stage_id: 'st-q', lob_id: 'lob-pig' }]) }) }) // stage line of business
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ current_quantity: '17.0000', nca_book_value: '1927.7698' }]) }) }) }); // source state
+      mockDbInsert.mockImplementation(() => ({ values: jest.fn(async (v: any) => { inserted.push(v); }) }));
+    });
+    const draft = () =>
+      service.create({ company_id: 'comp-1', to_batch_id: 'dst', transfer_date: '2026-11-10', animal_ids: ['b-amortised', 'b-valued'], post_immediately: false } as any, 'tenant-123', 'src');
+
+    it('moves a fully amortised animal at 0, not at its purchase price', async () => {
+      mockValuesFor.mockResolvedValueOnce(new Map([
+        ['b-amortised', { bookValue: 0, hasRows: true }],
+        ['b-valued', { bookValue: 352.5, hasRows: true }],
+      ]) as any);
+      await draft();
+      const [header, lines] = inserted;
+      expect(lines.map((l: any) => [l.animal_id, l.book_value])).toEqual([['b-amortised', '0.0000'], ['b-valued', '352.5000']]);
+      expect(header.transfer_value).toBe('352.5000');
+      expect(mockValuesFor).toHaveBeenCalledWith(['b-amortised', 'b-valued']);
+    });
+
+    it('takes the ledger book value over the register cache', async () => {
+      mockValuesFor.mockResolvedValueOnce(new Map([
+        ['b-amortised', { bookValue: 12.75, hasRows: true }],
+        ['b-valued', { bookValue: 340, hasRows: true }],
+      ]) as any);
+      await draft();
+      expect(inserted[1].map((l: any) => l.book_value)).toEqual(['12.7500', '340.0000']);
+    });
+  });
+
   describe('reversing a posted transfer (D7)', () => {
     const posted = (over: object = {}) => ({
       transfer_id: 'tr-1',
@@ -222,7 +283,9 @@ describe('BatchTransferService', () => {
       });
 
     it('moves the same animals straight back as a transfer of its own, naming what it undoes', async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValueOnce(posted() as any);
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce(
+        posted({ lines: [{ animal_id: 'a-1', from_location_id: 'pen-g1' }, { animal_id: 'a-2', from_location_id: 'pen-f4' }] }) as any,
+      );
       noPriorReversal();
       // Where each animal stood before the transfer, from its movement log: a-1 was in Gestation, a-2 in Flush.
       mockDbSelect.mockReturnValueOnce({
@@ -260,8 +323,10 @@ describe('BatchTransferService', () => {
       });
       // Each goes back to her own stage, not to one the transfer may have named — passed beside the request, never in it.
       expect(dto.return_stages).toBeUndefined();
+      // ...and to the pen she left from (10 Nov 2026: a reversed boar used to stay in the new pen).
       expect(options).toEqual({
         returnStages: { 'a-1': 'st-gest', 'a-2': 'st-flush' },
+        returnLocations: { 'a-1': 'pen-g1', 'a-2': 'pen-f4' },
       });
     });
 
@@ -432,7 +497,11 @@ describe('BatchTransferService', () => {
       expect(post).toHaveBeenCalled();
     });
 
-    it('posts: shifts head and value, writes both ledger legs, recounts the schedulers, marks it POSTED', async () => {
+    // A draft head-count transfer of 40 head worth 10,000 from WEAN-A (b-a) to WEAN-B (b-b), posted. accounts: the account each
+    // batch's carrying value sits in (carryingAccount, herd-account.ts).
+    const postHeadcount = async (
+      accounts: Record<string, string | undefined> = { 'b-a': 'acct-herd', 'b-b': 'acct-herd' },
+    ) => {
       jest
         .spyOn(service, 'findOne')
         .mockResolvedValueOnce({
@@ -498,8 +567,17 @@ describe('BatchTransferService', () => {
           return { where: jest.fn().mockResolvedValue({}) };
         }),
       }));
+      jest
+        .spyOn(service as any, 'carryingAccount')
+        .mockImplementation(async (batch: any) => accounts[batch.batch_id]);
 
       await service.post('tr-h', 'tenant-123', { userId: 'user-1' });
+      return { shiftValue, shiftQty, recount, inserted, sets };
+    };
+
+    it('posts: shifts head and value, writes both ledger legs, recounts the schedulers, marks it POSTED', async () => {
+      const { shiftValue, shiftQty, recount, inserted, sets } =
+        await postHeadcount();
 
       expect(shiftValue).toHaveBeenCalledWith('b-a', -40, -10000);
       expect(shiftValue).toHaveBeenCalledWith('b-b', 40, 10000);
@@ -521,6 +599,31 @@ describe('BatchTransferService', () => {
       expect(recount).toHaveBeenCalledWith('b-a');
       expect(recount).toHaveBeenCalledWith('b-b');
       expect(sets.find((v) => v.status === 'POSTED')).toBeDefined();
+      // Both herds in one account: a reclassification with nothing to post.
+      expect(mockGl.postAccountTransfer).not.toHaveBeenCalled();
+    });
+
+    it("moves the value between the accounts when the herds are carried in different ones (a piglet lot weaned into a weaner batch)", async () => {
+      await postHeadcount({ 'b-a': 'acct-weaners', 'b-b': 'acct-premature' });
+      expect(mockGl.postAccountTransfer).toHaveBeenCalledTimes(1);
+      expect(mockGl.postAccountTransfer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-123',
+          companyId: 'comp-1',
+          postingDate: '2026-10-01',
+          sourceDocumentType: 'BATCH_TRANSFER',
+          documentNo: 'BTR-9',
+          debitAccountId: 'acct-premature',
+          creditAccountId: 'acct-weaners',
+          amount: 10000,
+          userId: 'user-1',
+        }),
+      );
+    });
+
+    it('posts nothing where either herd has no one account (a mature herd)', async () => {
+      await postHeadcount({ 'b-a': 'acct-weaners', 'b-b': undefined });
+      expect(mockGl.postAccountTransfer).not.toHaveBeenCalled();
     });
   });
 

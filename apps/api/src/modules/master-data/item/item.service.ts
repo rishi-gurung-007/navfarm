@@ -22,6 +22,7 @@ import {
 } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { specProblems, specRowsToStore } from '../../inventory/qc-inspection/qc-inspection.rules';
+import { linesFromQcParameters } from '../item-qc-spec/qc-parameter-lines';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import {
@@ -475,7 +476,7 @@ export class ItemService {
       throw new BadRequestException('A biological asset cannot be QC required: animals are registered, not received into stock.');
     }
     // The checks of a QC-required item travel with it; they are dropped for an item that is not QC required.
-    const qcSpecs = dto.is_qc_required ? (dto.qc_specs ?? []) : [];
+    const qcSpecs = await linesFromQcParameters(this.db, dto.is_qc_required ? (dto.qc_specs ?? []) : [], { tenantId, companyId });
     const qcProblems = specProblems(qcSpecs);
     if (qcProblems.length) throw new BadRequestException(qcProblems.join(' '));
 

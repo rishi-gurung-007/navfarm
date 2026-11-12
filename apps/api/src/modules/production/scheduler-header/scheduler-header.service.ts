@@ -821,6 +821,37 @@ export class SchedulerHeaderService {
   }
 
   /**
+   * An animal of an animal-wise batch was moved into a stage by a user: that stage gets the batch's scheduler, as a
+   * batch's own stage transfer does (Arun, 12 Nov). Without it the stage had no data entry and never reached the Daily
+   * Data Entry strip until someone created the scheduler by hand: on BATCH-000001 PIG-2024-0001 moved to Gestation and
+   * the strip kept showing Quarantine and Insemination only. Only the stage the user moved the animal to — never the
+   * batch's other occupied stages (Rishi, 15 Oct) — and only when the stage's Scheduler Auto Create is on. Idempotent
+   * and matched by stage code (createForStage), so a stage that already has one is left as it is.
+   */
+  async openForAnimalStageMove(
+    batchId: string,
+    stageId: string,
+    tenantId: string,
+    userPayload?: { userId?: string },
+  ): Promise<void> {
+    const [batch] = await this.db
+      .select({ tracking_mode: schema.batchHeader.tracking_mode })
+      .from(schema.batchHeader)
+      .where(eq(schema.batchHeader.batch_id, batchId))
+      .limit(1);
+    if (batch?.tracking_mode !== 'ANIMAL_WISE') return;
+
+    const [stage] = await this.db
+      .select({ scheduler_auto_create: schema.stageMaster.scheduler_auto_create })
+      .from(schema.stageMaster)
+      .where(eq(schema.stageMaster.stage_id, stageId))
+      .limit(1);
+    if (!stage?.scheduler_auto_create) return;
+
+    await this.createForStage(batchId, stageId, tenantId, userPayload);
+  }
+
+  /**
    * Sets every open scheduler of an animal-wise batch to the number of live animals at its stage.
    * An animal-wise batch holds several stages at once, so a header's count is its own stage's
    * animals, never the whole batch; deaths, transfers and stage moves all end here so the count
@@ -892,8 +923,8 @@ export class SchedulerHeaderService {
    * holds has a scheduler"): every death, transfer and stage move ends here, so an animal moving into a stage opened a
    * scheduler there behind the user's back — creating one scheduler for one batch and stage was followed by schedulers
    * for every other stage the batch's animals stood in. A scheduler is created where the user asks for one (the Create
-   * Scheduler form, batch creation, a stage transfer). The cost of the reversal: animals at a stage that never had a
-   * scheduler have no data entry until someone creates it.
+   * Scheduler form, batch creation, a stage transfer, a user moving an animal to a stage — openForAnimalStageMove). The
+   * cost of the reversal: animals that reach a stage any other way have no data entry there until someone creates it.
    */
   private async reopenOccupiedStageSchedulers(
     batch: typeof schema.batchHeader.$inferSelect,

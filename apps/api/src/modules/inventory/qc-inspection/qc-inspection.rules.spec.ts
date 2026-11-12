@@ -1,9 +1,17 @@
-import { decideOutcome, judgeLine, lineNumber, specLineProblem, specProblems, specRowsToStore } from './qc-inspection.rules';
+import {
+  decideOutcome, dispositionsFor, judgeLine, lineNumber, resolveDisposition, settleProblem, specLineProblem, specProblems, specRowsToStore,
+} from './qc-inspection.rules';
 
 const valueSpec = { measurement_code: 'C', sampling_type: 'VALUE', min_value: '2', max_value: '4', is_mandatory: true };
 const textSpec = { measurement_code: 'Radiation', sampling_type: 'DESCRIPTIVE', min_value: null, max_value: null, is_mandatory: true };
 
 describe('specLineProblem', () => {
+  it("keeps an item's Target Value inside its own Min..Max", () => {
+    expect(specLineProblem({ sampling_type: 'VALUE', measurement_code: 'M', min_value: 11, max_value: 13, target_value: 12 })).toBeNull();
+    expect(specLineProblem({ sampling_type: 'VALUE', measurement_code: 'M', min_value: 11, max_value: 13, target_value: 14 })).toMatch(/above Max/);
+    expect(specLineProblem({ sampling_type: 'VALUE', measurement_code: 'M', min_value: 11, target_value: 10 })).toMatch(/below Min/);
+  });
+
   it('accepts a Value check with a range and a Descriptive check with its rule', () => {
     expect(specLineProblem({ sampling_type: 'VALUE', measurement_code: 'C', min_value: 2, max_value: 4 })).toBeNull();
     expect(specLineProblem({ sampling_type: 'VALUE', measurement_code: 'S', max_value: 0.05 })).toBeNull();
@@ -144,6 +152,66 @@ describe('decideOutcome', () => {
 
   it('a deviation flag on a passing inspection changes nothing', () => {
     expect(decideOutcome({ ...base, deviation: true, lines: pass })).toHaveProperty('outcome.status', 'CLOSED');
+  });
+});
+
+describe('dispositionsFor', () => {
+  it('offers a return to the supplier only on a goods receipt, and a transfer only its return to the sender', () => {
+    expect(dispositionsFor('GOODS_RECEIPT')).toEqual(['RETURN_TO_SUPPLIER', 'SCRAP', 'HOLD']);
+    expect(dispositionsFor('SEMEN_COLLECTION')).toEqual(['SCRAP', 'HOLD']);
+    expect(dispositionsFor('TRANSFER_RECEIPT')).toEqual(['RETURN_TO_SOURCE']);
+    expect(dispositionsFor('TRANSFER_EVENT')).toEqual(['RETURN_TO_SOURCE']);
+  });
+});
+
+describe('resolveDisposition', () => {
+  it('stores nothing when nothing is rejected, whatever was sent', () => {
+    expect(resolveDisposition({ sourceDocType: 'GOODS_RECEIPT', rejectedQty: 0, disposition: 'SCRAP', ref: 'DN-1' })).toEqual({ disposition: null, ref: null });
+  });
+
+  it('needs a disposition for a rejected quantity on a receipt or a collection', () => {
+    expect(resolveDisposition({ sourceDocType: 'GOODS_RECEIPT', rejectedQty: 10 })).toEqual({ error: expect.stringMatching(/Return to supplier or Scrap or Hold/) });
+    expect(resolveDisposition({ sourceDocType: 'SEMEN_COLLECTION', rejectedQty: 2, disposition: '' })).toEqual({ error: expect.stringMatching(/Scrap or Hold/) });
+  });
+
+  it('keeps the chosen disposition and a trimmed reference', () => {
+    expect(resolveDisposition({ sourceDocType: 'GOODS_RECEIPT', rejectedQty: 10, disposition: 'RETURN_TO_SUPPLIER', ref: '  DN-0042 ' })).toEqual({ disposition: 'RETURN_TO_SUPPLIER', ref: 'DN-0042' });
+    expect(resolveDisposition({ sourceDocType: 'SEMEN_COLLECTION', rejectedQty: 2, disposition: 'HOLD', ref: ' ' })).toEqual({ disposition: 'HOLD', ref: null });
+  });
+
+  it('refuses a return to a supplier where there is none, and RETURN_TO_SOURCE outside a transfer', () => {
+    expect(resolveDisposition({ sourceDocType: 'SEMEN_COLLECTION', rejectedQty: 2, disposition: 'RETURN_TO_SUPPLIER' })).toEqual({ error: expect.stringMatching(/Return to supplier is not open/) });
+    expect(resolveDisposition({ sourceDocType: 'GOODS_RECEIPT', rejectedQty: 2, disposition: 'RETURN_TO_SOURCE' })).toEqual({ error: expect.stringMatching(/not open/) });
+    expect(resolveDisposition({ sourceDocType: 'GOODS_RECEIPT', rejectedQty: 2, disposition: 'BURN' })).toEqual({ error: expect.stringMatching(/BURN is not open/) });
+  });
+
+  it('records a transfer as returned to its sender, and refuses any other choice for it', () => {
+    expect(resolveDisposition({ sourceDocType: 'TRANSFER_EVENT', rejectedQty: 5 })).toEqual({ disposition: 'RETURN_TO_SOURCE', ref: null });
+    expect(resolveDisposition({ sourceDocType: 'TRANSFER_RECEIPT', rejectedQty: 5, disposition: 'SCRAP' })).toEqual({ error: expect.stringMatching(/location it was sent from/) });
+  });
+});
+
+describe('settleProblem', () => {
+  const held = { status: 'CLOSED', sourceDocType: 'GOODS_RECEIPT', rejectedQty: 10, current: 'HOLD', next: 'SCRAP' };
+
+  it('settles a held rejection to a return or a scrap', () => {
+    expect(settleProblem(held)).toBeNull();
+    expect(settleProblem({ ...held, next: 'RETURN_TO_SUPPLIER' })).toBeNull();
+  });
+
+  it('settles a rejection closed before dispositions were recorded', () => {
+    expect(settleProblem({ ...held, current: null })).toBeNull();
+  });
+
+  it('refuses holding it again, a settled one, an open inspection and one with nothing rejected', () => {
+    expect(settleProblem({ ...held, next: 'HOLD' })).toMatch(/Return to supplier or Scrap/);
+    expect(settleProblem({ ...held, current: 'SCRAP', next: 'RETURN_TO_SUPPLIER' })).toMatch(/already settled: Scrap/);
+    expect(settleProblem({ ...held, status: 'PENDING_APPROVAL' })).toMatch(/closed inspection/);
+    expect(settleProblem({ ...held, rejectedQty: 0 })).toMatch(/Nothing was rejected/);
+  });
+
+  it('offers a held collection only a scrap', () => {
+    expect(settleProblem({ ...held, sourceDocType: 'SEMEN_COLLECTION', next: 'RETURN_TO_SUPPLIER' })).toMatch(/Choose Scrap\./);
   });
 });
 

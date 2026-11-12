@@ -4847,3 +4847,48 @@ The page opens on the farms; a farm opens its sheds, a shed its pens and crates 
 ## 4 Nov 2026 — Semen collectors are users, not a master
 
 The Semen Collector master is removed. A collector is a user (User Management) who holds the `SEMEN_COLLECTOR` role of the company; the collection plan and collection forms list those users (`GET /piggery/breeding/semen-collectors`) and the save checks refuse anyone else. The Collector ID (CM, AW, TA) is the user's Employee ID, else the name. Migration 0242 repoints `semen_boar_result.collector_id` and `semen_collection_plan_line.collector_id` to `user_master`, drops `semen_collector` (a collector with no linked user leaves the field empty) and adds the role to every company; new companies get it from the default role seed.
+
+## 11 Nov 2026 — a piglet lot is carried in one account: its birth cost, feed, deaths, sales and transfers all use it
+
+**Decided by Arun on 11 Nov 2026; Rishi has not confirmed it yet.** A farrowing's piglet lot (a `LIT-` batch, batch-wise) is carried in the debit account of the BIO_LITTER_BIRTH mapping (on nf_devco 170400 Weaners Inventory, the TDD's "Dr Piglets Inventory"). Its birth cost was debited there, and a piglet's death is credited there (the TDD's "Mortality: Dr Impairment Loss / Cr Weaners Inventory"). Its capitalised feed and overhead were debited to the BIO_CONSUMPTION_PREMATURE / BIO_OVERHEAD_PREMATURE mapping's account instead (152100 Biological Assets – Pre-mature). So a death took out of 170400 value that had gone into 152100. The two accounts added up to the right total, but 152100 was too high and 170400 could go negative. This was found by posting two days of weaner feed and a death on LIT-000022 through the API (Dr 152100 5.52, then Cr 170400 0.46).
+
+Now the feed and overhead go into the lot's own account: animals' class account first, else the piglet lot's account, else the mapping's (`BatchService.herdAssetAccount`). That covers a posted day's feed (`postConsumptionGroupAs`), a feed entry recorded on its own, and overhead. Proved on the running API, then undone: the same two days now post Dr 170400 for the feed, and LIT-000022's net in 170400 equals its carrying value (10.58). A batch no farrowing made, and feed that is expensed, are unchanged. With no BIO_LITTER_BIRTH mapping (it is opt-in), nothing changes.
+
+**Sales and transfers, same day, same decision.** The rule for where a herd's value sits is now one function, `herdCarryingAccount` in `production/batch/herd-account.ts`. A piglet lot is carried in its BIO_LITTER_BIRTH debit; any other pre-mature herd in the pre-mature account (the BIO_MORTALITY_PREMATURE credit); a mature herd has no one account and each posting keeps its own mapping.
+- **A sale, harvest or output** out of a pre-mature herd credits that account (`prematureAssetAccount` now asks it). Before, a piglet lot's sale was credited to 152100.
+- **A head-count transfer** between herds carried in different accounts posts Dr the destination's account / Cr the source's for the value moved (`BatchTransferService.postHeadcount`, `GlPostingService.postAccountTransfer`, source document BATCH_TRANSFER). Between herds in one account, or where either is mature, nothing is posted, as before. A reversal posts the opposite journal. Animal-wise transfers are unchanged: each animal stays in her own account.
+
+Proved on the running API, then undone (binlog inverse, tables checked against the dump). After two days of feed and a death on LIT-000022:
+- **Transfer BTR-0002**, 2 head to a test weaner batch: Dr 152100 / Cr 170400, 1.9236.
+- **Sale of 1 head for 5.00:** Dr Receivables / Cr 170400 5.00, then Dr 170400 / Cr Gain 4.0382, so 0.9618 left 170400.
+- **Reversal of the transfer:** Dr 170400 / Cr 152100, 1.9236.
+
+At every step each batch's net in its account equalled its carrying value.
+
+## 12 Nov 2026 — moving an animal to a stage opens that stage's scheduler
+
+**Asked by Arun on 12 Nov 2026; Rishi has not confirmed it yet.** It adds one case to Rishi's 15 Oct rule ("a scheduler is created only where the user asks for one"). It does not reverse that rule.
+
+On BATCH-000001, PIG-2024-0001 was moved from Insemination to Gestation from the Data Entry page (`POST /animal/:id/transition-stage`). The batch had no Gestation scheduler. The Data Entry strip lists only stages with a scheduler, so Gestation did not appear until a scheduler was created by hand (SCH-000060). A batch's own stage transfer already created the destination stage's scheduler; moving one animal did not.
+
+- **Now:** when a user moves an animal of an animal-wise batch to a stage, that stage gets the batch's scheduler if it has none (`SchedulerHeaderService.openForAnimalStageMove`, called from `AnimalService.transitionStage`; "Change Stage (all N)" loops the same call). The scheduler starts on the day of the move, and its lines come from a matching system scheduler, else the breed lifecycle. This is the rule for "where nobody is there to ask" (9 Oct).
+- **Still as on 15 Oct:** only the stage the user moved the animal to gets a scheduler. The batch's other occupied stages, opening the Data Entry screen, and the count sync create nothing. A stage whose Scheduler Auto Create is off gets nothing. A batch-wise batch gets nothing. A stage that already has a scheduler (matched by stage code) keeps it.
+- **Not changed:** an animal transferred into another batch keeps her stage (9 Oct), and that batch still gets no scheduler for it unless the transfer line's `auto_triggers_stage` asks for one.
+
+Proved on the running API, then undone (rows restored, the SCHEDULER series set back to SCH-000060). BATCH-000001 had schedulers for Quarantine, Insemination and Gestation:
+- **PIG-2024-0002 to Farrowing:** SCH-000061 was created: Active, 6 lifecycle lines, head count 1, starting 12 Nov.
+- **PIG-2024-0003 to Farrowing:** no second scheduler; the Farrowing head count went to 2.
+- **PIG-2024-0004 to Gestation:** SCH-000060 was kept; the Gestation head count went to 2.
+
+`GET /batch/:id/data-entry` then listed Farrowing (2 on the date, 2 now), so it appears on the strip.
+
+## 12 Nov 2026 — what becomes of a rejected QC quantity is recorded on the inspection, and nothing is posted for it
+
+**Decided by Arun on 12 Nov 2026; Rishi has not confirmed it.** Ours, not a client document: the plan's open question (`2026-11-03-incoming-qc`, "Rejected stock: back to the supplier, or held in a rejected location as BC did?") is still the client's to answer. Until then a rejection is recorded, never posted, because how it is accounted for is Finance's decision.
+
+- **What can be chosen** (`qc-inspection.rules.ts`, `dispositionsFor`): a goods receipt's rejected quantity is *Return to supplier*, *Scrap* or *Hold for a decision*; a semen collection's is *Scrap* or *Hold* (there is no supplier). A transfer receipt's rejection already goes back to the sending location (the inspection writes that return), so it is recorded as *Returned to the sending location* and nobody chooses it. A reference (return note, debit note, write-off no.) is optional.
+- **When it is required:** on completing an inspection with anything rejected, and on refusing a deviation (the whole lot is then rejected; what the inspector recorded for the rejected part carries over).
+- **A held rejection is settled later** (`POST /qc-inspection/:id/settle-rejection`): only on a closed inspection, only from *Hold* (or from nothing, for one closed before this existed), and only to a final disposition. Holding it again is refused.
+- **Schema:** `qc_inspection.rejection_disposition` and `rejection_ref`. The SQL was written on 4 Nov as `0242_qc_inspection_disposition.sql` but never journalled, so it never ran (audit 10 Nov, C3). It is renumbered `0249` and journalled, and `qc-inspection-disposition-migration.spec.ts` now fails on any tenant `.sql` file the journal does not name.
+
+Proved on the running API and in the browser on nf_devco, then undone: GR-000014 and GR-000015 (a QC feed item) raised QC-000002 to QC-000004. A failed lot with no disposition was refused (400). Hold was recorded, then settled to Return to supplier with a reference, and settling it again was refused. A deviation accepting 15 of 20 with 5 scrapped, refused by a second user, closed as FAIL with 20 rejected and Scrap kept. In the browser, a lot was completed as Hold and then settled to Scrap, and the settle offered only Return to supplier and Scrap. `inventory_ledger` and `journal_*` did not change at any step. The GRNs, inspections and lines were deleted and both number series reset; the audit-log rows of the test remain.

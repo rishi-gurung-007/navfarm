@@ -2,9 +2,10 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or } from 'drizzle-orm';
+import { eq, and, like, or, isNull, ne } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -18,6 +19,14 @@ import {
   QueryQcParameterDto,
 } from './dto/qc-parameter.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { qcRangeError } from './qc-parameter.rules';
+import {
+  specLineFromParameter,
+  specRowsToStore,
+} from '../../inventory/qc-inspection/qc-inspection.rules';
+
+const decimalOrNull = (v: number | string | null | undefined) =>
+  v === null || v === undefined ? null : v.toString();
 
 @Injectable()
 export class QcParameterService {
@@ -40,22 +49,89 @@ export class QcParameterService {
     return tenantDb;
   }
 
-  async create(dto: CreateQcParameterDto, tenantId: string, userPayload?: any) {
-    const existing = await this.db
+  /** Unit and Min / Max / Target belong to a NUMERIC parameter only; they must agree as Min ≤ Target ≤ Max. */
+  private measurement(
+    type: string,
+    v: { uom?: string | null; min?: number | string | null; max?: number | string | null; target?: number | string | null },
+  ) {
+    if (type !== 'NUMERIC') {
+      return { uom: null, min_value: null, max_value: null, target_value: null };
+    }
+    const error = qcRangeError(v.min, v.target, v.max);
+    if (error) throw new BadRequestException(error);
+    return {
+      uom: v.uom || null,
+      min_value: decimalOrNull(v.min),
+      max_value: decimalOrNull(v.max),
+      target_value: decimalOrNull(v.target),
+    };
+  }
+
+  /**
+   * The item QC specification lines taken from this parameter (0248) keep the item's own Description, Unit, Min / Max / Target and Mandatory:
+   * an item's values may differ from the master's. What follows the master is Active, and a change of QC Type, which resets the item's line to
+   * the master's values because a range kept for the other type would not mean anything. Inspections already raised keep their copy.
+   */
+  private async syncSpecLines(paramId: string, userId?: string | null) {
+    const [param] = await this.db
       .select()
+      .from(schema.qcParameterMaster)
+      .where(eq(schema.qcParameterMaster.param_id, paramId))
+      .limit(1);
+    if (!param) return;
+    const [row] = specRowsToStore([specLineFromParameter(param)], {
+      tenantId: param.tenant_id,
+      companyId: param.company_id,
+      itemId: '',
+      userId,
+      newId: () => '',
+    });
+    await this.db
+      .update(schema.itemQcSpecLine)
+      .set({
+        measurement_description: row.measurement_description,
+        sampling_type: row.sampling_type,
+        uom: row.uom,
+        min_value: row.min_value,
+        max_value: row.max_value,
+        target_value: row.target_value,
+        acceptance_text: row.acceptance_text,
+        is_mandatory: row.is_mandatory,
+        updated_by: userId ?? null,
+      })
+      .where(
+        and(
+          eq(schema.itemQcSpecLine.param_id, paramId),
+          ne(schema.itemQcSpecLine.sampling_type, row.sampling_type),
+        ),
+      );
+    await this.db
+      .update(schema.itemQcSpecLine)
+      .set({ is_active: row.is_active, updated_by: userId ?? null })
+      .where(eq(schema.itemQcSpecLine.param_id, paramId));
+  }
+
+  async create(dto: CreateQcParameterDto, tenantId: string, userPayload?: any) {
+    const companyId = this.workspaceCompany(dto.company_id);
+    const code = dto.param_code.trim().toUpperCase();
+
+    // QC Code is unique per company (uq_qc_parameter_company_code; a tenant template has no company, so it is checked here).
+    const existing = await this.db
+      .select({ param_id: schema.qcParameterMaster.param_id })
       .from(schema.qcParameterMaster)
       .where(
         and(
           eq(schema.qcParameterMaster.tenant_id, tenantId),
-          eq(schema.qcParameterMaster.param_code, dto.param_code.toUpperCase()),
+          companyId
+            ? eq(schema.qcParameterMaster.company_id, companyId)
+            : isNull(schema.qcParameterMaster.company_id),
+          eq(schema.qcParameterMaster.param_code, code),
         ),
       )
       .limit(1);
 
     if (existing.length > 0) {
-      throw new ConflictException(
-        `QC parameter code '${dto.param_code}' already exists.`,
-      );
+      throw new ConflictException(`QC Code '${code}' already exists.`);
     }
 
     const paramId = randomUUID();
@@ -63,24 +139,25 @@ export class QcParameterService {
     await this.db.insert(schema.qcParameterMaster).values({
       param_id: paramId,
       tenant_id: tenantId,
-      company_id: this.workspaceCompany(dto.company_id),
-      lob_id: dto.lob_id,
-      param_code: dto.param_code.toUpperCase(),
-      param_name: dto.param_name,
+      company_id: companyId,
+      lob_id: null,
+      param_code: code,
+      param_name: dto.param_name.trim(),
       param_type: dto.param_type,
-      uom: dto.uom || null,
-      min_value: dto.min_value?.toString() || null,
-      max_value: dto.max_value?.toString() || null,
-      pass_criteria: dto.pass_criteria || null,
-      fail_criteria: dto.fail_criteria || null,
-      grade_scale: dto.grade_scale || null,
+      ...this.measurement(dto.param_type, {
+        uom: dto.uom,
+        min: dto.min_value,
+        max: dto.max_value,
+        target: dto.target_value,
+      }),
       is_mandatory: dto.is_mandatory ?? true,
+      is_active: dto.is_active ?? true,
       created_by: userPayload?.userId || null,
     });
 
     await this.auditService.log({
       tenantId,
-      companyId: dto.company_id || '',
+      companyId: companyId || '',
       userId: userPayload?.userId,
       action: 'CREATE',
       entityName: 'qc_parameter_master',
@@ -123,8 +200,18 @@ export class QcParameterService {
         query.companyId,
       ),
     );
+    // A parameter without a line of business applies to every line.
     if (query.lobId)
-      conditions.push(eq(schema.qcParameterMaster.lob_id, query.lobId));
+      conditions.push(
+        or(
+          eq(schema.qcParameterMaster.lob_id, query.lobId),
+          isNull(schema.qcParameterMaster.lob_id),
+        )!,
+      );
+    if (query.isActive !== undefined)
+      conditions.push(
+        eq(schema.qcParameterMaster.is_active, query.isActive === 'true'),
+      );
     if (query.search) {
       conditions.push(
         or(
@@ -152,27 +239,29 @@ export class QcParameterService {
     userPayload?: any,
   ) {
     const param = await this.findOne(id);
+    const type = dto.param_type ?? param.param_type;
+    const pick = <A, B>(given: A | undefined, current: B): A | B =>
+      given !== undefined ? given : current;
 
     await this.db
       .update(schema.qcParameterMaster)
       .set({
-        param_name: dto.param_name ?? param.param_name,
-        uom: dto.uom ?? param.uom,
-        min_value:
-          dto.min_value !== undefined
-            ? dto.min_value.toString()
-            : param.min_value,
-        max_value:
-          dto.max_value !== undefined
-            ? dto.max_value.toString()
-            : param.max_value,
-        pass_criteria: dto.pass_criteria ?? param.pass_criteria,
-        fail_criteria: dto.fail_criteria ?? param.fail_criteria,
-        grade_scale: dto.grade_scale ?? param.grade_scale,
+        param_name: dto.param_name?.trim() || param.param_name,
+        param_type: type,
+        // A GRADE row from before 0247 keeps its scale until its type is changed.
+        ...(type === 'GRADE'
+          ? {}
+          : this.measurement(type, {
+              uom: pick(dto.uom, param.uom),
+              min: pick(dto.min_value, param.min_value),
+              max: pick(dto.max_value, param.max_value),
+              target: pick(dto.target_value, param.target_value),
+            })),
         is_mandatory: dto.is_mandatory ?? param.is_mandatory,
         is_active: dto.is_active ?? param.is_active,
       })
       .where(eq(schema.qcParameterMaster.param_id, id));
+    await this.syncSpecLines(id, userPayload?.userId);
 
     await this.auditService.log({
       tenantId,
@@ -195,6 +284,7 @@ export class QcParameterService {
       .update(schema.qcParameterMaster)
       .set({ is_active: false })
       .where(eq(schema.qcParameterMaster.param_id, id));
+    await this.syncSpecLines(id, userPayload?.userId);
 
     await this.auditService.log({
       tenantId,

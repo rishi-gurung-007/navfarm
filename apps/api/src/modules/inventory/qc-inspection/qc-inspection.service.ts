@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { and, asc, desc, eq, inArray, like, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, like, or, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -10,8 +10,8 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
-import { ApproveQcDeviationDto, CompleteQcInspectionDto, QueryQcInspectionDto } from './dto/qc-inspection.dto';
-import { decideOutcome, judgeLine, type InspectionLineSpec, type LineResult } from './qc-inspection.rules';
+import { ApproveQcDeviationDto, CompleteQcInspectionDto, QueryQcInspectionDto, RefuseQcDeviationDto, SettleQcRejectionDto } from './dto/qc-inspection.dto';
+import { decideOutcome, judgeLine, resolveDisposition, settleProblem, type InspectionLineSpec, type LineResult } from './qc-inspection.rules';
 
 /** The Number Series master's "Applies To" key for QC inspections. */
 export const QC_INSPECTION_SERIES = 'QC_INSPECTION';
@@ -208,6 +208,7 @@ export class QcInspectionService {
         uom: s.uom,
         min_value: s.min_value,
         max_value: s.max_value,
+        target_value: s.target_value,
         acceptance_text: s.acceptance_text,
         is_mandatory: s.is_mandatory,
       })),
@@ -338,6 +339,14 @@ export class QcInspectionService {
         throw new BadRequestException('A serial-tracked lot is accepted or rejected whole: serial numbers cannot be split between Accepted and Rejected.');
       }
 
+      const rejection = resolveDisposition({
+        sourceDocType: inspection.source_doc_type,
+        rejectedQty: dto.rejected_qty,
+        disposition: dto.rejection_disposition,
+        ref: dto.rejection_ref,
+      });
+      if ('error' in rejection) throw new BadRequestException(rejection.error);
+
       const postingDate = dto.posting_date ?? today();
       if ((outcome.postNow > 0 || TRANSFER_SOURCES.includes(inspection.source_doc_type)) && postingDate < inspection.source_posting_date) {
         throw new BadRequestException(`Posting Date cannot be before the receipt's posting date (${inspection.source_posting_date}).`);
@@ -377,6 +386,8 @@ export class QcInspectionService {
           accepted_qty: dec(dto.accepted_qty),
           rejected_qty: dec(dto.rejected_qty),
           reason_id: reasonId,
+          rejection_disposition: rejection.disposition,
+          rejection_ref: rejection.ref,
           deviation: outcome.result === 'DEVIATION',
           posting_date: outcome.result === 'FAIL' ? null : postingDate,
           remarks: dto.remarks ?? null,
@@ -393,7 +404,14 @@ export class QcInspectionService {
         action: 'UPDATE',
         entityName: 'qc_inspection',
         entityId: id,
-        newValues: { status: outcome.status, result: outcome.result, accepted_qty: dto.accepted_qty, rejected_qty: dto.rejected_qty, ledger_entry_id: ledgerEntryId },
+        newValues: {
+          status: outcome.status,
+          result: outcome.result,
+          accepted_qty: dto.accepted_qty,
+          rejected_qty: dto.rejected_qty,
+          rejection_disposition: rejection.disposition,
+          ledger_entry_id: ledgerEntryId,
+        },
       });
       return this.findOne(id);
     });
@@ -443,7 +461,7 @@ export class QcInspectionService {
   }
 
   /** The approver refuses the deviation: the lot is failed whole and nothing is ever written to the ledger. */
-  async rejectDeviation(id: string, dto: ApproveQcDeviationDto, tenantId: string, user?: { userId?: string }) {
+  async rejectDeviation(id: string, dto: RefuseQcDeviationDto, tenantId: string, user?: { userId?: string }) {
     return withTenantTransaction(this.cls, async () => {
       const inspection = await this.findOne(id);
       assertCompanyInScope(farmScope(this.cls), inspection.company_id);
@@ -453,6 +471,14 @@ export class QcInspectionService {
       if (user?.userId && user.userId === inspection.inspected_by) {
         throw new ForbiddenException('A deviation must be decided by someone other than the inspector.');
       }
+      // Refusing rejects the whole lot, so what becomes of it is needed even when the inspector rejected nothing.
+      const rejection = resolveDisposition({
+        sourceDocType: inspection.source_doc_type,
+        rejectedQty: Number(inspection.quantity),
+        disposition: dto.rejection_disposition ?? inspection.rejection_disposition,
+        ref: dto.rejection_ref ?? inspection.rejection_ref,
+      });
+      if ('error' in rejection) throw new BadRequestException(rejection.error);
       const [claim] = await this.db
         .update(schema.qcInspection)
         .set({
@@ -461,6 +487,8 @@ export class QcInspectionService {
           deviation: false,
           accepted_qty: '0.0000',
           rejected_qty: dec(Number(inspection.quantity)),
+          rejection_disposition: rejection.disposition,
+          rejection_ref: rejection.ref,
           posting_date: null,
           approved_by: user?.userId ?? null,
           approved_at: timestamp() as any,
@@ -478,7 +506,48 @@ export class QcInspectionService {
         action: 'REJECT',
         entityName: 'qc_inspection',
         entityId: id,
-        newValues: { status: 'CLOSED', result: 'FAIL' },
+        newValues: { status: 'CLOSED', result: 'FAIL', rejection_disposition: rejection.disposition },
+      });
+      return this.findOne(id);
+    });
+  }
+
+  /** A rejected quantity held for a decision is settled: returned to the supplier or scrapped. Recorded only; nothing is posted. */
+  async settleRejection(id: string, dto: SettleQcRejectionDto, tenantId: string, user?: { userId?: string }) {
+    return withTenantTransaction(this.cls, async () => {
+      const inspection = await this.findOne(id);
+      assertCompanyInScope(farmScope(this.cls), inspection.company_id);
+      const problem = settleProblem({
+        status: inspection.status,
+        sourceDocType: inspection.source_doc_type,
+        rejectedQty: Number(inspection.rejected_qty ?? 0),
+        current: inspection.rejection_disposition,
+        next: dto.rejection_disposition,
+      });
+      if (problem) throw new BadRequestException(problem);
+      const ref = dto.rejection_ref?.trim() || inspection.rejection_ref || null;
+
+      // Only the disposition that was read is replaced, so two people settling the same hold cannot both record theirs.
+      const [claim] = await this.db
+        .update(schema.qcInspection)
+        .set({ rejection_disposition: dto.rejection_disposition, rejection_ref: ref, updated_at: timestamp() as any })
+        .where(and(
+          eq(schema.qcInspection.inspection_id, id),
+          inspection.rejection_disposition
+            ? eq(schema.qcInspection.rejection_disposition, inspection.rejection_disposition)
+            : isNull(schema.qcInspection.rejection_disposition),
+        ));
+      if (claim.affectedRows === 0) throw new BadRequestException('This rejected quantity was settled by someone else.');
+
+      await this.auditService.log({
+        tenantId,
+        companyId: inspection.company_id,
+        userId: user?.userId,
+        action: 'UPDATE',
+        entityName: 'qc_inspection',
+        entityId: id,
+        oldValues: { rejection_disposition: inspection.rejection_disposition, rejection_ref: inspection.rejection_ref },
+        newValues: { rejection_disposition: dto.rejection_disposition, rejection_ref: ref },
       });
       return this.findOne(id);
     });

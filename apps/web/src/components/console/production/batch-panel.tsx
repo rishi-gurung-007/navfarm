@@ -1467,6 +1467,7 @@ export default function BatchPanel() {
     const params = new URLSearchParams();
     if (companyId) params.set('companyId', companyId);
     params.set('lobId', viewing.lob_id);
+    params.set('isActive', 'true');
     params.set('limit', '200');
     api
       .get(`/qc-parameter?${params.toString()}`)
@@ -2201,15 +2202,34 @@ export default function BatchPanel() {
                 }
               />
             </div>
-            {trackingMode === 'BATCH_WISE' && (
+            {/* Animal-wise too (11 Nov 2026): the stage chosen is the stage the selected animals enter. It used to be hidden
+                here yet still sent, so the batch recorded it while its animals stayed where they were registered (QUARANTINE). */}
+            {(
               <div className="flex flex-col gap-1.5 sm:col-span-2">
                 <label className="nf-text-label" style={S.sub}>
-                  {t('blLabelInitialStage')}{' '}
-                  <span className="text-(--danger)">*</span>
+                  {trackingMode === 'BATCH_WISE'
+                    ? t('blLabelInitialStage')
+                    : 'Stage the animals enter'}{' '}
+                  {trackingMode === 'BATCH_WISE' ? (
+                    <span className="text-(--danger)">*</span>
+                  ) : (
+                    <span className="text-[11px] font-normal" style={S.muted}>
+                      (optional: leave empty to keep each animal&apos;s own stage)
+                    </span>
+                  )}
                 </label>
                 <SearchableSelect
-                  ariaLabel={t('blLabelInitialStage')}
-                  ariaRequired
+                  ariaLabel={
+                    trackingMode === 'BATCH_WISE'
+                      ? t('blLabelInitialStage')
+                      : 'Stage the animals enter'
+                  }
+                  ariaRequired={trackingMode === 'BATCH_WISE'}
+                  onClear={
+                    trackingMode === 'ANIMAL_WISE'
+                      ? () => setHeader((h) => ({ ...h, stage_id: '' }))
+                      : undefined
+                  }
                   value={header.stage_id}
                   disabled={!header.lob_id}
                   onChange={(sId) => {
@@ -5078,7 +5098,7 @@ export default function BatchPanel() {
                           </p>
                           <p className="text-[10px]" style={S.muted}>
                             {p.param_type === 'NUMERIC'
-                              ? `${p.min_value != null ? formatQuantity(p.min_value) : NA}–${p.max_value != null ? formatQuantity(p.max_value) : NA} ${p.uom || ''}`
+                              ? `${p.min_value != null ? formatQuantity(p.min_value) : NA}–${p.max_value != null ? formatQuantity(p.max_value) : NA} ${p.uom || ''}${p.target_value != null ? ` · ${t('blQcTarget')} ${formatQuantity(p.target_value)}` : ''}`
                               : p.param_type}
                           </p>
                         </div>
