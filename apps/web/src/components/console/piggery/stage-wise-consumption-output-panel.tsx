@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
@@ -1229,15 +1231,13 @@ export default function StageWiseConsumptionOutputPanel() {
               {t('swDateRange')}
             </span>
             <div className="flex items-center gap-1.5 text-xs">
-              <input
-                type="date"
+              <DateInput
                 value={dateFrom}
                 onChange={(e) => setDateFrom(e.target.value)}
                 className="nf-input-sm font-medium"
               />
               <span className="text-[var(--text-muted)]">to</span>
-              <input
-                type="date"
+              <DateInput
                 value={dateTo}
                 onChange={(e) => setDateTo(e.target.value)}
                 className="nf-input-sm font-medium"
@@ -2072,7 +2072,7 @@ export default function StageWiseConsumptionOutputPanel() {
                                 {index + 1}
                               </td>
                               <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
-                                {w.date || NA}
+                                {w.date ? formatDate(w.date) : NA}
                               </td>
                               <td className="px-3 py-2 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
                                 {w.avgWeightKg > 0
@@ -2118,7 +2118,7 @@ export default function StageWiseConsumptionOutputPanel() {
                                 {m.count} Head Mortality
                               </span>
                               <span className="text-[var(--text-muted)] font-mono text-[11px]">
-                                ({m.date})
+                                ({formatDate(m.date)})
                               </span>
                               <span className="px-2 py-0.5 rounded-[var(--radius-xs)] text-[10px] font-semibold bg-rose-500/10 text-rose-600 border border-rose-500/20">
                                 {m.pen}
@@ -2171,7 +2171,7 @@ export default function StageWiseConsumptionOutputPanel() {
                                 </span>
                               )}
                               <span className="text-[var(--text-muted)] font-mono text-[11px]">
-                                ({obs.date})
+                                ({formatDate(obs.date)})
                               </span>
                             </div>
                             <p className="mt-1 font-semibold text-[var(--text-primary)]">
@@ -2229,7 +2229,7 @@ export default function StageWiseConsumptionOutputPanel() {
                             {index + 1}
                           </td>
                           <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
-                            {l.date || NA}
+                            {l.date ? formatDate(l.date) : NA}
                           </td>
                           <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">
                             {l.resource}
@@ -2378,7 +2378,7 @@ export default function StageWiseConsumptionOutputPanel() {
                           className="hover:bg-[var(--surface-raised)]"
                         >
                           <td className="px-3 py-2.5 align-top whitespace-nowrap font-mono text-[var(--text-secondary)]">
-                            {tr.date}
+                            {formatDate(tr.date)}
                           </td>
                           <td className="px-3 py-2.5 align-top font-mono text-[var(--text-secondary)]">
                             {tr.fromStage}
@@ -2489,8 +2489,7 @@ export default function StageWiseConsumptionOutputPanel() {
                         <label className="text-[10px] uppercase font-bold text-[var(--text-muted)] block mb-1">
                           Log Date
                         </label>
-                        <input
-                          type="date"
+                        <DateInput
                           value={photoDate}
                           onChange={(e) => setPhotoDate(e.target.value)}
                           className="nf-input-sm w-full font-medium"
@@ -2623,9 +2622,8 @@ export default function StageWiseConsumptionOutputPanel() {
                               </p>
                               <p className="text-[10px] font-mono text-[var(--text-muted)] mt-0.5 flex items-center gap-1">
                                 <Calendar className="h-2.5 w-2.5" />
-                                {att.log_date ||
-                                  (att.created_at
-                                    ? String(att.created_at).slice(0, 10)
+                                {att.log_date ? formatDate(att.log_date) : (att.created_at
+                                    ? formatDate(att.created_at)
                                     : NA)}
                               </p>
                             </div>

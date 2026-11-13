@@ -37,6 +37,11 @@ export interface DemoContext {
    * batches — with the other demo farm kept as a stocked store for the transfers to land in.
    */
   lean: boolean;
+  /**
+   * Narrows chapter 04 (daily entries) to the named batches and the given calendar days, instead of every demo batch over the standing
+   * window. Set only by the costing walkthrough, which posts a batch's days in the order its animals lived them.
+   */
+  dailyEntryScope?: { batchRemarks: string[]; dates: string[] };
   log(line: string): void;
 }
 

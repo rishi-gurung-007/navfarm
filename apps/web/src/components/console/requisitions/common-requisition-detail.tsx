@@ -16,6 +16,7 @@
  * The draft is local state; the caller owns the last server view and is told
  * about each new one (`onView`), which also resets the draft to it.
  */
+import { DateInput } from '@/components/ui/date-input';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { api } from '@/services/api-client';
@@ -305,9 +306,8 @@ export function CommonRequisitionDetail({
       label={t('crqPostingDate')}
       htmlFor="crq-posting-date"
     >
-      <input
+      <DateInput
         id="crq-posting-date"
-        type="date"
         className="nf-input-sm"
         style={inputStyle}
         value={postingDate}

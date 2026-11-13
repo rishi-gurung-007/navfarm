@@ -40,6 +40,8 @@ import { CustomerModule } from './modules/master-data/customer/customer.module';
 import { ResourceModule } from './modules/master-data/resource/resource.module';
 import { DiseaseModule } from './modules/master-data/disease/disease.module';
 import { ReasonModule } from './modules/master-data/reason/reason.module';
+import { BreedingLineModule } from './modules/master-data/breeding-line/breeding-line.module';
+import { BoarConditionModule } from './modules/piggery/boar-condition/boar-condition.module';
 import { AlertRuleModule } from './modules/system/alert-rule/alert-rule.module';
 import { ReportingPeriodModule } from './modules/master-data/reporting-period/reporting-period.module';
 import { AccountingPeriodModule } from './modules/master-data/accounting-period/accounting-period.module';
@@ -49,6 +51,7 @@ import { FeedFormulaModule } from './modules/master-data/feed-formula/feed-formu
 import { GlAccountModule } from './modules/finance/gl-account/gl-account.module';
 import { GlMappingModule } from './modules/finance/gl-mapping/gl-mapping.module';
 import { CostCenterModule } from './modules/finance/cost-center/cost-center.module';
+import { GlPostingGroupModule } from './modules/finance/gl-posting-group/gl-posting-group.module';
 import { InventoryLedgerModule } from './modules/inventory/inventory-ledger/inventory-ledger.module';
 import { FeedForecastModule } from './modules/inventory/feed-forecast/feed-forecast.module';
 import { FeedSettingsModule } from './modules/inventory/feed-settings/feed-settings.module';
@@ -57,6 +60,7 @@ import { FeedSchedulerModule } from './modules/inventory/feed-scheduler/feed-sch
 import { FeedStockCountModule } from './modules/inventory/feed-stock-count/feed-stock-count.module';
 import { GoodsReceiptModule } from './modules/inventory/goods-receipt/goods-receipt.module';
 import { BioAssetLedgerModule } from './modules/inventory/bio-asset-ledger/bio-asset-ledger.module';
+import { BioCostingModule } from './modules/finance/bio-costing/bio-costing.module';
 import { StockTransferModule } from './modules/inventory/stock-transfer/stock-transfer.module';
 import { StockAdjustmentModule } from './modules/inventory/stock-adjustment/stock-adjustment.module';
 import { MillOutputModule } from './modules/inventory/mill-output/mill-output.module';
@@ -77,9 +81,12 @@ import { RequisitionModule } from './modules/procurement/requisition/requisition
 import { MilkModule } from './modules/production/milk/milk.module';
 import { QcParameterModule } from './modules/production/qc-parameter/qc-parameter.module';
 import { QcModule } from './modules/production/qc/qc.module';
+import { QcInspectionModule } from './modules/inventory/qc-inspection/qc-inspection.module';
+import { ItemQcSpecModule } from './modules/master-data/item-qc-spec/item-qc-spec.module';
 import { QrCodeModule } from './modules/production/qr-code/qr-code.module';
 import { AnimalModule } from './modules/piggery/animal/animal.module';
 import { BreedingModule } from './modules/piggery/breeding/breeding.module';
+import { GiltSelectionModule } from './modules/piggery/gilt-selection/gilt-selection.module';
 import { PiggeryAnalyticsModule } from './modules/piggery/analytics/piggery-analytics.module';
 import { ReportsModule } from './modules/piggery/reports/reports.module';
 import { TenantMiddleware } from './common/middlewares/tenant.middleware';
@@ -145,6 +152,8 @@ import { SystemController } from './system/system.controller';
     ResourceModule,
     DiseaseModule,
     ReasonModule,
+    BreedingLineModule,
+    BoarConditionModule,
     AlertRuleModule,
     ReportingPeriodModule,
     AccountingPeriodModule,
@@ -154,6 +163,7 @@ import { SystemController } from './system/system.controller';
     GlAccountModule,
     GlMappingModule,
     CostCenterModule,
+    GlPostingGroupModule,
     InventoryLedgerModule,
     FeedForecastModule,
     FeedSettingsModule,
@@ -162,6 +172,7 @@ import { SystemController } from './system/system.controller';
     FeedStockCountModule,
     GoodsReceiptModule,
     BioAssetLedgerModule,
+    BioCostingModule,
     StockTransferModule,
     StockAdjustmentModule,
     MillOutputModule,
@@ -190,15 +201,19 @@ import { SystemController } from './system/system.controller';
     MilkModule,
     QcParameterModule,
     QcModule,
+    QcInspectionModule,
+    ItemQcSpecModule,
     QrCodeModule,
     AnimalModule,
     BreedingModule,
+    GiltSelectionModule,
     PiggeryAnalyticsModule,
     ReportsModule,
   ],
   controllers: [SystemController],
   providers: [],
 })
+
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(TenantMiddleware).forRoutes('*path');

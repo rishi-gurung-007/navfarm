@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -58,6 +60,8 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { confirmAction } from '@/components/ui/confirm-dialog';
 import { LotSerialPicker } from '@/components/ui/lot-serial-picker';
 import { useSystemSchedulerPrompt } from '@/components/console/production/system-scheduler-prompt';
+import { BIO_DOCUMENT_LABEL } from '../inventory/bio-asset-ledger-detail';
+import { formatTransactionType } from '../inventory/inventory-ledger-detail';
 
 const PAGE_SIZE = 25;
 
@@ -544,7 +548,10 @@ export default function BatchPanel() {
     setNobId(batch.nob_id || activeArea?.nob_id || '');
     setHeader({
       lob_id: batch.lob_id || '',
-      costing_method: batch.costing_method || 'STANDARD',
+      costing_method:
+        batch.tracking_mode === 'ANIMAL_WISE'
+          ? 'BIO_ASSET'
+          : batch.costing_method || 'STANDARD',
       breed_id: batch.breed_id || '',
       stage_id: batch.stage_id || '',
       shed_id: batch.shed_id || '',
@@ -1463,6 +1470,7 @@ export default function BatchPanel() {
     const params = new URLSearchParams();
     if (companyId) params.set('companyId', companyId);
     params.set('lobId', viewing.lob_id);
+    params.set('isActive', 'true');
     params.set('limit', '200');
     api
       .get(`/qc-parameter?${params.toString()}`)
@@ -1887,7 +1895,7 @@ export default function BatchPanel() {
                       )}
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>
-                      {row.start_date}
+                      {formatDate(row.start_date)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>
                       {row.costing_method}
@@ -2060,11 +2068,19 @@ export default function BatchPanel() {
                   const mode = val as 'BATCH_WISE' | 'ANIMAL_WISE';
                   setTrackingMode(mode);
                   if (mode === 'ANIMAL_WISE') {
-                    setHeader((h) => ({ ...h, uom: 'HEAD' }));
+                    setHeader((h) => ({
+                      ...h,
+                      uom: 'HEAD',
+                      costing_method: 'BIO_ASSET',
+                    }));
                   } else {
                     setHeader((h) => ({
                       ...h,
                       uom: h.uom === 'HEAD' ? '' : h.uom,
+                      costing_method:
+                        h.costing_method === 'BIO_ASSET'
+                          ? 'STANDARD'
+                          : h.costing_method,
                     }));
                   }
                 }}
@@ -2083,6 +2099,7 @@ export default function BatchPanel() {
                 ariaLabel={t('blLabelCostingMethod')}
                 ariaRequired
                 value={header.costing_method}
+                disabled={trackingMode === 'ANIMAL_WISE'}
                 onChange={(val) =>
                   setHeader((h) => ({ ...h, costing_method: val }))
                 }
@@ -2197,15 +2214,34 @@ export default function BatchPanel() {
                 }
               />
             </div>
-            {trackingMode === 'BATCH_WISE' && (
+            {/* Animal-wise too (11 Nov 2026): the stage chosen is the stage the selected animals enter. It used to be hidden
+                here yet still sent, so the batch recorded it while its animals stayed where they were registered (QUARANTINE). */}
+            {(
               <div className="flex flex-col gap-1.5 sm:col-span-2">
                 <label className="nf-text-label" style={S.sub}>
-                  {t('blLabelInitialStage')}{' '}
-                  <span className="text-(--danger)">*</span>
+                  {trackingMode === 'BATCH_WISE'
+                    ? t('blLabelInitialStage')
+                    : 'Stage the animals enter'}{' '}
+                  {trackingMode === 'BATCH_WISE' ? (
+                    <span className="text-(--danger)">*</span>
+                  ) : (
+                    <span className="text-[11px] font-normal" style={S.muted}>
+                      (optional: leave empty to keep each animal&apos;s own stage)
+                    </span>
+                  )}
                 </label>
                 <SearchableSelect
-                  ariaLabel={t('blLabelInitialStage')}
-                  ariaRequired
+                  ariaLabel={
+                    trackingMode === 'BATCH_WISE'
+                      ? t('blLabelInitialStage')
+                      : 'Stage the animals enter'
+                  }
+                  ariaRequired={trackingMode === 'BATCH_WISE'}
+                  onClear={
+                    trackingMode === 'ANIMAL_WISE'
+                      ? () => setHeader((h) => ({ ...h, stage_id: '' }))
+                      : undefined
+                  }
                   value={header.stage_id}
                   disabled={!header.lob_id}
                   onChange={(sId) => {
@@ -2265,8 +2301,7 @@ export default function BatchPanel() {
                 {t('blLabelStartDate')}{' '}
                 <span className="text-(--danger)">*</span>
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={header.start_date}
                 onChange={(e) =>
                   setHeader((h) => ({ ...h, start_date: e.target.value }))
@@ -2279,8 +2314,7 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelExpectedEndDate')}
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={header.expected_end_date}
                 onChange={(e) =>
                   setHeader((h) => ({
@@ -3138,7 +3172,7 @@ export default function BatchPanel() {
                   {t('blLabelStartDate')}
                 </p>
                 <p className="font-semibold mt-0.5" style={S.primary}>
-                  {viewing.start_date || NA}
+                  {viewing.start_date ? formatDate(viewing.start_date) : NA}
                 </p>
               </div>
               <div>
@@ -3149,7 +3183,7 @@ export default function BatchPanel() {
                   {t('blLabelExpectedEndDate')}
                 </p>
                 <p className="font-semibold mt-0.5" style={S.primary}>
-                  {viewing.expected_end_date || NA}
+                  {viewing.expected_end_date ? formatDate(viewing.expected_end_date) : NA}
                 </p>
               </div>
               <BatchShedField
@@ -3306,7 +3340,7 @@ export default function BatchPanel() {
                                 {s.to_stage_code}
                               </TableCell>
                               <TableCell className="px-3 py-2" style={S.sub}>
-                                {s.transferred_at}
+                                {formatDate(s.transferred_at)}
                               </TableCell>
                               <TableCell className="px-3 py-2" style={S.sub}>
                                 {s.remarks || NA}
@@ -3462,9 +3496,12 @@ export default function BatchPanel() {
                             </p>
                           </div>
                         </div>
+                        {viewing.status === 'ACTIVE' && viewing.tracking_mode === 'ANIMAL_WISE' && (
+                          <p className="mt-3 text-xs" style={S.muted}>{t('blAnimalWiseCostingNote')}</p>
+                        )}
                         {viewing.status === 'ACTIVE' && (
                           <div className="mt-3 flex flex-wrap gap-2">
-                            {viewing.bio_asset_state.stage === 'PREMATURE' && (
+                            {viewing.bio_asset_state.stage === 'PREMATURE' && viewing.tracking_mode !== 'ANIMAL_WISE' && (
                               <Button
                                 size="sm"
                                 onClick={() => openBioAction('mature')}
@@ -3473,7 +3510,7 @@ export default function BatchPanel() {
                                 {t('blMatureHerd')}
                               </Button>
                             )}
-                            {viewing.bio_asset_state.stage === 'MATURE' && (
+                            {viewing.bio_asset_state.stage === 'MATURE' && viewing.tracking_mode !== 'ANIMAL_WISE' && (
                               <>
                                 <Button
                                   size="sm"
@@ -3560,10 +3597,10 @@ export default function BatchPanel() {
                                   className="px-3 py-2"
                                   style={S.primary}
                                 >
-                                  {e.posting_date}
+                                  {formatDate(e.posting_date)}
                                 </TableCell>
                                 <TableCell className="px-3 py-2" style={S.sub}>
-                                  {e.entry_type}
+                                  {BIO_DOCUMENT_LABEL[e.document_type] ?? e.document_type} · {formatTransactionType(e.transaction_type)}
                                 </TableCell>
                                 <TableCell
                                   className="px-3 py-2"
@@ -4089,8 +4126,7 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelStartDate')} *
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={renewForm.start_date || ''}
                 onChange={(e) =>
                   setRenewForm((f: Row) => ({
@@ -4106,8 +4142,7 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelExpectedEndDate')}
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={renewForm.expected_end_date || ''}
                 onChange={(e) =>
                   setRenewForm((f: Row) => ({
@@ -4307,8 +4342,7 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelActualEndDate')}
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={closeDate}
                 onChange={(e) => setCloseDate(e.target.value)}
                 className={inputCls}
@@ -4580,8 +4614,7 @@ export default function BatchPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('blLabelPostingDate')}
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={bioForm.posting_date}
                 onChange={(e) =>
                   setBioForm((f: Row) => ({
@@ -4604,8 +4637,7 @@ export default function BatchPanel() {
                 <label className="nf-text-label" style={S.sub}>
                   {t('blLabelPostingDate')}
                 </label>
-                <input
-                  type="date"
+                <DateInput
                   value={bioForm.posting_date}
                   onChange={(e) =>
                     setBioForm((f: Row) => ({
@@ -4683,8 +4715,7 @@ export default function BatchPanel() {
                   <label className="nf-text-label" style={S.sub}>
                     {t('blLabelPostingDate')}
                   </label>
-                  <input
-                    type="date"
+                  <DateInput
                     value={bioForm.posting_date}
                     onChange={(e) =>
                       setBioForm((f: Row) => ({
@@ -4939,8 +4970,7 @@ export default function BatchPanel() {
                   <label className="nf-text-label" style={S.sub}>
                     {t('blLabelQcDate')}
                   </label>
-                  <input
-                    type="date"
+                  <DateInput
                     value={qcForm.qc_date}
                     onChange={(e) =>
                       setQcForm((f: Row) => ({ ...f, qc_date: e.target.value }))
@@ -5080,7 +5110,7 @@ export default function BatchPanel() {
                           </p>
                           <p className="text-[10px]" style={S.muted}>
                             {p.param_type === 'NUMERIC'
-                              ? `${p.min_value != null ? formatQuantity(p.min_value) : NA}–${p.max_value != null ? formatQuantity(p.max_value) : NA} ${p.uom || ''}`
+                              ? `${p.min_value != null ? formatQuantity(p.min_value) : NA}–${p.max_value != null ? formatQuantity(p.max_value) : NA} ${p.uom || ''}${p.target_value != null ? ` · ${t('blQcTarget')} ${formatQuantity(p.target_value)}` : ''}`
                               : p.param_type}
                           </p>
                         </div>
@@ -5232,9 +5262,9 @@ export default function BatchPanel() {
               </div>
               <p className="text-xs" style={S.sub}>
                 {formatQuantity(generatedPack.net_weight)}{' '}
-                {generatedPack.pack_uom} — {generatedPack.production_date}
+                {generatedPack.pack_uom} — {formatDate(generatedPack.production_date)}
                 {generatedPack.expiry_date
-                  ? ` → ${generatedPack.expiry_date}`
+                  ? ` → ${formatDate(generatedPack.expiry_date)}`
                   : ''}
               </p>
             </div>
@@ -5347,7 +5377,7 @@ export default function BatchPanel() {
                   }
                   options={packQcRecords.map((q) => ({
                     value: q.qc_id,
-                    label: `${q.qc_date} — ${q.overall_result}`,
+                    label: `${formatDate(q.qc_date)} — ${q.overall_result}`,
                   }))}
                   placeholder={t('blNone')}
                   searchPlaceholder="Search QC record…"

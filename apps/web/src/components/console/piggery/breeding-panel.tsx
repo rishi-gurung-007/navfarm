@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -13,22 +15,49 @@ import {
   Clock,
   Activity,
   X,
+  Sprout,
+  BellRing,
+  Trophy,
 } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { Button } from '@/components/ui/button';
+import { TablePager } from '@/components/ui/table-pager';
+import { usePagination } from '@/hooks/usePagination';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { getActiveCompanyId } from '@/hooks/useAuth';
+import { ReasonSelect } from '@/components/ui/reason-select';
 import { fetchAllPages, usePagedOptions } from '@/hooks/usePagedOptions';
 import { EntityLookupField } from '@/modules/master-data/EntityLookupField';
 import { Toast } from '@/components/ui/toast';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import AnimalDetailsModal from './animal-details-modal';
+import { SemenBoarResults } from './semen-boar-results';
+import { BoarSelectionPanel } from './boar-selection-panel';
+import { BoarConditionPanel } from './boar-condition-panel';
+import GiltCards from './gilt-cards';
+import GiltSelectionHistory from './gilt-selection-history';
+import GiltSelectionDialog from './gilt-selection-dialog';
+import {
+  bufferErrors,
+  resizeBuffer,
+  type GiltBufferRow,
+} from './gilt-selection-rules';
 import { formatQuantity } from '@/lib/utils';
+import { SemenLotDetails } from './semen-lot-details';
+import {
+  PageHeader,
+  StatTiles,
+  TabBar,
+  type Stat,
+  type TabItem,
+} from './breeding-header';
 import {
   BatchPicker,
   EntryModal,
   Field,
   ImpactCard,
+  PlanSummary,
   Step,
   inputStyle,
 } from './breeding-form-parts';
@@ -36,7 +65,12 @@ import {
   addDays,
   checkFarrowing,
   checkMating,
+  acceptedBoarIds,
+  boarResultOf,
   checkSemen,
+  lotDosesOf,
+  type LineRules,
+  type SemenBoarResultForm,
   daysBetween,
   daysSinceCollection,
   errorsOf,
@@ -72,7 +106,11 @@ function AnimalCodeLink({
   return (
     <button
       type="button"
-      onClick={() => onOpen(animalId)}
+      onClick={(e) => {
+        // Inside a clickable row (the semen lots list): open the animal, not the row.
+        e.stopPropagation();
+        onOpen(animalId);
+      }}
       className="font-mono font-bold text-[var(--accent)] hover:underline text-left cursor-pointer"
       style={style}
       title="View animal details"
@@ -115,6 +153,11 @@ const S = {
 };
 
 // breeding_record.conception_result (15 Sep correction 6).
+// The semen collection form's Period Running Costs step is hidden for now. Left empty, the lot's cost per dose is still worked
+// out from what was posted for each boar. (Quality is no longer hidden: what each boar gave is entered per boar, in the form's
+// "What each boar gave" step.)
+const SHOW_SEMEN_PERIOD_COSTS = false;
+
 const CONCEPTION_RESULTS = [
   'CONFIRMED',
   'REPEAT',
@@ -122,23 +165,62 @@ const CONCEPTION_RESULTS = [
   'PENDING',
 ] as const;
 
-export function BreedingPanel() {
+/** The two pages this panel serves: the sows' breeding, and the AI Station (semen collection, boar selection, boar condition). */
+export type BreedingSection = 'breeding' | 'ai-station';
+
+export function BreedingPanel({
+  section = 'breeding',
+}: {
+  section?: BreedingSection;
+}) {
   const { formatMoney } = useCompanyCurrency();
   const { t } = useLanguage();
-  const [subTab, setSubTab] = useState<'mating' | 'farrowing' | 'semen'>(
-    'mating',
+  const [subTab, setSubTab] = useState<
+    'mating' | 'farrowing' | 'semen' | 'selection' | 'condition' | 'gilts'
+  >(section === 'ai-station' ? 'semen' : 'mating');
+  const [giltSelections, setGiltSelections] = useState<Row[]>([]);
+  // BBP: gilts are selected once per litter, before it is weaned. A cancelled selection does not count.
+  const giltSelectionOf = (farrowId: string) =>
+    giltSelections.find(
+      (s) =>
+        s.status !== 'CANCELLED' &&
+        (s.lines ?? []).some((l: Row) => l.farrow_id === farrowId),
+    );
+  const giltSelectedFrom = (farrowId: string) => !!giltSelectionOf(farrowId);
+  const giltPostedFrom = (farrowId: string) =>
+    giltSelectionOf(farrowId)?.status === 'POSTED';
+  // The history lists what was posted. An unfinished (draft) selection is not history: it is continued from its litter's Select gilts button.
+  const postedGiltSelections = giltSelections.filter(
+    (s) => s.status === 'POSTED',
   );
+  const openGiltDialog = (f: Row) => {
+    const sel = giltSelectionOf(f.farrow_id);
+    setGiltDialog(
+      sel?.status === 'DRAFT' ? { draftId: sel.selection_id } : { farrow: f },
+    );
+  };
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  // Gilts are selected here, per litter: before the weaning, at week 4 or after it; or a draft is continued from the Gilt Selections tab.
+  const [giltDialog, setGiltDialog] = useState<{
+    farrow?: Row;
+    draftId?: string;
+  } | null>(null);
 
   // Data
   const [matings, setMatings] = useState<Row[]>([]);
   const [farrowings, setFarrowings] = useState<Row[]>([]);
   const [semenBatches, setSemenBatches] = useState<Row[]>([]);
+  // Each table pages its own list; the page follows the list, so a shorter list never strands the table on an empty page.
+  const matingPager = usePagination(matings);
+  const farrowingPager = usePagination(farrowings);
+  const semenPager = usePagination(semenBatches);
   const [animals, setAnimals] = useState<Row[]>([]);
   // The first open batches name animals' batches; each picker pages its own list.
   const [lookupBatches, setBatches] = useState<Row[]>([]);
+  // A litter's piglet lot is kept apart from the batches: it is only ever the lot a farrowing or weaning acts on.
+  const [litterLots, setLitterLots] = useState<Row[]>([]);
   const pagedBreedingBatches = usePagedOptions({
     path: '/batch',
     params: { status: 'ACTIVE', trackingMode: 'ANIMAL_WISE' },
@@ -151,7 +233,11 @@ export function BreedingPanel() {
   });
   const batches = useMemo(() => {
     const byId = new Map<string, Row>();
-    for (const b of [...lookupBatches, ...pagedBreedingBatches.options, ...pagedWeanBatches.options])
+    for (const b of [
+      ...lookupBatches,
+      ...pagedBreedingBatches.options,
+      ...pagedWeanBatches.options,
+    ])
       if (!byId.has(b.batch_id)) byId.set(b.batch_id, b);
     return [...byId.values()];
   }, [lookupBatches, pagedBreedingBatches.options, pagedWeanBatches.options]);
@@ -168,6 +254,8 @@ export function BreedingPanel() {
   );
   const [pickedPigletItem, setPickedPigletItem] = useState<Row | null>(null);
   const [stages, setStages] = useState<Row[]>([]);
+  // Locations, for the pens a new weaner batch can be placed in.
+  const [locations, setLocations] = useState<Row[]>([]);
   // Any item the farm uses for semen: nothing is fixed.
   const pagedSemenItems = usePagedOptions({
     path: '/item',
@@ -183,7 +271,20 @@ export function BreedingPanel() {
   const [showMatingModal, setShowMatingModal] = useState(false);
   const [showFarrowModal, setShowFarrowModal] = useState(false);
   const [showWeanModal, setShowWeanModal] = useState(false);
+  const [showFosterModal, setShowFosterModal] = useState(false);
+  const [fosterForm, setFosterForm] = useState({
+    to_farrow_id: '',
+    quantity: '',
+    foster_date: new Date().toISOString().slice(0, 10),
+    notes: '',
+  });
   const [showSemenModal, setShowSemenModal] = useState(false);
+  // The rules of the primary boar's breeding line (Breeding Line Setup), read as he is chosen. Null: none set.
+  const [lineRules, setLineRules] = useState<LineRules | null>(null);
+  // The names of the farms the line's setup sends its semen to, read when the form is open.
+  const [lineFarmNames, setLineFarmNames] = useState<Record<string, string>>({});
+  // The AI Station's collectors (Semen Collectors master), offered per boar on the collection form.
+  const [collectors, setCollectors] = useState<Row[]>([]);
   const [showPregCheckModal, setShowPregCheckModal] = useState(false);
   const [selectedMating, setSelectedMating] = useState<Row | null>(null);
   const [selectedFarrow, setSelectedFarrow] = useState<Row | null>(null);
@@ -202,8 +303,6 @@ export function BreedingPanel() {
     expected_farrowing_date: '',
     preg_check_date: '',
     conception_result: 'PENDING',
-    parity_number: '',
-    boar_parity_number: '',
     notes: '',
   });
   const [matingForm, setMatingForm] = useState(emptyMatingForm);
@@ -228,6 +327,7 @@ export function BreedingPanel() {
     sow_animal_id: '',
     breeding_id: '',
     farrowing_date: todayIso(),
+    piglets_total_born: '',
     piglets_born_live: '',
     piglets_stillborn: '',
     piglets_mummified: '',
@@ -249,29 +349,124 @@ export function BreedingPanel() {
     cost_per_piglet: '',
     move_to_batch_id: '',
     move_to_stage_code: '',
+    new_batch_stage_code: '',
+    new_batch_pen_id: '',
+    loss_reason_id: '',
     notes: '',
   });
+  const [lossReasons, setLossReasons] = useState<Record<string, unknown>[]>([]);
+  // Gilts picked in the same form as the weaning (BBP: gilt selection is at week 4, which is weaning).
+  const [giltCount, setGiltCount] = useState('');
+  const [giltRows, setGiltRows] = useState<GiltBufferRow[]>([]);
+  const [giltInfo, setGiltInfo] = useState<Record<string, any> | null>(null);
+  const [giltColour, setGiltColour] = useState('');
+  const giltErrors = bufferErrors(giltRows);
+  const weanedN = Math.floor(Number(weanForm.piglets_weaned) || 0);
+  // A new weaner batch is built from the piglet lot, so its stage is one of the lot's line of business and its pen one of the lot's shed.
+  const lotBatch =
+    litterLots.find((b) => b.batch_id === selectedFarrow?.piglet_batch_id) ??
+    batches.find((b) => b.batch_id === selectedFarrow?.piglet_batch_id);
+  const newBatchStageOptions = (() => {
+    const seen = new Set<string>();
+    return stages
+      .filter(
+        (st) =>
+          (!lotBatch?.lob_id || st.lob_id === lotBatch.lob_id) &&
+          st.is_active !== false,
+      )
+      .filter((st) =>
+        seen.has(String(st.stage_code))
+          ? false
+          : (seen.add(String(st.stage_code)), true),
+      )
+      .map((st) => ({
+        value: String(st.stage_code),
+        label: String(st.stage_name),
+      }));
+  })();
+  const newBatchPenOptions = locations
+    .filter(
+      (l) =>
+        l.location_type === 'PEN' &&
+        (!lotBatch?.shed_id ||
+          l.parent_location_id === lotBatch.shed_id ||
+          l.shed_id === lotBatch.shed_id),
+    )
+    .map((l) => ({
+      value: String(l.location_id),
+      label: String(l.location_name || l.location_code),
+    }));
+  const giltsTooMany = giltRows.length > weanedN;
+
+  // The litter's parents and the lot's value per head, for the gilt cards in the weaning form.
+  useEffect(() => {
+    setGiltCount('');
+    setGiltRows([]);
+    setGiltInfo(null);
+    setGiltColour('');
+    if (!showWeanModal || !selectedFarrow?.piglet_batch_id) return;
+    api
+      .get(
+        `/piggery/gilt-selection/piglets?batch_id=${selectedFarrow.piglet_batch_id}`,
+      )
+      .then((r: any) => {
+        const d = r?.data ?? r;
+        setGiltInfo({
+          value_per_head: d.value_per_head,
+          litter:
+            (d.litters || []).find(
+              (l: any) => l.farrow_id === selectedFarrow.farrow_id,
+            ) ?? null,
+        });
+      })
+      .catch(() => setGiltInfo(null));
+  }, [showWeanModal, selectedFarrow?.farrow_id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!showWeanModal) return;
+    const companyId = getActiveCompanyId();
+    if (!companyId) return;
+    api
+      .get(`/reason?companyId=${companyId}&isActive=true&limit=100`)
+      .then((r: any) => setLossReasons(Array.isArray(r) ? r : (r?.data ?? [])))
+      .catch(() => setLossReasons([]));
+  }, [showWeanModal]);
 
   // No pre-filled figures: doses and costs are whatever was collected and spent, entered by whoever knows.
   const emptySemenForm = () => ({
     // The batch is chosen first; its boars are the only ones offered.
     batch_id: '',
+    // The breed (breeding line) of the boars: chosen before them, since the line's rules decide how the lot is made.
+    breed_id: '',
+    // The planned collection this carries out, when it was started from one (Phase 4).
+    plan_id: '',
+    plan_no: '',
+    // The plan's own details (day, reference, destination, who asked) and the boars it still has to collect, shown on the form and
+    // used to check it. Null when the collection is not from a plan.
+    plan_info: null as Row | null,
+    plan_boar_ids: [] as string[],
     // The boars the lot is collected from, in the order chosen: the first is its main boar, and with more than one the
     // semen is pooled — mixed into one lot.
     boar_animal_ids: [] as string[],
     collection_date: todayIso(),
-    doses_collected: '',
+    // What each chosen boar gave, by animal id: his collector, volume, doses, morphology, motility, concentration and
+    // whether his ejaculate went into the lot. The lot's doses are the accepted boars' doses added up.
+    results: {} as Record<string, Partial<SemenBoarResultForm>>,
     output_item_id: '',
     amortisation_period: '',
     feed_cost_period: '',
     drug_cost_period: '',
     overhead_cost_period: '',
-    volume_ml: '',
-    motility_pct: '',
-    concentration_m_per_ml: '',
     notes: '',
   });
   const [semenForm, setSemenForm] = useState(emptySemenForm);
+  // The lot whose details page is open.
+  const [semenLotOpen, setSemenLotOpen] = useState<string | null>(null);
+  // What the Boar Selection and Boar Condition tabs have loaded, for the figures above the tabs.
+  const [selectionSummary, setSelectionSummary] = useState<{ lines: Row[]; rows: Row[]; plans: Row[]; allLines: boolean }>({ lines: [], rows: [], plans: [], allLines: true });
+  const [conditionRows, setConditionRows] = useState<Row[]>([]);
+  // The breeding lines that have live boars, offered before the boars.
+  const [semenLines, setSemenLines] = useState<Row[]>([]);
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -287,21 +482,30 @@ export function BreedingPanel() {
         fetchAllPages('/animal').catch(() => []),
         // The API bounds this to the active farm; the service write checks
         // again that the batch is on the sow's own farm.
-        api.get('/batch?limit=100').catch(() => []),
+        api.get('/batch?limit=500&includeLitterLots=true').catch(() => []),
       ]);
       setMatings(unwrap<Row[]>(mRes) || []);
       setFarrowings(unwrap<Row[]>(fRes) || []);
       setSemenBatches(unwrap<Row[]>(sRes) || []);
+      api
+        .get('/piggery/gilt-selection')
+        .then((r) => setGiltSelections(unwrap<Row[]>(r) || []))
+        .catch(() => setGiltSelections([]));
       setAnimals(unwrap<Row[]>(aRes) || []);
-      setBatches(
-        (unwrap<Row[]>(bRes) || []).filter(
-          (b) => b.status !== 'CLOSED' && b.status !== 'CANCELLED',
-        ),
+      // A litter on its sow is not a batch to file a mating under or move piglets to: it is kept apart, for its shed and line of business only.
+      const allBatches = (unwrap<Row[]>(bRes) || []).filter(
+        (b) => b.status !== 'CLOSED' && b.status !== 'CANCELLED',
       );
+      setBatches(allBatches.filter((b) => !b.is_litter_lot));
+      setLitterLots(allBatches.filter((b) => b.is_litter_lot));
       api
         .get('/stage?limit=100')
         .then((r) => setStages(unwrap<Row[]>(r) || []))
         .catch(() => setStages([]));
+      api
+        .get('/location?limit=500')
+        .then((r) => setLocations(unwrap<Row[]>(r) || []))
+        .catch(() => setLocations([]));
     } catch (e: any) {
       setError(e.message || t('brpErrorLoadFailed'));
     } finally {
@@ -317,6 +521,62 @@ export function BreedingPanel() {
   // recorded female was offered as a sow, and any male as a boar.)
   const sows = animals.filter(isLiveSow);
   const boars = animals.filter(isLiveBoar);
+
+  // The line's rules follow the boar the lot is filed under (the first chosen). A boar whose line has no setup reads the
+  // company default; with neither, nothing is checked.
+  const semenPrimaryBreedId =
+    boars.find((b) => b.animal_id === semenForm.boar_animal_ids[0])?.breed_id ??
+    null;
+  useEffect(() => {
+    if (!showSemenModal) return;
+    let current = true;
+    api
+      .get(
+        `/breeding-line-setup/effective${semenPrimaryBreedId ? `?breed_id=${semenPrimaryBreedId}` : ''}`,
+      )
+      .then((res) => {
+        if (current) setLineRules(unwrap<LineRules | null>(res) ?? null);
+      })
+      .catch(() => {
+        if (current) setLineRules(null);
+      });
+    return () => {
+      current = false;
+    };
+  }, [showSemenModal, semenPrimaryBreedId]);
+  useEffect(() => {
+    if (!showSemenModal) return;
+    for (const id of lineRules?.destination_farm_ids ?? []) {
+      api
+        .get(`/location/${id}`)
+        .then((res) => {
+          const farm = unwrap<Row>(res);
+          if (farm?.location_code || farm?.location_name) {
+            setLineFarmNames((m) => ({
+              ...m,
+              [id]: [farm.location_code, farm.location_name]
+                .filter(Boolean)
+                .join(' — '),
+            }));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [showSemenModal, lineRules]);
+  useEffect(() => {
+    if (!showSemenModal) return;
+    api
+      .get('/piggery/boar-selection/lines')
+      .then((res) => setSemenLines(unwrap<Row[]>(res) ?? []))
+      .catch(() => setSemenLines([]));
+  }, [showSemenModal]);
+  useEffect(() => {
+    if (!showSemenModal) return;
+    api
+      .get('/piggery/breeding/semen-collectors')
+      .then((res) => setCollectors(unwrap<Row[]>(res) ?? []))
+      .catch(() => setCollectors([]));
+  }, [showSemenModal]);
 
   // Prefill from the API, which owns the rules: the sow's breed gestation
   // days (116 when the breed has none), check at +28, sow parity from her
@@ -352,16 +612,6 @@ export function BreedingPanel() {
           preg_check_date: edited.has('preg_check_date')
             ? form.preg_check_date
             : (d.preg_check_date ?? ''),
-          parity_number: edited.has('parity_number')
-            ? form.parity_number
-            : d.parity_number != null
-              ? String(d.parity_number)
-              : '',
-          boar_parity_number: edited.has('boar_parity_number')
-            ? form.boar_parity_number
-            : d.boar_parity_number != null
-              ? String(d.boar_parity_number)
-              : '',
           batch_id: edited.has('batch_id') ? form.batch_id : (d.batch_id ?? ''),
         }));
       })
@@ -390,6 +640,58 @@ export function BreedingPanel() {
     });
     setShowFarrowModal(true);
   };
+  // Bumped when a collection is saved, so the Boar Selection tab reads its table and plans again.
+  const [selectionVersion, setSelectionVersion] = useState(0);
+
+  // A collection started from a planned one: its batch, boars and date are the plan's, and saving marks its boars collected.
+  const startCollectionFromPlan = (
+    plan: Row,
+    boarIds: string[],
+    batchId: string | null,
+  ) => {
+    const planDate = String(plan.collection_date).slice(0, 10);
+    const lines: Row[] = plan.lines ?? [];
+    // The collector the plan named for each boar is already on his result.
+    const results: Record<string, Partial<SemenBoarResultForm>> = {};
+    for (const l of lines) {
+      if (boarIds.includes(l.boar_id) && l.collector_id) {
+        results[l.boar_id] = { collector_id: l.collector_id };
+      }
+    }
+    // The semen item is the one the last collection of this line was posted as.
+    const planBoars = new Set(lines.map((l) => l.boar_id));
+    const lastLot =
+      semenBatches.find((b) => b.output_item_id && planBoars.has(b.boar_id)) ??
+      semenBatches.find((b) => b.output_item_id);
+    setPickedSemenItem(null);
+    if (lastLot?.output_item_id) {
+      api
+        .get(`/item/${lastLot.output_item_id}`)
+        .then((res) => {
+          const item = unwrap<Row>(res);
+          if (item?.item_id) setPickedSemenItem(item);
+        })
+        .catch(() => {});
+    }
+    setSemenForm({
+      ...emptySemenForm(),
+      batch_id: batchId ?? '',
+      breed_id: plan.breed_id ?? '',
+      boar_animal_ids: boarIds,
+      // A collection cannot be dated in the future: a plan for a later day is recorded today and the API says so.
+      collection_date: planDate <= todayIso() ? planDate : todayIso(),
+      plan_id: plan.plan_id,
+      plan_no: plan.plan_no,
+      plan_info: plan,
+      plan_boar_ids: lines
+        .filter((l) => l.status === 'PLANNED')
+        .map((l) => l.boar_id),
+      results,
+      output_item_id: lastLot?.output_item_id ?? '',
+    });
+    setShowSemenModal(true);
+  };
+
   const openSemenModal = () => {
     setSemenForm(emptySemenForm());
     setShowSemenModal(true);
@@ -414,19 +716,13 @@ export function BreedingPanel() {
       const body: Row = Object.fromEntries(
         Object.entries(matingForm).filter(([, v]) => v !== ''),
       );
-      await api.post('/piggery/breeding/mating', {
+      const res: any = await api.post('/piggery/breeding/mating', {
         ...body,
         semen_dose_qty: Number(matingForm.semen_dose_qty) || 1,
-        parity_number:
-          matingForm.parity_number !== ''
-            ? Number(matingForm.parity_number)
-            : undefined,
-        boar_parity_number:
-          matingForm.boar_parity_number !== ''
-            ? Number(matingForm.boar_parity_number)
-            : undefined,
       });
-      setSuccess(t('brpSuccessMatingRecorded'));
+      // The lot may be for other farms than this sow's; the line either stops that or warns, and the warning is shown.
+      const matingWarnings: string[] = res?.data?.warnings ?? res?.warnings ?? [];
+      setSuccess([t('brpSuccessMatingRecorded'), ...matingWarnings].join(' '));
       setShowMatingModal(false);
       await loadData();
     } catch (err: any) {
@@ -475,6 +771,7 @@ export function BreedingPanel() {
           farrowMating?.breeding_id || farrowForm.breeding_id || undefined,
         farrowing_date: farrowForm.farrowing_date,
         farrowing_status: farrowForm.farrowing_status,
+        piglets_total_born: num(farrowForm.piglets_total_born),
         piglets_born_live: Number(farrowForm.piglets_born_live),
         piglets_stillborn: num(farrowForm.piglets_stillborn),
         piglets_mummified: num(farrowForm.piglets_mummified),
@@ -499,9 +796,42 @@ export function BreedingPanel() {
     }
   };
 
+  const handleFoster = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedFarrow) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      const res: any = await api.post(
+        `/piggery/breeding/farrowing/${selectedFarrow.farrow_id}/foster`,
+        {
+          to_farrow_id: fosterForm.to_farrow_id,
+          quantity: Number(fosterForm.quantity),
+          foster_date: fosterForm.foster_date,
+          notes: fosterForm.notes || undefined,
+        },
+      );
+      setSuccess(res?.data?.message || res?.message || 'Piglets fostered.');
+      setShowFosterModal(false);
+      setFosterForm({
+        to_farrow_id: '',
+        quantity: '',
+        foster_date: new Date().toISOString().slice(0, 10),
+        notes: '',
+      });
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || 'Could not foster the piglets.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleWeaning = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFarrow) return;
+    if (giltRows.length && (Object.keys(giltErrors).length || giltsTooMany))
+      return;
     setSubmitting(true);
     setError(null);
     try {
@@ -520,12 +850,30 @@ export function BreedingPanel() {
             : undefined,
           move_to_batch_id: weanForm.move_to_batch_id || undefined,
           move_to_stage_code: weanForm.move_to_stage_code || undefined,
+          new_batch_stage_code: weanForm.new_batch_stage_code || undefined,
+          new_batch_pen_id: weanForm.new_batch_stage_code
+            ? weanForm.new_batch_pen_id || undefined
+            : undefined,
+          loss_reason_id: weanForm.loss_reason_id || undefined,
           notes: weanForm.notes || undefined,
+          ...(giltRows.length
+            ? {
+                gilts: giltRows.map((g) => ({
+                  rfid_tag: g.rfid_tag.trim(),
+                  no_of_teats: Number(g.no_of_teats),
+                  ...(g.dob ? { dob: g.dob } : {}),
+                })),
+                ...(giltColour.trim()
+                  ? { gilt_colour_code: giltColour.trim() }
+                  : {}),
+              }
+            : {}),
         },
       );
       setSuccess(
         res?.data?.message || res?.message || t('brpSuccessWeaningRecorded'),
       );
+      // BBP: the gilt selection screen opens at week 4 of the piglets, which is weaning. Offer it for this litter, if some were weaned.
       setShowWeanModal(false);
       await loadData();
     } catch (err: any) {
@@ -542,28 +890,48 @@ export function BreedingPanel() {
     setError(null);
     try {
       const num = (v: string) => (v === '' ? undefined : Number(v));
-      const [mainBoar, ...pooled] = semenForm.boar_animal_ids;
+      // The lot is made from the boars whose ejaculate was accepted: the first is its main boar, the rest are pooled with him.
+      // A boar tapped whose ejaculate was rejected is named in the results only.
+      const [mainBoar, ...pooled] = acceptedBoarIds(semenForm);
       const res: any = await api.post('/piggery/breeding/semen-collection', {
         boar_batch_id: semenForm.batch_id,
+        ...(semenForm.plan_id ? { plan_id: semenForm.plan_id } : {}),
         boar_animal_id: mainBoar,
         ...(pooled.length ? { pool_boar_animal_ids: pooled } : {}),
         collection_date: semenForm.collection_date,
-        doses_collected: Number(semenForm.doses_collected),
+        boar_results: semenForm.boar_animal_ids.map((id) => {
+          const r = boarResultOf(semenForm, id);
+          return r.accepted
+            ? {
+                boar_animal_id: id,
+                collector_id: r.collector_id || undefined,
+                volume_ml: num(r.volume_ml),
+                doses: num(r.doses),
+                morphology_pct: num(r.morphology_pct),
+                motility_pct: num(r.motility_pct),
+                concentration_m_per_ml: num(r.concentration_m_per_ml),
+              }
+            : {
+                boar_animal_id: id,
+                collector_id: r.collector_id || undefined,
+                accepted: false,
+                reject_reason: r.reject_reason.trim(),
+              };
+        }),
         output_item_id: semenForm.output_item_id || undefined,
         amortisation_period: num(semenForm.amortisation_period),
         feed_cost_period: num(semenForm.feed_cost_period),
         drug_cost_period: num(semenForm.drug_cost_period),
         overhead_cost_period: num(semenForm.overhead_cost_period),
-        volume_ml: num(semenForm.volume_ml),
-        motility_pct: num(semenForm.motility_pct),
-        concentration_m_per_ml: num(semenForm.concentration_m_per_ml),
         notes: semenForm.notes || undefined,
       });
+      const warnings: string[] = res?.data?.warnings ?? res?.warnings ?? [];
       setSuccess(
-        res?.data?.message || res?.message || t('brpSuccessSemenLogged'),
+        [res?.data?.message || res?.message || t('brpSuccessSemenLogged'), ...warnings].join(' '),
       );
       setShowSemenModal(false);
       setSemenForm(emptySemenForm());
+      setSelectionVersion((v) => v + 1);
       await loadData();
     } catch (err: any) {
       setError(err.message || t('brpErrorSemenFailed'));
@@ -575,6 +943,7 @@ export function BreedingPanel() {
   // KPIs
   const activeInseminations = matings.filter(
     (m) =>
+      !m.farrow_id &&
       (m.conception_result === 'CONFIRMED' ||
         m.conception_result === 'PENDING') &&
       m.days_until_farrowing >= 0,
@@ -676,54 +1045,144 @@ export function BreedingPanel() {
       : undefined);
 
   const semenBatchBoars = inBatch(boars, semenForm.batch_id);
-  const semenChosenBoars = boars.filter((b) =>
-    semenForm.boar_animal_ids.includes(b.animal_id),
+  // The breeds the batch's boars belong to: the line is picked from these, then only that line's boars are offered.
+  const semenBatchBreedIds = new Set(
+    semenBatchBoars.map((b) => b.breed_id).filter(Boolean),
   );
+  const semenBreedOptions = semenLines.filter((l) =>
+    semenBatchBreedIds.has(l.breed_id),
+  );
+  // From a plan, only the boars it still has to collect are offered: the API refuses any other.
+  const semenLineBoars = semenBatchBoars.filter(
+    (b) =>
+      b.breed_id === semenForm.breed_id &&
+      (!semenForm.plan_id || semenForm.plan_boar_ids.includes(b.animal_id)),
+  );
+  // In the order chosen: the first accepted boar is the lot's main boar.
+  const semenChosenBoars = semenForm.boar_animal_ids
+    .map((id) => boars.find((b) => b.animal_id === id))
+    .filter((b): b is Row => !!b);
+  const semenAcceptedIds = acceptedBoarIds(semenForm);
   const semenIssues = checkSemen({
     form: semenForm,
     boars: semenChosenBoars,
     lots: semenBatches,
+    rules: lineRules,
+    lineBoarIds: boars
+      .filter((b) => b.breed_id === semenForm.breed_id)
+      .map((b) => b.animal_id),
   });
+  // Where the lot is for: the farm its plan names, else the one farm the line's setup gives.
+  const semenPlan = semenForm.plan_info as Row | null;
+  const semenDestination = semenPlan?.destination_farm_code
+    ? [semenPlan.destination_farm_code, semenPlan.destination_farm_name]
+        .filter(Boolean)
+        .join(' — ')
+    : lineRules?.destination_rule === 'ONE'
+      ? (lineFarmNames[lineRules.destination_farm_ids?.[0] ?? ''] ?? null)
+      : null;
   const semenItem =
     semenItems.find((i) => i.item_id === semenForm.output_item_id) ??
     (pickedSemenItem?.item_id === semenForm.output_item_id
       ? pickedSemenItem
       : undefined);
 
+  // ── The header, the figures and the tabs follow the selected tab ──
+  // The translated tab names carry a "(count)"; the bar shows the count as a badge, so it is taken off the text.
+  const tabName = (key: Parameters<typeof t>[0]) =>
+    t(key, { count: 0 }).replace(/\s*[(（]\s*0\s*[)）]\s*$/, '');
+  const allTabItems: TabItem<typeof subTab>[] = [
+    { key: 'mating', label: tabName('brpTabMating'), icon: Heart, count: matings.length },
+    { key: 'farrowing', label: tabName('brpTabFarrowing'), icon: Baby, count: farrowings.length },
+    { key: 'semen', label: section === 'ai-station' ? 'Semen Collection' : tabName('brpTabSemen'), icon: FlaskConical, count: semenBatches.length },
+    { key: 'selection', label: 'Boar Selection', icon: Trophy },
+    { key: 'condition', label: 'Boar Condition', icon: Activity },
+    { key: 'gilts', label: tabName('brpTabGilts'), icon: Sprout, count: postedGiltSelections.length },
+  ];
+  // The sows' side and the AI Station are two pages over one set of records.
+  const sectionTabs: Record<BreedingSection, (typeof subTab)[]> = {
+    breeding: ['mating', 'farrowing', 'gilts'],
+    'ai-station': ['semen', 'selection', 'condition'],
+  };
+  const tabItems = allTabItems.filter((tab) => sectionTabs[section].includes(tab.key));
+  const tabMeta = {
+    mating: { icon: Heart, title: 'Mating & Insemination', subtitle: 'Record each service and follow every sow from mating to farrowing.' },
+    farrowing: { icon: Baby, title: 'Farrowing & Litters', subtitle: 'Litters born, piglet survival and weaning.' },
+    semen: { icon: FlaskConical, title: section === 'ai-station' ? 'Semen Collection' : 'Boar Semen AI Station', subtitle: 'Semen collected from the boars: doses, cost per dose and where each lot is used.' },
+    selection: { icon: Trophy, title: 'Boar Selection', subtitle: "Rank each line's boars and plan the next collection day." },
+    condition: { icon: Activity, title: 'Boar Condition', subtitle: 'Body-condition scores (SOP 21), feed levels and when each boar is next due.' },
+    gilts: { icon: Sprout, title: 'Gilt Selections', subtitle: 'Gilts chosen from litters to join the breeding herd.' },
+  }[subTab];
+  const primaryAction =
+    subTab === 'mating'
+      ? { label: t('brpRecordMatingAi'), run: openMatingModal }
+      : subTab === 'farrowing'
+        ? { label: t('brpRecordFarrowing'), run: openFarrowModal }
+        : subTab === 'semen'
+          ? { label: t('brpLogSemenCollection'), run: openSemenModal }
+          : null;
+  const countWhere = (rows: Row[], test: (r: Row) => boolean) => rows.filter(test).length;
+  const semenLeft = semenBatches.reduce(
+    (n, x) => n + Math.max(0, (Number(x.doses_collected) || 0) - (Number(x.doses_used_internal) || 0) - (Number(x.doses_sold) || 0)),
+    0,
+  );
+  const semenCost = semenBatches.reduce((n, x) => n + (Number(x.running_cost_period) || 0), 0);
+  const aiMatings = countWhere(matings, (m) => m.mating_type === 'AI');
+  const tabStatsByTab: Record<typeof subTab, Stat[]> = {
+    mating: [
+      { label: 'Active gestations', value: activeInseminations, caption: 'Sows due to farrow', icon: Heart, tone: 'accent' },
+      { label: 'Matings recorded', value: matings.length, caption: `${aiMatings} AI · ${matings.length - aiMatings} natural`, icon: Activity, tone: 'info' },
+      { label: 'Confirmed in pig', value: countWhere(matings, (m) => m.conception_result === 'CONFIRMED'), caption: 'Pregnancy confirmed', icon: CheckCircle2, tone: 'success' },
+      { label: 'Awaiting check', value: countWhere(matings, (m) => m.conception_result === 'PENDING'), caption: 'Pregnancy not yet checked', icon: Clock, tone: 'warning' },
+    ],
+    farrowing: [
+      { label: 'Total litters', value: totalLitters, caption: 'Farrowing batches', icon: Baby, tone: 'accent' },
+      { label: 'Born live', value: totalBornLive, caption: 'Lifetime live births', icon: Activity, tone: 'success' },
+      { label: 'Weaned', value: totalWeaned, caption: 'Piglets weaned', icon: Sprout, tone: 'info' },
+      { label: 'Weaning survival', value: avgSurvivalRate === '--' ? '--' : `${avgSurvivalRate}%`, caption: 'Weaned of born live', icon: CheckCircle2, tone: 'success' },
+    ],
+    semen: [
+      { label: 'Lots collected', value: semenBatches.length, caption: 'Semen collections', icon: FlaskConical, tone: 'accent' },
+      { label: 'Doses collected', value: totalDoses, caption: 'From all boars', icon: Activity, tone: 'info' },
+      { label: 'Doses left', value: semenLeft, caption: 'Not yet used or sold', icon: CheckCircle2, tone: 'success' },
+      { label: 'Average cost per dose', value: totalDoses > 0 ? formatMoney(semenCost / totalDoses) : '--', caption: 'Lot costs ÷ doses', icon: Clock, tone: 'warning' },
+    ],
+    selection: [
+      { label: 'Breeding lines', value: selectionSummary.lines.length, caption: 'With live boars', icon: Trophy, tone: 'accent' },
+      { label: 'Live boars', value: selectionSummary.lines.reduce((n, l) => n + (Number(l.boars) || 0), 0), caption: 'Across all lines', icon: Activity, tone: 'info' },
+      { label: selectionSummary.allLines ? 'Boars shown' : 'Boars in this line', value: selectionSummary.rows.length, caption: 'Ranked in the tables below', icon: CheckCircle2, tone: 'success' },
+      { label: 'Planned collections', value: countWhere(selectionSummary.plans, (p) => p.status === 'PLANNED'), caption: selectionSummary.allLines ? 'Across all lines' : 'For this line', icon: Clock, tone: 'warning' },
+    ],
+    condition: [
+      { label: 'Boars', value: conditionRows.length, caption: 'In the list', icon: Activity, tone: 'info' },
+      { label: 'Overdue', value: countWhere(conditionRows, (r) => r.status === 'OVERDUE'), caption: 'Scoring is late', icon: XCircle, tone: 'danger' },
+      { label: 'Need scoring', value: countWhere(conditionRows, (r) => r.status === 'DUE' || r.status === 'NEVER'), caption: 'Due now or never scored', icon: Clock, tone: 'warning' },
+      { label: 'Up to date', value: countWhere(conditionRows, (r) => r.status === 'OK' || r.status === 'DUE_SOON'), caption: 'Scored within schedule', icon: CheckCircle2, tone: 'success' },
+    ],
+    gilts: [
+      { label: 'Posted selections', value: postedGiltSelections.length, caption: 'Gilts moved to the herd', icon: Sprout, tone: 'success' },
+      { label: 'In progress', value: countWhere(giltSelections, (g) => g.status === 'DRAFT'), caption: 'Drafts to continue', icon: Clock, tone: 'warning' },
+      { label: 'Litters selected from', value: new Set(postedGiltSelections.flatMap((g) => (g.lines ?? []).map((l: Row) => l.farrow_id))).size, caption: 'Distinct litters', icon: Baby, tone: 'info' },
+    ],
+  };
+  const tabStats = tabStatsByTab[subTab];
+
   return (
     <div className="space-y-6">
-      {/* ── Top Header ── */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h2
-            className="text-xl font-bold flex items-center gap-2"
-            style={S.primary}
-          >
-            <Heart className="w-5 h-5" style={S.accent} />
-            {t('brpTitle')}
-          </h2>
-          <p className="text-sm mt-0.5" style={S.sub}>
-            {t('brpSubtitle')}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            size="sm"
-            onClick={() => {
-              if (subTab === 'mating') openMatingModal();
-              else if (subTab === 'farrowing') openFarrowModal();
-              else openSemenModal();
-            }}
-          >
-            <Plus className="w-4 h-4 mr-1.5" />
-            {subTab === 'mating'
-              ? t('brpRecordMatingAi')
-              : subTab === 'farrowing'
-                ? t('brpRecordFarrowing')
-                : t('brpLogSemenCollection')}
-          </Button>
-        </div>
-      </div>
+      {/* ── Header, figures and tabs: all follow the selected tab ── */}
+      <PageHeader
+        icon={tabMeta.icon}
+        title={tabMeta.title}
+        subtitle={tabMeta.subtitle}
+        action={
+          primaryAction && (
+            <Button size="sm" onClick={primaryAction.run}>
+              <Plus className="w-4 h-4 mr-1.5" />
+              {primaryAction.label}
+            </Button>
+          )
+        }
+      />
 
       <Toast variant="danger" message={error} onClose={() => setError(null)} />
       <Toast
@@ -732,193 +1191,9 @@ export function BreedingPanel() {
         onClose={() => setSuccess(null)}
       />
 
-      {/* ── KPI Stat Cards ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <div
-          className="rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)]"
-          style={{
-            backgroundColor: 'var(--surface)',
-            borderColor: 'var(--border)',
-          }}
-        >
-          <div
-            className="text-[11px] font-semibold uppercase tracking-wider flex items-center justify-between"
-            style={S.muted}
-          >
-            <span>{t('brpKpiActiveGestations')}</span>
-            <Heart className="w-3.5 h-3.5" style={{ color: 'var(--accent)' }} />
-          </div>
-          <div
-            className="text-2xl font-bold font-mono mt-1.5"
-            style={S.primary}
-          >
-            {activeInseminations}
-          </div>
-          <div className="text-[11px] mt-0.5" style={S.muted}>
-            {t('brpKpiActiveGestationsDesc')}
-          </div>
-        </div>
+      <StatTiles stats={tabStats} />
 
-        <div
-          className="rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)]"
-          style={{
-            backgroundColor: 'var(--surface)',
-            borderColor: 'var(--border)',
-          }}
-        >
-          <div
-            className="text-[11px] font-semibold uppercase tracking-wider flex items-center justify-between"
-            style={S.muted}
-          >
-            <span>{t('brpKpiTotalLitters')}</span>
-            <Baby
-              className="w-3.5 h-3.5"
-              style={{ color: 'var(--text-secondary)' }}
-            />
-          </div>
-          <div
-            className="text-2xl font-bold font-mono mt-1.5"
-            style={S.primary}
-          >
-            {totalLitters}
-          </div>
-          <div className="text-[11px] mt-0.5" style={S.muted}>
-            {t('brpKpiTotalLittersDesc')}
-          </div>
-        </div>
-
-        <div
-          className="rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)]"
-          style={{
-            backgroundColor: 'var(--surface)',
-            borderColor: 'var(--border)',
-          }}
-        >
-          <div
-            className="text-[11px] font-semibold uppercase tracking-wider flex items-center justify-between"
-            style={S.muted}
-          >
-            <span>{t('brpKpiBornLive')}</span>
-            <Activity
-              className="w-3.5 h-3.5"
-              style={{ color: 'var(--success)' }}
-            />
-          </div>
-          <div
-            className="text-2xl font-bold font-mono mt-1.5"
-            style={S.primary}
-          >
-            {totalBornLive}
-          </div>
-          <div className="text-[11px] mt-0.5" style={S.muted}>
-            {t('brpKpiBornLiveDesc')}
-          </div>
-        </div>
-
-        <div
-          className="rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)]"
-          style={{
-            backgroundColor: 'var(--surface)',
-            borderColor: 'var(--border)',
-          }}
-        >
-          <div
-            className="text-[11px] font-semibold uppercase tracking-wider flex items-center justify-between"
-            style={S.muted}
-          >
-            <span>{t('brpKpiWeaningSurvival')}</span>
-            <CheckCircle2
-              className="w-3.5 h-3.5"
-              style={{ color: 'var(--text-secondary)' }}
-            />
-          </div>
-          <div
-            className="text-2xl font-bold font-mono mt-1.5"
-            style={{ color: 'var(--accent)' }}
-          >
-            {avgSurvivalRate}%
-          </div>
-          <div className="text-[11px] mt-0.5" style={S.muted}>
-            {t('brpKpiWeanedPigletsCount', { count: totalWeaned })}
-          </div>
-        </div>
-
-        <div
-          className="rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)]"
-          style={{
-            backgroundColor: 'var(--surface)',
-            borderColor: 'var(--border)',
-          }}
-        >
-          <div
-            className="text-[11px] font-semibold uppercase tracking-wider flex items-center justify-between"
-            style={S.muted}
-          >
-            <span>{t('brpKpiSemenDoses')}</span>
-            <FlaskConical
-              className="w-3.5 h-3.5"
-              style={{ color: 'var(--text-secondary)' }}
-            />
-          </div>
-          <div
-            className="text-2xl font-bold font-mono mt-1.5"
-            style={S.primary}
-          >
-            {totalDoses}
-          </div>
-          <div className="text-[11px] mt-0.5" style={S.muted}>
-            {t('brpKpiSemenDosesDesc')}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Sub Navigation Tabs ── */}
-      <div
-        className="flex border-b gap-6"
-        style={{ borderColor: 'var(--border)' }}
-      >
-        <button
-          onClick={() => setSubTab('mating')}
-          className="pb-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition-colors cursor-pointer"
-          style={{
-            borderColor: subTab === 'mating' ? 'var(--accent)' : 'transparent',
-            color:
-              subTab === 'mating' ? 'var(--accent)' : 'var(--text-secondary)',
-          }}
-        >
-          <Heart className="w-4 h-4" />
-          {t('brpTabMating', { count: matings.length })}
-        </button>
-
-        <button
-          onClick={() => setSubTab('farrowing')}
-          className="pb-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition-colors cursor-pointer"
-          style={{
-            borderColor:
-              subTab === 'farrowing' ? 'var(--accent)' : 'transparent',
-            color:
-              subTab === 'farrowing'
-                ? 'var(--accent)'
-                : 'var(--text-secondary)',
-          }}
-        >
-          <Baby className="w-4 h-4" />
-          {t('brpTabFarrowing', { count: farrowings.length })}
-        </button>
-
-        <button
-          onClick={() => setSubTab('semen')}
-          className="pb-3 text-sm font-semibold flex items-center gap-2 border-b-2 transition-colors cursor-pointer"
-          style={{
-            borderColor: subTab === 'semen' ? 'var(--accent)' : 'transparent',
-            color:
-              subTab === 'semen' ? 'var(--accent)' : 'var(--text-secondary)',
-          }}
-        >
-          <FlaskConical className="w-4 h-4" />
-          {t('brpTabSemen', { count: semenBatches.length })}
-        </button>
-      </div>
+      <TabBar tabs={tabItems} value={subTab} onChange={setSubTab} />
 
       {/* ── Tab Content ── */}
       {loading ? (
@@ -936,376 +1211,609 @@ export function BreedingPanel() {
               className="rounded-[var(--radius-lg)] border overflow-hidden"
               style={S.surface}
             >
-              <table className="w-full text-left text-sm border-collapse">
-                <thead
-                  className="text-xs uppercase font-semibold border-b"
-                  style={{
-                    backgroundColor: 'var(--surface-raised)',
-                    borderColor: 'var(--border)',
-                    color: 'var(--text-secondary)',
-                  }}
-                >
-                  <tr>
-                    <th className="py-3 px-4">{t('brpColSow')}</th>
-                    <th className="py-3 px-4">{t('brpColType')}</th>
-                    <th className="py-3 px-4">{t('brpColBoar')}</th>
-                    <th className="py-3 px-4">{t('brpColBatch')}</th>
-                    <th className="py-3 px-4">{t('brpColMatingDate')}</th>
-                    <th className="py-3 px-4">{t('brpColPregCheck')}</th>
-                    <th className="py-3 px-4">
-                      {t('brpColExpectedFarrowing')}
-                    </th>
-                    <th className="py-3 px-4">{t('brpColStatusCountdown')}</th>
-                    <th className="py-3 px-4 text-right">
-                      {t('brpColActions')}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody
-                  className="divide-y"
-                  style={{ borderColor: 'var(--border)' }}
-                >
-                  {matings.length === 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[48rem] text-left text-sm border-collapse">
+                  <thead
+                    className="text-xs uppercase font-semibold border-b"
+                    style={{
+                      backgroundColor: 'var(--surface-raised)',
+                      borderColor: 'var(--border)',
+                      color: 'var(--text-secondary)',
+                    }}
+                  >
                     <tr>
-                      <td
-                        colSpan={9}
-                        className="py-12 text-center"
-                        style={S.muted}
-                      >
-                        {t('brpEmptyMatings')}
-                      </td>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColSow')}
+                      </th>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColType')}
+                      </th>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColBoar')}
+                      </th>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColBatch')}
+                      </th>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColMatingDate')}
+                      </th>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColPregCheck')}
+                      </th>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColExpectedFarrowing')}
+                      </th>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColStatusCountdown')}
+                      </th>
+                      <th className="whitespace-nowrap py-3 px-4 text-right">
+                        {t('brpColActions')}
+                      </th>
                     </tr>
-                  ) : (
-                    matings.map((m) => (
-                      <tr
-                        key={m.breeding_id}
-                        className="hover:bg-[var(--surface-raised)] transition-colors"
-                      >
-                        <td className="py-3.5 px-4">
-                          <div className="font-semibold" style={S.primary}>
-                            <AnimalCodeLink
-                              animalId={m.sow_id}
-                              code={m.sow_code}
-                              onOpen={setDetailsAnimalId}
-                            />
-                          </div>
-                          <div className="text-xs" style={S.sub}>
-                            {t('brpTagParity', {
-                              tag: m.sow_tag || '--',
-                              parity: m.parity_number,
-                            })}
-                          </div>
+                  </thead>
+                  <tbody
+                    className="divide-y"
+                    style={{ borderColor: 'var(--border)' }}
+                  >
+                    {matings.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={9}
+                          className="py-12 text-center"
+                          style={S.muted}
+                        >
+                          {t('brpEmptyMatings')}
                         </td>
-                        <td className="py-3.5 px-4">
-                          <span
-                            className="px-2 py-0.5 rounded-[var(--radius-xs)] text-xs font-semibold border"
-                            style={{
-                              backgroundColor: 'var(--surface-raised)',
-                              borderColor: 'var(--border)',
-                              color: 'var(--text-primary)',
-                            }}
-                          >
-                            {m.mating_type}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <div
-                            className="text-xs font-semibold"
-                            style={m.boar_code ? S.primary : S.muted}
-                          >
-                            <AnimalCodeLink
-                              animalId={m.boar_id}
-                              code={m.boar_code}
-                              onOpen={setDetailsAnimalId}
-                            />
-                          </div>
-                          {m.boar_parity_number != null && (
-                            <div className="text-[11px]" style={S.sub}>
-                              {t('brpBoarParity', {
-                                parity: m.boar_parity_number,
+                      </tr>
+                    ) : (
+                      matingPager.pageRows.map((m) => (
+                        <tr
+                          key={m.breeding_id}
+                          className="hover:bg-[var(--surface-raised)] transition-colors"
+                        >
+                          <td className="whitespace-nowrap py-3.5 px-4">
+                            <div className="font-semibold" style={S.primary}>
+                              <AnimalCodeLink
+                                animalId={m.sow_id}
+                                code={m.sow_code}
+                                onOpen={setDetailsAnimalId}
+                              />
+                            </div>
+                            <div className="text-xs" style={S.sub}>
+                              {t('brpTagParity', {
+                                tag: m.sow_tag || '--',
+                                parity: m.parity_number,
                               })}
                             </div>
-                          )}
-                        </td>
-                        <td
-                          className="py-3.5 px-4 font-mono text-xs"
-                          style={m.batch_no ? S.sub : S.muted}
-                        >
-                          {m.batch_no || '--'}
-                        </td>
-                        <td
-                          className="py-3.5 px-4 font-mono text-xs"
-                          style={S.sub}
-                        >
-                          {m.mating_date}
-                          {m.second_mating_date && (
-                            <span className="block text-[11px]" style={S.muted}>
-                              {t('brpSecondMatingDate', {
-                                date: m.second_mating_date,
-                              })}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4">
-                          {/* conception_result is the field of record; REPEAT (back
-                              on heat) and FAILED are both not-pregnant but not
-                              the same outcome, which the boolean could not say. */}
-                          {m.conception_result === 'CONFIRMED' ? (
+                          </td>
+                          <td className="whitespace-nowrap py-3.5 px-4">
                             <span
-                              className="inline-flex items-center gap-1 text-xs font-medium"
-                              style={S.success}
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5" />{' '}
-                              {t('brpStatusConfirmed')}
-                            </span>
-                          ) : m.conception_result === 'FAILED' ? (
-                            <span
-                              className="inline-flex items-center gap-1 text-xs font-medium"
-                              style={S.danger}
-                            >
-                              <XCircle className="w-3.5 h-3.5" />{' '}
-                              {t('brpStatusFailed')}
-                            </span>
-                          ) : m.conception_result === 'REPEAT' ? (
-                            <span
-                              className="inline-flex items-center gap-1 text-xs font-medium"
-                              style={S.warning}
-                            >
-                              <XCircle className="w-3.5 h-3.5" />{' '}
-                              {t('brpStatusRepeat')}
-                            </span>
-                          ) : (
-                            <span
-                              className="inline-flex items-center gap-1 text-xs font-medium"
-                              style={S.warning}
-                            >
-                              <Clock className="w-3.5 h-3.5" />{' '}
-                              {t('brpStatusDue', { date: m.preg_check_date })}
-                            </span>
-                          )}
-                        </td>
-                        <td
-                          className="py-3.5 px-4 font-mono text-xs"
-                          style={S.primary}
-                        >
-                          {m.expected_farrowing_date}
-                        </td>
-                        <td className="py-3.5 px-4">
-                          {m.days_until_farrowing < 0 ? (
-                            <span
-                              className="px-2 py-0.5 rounded-[var(--radius-xs)] text-xs border font-medium"
+                              className="px-2 py-0.5 rounded-[var(--radius-xs)] text-xs font-semibold border"
                               style={{
                                 backgroundColor: 'var(--surface-raised)',
                                 borderColor: 'var(--border)',
-                                color: 'var(--text-muted)',
+                                color: 'var(--text-primary)',
                               }}
                             >
-                              {t('brpStatusPastDue')}
+                              {m.mating_type}
                             </span>
-                          ) : m.days_until_farrowing <= 7 ? (
-                            <span
-                              className="px-2 py-0.5 rounded-[var(--radius-xs)] text-xs border font-bold animate-pulse"
-                              style={S.warning}
+                          </td>
+                          <td className="whitespace-nowrap py-3.5 px-4">
+                            <div
+                              className="text-xs font-semibold"
+                              style={m.boar_code ? S.primary : S.muted}
                             >
-                              {t('brpStatusDueInDays', {
-                                days: m.days_until_farrowing,
-                              })}
-                            </span>
-                          ) : (
-                            <span
-                              className="px-2 py-0.5 rounded-[var(--radius-xs)] text-xs border font-medium"
-                              style={S.success}
-                            >
-                              {t('brpStatusDueInDays', {
-                                days: m.days_until_farrowing,
-                              })}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4 text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="-mr-4"
-                            onClick={() => {
-                              setSelectedMating(m);
-                              setPregCheckForm({
-                                conception_result:
-                                  m.conception_result &&
-                                  m.conception_result !== 'PENDING'
-                                    ? m.conception_result
-                                    : 'CONFIRMED',
-                                preg_check_method:
-                                  m.preg_check_method || 'ULTRASOUND',
-                                preg_check_date:
-                                  m.preg_check_date ||
-                                  new Date().toISOString().slice(0, 10),
-                                notes: '',
-                              });
-                              setShowPregCheckModal(true);
-                            }}
+                              <AnimalCodeLink
+                                animalId={m.boar_id}
+                                code={m.boar_code}
+                                onOpen={setDetailsAnimalId}
+                              />
+                            </div>
+                            {m.boar_parity_number != null && (
+                              <div className="text-[11px]" style={S.sub}>
+                                {t('brpBoarParity', {
+                                  parity: m.boar_parity_number,
+                                })}
+                              </div>
+                            )}
+                          </td>
+                          <td
+                            className="whitespace-nowrap py-3.5 px-4 font-mono text-xs"
+                            style={m.batch_no ? S.sub : S.muted}
                           >
-                            {t('brpBtnUpdateCheck')}
-                          </Button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                            {m.batch_no || '--'}
+                          </td>
+                          <td
+                            className="whitespace-nowrap py-3.5 px-4 font-mono text-xs"
+                            style={S.sub}
+                          >
+                            {formatDate(m.mating_date)}
+                            {m.second_mating_date && (
+                              <span
+                                className="block text-[11px]"
+                                style={S.muted}
+                              >
+                                {t('brpSecondMatingDate', {
+                                  date: formatDate(m.second_mating_date),
+                                })}
+                              </span>
+                            )}
+                          </td>
+                          <td className="whitespace-nowrap py-3.5 px-4">
+                            {/* conception_result is the field of record; REPEAT (back
+                              on heat) and FAILED are both not-pregnant but not
+                              the same outcome, which the boolean could not say. */}
+                            {m.conception_result === 'CONFIRMED' ? (
+                              <span
+                                className="inline-flex items-center gap-1 text-xs font-medium"
+                                style={S.success}
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5" />{' '}
+                                {t('brpStatusConfirmed')}
+                              </span>
+                            ) : m.conception_result === 'FAILED' ? (
+                              <span
+                                className="inline-flex items-center gap-1 text-xs font-medium"
+                                style={S.danger}
+                              >
+                                <XCircle className="w-3.5 h-3.5" />{' '}
+                                {t('brpStatusFailed')}
+                              </span>
+                            ) : m.conception_result === 'REPEAT' ? (
+                              <span
+                                className="inline-flex items-center gap-1 text-xs font-medium"
+                                style={S.warning}
+                              >
+                                <XCircle className="w-3.5 h-3.5" />{' '}
+                                {t('brpStatusRepeat')}
+                              </span>
+                            ) : (
+                              <span
+                                className="inline-flex items-center gap-1 text-xs font-medium"
+                                style={S.warning}
+                              >
+                                <Clock className="w-3.5 h-3.5" />{' '}
+                                {t('brpStatusDue', { date: formatDate(m.preg_check_date) })}
+                              </span>
+                            )}
+                          </td>
+                          <td
+                            className="whitespace-nowrap py-3.5 px-4 font-mono text-xs"
+                            style={S.primary}
+                          >
+                            {formatDate(m.expected_farrowing_date)}
+                          </td>
+                          <td className="whitespace-nowrap py-3.5 px-4">
+                            {m.farrow_id ? (
+                              <span
+                                className="px-2 py-0.5 rounded-[var(--radius-xs)] text-xs border font-medium"
+                                style={S.success}
+                              >
+                                Farrowed
+                              </span>
+                            ) : m.conception_result === 'FAILED' ||
+                              m.conception_result === 'REPEAT' ? (
+                              <span className="text-xs" style={S.muted}>
+                                —
+                              </span>
+                            ) : m.days_until_farrowing < 0 ? (
+                              <span
+                                className="px-2 py-0.5 rounded-[var(--radius-xs)] text-xs border font-medium"
+                                style={{
+                                  backgroundColor: 'var(--surface-raised)',
+                                  borderColor: 'var(--border)',
+                                  color: 'var(--text-muted)',
+                                }}
+                              >
+                                {t('brpStatusPastDue')}
+                              </span>
+                            ) : m.days_until_farrowing <= 7 ? (
+                              <span
+                                className="px-2 py-0.5 rounded-[var(--radius-xs)] text-xs border font-bold animate-pulse"
+                                style={S.warning}
+                              >
+                                {t('brpStatusDueInDays', {
+                                  days: m.days_until_farrowing,
+                                })}
+                              </span>
+                            ) : (
+                              <span
+                                className="px-2 py-0.5 rounded-[var(--radius-xs)] text-xs border font-medium"
+                                style={S.success}
+                              >
+                                {t('brpStatusDueInDays', {
+                                  days: m.days_until_farrowing,
+                                })}
+                              </span>
+                            )}
+                          </td>
+                          <td className="whitespace-nowrap py-3.5 px-4 text-right">
+                            {m.farrow_id ? (
+                              <span className="text-xs" style={S.muted}>
+                                Farrowed
+                              </span>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="-mr-4"
+                                onClick={() => {
+                                  setSelectedMating(m);
+                                  setPregCheckForm({
+                                    conception_result:
+                                      m.conception_result &&
+                                      m.conception_result !== 'PENDING'
+                                        ? m.conception_result
+                                        : 'CONFIRMED',
+                                    preg_check_method:
+                                      m.preg_check_method || 'ULTRASOUND',
+                                    preg_check_date:
+                                      m.preg_check_date ||
+                                      new Date().toISOString().slice(0, 10),
+                                    notes: '',
+                                  });
+                                  setShowPregCheckModal(true);
+                                }}
+                              >
+                                {t('brpBtnUpdateCheck')}
+                              </Button>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <TablePager {...matingPager.paginationProps} />
             </div>
           )}
 
           {/* TAB 2: FARROWING & LITTERS */}
           {subTab === 'farrowing' && (
-            <div
-              className="rounded-[var(--radius-lg)] border overflow-hidden"
-              style={S.surface}
-            >
-              <table className="w-full text-left text-sm border-collapse">
-                <thead
-                  className="text-xs uppercase font-semibold border-b"
-                  style={{
-                    backgroundColor: 'var(--surface-raised)',
-                    borderColor: 'var(--border)',
-                    color: 'var(--text-secondary)',
-                  }}
-                >
-                  <tr>
-                    <th className="py-3 px-4">{t('brpColSow')}</th>
-                    <th className="py-3 px-4">{t('brpColFarrowDate')}</th>
-                    <th className="py-3 px-4">{t('brpColLiveTotal')}</th>
-                    <th className="py-3 px-4">{t('brpColStillbornMummies')}</th>
-                    <th className="py-3 px-4">{t('brpColLitterWeight')}</th>
-                    <th className="py-3 px-4">{t('brpColWeanedSurvival')}</th>
-                    <th className="py-3 px-4 text-right">
-                      {t('brpColActions')}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody
-                  className="divide-y"
-                  style={{ borderColor: 'var(--border)' }}
-                >
-                  {farrowings.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={7}
-                        className="py-12 text-center"
-                        style={S.muted}
+            <div className="space-y-4">
+              {farrowings
+                .filter((f) => f.week4_due && !giltPostedFrom(f.farrow_id))
+                .map((f) => (
+                  <div
+                    key={f.farrow_id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-lg)] border p-4"
+                    style={{ ...S.surface, borderColor: 'var(--warning)' }}
+                    role="alert"
+                  >
+                    <div className="flex min-w-0 items-start gap-3">
+                      <span
+                        className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                        style={{
+                          backgroundColor: 'var(--warning-muted)',
+                          color: 'var(--warning)',
+                        }}
                       >
-                        {t('brpEmptyFarrowings')}
-                      </td>
-                    </tr>
-                  ) : (
-                    farrowings.map((f) => (
-                      <tr
-                        key={f.farrow_id}
-                        className="hover:bg-[var(--surface-raised)] transition-colors"
+                        <BellRing className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold" style={S.primary}>
+                          {t('brpWeek4Title', {
+                            sow: f.sow_code,
+                            lot: f.piglet_lot_no ?? '',
+                          })}
+                        </p>
+                        <p className="text-xs" style={S.sub}>
+                          {t('brpWeek4Body', {
+                            date: formatDate(f.farrowing_date),
+                            count: f.piglets_in_lot ?? 0,
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" onClick={() => openGiltDialog(f)}>
+                        <Sprout className="mr-1.5 h-3.5 w-3.5" />{' '}
+                        {t('brpSelectGilts')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setSelectedFarrow(f);
+                          setWeanForm((w) => ({
+                            ...w,
+                            piglets_weaned: String(f.piglets_in_lot ?? ''),
+                          }));
+                          setShowWeanModal(true);
+                        }}
                       >
-                        <td className="py-3.5 px-4">
-                          <div className="font-semibold" style={S.primary}>
-                            <AnimalCodeLink
-                              animalId={f.sow_id}
-                              code={f.sow_code}
-                              onOpen={setDetailsAnimalId}
-                            />
-                          </div>
-                          <div className="text-xs" style={S.sub}>
-                            {t('brpTagParity', {
-                              tag: f.sow_tag || '--',
-                              parity: f.parity_number,
-                            })}
-                          </div>
-                        </td>
-                        <td
-                          className="py-3.5 px-4 font-mono text-xs"
-                          style={S.sub}
-                        >
-                          {f.farrowing_date}
-                        </td>
-                        <td className="py-3.5 px-4">
-                          <span className="font-bold" style={S.success}>
-                            {f.piglets_born_live}
-                          </span>
-                          <span className="text-xs" style={S.muted}>
-                            {' '}
-                            / {f.piglets_born_total}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-4 text-xs">
-                          <span style={S.danger}>
-                            {t('brpStillbornCount', {
-                              count: f.piglets_stillborn,
-                            })}
-                          </span>
-                          <span className="mx-1" style={S.muted}>
-                            •
-                          </span>
-                          <span style={S.sub}>
-                            {t('brpMummifiedCount', {
-                              count: f.piglets_mummified,
-                            })}
-                          </span>
-                        </td>
-                        <td
-                          className="py-3.5 px-4 text-xs font-mono"
-                          style={S.sub}
-                        >
-                          {f.total_litter_weight_kg
-                            ? `${formatQuantity(f.total_litter_weight_kg)} kg`
-                            : '--'}
-                          {f.avg_birth_weight_kg && (
-                            <span className="block text-[11px]" style={S.muted}>
-                              {t('brpAvgWeight', {
-                                weight: f.avg_birth_weight_kg,
-                              })}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4">
-                          {f.piglets_weaned > 0 ? (
-                            <div>
-                              <span className="font-bold" style={S.accent}>
-                                {t('brpWeanedCount', {
-                                  count: f.piglets_weaned,
+                        {t('brpWeanAll')}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              <div
+                className="rounded-[var(--radius-lg)] border overflow-hidden"
+                style={S.surface}
+              >
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[48rem] text-left text-sm border-collapse">
+                    <thead
+                      className="text-xs uppercase font-semibold border-b"
+                      style={{
+                        backgroundColor: 'var(--surface-raised)',
+                        borderColor: 'var(--border)',
+                        color: 'var(--text-secondary)',
+                      }}
+                    >
+                      <tr>
+                        <th className="whitespace-nowrap py-3 px-4">
+                          {t('brpColSow')}
+                        </th>
+                        <th className="whitespace-nowrap py-3 px-4">
+                          {t('brpColFarrowDate')}
+                        </th>
+                        <th className="whitespace-nowrap py-3 px-4">
+                          {t('brpColLiveTotal')}
+                        </th>
+                        <th className="whitespace-nowrap py-3 px-4">
+                          {t('brpColStillbornMummies')}
+                        </th>
+                        <th className="whitespace-nowrap py-3 px-4">
+                          {t('brpColLitterWeight')}
+                        </th>
+                        <th className="whitespace-nowrap py-3 px-4">
+                          {t('brpColWeanedSurvival')}
+                        </th>
+                        <th className="whitespace-nowrap py-3 px-4 text-right">
+                          {t('brpColActions')}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody
+                      className="divide-y"
+                      style={{ borderColor: 'var(--border)' }}
+                    >
+                      {farrowings.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={7}
+                            className="py-12 text-center"
+                            style={S.muted}
+                          >
+                            {t('brpEmptyFarrowings')}
+                          </td>
+                        </tr>
+                      ) : (
+                        farrowingPager.pageRows.map((f) => (
+                          <tr
+                            key={f.farrow_id}
+                            className="hover:bg-[var(--surface-raised)] transition-colors"
+                          >
+                            <td className="whitespace-nowrap py-3.5 px-4">
+                              <div className="font-semibold" style={S.primary}>
+                                <AnimalCodeLink
+                                  animalId={f.sow_id}
+                                  code={f.sow_code}
+                                  onOpen={setDetailsAnimalId}
+                                />
+                              </div>
+                              <div className="text-xs" style={S.sub}>
+                                {t('brpTagParity', {
+                                  tag: f.sow_tag || '--',
+                                  parity: f.parity_number,
+                                })}
+                              </div>
+                            </td>
+                            <td
+                              className="whitespace-nowrap py-3.5 px-4 font-mono text-xs"
+                              style={S.sub}
+                            >
+                              {formatDate(f.farrowing_date)}
+                            </td>
+                            <td className="whitespace-nowrap py-3.5 px-4">
+                              <span className="font-bold" style={S.success}>
+                                {f.piglets_born_live}
+                              </span>
+                              <span className="text-xs" style={S.muted}>
+                                {' '}
+                                / {f.piglets_born_total}
+                              </span>
+                              {(f.foster_received > 0 ||
+                                f.fostered_out > 0) && (
+                                <span
+                                  className="block text-[11px]"
+                                  style={S.muted}
+                                >
+                                  {f.foster_received > 0
+                                    ? `+${f.foster_received} fostered in`
+                                    : ''}
+                                  {f.foster_received > 0 && f.fostered_out > 0
+                                    ? ' · '
+                                    : ''}
+                                  {f.fostered_out > 0
+                                    ? `−${f.fostered_out} fostered out`
+                                    : ''}
+                                </span>
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap py-3.5 px-4 text-xs">
+                              <span style={S.danger}>
+                                {t('brpStillbornCount', {
+                                  count: f.piglets_stillborn,
                                 })}
                               </span>
-                              {f.weaning_survival_rate_pct && (
-                                <span className="text-xs block" style={S.muted}>
-                                  {t('brpSurvivalPct', {
-                                    pct: f.weaning_survival_rate_pct,
+                              <span className="mx-1" style={S.muted}>
+                                •
+                              </span>
+                              <span style={S.sub}>
+                                {t('brpMummifiedCount', {
+                                  count: f.piglets_mummified,
+                                })}
+                              </span>
+                            </td>
+                            <td
+                              className="whitespace-nowrap py-3.5 px-4 text-xs font-mono"
+                              style={S.sub}
+                            >
+                              {f.total_litter_weight_kg
+                                ? `${formatQuantity(f.total_litter_weight_kg)} kg`
+                                : '--'}
+                              {f.avg_birth_weight_kg && (
+                                <span
+                                  className="block text-[11px]"
+                                  style={S.muted}
+                                >
+                                  {t('brpAvgWeight', {
+                                    weight: f.avg_birth_weight_kg,
                                   })}
                                 </span>
                               )}
-                            </div>
-                          ) : (
-                            <span
-                              className="text-xs font-medium"
-                              style={S.warning}
-                            >
-                              {t('brpLactatingDue', { date: f.weaning_date })}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4 text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="-mr-4"
-                            onClick={() => {
-                              setSelectedFarrow(f);
-                              setShowWeanModal(true);
-                            }}
-                          >
-                            {t('brpBtnRecordWeaning')}
-                          </Button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                            </td>
+                            <td className="whitespace-nowrap py-3.5 px-4">
+                              {f.piglets_weaned > 0 ? (
+                                <div>
+                                  <span className="font-bold" style={S.accent}>
+                                    {t('brpWeanedCount', {
+                                      count: f.piglets_weaned,
+                                    })}
+                                  </span>
+                                  {Number(f.gilts_selected) > 0 && (
+                                    <span
+                                      className="text-xs block"
+                                      style={S.sub}
+                                    >
+                                      {t('brpWeanedGilts', {
+                                        count: f.gilts_selected,
+                                      })}
+                                    </span>
+                                  )}
+                                  {f.weaning_survival_rate_pct && (
+                                    <span
+                                      className="text-xs block"
+                                      style={S.muted}
+                                    >
+                                      {t('brpSurvivalPct', {
+                                        pct: f.weaning_survival_rate_pct,
+                                      })}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <div>
+                                  <span
+                                    className="text-xs font-medium"
+                                    style={S.warning}
+                                  >
+                                    {t('brpLactatingDue', {
+                                      date: formatDate(f.weaning_date),
+                                    })}
+                                  </span>
+                                  {f.week4_due && (
+                                    <span
+                                      className="mt-1 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                                      style={{
+                                        borderColor: 'var(--warning)',
+                                        color: 'var(--warning)',
+                                      }}
+                                    >
+                                      <BellRing className="h-3 w-3" />{' '}
+                                      {t('brpWeek4Chip')}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                            <td className="whitespace-nowrap py-3.5 px-4 text-right">
+                              {f.piglets_weaned > 0 ? (
+                                <span
+                                  className="text-xs font-medium"
+                                  style={S.muted}
+                                >
+                                  Weaned
+                                </span>
+                              ) : (
+                                <>
+                                  {f.piglet_batch_id &&
+                                    !giltPostedFrom(f.farrow_id) && (
+                                      <Button
+                                        variant={
+                                          f.week4_due ? 'default' : 'outline'
+                                        }
+                                        size="sm"
+                                        onClick={() => openGiltDialog(f)}
+                                      >
+                                        <Sprout className="mr-1.5 h-3.5 w-3.5" />{' '}
+                                        {t('brpSelectGilts')}
+                                      </Button>
+                                    )}
+                                  {f.piglet_batch_id && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => {
+                                        setSelectedFarrow(f);
+                                        setFosterForm({
+                                          to_farrow_id: '',
+                                          quantity: '',
+                                          foster_date: new Date()
+                                            .toISOString()
+                                            .slice(0, 10),
+                                          notes: '',
+                                        });
+                                        setShowFosterModal(true);
+                                      }}
+                                    >
+                                      Foster piglets
+                                    </Button>
+                                  )}
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="-mr-4"
+                                    onClick={() => {
+                                      setSelectedFarrow(f);
+                                      setShowWeanModal(true);
+                                    }}
+                                  >
+                                    {t('brpBtnRecordWeaning')}
+                                  </Button>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <TablePager {...farrowingPager.paginationProps} />
+              </div>
+            </div>
+          )}
+
+          {/* TAB: BOAR SELECTION (a line's boars with their ranks, before they are collected) */}
+          {subTab === 'selection' && (
+            <BoarSelectionPanel
+              version={selectionVersion}
+              onSummary={setSelectionSummary}
+              onCollect={startCollectionFromPlan}
+            />
+          )}
+
+          {/* TAB: BOAR CONDITION (SOP 21: each boar's body condition score, feed level and when he is next due) */}
+          {subTab === 'condition' && (
+            <BoarConditionPanel onSummary={setConditionRows} />
+          )}
+
+          {/* TAB 4: GILT SELECTIONS (the history; gilts are selected from a litter's row, or the week-4 alert above it) */}
+          {subTab === 'gilts' && (
+            <div className="space-y-3">
+              <p className="text-xs" style={S.sub}>
+                {t('brpGiltsTabHint')}
+              </p>
+              <GiltSelectionHistory
+                rows={postedGiltSelections}
+                onOpenAnimal={setDetailsAnimalId}
+                onContinue={(id) => setGiltDialog({ draftId: id })}
+                onError={setError}
+              />
             </div>
           )}
 
@@ -1315,126 +1823,158 @@ export function BreedingPanel() {
               className="rounded-[var(--radius-lg)] border overflow-hidden"
               style={S.surface}
             >
-              <table className="w-full text-left text-sm border-collapse">
-                <thead
-                  className="text-xs uppercase font-semibold border-b"
-                  style={{
-                    backgroundColor: 'var(--surface-raised)',
-                    borderColor: 'var(--border)',
-                    color: 'var(--text-secondary)',
-                  }}
-                >
-                  <tr>
-                    <th className="py-3 px-4">{t('brpColBoar')}</th>
-                    <th className="py-3 px-4">{t('brpColCollectionDate')}</th>
-                    <th className="py-3 px-4">{t('brpColDosesCollected')}</th>
-                    <th className="py-3 px-4">{t('brpColRunningCost')}</th>
-                    <th className="py-3 px-4">{t('brpColUnitCostDose')}</th>
-                    <th className="py-3 px-4">{t('brpColInternalSold')}</th>
-                  </tr>
-                </thead>
-                <tbody
-                  className="divide-y"
-                  style={{ borderColor: 'var(--border)' }}
-                >
-                  {semenBatches.length === 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[48rem] text-left text-sm border-collapse">
+                  <thead
+                    className="text-xs uppercase font-semibold border-b"
+                    style={{
+                      backgroundColor: 'var(--surface-raised)',
+                      borderColor: 'var(--border)',
+                      color: 'var(--text-secondary)',
+                    }}
+                  >
                     <tr>
-                      <td
-                        colSpan={6}
-                        className="py-12 text-center"
-                        style={S.muted}
-                      >
-                        {t('brpEmptySemen')}
-                      </td>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColBoar')}
+                      </th>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColCollectionDate')}
+                      </th>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColDosesCollected')}
+                      </th>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColRunningCost')}
+                      </th>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColUnitCostDose')}
+                      </th>
+                      <th className="whitespace-nowrap py-3 px-4">
+                        {t('brpColInternalSold')}
+                      </th>
                     </tr>
-                  ) : (
-                    semenBatches.map((s) => (
-                      <tr
-                        key={s.semen_batch_id}
-                        className="hover:bg-[var(--surface-raised)] transition-colors"
-                      >
+                  </thead>
+                  <tbody
+                    className="divide-y"
+                    style={{ borderColor: 'var(--border)' }}
+                  >
+                    {semenBatches.length === 0 ? (
+                      <tr>
                         <td
-                          className="py-3.5 px-4 font-semibold"
-                          style={S.primary}
+                          colSpan={6}
+                          className="py-12 text-center"
+                          style={S.muted}
                         >
-                          {s.pooled ? (
-                            (s.boars || []).map((b: Row, i: number) => (
-                              <span key={b.boar_id ?? b.boar_code}>
-                                {i > 0 && ' + '}
-                                <AnimalCodeLink
-                                  animalId={b.boar_id}
-                                  code={b.boar_code}
-                                  onOpen={setDetailsAnimalId}
-                                />
-                              </span>
-                            ))
-                          ) : (
-                            <AnimalCodeLink
-                              animalId={s.boar_id}
-                              code={s.boar_code}
-                              onOpen={setDetailsAnimalId}
-                            />
-                          )}
-                          {s.pooled ? (
-                            <span
-                              className="block text-xs font-normal"
-                              style={S.sub}
-                            >
-                              Pooled lot · {(s.boars || []).length} boars mixed
-                            </span>
-                          ) : (
-                            <span
-                              className="block text-xs font-normal"
-                              style={S.sub}
-                            >
-                              {t('brpTagOnly', { tag: s.boar_tag || '--' })}
-                            </span>
-                          )}
-                        </td>
-                        <td
-                          className="py-3.5 px-4 font-mono text-xs"
-                          style={S.sub}
-                        >
-                          {s.collection_date}
-                          {s.lot_no && (
-                            <span className="block" style={S.primary}>
-                              {s.lot_no}
-                              {s.expiry_date
-                                ? ` · exp ${String(s.expiry_date).slice(0, 10)}`
-                                : ''}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-4 font-bold" style={S.accent}>
-                          {t('brpDosesCount', { count: s.doses_collected })}
-                        </td>
-                        <td
-                          className="py-3.5 px-4 font-mono text-xs"
-                          style={S.sub}
-                        >
-                          {formatMoney(
-                            Number(s.running_cost_period || 0).toLocaleString(),
-                          )}
-                        </td>
-                        <td
-                          className="py-3.5 px-4 font-mono text-xs font-bold"
-                          style={S.success}
-                        >
-                          {t('brpUnitCostPerDose', {
-                            cost: Number(s.unit_cost_per_dose || 0).toFixed(2),
-                          })}
-                        </td>
-                        <td className="py-3.5 px-4 text-xs" style={S.sub}>
-                          {t('brpInternalSoldCount', {
-                            internal: s.doses_used_internal || 0,
-                            sold: s.doses_sold || 0,
-                          })}
+                          {t('brpEmptySemen')}
                         </td>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                    ) : (
+                      semenPager.pageRows.map((s) => (
+                        <tr
+                          key={s.semen_batch_id}
+                          className="hover:bg-[var(--surface-raised)] transition-colors cursor-pointer"
+                          onClick={() => setSemenLotOpen(s.semen_batch_id)}
+                          title="View the lot's details"
+                        >
+                          <td
+                            className="whitespace-nowrap py-3.5 px-4 font-semibold"
+                            style={S.primary}
+                          >
+                            {s.pooled ? (
+                              (s.boars || []).map((b: Row, i: number) => (
+                                <span key={b.boar_id ?? b.boar_code}>
+                                  {i > 0 && ' + '}
+                                  <AnimalCodeLink
+                                    animalId={b.boar_id}
+                                    code={b.boar_code}
+                                    onOpen={setDetailsAnimalId}
+                                  />
+                                </span>
+                              ))
+                            ) : (
+                              <AnimalCodeLink
+                                animalId={s.boar_id}
+                                code={s.boar_code}
+                                onOpen={setDetailsAnimalId}
+                              />
+                            )}
+                            {s.pooled ? (
+                              <span
+                                className="block text-xs font-normal"
+                                style={S.sub}
+                              >
+                                Pooled lot · {(s.boars || []).length} boars
+                                mixed
+                              </span>
+                            ) : (
+                              <span
+                                className="block text-xs font-normal"
+                                style={S.sub}
+                              >
+                                {t('brpTagOnly', { tag: s.boar_tag || '--' })}
+                              </span>
+                            )}
+                          </td>
+                          <td
+                            className="whitespace-nowrap py-3.5 px-4 font-mono text-xs"
+                            style={S.sub}
+                          >
+                            {formatDate(s.collection_date)}
+                            {s.lot_no && (
+                              <span className="block" style={S.primary}>
+                                {s.lot_no}
+                                {s.expiry_date
+                                  ? ` · exp ${formatDate(s.expiry_date)}`
+                                  : ''}
+                              </span>
+                            )}
+                            {/* What the line's setup put on the lot: the sachet label, the colorant, and where it is for. */}
+                            {(s.label || s.colorant_name) && (
+                              <span className="block font-sans" style={S.sub}>
+                                {[s.label, s.colorant_name && `${s.colorant_name} colorant`]
+                                  .filter(Boolean)
+                                  .join(' · ')}
+                              </span>
+                            )}
+                          </td>
+                          <td
+                            className="whitespace-nowrap py-3.5 px-4 font-bold"
+                            style={S.accent}
+                          >
+                            {t('brpDosesCount', { count: s.doses_collected })}
+                          </td>
+                          <td
+                            className="whitespace-nowrap py-3.5 px-4 font-mono text-xs"
+                            style={S.sub}
+                          >
+                            {formatMoney(Number(s.running_cost_period || 0))}
+                          </td>
+                          <td
+                            className="whitespace-nowrap py-3.5 px-4 font-mono text-xs font-bold"
+                            style={S.success}
+                          >
+                            {t('brpUnitCostPerDose', {
+                              cost: Number(s.unit_cost_per_dose || 0).toFixed(
+                                2,
+                              ),
+                            })}
+                          </td>
+                          <td
+                            className="whitespace-nowrap py-3.5 px-4 text-xs"
+                            style={S.sub}
+                          >
+                            {t('brpInternalSoldCount', {
+                              internal: s.doses_used_internal || 0,
+                              sold: s.doses_sold || 0,
+                            })}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <TablePager {...semenPager.paginationProps} />
             </div>
           )}
         </>
@@ -1542,10 +2082,23 @@ export function BreedingPanel() {
                   return {
                     value: a.animal_id,
                     label: `${a.animal_code} · ${a.animal_type} · parity ${a.parity_count ?? 0} · ${why ?? 'ready to serve'}`,
+                    code: a.animal_code,
+                    type: a.animal_type,
+                    parity: String(a.parity_count ?? 0),
+                    stage:
+                      stages.find((st) => st.stage_id === a.current_stage_id)
+                        ?.stage_name ?? NA,
+                    status: why ?? 'Ready to serve',
                     disabled: !!why,
                   };
                 })}
-                columnHeaders={false}
+                columns={[
+                  { key: 'code', label: 'Code' },
+                  { key: 'type', label: 'Type' },
+                  { key: 'parity', label: 'Parity' },
+                  { key: 'stage', label: 'Stage' },
+                  { key: 'status', label: 'Status' },
+                ]}
               />
             </Field>
           </Step>
@@ -1574,26 +2127,12 @@ export function BreedingPanel() {
                 issues={matingIssues}
                 name="mating_type"
               >
-                <SearchableSelect
+                <input
                   id="mating-type"
-                  value={matingForm.mating_type}
-                  onChange={(val) =>
-                    setMatingForm({
-                      ...matingForm,
-                      mating_type: String(val),
-                      ...(String(val) === 'NATURAL_MATING'
-                        ? { semen_lot_id: '' }
-                        : {}),
-                    })
-                  }
-                  options={[
-                    { value: 'AI', label: t('brpOptionAi') },
-                    {
-                      value: 'NATURAL_MATING',
-                      label: t('brpOptionNaturalMating'),
-                    },
-                  ]}
-                  columnHeaders={false}
+                  className="nf-input w-full text-sm"
+                  style={inputStyle(matingIssues, 'mating_type')}
+                  value={t('brpOptionAi')}
+                  readOnly
                 />
               </Field>
               <Field
@@ -1602,8 +2141,7 @@ export function BreedingPanel() {
                 name="mating_date"
                 required
               >
-                <input
-                  type="date"
+                <DateInput
                   className="nf-input w-full text-sm"
                   style={inputStyle(matingIssues, 'mating_date')}
                   value={matingForm.mating_date}
@@ -1639,11 +2177,22 @@ export function BreedingPanel() {
                         : sb.boar_code;
                       return {
                         value: sb.semen_batch_id,
-                        label: `${sb.lot_no ?? 'no lot'} · ${who} · ${st.usable ? `${st.left} doses left` : st.why}${sb.expiry_date && st.usable ? ` · exp ${String(sb.expiry_date).slice(0, 10)}` : ''}`,
+                        label: `${sb.lot_no ?? 'no lot'} · ${who} · ${st.usable ? `${st.left} doses left` : st.why}${sb.expiry_date && st.usable ? ` · exp ${formatDate(sb.expiry_date)}` : ''}`,
+                        lot: sb.lot_no ?? 'no lot',
+                        boar: who,
+                        doses: st.usable ? `${st.left} left` : st.why,
+                        expiry: sb.expiry_date
+                          ? formatDate(sb.expiry_date)
+                          : NA,
                         disabled: !st.usable,
                       };
                     })}
-                    columnHeaders={false}
+                    columns={[
+                      { key: 'lot', label: 'Lot' },
+                      { key: 'boar', label: 'Boar' },
+                      { key: 'doses', label: 'Doses' },
+                      { key: 'expiry', label: 'Expiry' },
+                    ]}
                   />
                 </Field>
                 <Field
@@ -1671,15 +2220,10 @@ export function BreedingPanel() {
 
             <div className="grid grid-cols-2 gap-3">
               <Field
-                label={
-                  matingForm.mating_type === 'NATURAL_MATING'
-                    ? t('brpLabelBoarAnimal')
-                    : t('brpLabelBoarOptional')
-                }
+                label={t('brpLabelBoarOptional')}
                 htmlFor="mating-boar"
                 issues={matingIssues}
                 name="boar_animal_id"
-                required={matingForm.mating_type === 'NATURAL_MATING'}
                 hint={
                   matingLot && !matingLot.pooled
                     ? 'Named by the semen lot.'
@@ -1708,8 +2252,17 @@ export function BreedingPanel() {
                     .map((b) => ({
                       value: b.animal_id,
                       label: `${b.animal_code} · ${b.rfid_tag || t('brpNa')} · ${batches.find((x) => x.batch_id === b.current_batch_id)?.batch_no ?? 'no batch'}`,
+                      code: b.animal_code,
+                      tag: b.rfid_tag || t('brpNa'),
+                      batch:
+                        batches.find((x) => x.batch_id === b.current_batch_id)
+                          ?.batch_no ?? 'no batch',
                     }))}
-                  columnHeaders={false}
+                  columns={[
+                    { key: 'code', label: 'Boar' },
+                    { key: 'tag', label: 'Ear tag' },
+                    { key: 'batch', label: 'Batch' },
+                  ]}
                 />
               </Field>
               <Field
@@ -1718,8 +2271,7 @@ export function BreedingPanel() {
                 name="second_mating_date"
                 hint="Optional — within a week of the first."
               >
-                <input
-                  type="date"
+                <DateInput
                   className="nf-input w-full text-sm"
                   style={inputStyle(matingIssues, 'second_mating_date')}
                   value={matingForm.second_mating_date}
@@ -1756,8 +2308,7 @@ export function BreedingPanel() {
                     : undefined
                 }
               >
-                <input
-                  type="date"
+                <DateInput
                   className="nf-input w-full text-sm"
                   style={inputStyle(matingIssues, 'expected_farrowing_date')}
                   value={matingForm.expected_farrowing_date}
@@ -1773,8 +2324,7 @@ export function BreedingPanel() {
                 name="preg_check_date"
                 hint={t('brpValue28DaysPostMating')}
               >
-                <input
-                  type="date"
+                <DateInput
                   className="nf-input w-full text-sm"
                   style={inputStyle(matingIssues, 'preg_check_date')}
                   value={matingForm.preg_check_date}
@@ -1785,7 +2335,7 @@ export function BreedingPanel() {
                 />
               </Field>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <Field
                 label={t('brpLabelResultShort')}
                 htmlFor="mating-conception-result"
@@ -1803,41 +2353,6 @@ export function BreedingPanel() {
                     label: t(`brpResult${r}`),
                   }))}
                   columnHeaders={false}
-                />
-              </Field>
-              <Field
-                label={t('brpLabelSowParity')}
-                issues={matingIssues}
-                name="parity_number"
-              >
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  className="nf-input w-full text-sm"
-                  style={inputStyle(matingIssues, 'parity_number')}
-                  value={matingForm.parity_number}
-                  onChange={(e) => editMating('parity_number', e.target.value)}
-                />
-              </Field>
-              <Field
-                label={t('brpLabelBoarParity')}
-                issues={matingIssues}
-                name="boar_parity_number"
-              >
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  className="nf-input w-full text-sm"
-                  style={inputStyle(matingIssues, 'boar_parity_number')}
-                  value={matingForm.boar_parity_number}
-                  disabled={
-                    !matingForm.boar_animal_id && !matingForm.semen_lot_id
-                  }
-                  onChange={(e) =>
-                    editMating('boar_parity_number', e.target.value)
-                  }
                 />
               </Field>
             </div>
@@ -1876,7 +2391,7 @@ export function BreedingPanel() {
               <span className="font-semibold" style={S.primary}>
                 {selectedMating.sow_code}
               </span>{' '}
-              {t('brpMatedOn', { date: selectedMating.mating_date })}
+              {t('brpMatedOn', { date: formatDate(selectedMating.mating_date) })}
             </p>
             <form onSubmit={handlePregCheck} className="space-y-3">
               <div>
@@ -1885,6 +2400,7 @@ export function BreedingPanel() {
                   style={S.sub}
                 >
                   {t('brpLabelResult')}
+                  <span style={{ color: 'var(--danger)' }}> *</span>
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   {CONCEPTION_RESULTS.map((r) => (
@@ -1959,8 +2475,7 @@ export function BreedingPanel() {
                 >
                   {t('brpLabelCheckDate')}
                 </label>
-                <input
-                  type="date"
+                <DateInput
                   className="nf-input w-full text-sm"
                   style={S.input}
                   value={pregCheckForm.preg_check_date}
@@ -2019,7 +2534,7 @@ export function BreedingPanel() {
                 [
                   'Litter no.',
                   farrowSow
-                    ? `${(Number(farrowSow.parity_count) || 0) + 1} (parity completes at weaning)`
+                    ? `${(Number(farrowSow.parity_count) || 0) + 1} (sow parity rises to this on saving)`
                     : NA,
                 ],
                 [
@@ -2029,7 +2544,7 @@ export function BreedingPanel() {
                     : NA,
                 ],
               ]}
-              note="The live piglets become a head-count lot in a new batch, at nil value — the value of births is not decided yet — and no inventory ledger line is written for them."
+              note="The live piglets become a head-count lot in a new batch, with an entry in the Bio Asset Ledger. They are born at nil value; at weaning the sow's lactation feed, drug and overhead cost moves into the lot, spread over the piglets weaned."
             />
           }
         >
@@ -2095,11 +2610,24 @@ export function BreedingPanel() {
                   const m = openMatingOf(a.animal_id, matings);
                   return {
                     value: a.animal_id,
-                    label: `${a.animal_code} · parity ${a.parity_count ?? 0} · ${why ?? `served ${String(m!.mating_date).slice(0, 10)}, due ${String(m!.expected_farrowing_date).slice(0, 10)}`}`,
+                    label: `${a.animal_code} · parity ${a.parity_count ?? 0} · ${why ?? `served ${formatDate(m!.mating_date)}, due ${formatDate(m!.expected_farrowing_date)}`}`,
+                    code: a.animal_code,
+                    parity: String(a.parity_count ?? 0),
+                    served: m ? formatDate(m.mating_date) : NA,
+                    due: m
+                      ? formatDate(m.expected_farrowing_date)
+                      : NA,
+                    status: why ?? 'Ready to farrow',
                     disabled: !!why,
                   };
                 })}
-                columnHeaders={false}
+                columns={[
+                  { key: 'code', label: 'Code' },
+                  { key: 'parity', label: 'Parity' },
+                  { key: 'served', label: 'Served' },
+                  { key: 'due', label: 'Due' },
+                  { key: 'status', label: 'Status' },
+                ]}
               />
             </Field>
             {farrowSow && farrowMating && (
@@ -2110,7 +2638,7 @@ export function BreedingPanel() {
                 <div>
                   <span style={S.muted}>Mating</span>
                   <div className="font-semibold" style={S.primary}>
-                    {String(farrowMating.mating_date).slice(0, 10)} ·{' '}
+                    {formatDate(farrowMating.mating_date)} ·{' '}
                     {farrowMating.mating_type === 'AI' ? 'AI' : 'natural'}
                   </div>
                 </div>
@@ -2126,7 +2654,7 @@ export function BreedingPanel() {
                 <div>
                   <span style={S.muted}>Due</span>
                   <div className="font-semibold" style={S.primary}>
-                    {String(farrowMating.expected_farrowing_date).slice(0, 10)}
+                    {formatDate(farrowMating.expected_farrowing_date)}
                   </div>
                 </div>
                 <div>
@@ -2170,8 +2698,7 @@ export function BreedingPanel() {
                     : undefined
                 }
               >
-                <input
-                  type="date"
+                <DateInput
                   className="nf-input w-full text-sm"
                   style={inputStyle(farrowIssues, 'farrowing_date')}
                   value={farrowForm.farrowing_date}
@@ -2227,7 +2754,29 @@ export function BreedingPanel() {
               </Field>
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-4 gap-3">
+              <Field
+                label={t('brpLabelTotalBorn')}
+                issues={farrowIssues}
+                name="piglets_total_born"
+              >
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputMode="numeric"
+                  placeholder={String(farrowTotalBorn || '')}
+                  className="nf-input w-full text-sm"
+                  style={inputStyle(farrowIssues, 'piglets_total_born')}
+                  value={farrowForm.piglets_total_born}
+                  onChange={(e) =>
+                    setFarrowForm({
+                      ...farrowForm,
+                      piglets_total_born: e.target.value,
+                    })
+                  }
+                />
+              </Field>
               <Field
                 label={t('brpLabelBornLive')}
                 issues={farrowIssues}
@@ -2288,53 +2837,6 @@ export function BreedingPanel() {
                     setFarrowForm({
                       ...farrowForm,
                       piglets_mummified: e.target.value,
-                    })
-                  }
-                />
-              </Field>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <Field
-                label="Fostered in"
-                issues={farrowIssues}
-                name="foster_received"
-                hint="Piglets received from another sow"
-              >
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  inputMode="numeric"
-                  className="nf-input w-full text-sm"
-                  style={inputStyle(farrowIssues, 'foster_received')}
-                  value={farrowForm.foster_received}
-                  onChange={(e) =>
-                    setFarrowForm({
-                      ...farrowForm,
-                      foster_received: e.target.value,
-                    })
-                  }
-                />
-              </Field>
-              <Field
-                label="Fostered out"
-                issues={farrowIssues}
-                name="fostered_out"
-                hint="Piglets given to another sow"
-              >
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  inputMode="numeric"
-                  className="nf-input w-full text-sm"
-                  style={inputStyle(farrowIssues, 'fostered_out')}
-                  value={farrowForm.fostered_out}
-                  onChange={(e) =>
-                    setFarrowForm({
-                      ...farrowForm,
-                      fostered_out: e.target.value,
                     })
                   }
                 />
@@ -2406,7 +2908,8 @@ export function BreedingPanel() {
                   value={farrowForm.piglet_item_id}
                   onChange={(val) => {
                     setPickedPigletItem(
-                      pigletItems.find((i) => i.item_id === String(val)) ?? null,
+                      pigletItems.find((i) => i.item_id === String(val)) ??
+                        null,
                     );
                     setFarrowForm({
                       ...farrowForm,
@@ -2453,12 +2956,137 @@ export function BreedingPanel() {
       )}
 
       {/* ========================================================================= */}
+      {/* MODAL: FOSTER PIGLETS */}
+      {/* ========================================================================= */}
+      {showFosterModal && selectedFarrow && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div
+            className="rounded-[var(--radius-lg)] border max-w-md w-full p-6 space-y-4 shadow-2xl"
+            style={S.surface}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold" style={S.primary}>
+                Foster piglets
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowFosterModal(false)}
+                className="p-1 rounded-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                aria-label={t('close')}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-xs" style={S.sub}>
+              From{' '}
+              <span className="font-semibold" style={S.primary}>
+                {selectedFarrow.sow_code}
+              </span>
+              &apos;s litter ({selectedFarrow.piglet_lot_no}) to another
+              sow&apos;s litter that is still nursing. The head moves between
+              the two piglet lots and both litters are updated.
+            </p>
+            <form onSubmit={handleFoster} className="space-y-3">
+              <Field
+                label="Receiving litter"
+                htmlFor="foster-to"
+                issues={[]}
+                name="to_farrow_id"
+                required
+              >
+                <SearchableSelect
+                  id="foster-to"
+                  value={fosterForm.to_farrow_id}
+                  onChange={(val) =>
+                    setFosterForm({ ...fosterForm, to_farrow_id: String(val) })
+                  }
+                  placeholder="Choose the sow"
+                  options={farrowings
+                    .filter(
+                      (o) =>
+                        o.farrow_id !== selectedFarrow.farrow_id &&
+                        o.piglet_batch_id &&
+                        !(o.piglets_weaned > 0),
+                    )
+                    .map((o) => ({
+                      value: o.farrow_id,
+                      label: `${o.sow_code} · ${o.piglet_lot_no} · farrowed ${formatDate(o.farrowing_date)}`,
+                      sow: o.sow_code,
+                      lot: o.piglet_lot_no,
+                      farrowed: formatDate(o.farrowing_date),
+                      head: String(o.net_litter_size ?? NA),
+                    }))}
+                  columns={[
+                    { key: 'sow', label: 'Sow' },
+                    { key: 'lot', label: 'Lot' },
+                    { key: 'farrowed', label: 'Farrowed' },
+                    { key: 'head', label: 'Piglets' },
+                  ]}
+                />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field
+                  label="Piglets fostered"
+                  issues={[]}
+                  name="quantity"
+                  required
+                  hint={`Up to ${selectedFarrow.net_litter_size ?? NA} in this litter`}
+                >
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    className="nf-input w-full text-sm"
+                    style={S.input}
+                    value={fosterForm.quantity}
+                    onChange={(e) =>
+                      setFosterForm({ ...fosterForm, quantity: e.target.value })
+                    }
+                    required
+                  />
+                </Field>
+                <Field label="Date" issues={[]} name="foster_date" required>
+                  <DateInput
+                    className="nf-input w-full text-sm"
+                    style={S.input}
+                    value={fosterForm.foster_date}
+                    max={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) =>
+                      setFosterForm({
+                        ...fosterForm,
+                        foster_date: e.target.value,
+                      })
+                    }
+                    required
+                  />
+                </Field>
+              </div>
+              <div className="flex justify-end pt-2">
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={
+                    submitting ||
+                    !fosterForm.to_farrow_id ||
+                    !(Number(fosterForm.quantity) > 0)
+                  }
+                >
+                  {submitting ? t('brpBtnSaving') : 'Foster piglets'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* MODAL: RECORD WEANING */}
       {/* ========================================================================= */}
       {showWeanModal && selectedFarrow && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div
-            className="rounded-[var(--radius-lg)] border max-w-md w-full p-6 space-y-4 shadow-2xl"
+            className={`rounded-[var(--radius-lg)] border w-full p-6 space-y-4 shadow-2xl max-h-[92vh] overflow-y-auto ${selectedFarrow.piglet_batch_id ? 'max-w-3xl' : 'max-w-md'}`}
             style={S.surface}
           >
             <div className="flex items-center justify-between">
@@ -2483,36 +3111,38 @@ export function BreedingPanel() {
               <span className="font-semibold" style={S.primary}>
                 {selectedFarrow.sow_code}
               </span>{' '}
-              {t('brpFarrowedOn', { date: selectedFarrow.farrowing_date })}
+              {t('brpFarrowedOn', { date: formatDate(selectedFarrow.farrowing_date) })}
             </p>
             <form onSubmit={handleWeaning} className="space-y-3">
-              <div>
-                <label
-                  className="block text-xs font-semibold mb-1"
-                  style={S.sub}
-                >
-                  {t('brpLabelWeaningDate')}
-                </label>
-                <input
-                  type="date"
+              <Field
+                label={t('brpLabelWeaningDate')}
+                issues={[]}
+                name="weaning_date"
+                required
+              >
+                <DateInput
                   className="nf-input w-full text-sm"
                   style={S.input}
                   value={weanForm.weaning_date}
+                  min={
+                    selectedFarrow.farrowing_date
+                      ? formatDate(selectedFarrow.farrowing_date)
+                      : undefined
+                  }
                   onChange={(e) =>
                     setWeanForm({ ...weanForm, weaning_date: e.target.value })
                   }
                   required
                 />
-              </div>
+              </Field>
 
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label
-                    className="block text-xs font-semibold mb-1"
-                    style={S.accent}
-                  >
-                    {t('brpLabelPigletsWeaned')}
-                  </label>
+                <Field
+                  label={t('brpLabelPigletsWeaned')}
+                  issues={[]}
+                  name="piglets_weaned"
+                  required
+                >
                   <input
                     type="number"
                     min="0"
@@ -2527,14 +3157,12 @@ export function BreedingPanel() {
                     }
                     required
                   />
-                </div>
-                <div>
-                  <label
-                    className="block text-xs font-semibold mb-1"
-                    style={S.sub}
-                  >
-                    {t('brpLabelAvgWeanWeight')}
-                  </label>
+                </Field>
+                <Field
+                  label={t('brpLabelAvgWeanWeight')}
+                  issues={[]}
+                  name="avg_weaning_weight_kg"
+                >
                   <input
                     type="number"
                     step="0.01"
@@ -2549,22 +3177,56 @@ export function BreedingPanel() {
                       })
                     }
                   />
-                </div>
+                </Field>
               </div>
 
+              {Number(giltInfo?.litter?.already_selected) > 0 && (
+                <p
+                  className="rounded-[var(--radius-md)] border px-3 py-2 text-xs"
+                  style={{ ...S.surface, ...S.sub }}
+                >
+                  {t('brpWeanEarlierGilts', {
+                    count: giltInfo?.litter?.already_selected,
+                  })}
+                </p>
+              )}
               {selectedFarrow.piglet_batch_id && (
                 <div
                   className="rounded-[var(--radius-md)] border p-3 space-y-2"
                   style={S.surface}
                 >
                   <p className="text-xs font-semibold" style={S.primary}>
-                    Piglet lot {selectedFarrow.piglet_lot_no}
+                    Litter {selectedFarrow.piglet_lot_no} — with{' '}
+                    {selectedFarrow.sow_code} until weaning
                   </p>
                   <p className="text-[11px]" style={S.sub}>
                     Piglets of the lot not weaned are recorded as lost before
-                    weaning. Send the weaned piglets to a batch, or on to a
+                    weaning. Send the weaned piglets to an existing batch,
+                    create a new weaner batch for them, move the lot on to a
                     stage, or leave them where they are and transfer them later.
                   </p>
+                  <Field
+                    label="Reason for piglets lost before weaning"
+                    htmlFor="wean-loss-reason"
+                    issues={[]}
+                    name="loss_reason_id"
+                  >
+                    <ReasonSelect
+                      id="wean-loss-reason"
+                      ariaLabel="Reason for piglets lost before weaning"
+                      value={weanForm.loss_reason_id}
+                      valueFormat="id"
+                      onChange={(val) =>
+                        setWeanForm({ ...weanForm, loss_reason_id: val })
+                      }
+                      onClear={() =>
+                        setWeanForm({ ...weanForm, loss_reason_id: '' })
+                      }
+                      category="MORTALITY"
+                      placeholder="Select reason…"
+                      reasons={lossReasons as any}
+                    />
+                  </Field>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label
@@ -2582,6 +3244,8 @@ export function BreedingPanel() {
                             ...weanForm,
                             move_to_batch_id: String(val),
                             move_to_stage_code: '',
+                            new_batch_stage_code: '',
+                            new_batch_pen_id: '',
                           })
                         }
                         placeholder="Stay in the lot’s batch"
@@ -2618,6 +3282,8 @@ export function BreedingPanel() {
                             ...weanForm,
                             move_to_stage_code: String(val),
                             move_to_batch_id: '',
+                            new_batch_stage_code: '',
+                            new_batch_pen_id: '',
                           })
                         }
                         placeholder="No stage change"
@@ -2629,12 +3295,209 @@ export function BreedingPanel() {
                       />
                     </div>
                   </div>
+                  {/* A new weaner batch: it copies the lot's item, company, line of business, farm and shed; the stage and pen come from here. */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label
+                        className="block text-xs font-semibold mb-1"
+                        style={S.sub}
+                        htmlFor="wean-new-batch-stage"
+                      >
+                        Or create a new weaner batch in stage
+                      </label>
+                      <SearchableSelect
+                        id="wean-new-batch-stage"
+                        value={weanForm.new_batch_stage_code}
+                        onChange={(val) =>
+                          setWeanForm({
+                            ...weanForm,
+                            new_batch_stage_code: String(val),
+                            new_batch_pen_id: '',
+                            move_to_batch_id: '',
+                            move_to_stage_code: '',
+                          })
+                        }
+                        placeholder="No new batch"
+                        options={newBatchStageOptions}
+                        columnHeaders={false}
+                      />
+                    </div>
+                    {weanForm.new_batch_stage_code && (
+                      <div>
+                        <label
+                          className="block text-xs font-semibold mb-1"
+                          style={S.sub}
+                          htmlFor="wean-new-batch-pen"
+                        >
+                          Pen (in the lot’s shed)
+                        </label>
+                        <SearchableSelect
+                          id="wean-new-batch-pen"
+                          value={weanForm.new_batch_pen_id}
+                          onChange={(val) =>
+                            setWeanForm({
+                              ...weanForm,
+                              new_batch_pen_id: String(val),
+                            })
+                          }
+                          placeholder="No pen yet"
+                          options={newBatchPenOptions}
+                          columnHeaders={false}
+                        />
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
-              <div className="flex justify-end pt-2">
-                <Button type="submit" size="sm" disabled={submitting}>
-                  {submitting ? t('brpBtnSaving') : t('brpBtnSaveWeaning')}
+              {selectedFarrow.piglet_batch_id &&
+                !giltSelectedFrom(selectedFarrow.farrow_id) && (
+                  <div
+                    className="space-y-3 rounded-[var(--radius-lg)] border p-4"
+                    style={{
+                      ...S.surface,
+                      borderColor: giltRows.length
+                        ? 'var(--accent)'
+                        : 'var(--border)',
+                    }}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p
+                          className="flex items-center gap-2 text-sm font-semibold"
+                          style={S.primary}
+                        >
+                          <Sprout className="h-4 w-4" style={S.accent} />{' '}
+                          {t('brpWeanStepGilts')}
+                          <span
+                            className="rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide"
+                            style={{ ...S.muted, borderColor: 'var(--border)' }}
+                          >
+                            {t('brpWeanGiltsOptional')}
+                          </span>
+                        </p>
+                        <p className="mt-1 text-[11px]" style={S.sub}>
+                          {t('brpWeanGiltsHint')}
+                        </p>
+                      </div>
+                      <div className="w-36">
+                        <label
+                          className="block text-xs font-semibold mb-1"
+                          style={S.sub}
+                          htmlFor="wean-gilt-count"
+                        >
+                          {t('brpWeanGiltsCount')}
+                        </label>
+                        <input
+                          id="wean-gilt-count"
+                          type="number"
+                          min="0"
+                          max={weanedN || undefined}
+                          className="nf-input w-full text-sm font-bold"
+                          style={S.input}
+                          value={giltCount}
+                          placeholder="0"
+                          onChange={(e) => {
+                            setGiltCount(e.target.value);
+                            setGiltRows((rows) =>
+                              resizeBuffer(
+                                rows,
+                                Number(e.target.value),
+                                selectedFarrow.farrow_id,
+                                String(
+                                  selectedFarrow.farrowing_date ?? '',
+                                ).slice(0, 10),
+                              ),
+                            );
+                          }}
+                        />
+                        <p className="mt-1 text-[10px]" style={S.muted}>
+                          {weanedN > 0
+                            ? t('brpWeanGiltsMax', { count: weanedN })
+                            : t('brpWeanGiltsNone')}
+                        </p>
+                      </div>
+                    </div>
+                    {giltsTooMany && (
+                      <p className="text-xs" style={S.danger}>
+                        {t('brpGiltsOverWeaned')}
+                      </p>
+                    )}
+                    {giltRows.length > 0 && (
+                      <>
+                        <div className="max-w-xs">
+                          <label
+                            className="block text-xs font-semibold mb-1"
+                            style={S.sub}
+                            htmlFor="wean-gilt-colour"
+                          >
+                            {t('gsColour')}
+                          </label>
+                          <input
+                            id="wean-gilt-colour"
+                            className="nf-input w-full text-sm"
+                            style={S.input}
+                            value={giltColour}
+                            maxLength={30}
+                            onChange={(e) => setGiltColour(e.target.value)}
+                          />
+                        </div>
+                        <GiltCards
+                          rows={giltRows}
+                          parents={{
+                            dam_animal_id: selectedFarrow.sow_id,
+                            dam_code: selectedFarrow.sow_code,
+                            dam_parity:
+                              selectedFarrow.parity_number ??
+                              giltInfo?.litter?.parity_number,
+                            dam_tsi: giltInfo?.litter?.sow_tsi ?? null,
+                            sire_animal_id:
+                              giltInfo?.litter?.boar_animal_id ?? null,
+                            sire_code: giltInfo?.litter?.boar_code ?? null,
+                            lot_no: selectedFarrow.piglet_lot_no,
+                            farrowing_date: selectedFarrow.farrowing_date,
+                            avg_birth_weight_kg:
+                              selectedFarrow.avg_birth_weight_kg ?? null,
+                            avg_weaning_weight_kg:
+                              weanForm.avg_weaning_weight_kg || null,
+                          }}
+                          atWeaning
+                          errors={giltErrors}
+                          onChange={(key, patch) =>
+                            setGiltRows((rows) =>
+                              rows.map((r) =>
+                                r.key === key ? { ...r, ...patch } : r,
+                              ),
+                            )
+                          }
+                          onOpenAnimal={setDetailsAnimalId}
+                        />
+                      </>
+                    )}
+                  </div>
+                )}
+
+              <div className="flex items-center justify-between gap-3 pt-2">
+                <p className="text-[11px]" style={S.muted}>
+                  {selectedFarrow.piglet_batch_id &&
+                  !giltSelectedFrom(selectedFarrow.farrow_id)
+                    ? t('brpGiltsAfter')
+                    : ''}
+                </p>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={
+                    submitting ||
+                    (giltRows.length > 0 &&
+                      (Object.keys(giltErrors).length > 0 || giltsTooMany))
+                  }
+                >
+                  {submitting
+                    ? t('brpBtnSaving')
+                    : giltRows.length
+                      ? t('brpBtnSaveWeaningGilts', { count: giltRows.length })
+                      : t('brpBtnSaveWeaning')}
                 </Button>
               </div>
             </form>
@@ -2664,24 +3527,60 @@ export function BreedingPanel() {
                   batches.find((b) => b.batch_id === semenForm.batch_id)
                     ?.batch_no ?? NA,
                 ],
+                ...(semenForm.plan_no
+                  ? ([['Plan', semenForm.plan_no]] as [string, string][])
+                  : []),
                 [
-                  'Boars',
-                  semenChosenBoars.length
-                    ? semenChosenBoars.map((b) => b.animal_code).join(' + ')
+                  'Boars in the lot',
+                  semenAcceptedIds.length
+                    ? semenChosenBoars
+                        .filter((b) => semenAcceptedIds.includes(b.animal_id))
+                        .map((b) => b.animal_code)
+                        .join(' + ')
                     : NA,
                 ],
                 [
                   'Lot',
-                  semenChosenBoars.length > 1
+                  semenAcceptedIds.length > 1
                     ? 'one pooled lot'
-                    : semenChosenBoars.length
+                    : semenAcceptedIds.length
                       ? 'single-boar lot'
                       : NA,
                 ],
+                ...(lineRules?.label_template
+                  ? ([['Lot label', 'worked out on save']] as [string, string][])
+                  : []),
+                ...(semenDestination
+                  ? ([['For farm', semenDestination]] as [string, string][])
+                  : []),
+                ...(semenPlan?.reference
+                  ? ([
+                      [
+                        lineRules?.reference_label?.trim() || 'Reference',
+                        semenPlan.reference,
+                      ],
+                    ] as [string, string][])
+                  : []),
+                ...(lineRules?.colorant_name
+                  ? ([
+                      [
+                        'Colorant',
+                        `${lineRules.colorant_name}${lineRules.colorant_item_id && Number(lineRules.colorant_qty_per_lot) > 0 ? ` · ${Number(lineRules.colorant_qty_per_lot)} issued from stock` : ''}`,
+                      ],
+                    ] as [string, string][])
+                  : []),
+                [
+                  'Rejected',
+                  semenChosenBoars.length > semenAcceptedIds.length
+                    ? `${semenChosenBoars.length - semenAcceptedIds.length} recorded, not in the lot`
+                    : 'none',
+                ],
                 [
                   'Into inventory',
-                  semenItem && Number(semenForm.doses_collected) > 0
-                    ? `+${Number(semenForm.doses_collected)} × ${semenItem.item_name}`
+                  semenItem && lotDosesOf(semenForm) > 0
+                    ? semenItem.is_qc_required
+                      ? `${lotDosesOf(semenForm)} × ${semenItem.item_name} — held until its QC inspection is accepted`
+                      : `+${lotDosesOf(semenForm)} × ${semenItem.item_name}`
                     : 'nothing — no item chosen',
                 ],
                 [
@@ -2699,6 +3598,14 @@ export function BreedingPanel() {
             />
           }
         >
+          {semenForm.plan_info && (
+            <PlanSummary
+              plan={semenForm.plan_info}
+              referenceLabel={lineRules?.reference_label}
+              destination={semenDestination}
+            />
+          )}
+
           <Step
             n={1}
             title="Batch"
@@ -2711,29 +3618,80 @@ export function BreedingPanel() {
               remote={pagedBreedingBatches}
               value={semenForm.batch_id}
               onChange={(id) =>
-                setSemenForm((f) => ({
-                  ...f,
-                  batch_id: id,
-                  // Boars of another batch are no longer offered, so none of them can stay chosen.
-                  boar_animal_ids: f.boar_animal_ids.filter((b) =>
-                    boars.some(
-                      (x) => x.animal_id === b && x.current_batch_id === id,
+                setSemenForm((f) => {
+                  const inNew = inBatch(boars, id);
+                  const breeds = [
+                    ...new Set(inNew.map((b) => b.breed_id).filter(Boolean)),
+                  ];
+                  // Kept if the new batch has boars of it; a batch of one line needs no choosing.
+                  const breed_id = breeds.includes(f.breed_id)
+                    ? f.breed_id
+                    : breeds.length === 1
+                      ? breeds[0]
+                      : '';
+                  return {
+                    ...f,
+                    batch_id: id,
+                    breed_id,
+                    // Boars of another batch or line are no longer offered, so none of them can stay chosen.
+                    boar_animal_ids: f.boar_animal_ids.filter((b) =>
+                      inNew.some(
+                        (x) => x.animal_id === b && x.breed_id === breed_id,
+                      ),
                     ),
-                  ),
-                }))
+                  };
+                })
               }
               countOf={(id) => inBatch(boars, id).length}
               noun="boar"
               issues={semenIssues}
+              disabled={!!semenForm.plan_id}
             />
           </Step>
 
           <Step
             n={2}
             title="Boar or boars"
-            hint="Only the boars of that batch. Choose several to mix their semen into one pooled lot."
+            hint="Choose the breed (line) first, then its boars from that batch. Choose several to mix their semen into one pooled lot."
             done={semenForm.boar_animal_ids.length > 0}
           >
+            <Field
+              label="Breed (line)"
+              htmlFor="semen-breed"
+              issues={semenIssues}
+              name="breed_id"
+              required
+              hint="The line's rules (collection days, pooling, label, colorant) follow the breed."
+            >
+              <select
+                id="semen-breed"
+                className="nf-input w-full text-sm"
+                style={inputStyle(semenIssues, 'breed_id')}
+                value={semenForm.breed_id}
+                disabled={!semenForm.batch_id || !!semenForm.plan_id}
+                onChange={(e) =>
+                  setSemenForm((f) => ({
+                    ...f,
+                    breed_id: e.target.value,
+                    boar_animal_ids: [],
+                  }))
+                }
+              >
+                <option value="">
+                  {semenForm.batch_id
+                    ? 'Select breed...'
+                    : 'Choose the batch first'}
+                </option>
+                {semenBreedOptions.map((l) => (
+                  <option key={l.breed_id} value={l.breed_id}>
+                    {l.breed_code}
+                    {l.breed_name && l.breed_name !== l.breed_code
+                      ? ` · ${l.breed_name}`
+                      : ''}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field
               label={t('brpLabelBoarAnimal')}
               htmlFor="semen-boars"
@@ -2744,7 +3702,7 @@ export function BreedingPanel() {
               <EntityLookupField
                 id="semen-boars"
                 label="Boars"
-                options={semenBatchBoars.map((b) => {
+                options={semenLineBoars.map((b) => {
                   const since = daysSinceCollection(
                     b.animal_id,
                     semenBatches,
@@ -2770,19 +3728,21 @@ export function BreedingPanel() {
                   })
                 }
                 multiple
-                disabled={!semenForm.batch_id}
+                disabled={!semenForm.batch_id || !semenForm.breed_id}
                 placeholder={
-                  semenForm.batch_id
-                    ? t('brpSelectBoar')
-                    : 'Choose the batch first'
+                  !semenForm.batch_id
+                    ? 'Choose the batch first'
+                    : !semenForm.breed_id
+                      ? 'Choose the breed first'
+                      : t('brpSelectBoar')
                 }
               />
               {semenForm.boar_animal_ids.length > 1 && (
                 <p className="text-[11px] mt-1" style={S.muted}>
-                  One pooled lot from {semenForm.boar_animal_ids.length} boars:
-                  the doses entered below are the whole mix, and the cost is
-                  what every one of them cost. The first boar chosen is the
-                  lot's main boar.
+                  One pooled lot from the boars whose ejaculate is accepted:
+                  the lot's doses are what they gave, added up, and its cost
+                  is what every one of them cost. The first accepted boar is
+                  the lot's main boar.
                 </p>
               )}
             </Field>
@@ -2790,17 +3750,41 @@ export function BreedingPanel() {
 
           <Step
             n={3}
+            title="What each boar gave"
+            hint="Enter each boar's collection. A boar whose ejaculate is rejected is recorded with the reason and is in none of the lot's doses or costs."
+            done={
+              semenAcceptedIds.length > 0 &&
+              !semenIssues.some(
+                (i) => i.level === 'error' && i.field.startsWith('results.'),
+              )
+            }
+          >
+            <SemenBoarResults
+              boars={semenChosenBoars}
+              results={semenForm.results}
+              collectors={collectors}
+              issues={semenIssues}
+              onChange={(boarId, patch) =>
+                setSemenForm((f) => ({
+                  ...f,
+                  results: {
+                    ...f.results,
+                    [boarId]: { ...f.results[boarId], ...patch },
+                  },
+                }))
+              }
+            />
+          </Step>
+
+          <Step
+            n={4}
             title="Collection"
             done={
-              !!semenForm.doses_collected &&
+              lotDosesOf(semenForm) > 0 &&
               !semenIssues.some(
                 (i) =>
                   i.level === 'error' &&
-                  [
-                    'collection_date',
-                    'doses_collected',
-                    'output_item_id',
-                  ].includes(i.field),
+                  ['collection_date', 'output_item_id'].includes(i.field),
               )
             }
           >
@@ -2811,8 +3795,7 @@ export function BreedingPanel() {
                 name="collection_date"
                 required
               >
-                <input
-                  type="date"
+                <DateInput
                   className="nf-input w-full text-sm"
                   style={inputStyle(semenIssues, 'collection_date')}
                   value={semenForm.collection_date}
@@ -2829,22 +3812,14 @@ export function BreedingPanel() {
                 label={t('brpLabelDosesCollected')}
                 issues={semenIssues}
                 name="doses_collected"
-                required
+                hint="Worked out: the accepted boars' doses added up."
               >
                 <input
                   type="number"
-                  min="1"
-                  step="1"
-                  inputMode="numeric"
+                  readOnly
+                  tabIndex={-1}
                   className="nf-input w-full text-sm font-bold"
-                  style={inputStyle(semenIssues, 'doses_collected')}
-                  value={semenForm.doses_collected}
-                  onChange={(e) =>
-                    setSemenForm({
-                      ...semenForm,
-                      doses_collected: e.target.value,
-                    })
-                  }
+                  value={lotDosesOf(semenForm) || ''}
                 />
               </Field>
             </div>
@@ -2874,105 +3849,80 @@ export function BreedingPanel() {
                 columnHeaders={false}
                 remote={pagedSemenItems}
               />
+              {semenItem?.is_qc_required && (
+                <p
+                  className="mt-2 rounded-lg border px-3 py-2 text-xs"
+                  style={{ borderColor: 'var(--warning)', color: 'var(--text-secondary)' }}
+                >
+                  <span className="font-semibold" style={{ color: 'var(--warning)' }}>
+                    QC required.
+                  </span>{' '}
+                  Saving this collection does not put the doses into stock yet. It raises a QC inspection (Inventory &gt; QC Inspections); the doses are
+                  posted when it is completed and accepted, and the lot cannot be used in a mating before then.
+                </p>
+              )}
             </Field>
           </Step>
 
-          <Step
-            n={4}
-            title="Quality"
-            hint="Read at collection; kept on the lot and printed on its QR. Optional."
-          >
-            <div className="grid grid-cols-3 gap-3">
-              <Field label="Volume (ml)" issues={semenIssues} name="volume_ml">
-                <input
-                  id="semen-volume"
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  className="nf-input w-full text-sm"
-                  style={inputStyle(semenIssues, 'volume_ml')}
-                  value={semenForm.volume_ml}
-                  onChange={(e) =>
-                    setSemenForm({ ...semenForm, volume_ml: e.target.value })
-                  }
-                />
-              </Field>
-              <Field
-                label="Motility (%)"
-                issues={semenIssues}
-                name="motility_pct"
+          {SHOW_SEMEN_PERIOD_COSTS && (
+            <>
+              <Step
+                n={5}
+                title={t('brpLabelPeriodRunningCosts')}
+                hint="Leave these empty to have them worked out from what was posted for the boar since his last collection: his own feed and medicine, his overheads and his share of his batch's, and his amortisation."
               >
-                <input
-                  id="semen-motility"
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.1"
-                  className="nf-input w-full text-sm"
-                  style={inputStyle(semenIssues, 'motility_pct')}
-                  value={semenForm.motility_pct}
-                  onChange={(e) =>
-                    setSemenForm({ ...semenForm, motility_pct: e.target.value })
-                  }
-                />
-              </Field>
-              <Field
-                label="Concentration (M/ml)"
-                issues={semenIssues}
-                name="concentration_m_per_ml"
-              >
-                <input
-                  id="semen-concentration"
-                  type="number"
-                  min="0"
-                  step="1"
-                  className="nf-input w-full text-sm"
-                  style={inputStyle(semenIssues, 'concentration_m_per_ml')}
-                  value={semenForm.concentration_m_per_ml}
-                  onChange={(e) =>
-                    setSemenForm({
-                      ...semenForm,
-                      concentration_m_per_ml: e.target.value,
-                    })
-                  }
-                />
-              </Field>
-            </div>
-          </Step>
-
-          <Step
-            n={5}
-            title={t('brpLabelPeriodRunningCosts')}
-            hint="Leave these empty to have them worked out from what was posted for the boar since his last collection: his own feed and medicine, his overheads and his share of his batch's, and his amortisation."
-          >
-            <div className="grid grid-cols-2 gap-3">
-              {(
-                [
-                  ['amortisation_period', t('brpLabelAmortisation')],
-                  ['feed_cost_period', t('brpLabelFeedCost')],
-                  ['drug_cost_period', t('brpLabelDrugsMed')],
-                  ['overhead_cost_period', t('brpLabelLabOverhead')],
-                ] as const
-              ).map(([key, label]) => (
-                <Field key={key} label={label} issues={semenIssues} name={key}>
-                  <input
-                    type="number"
-                    min="0"
-                    className="nf-input w-full text-sm"
-                    style={inputStyle(semenIssues, key)}
-                    value={semenForm[key]}
-                    onChange={(e) =>
-                      setSemenForm({ ...semenForm, [key]: e.target.value })
-                    }
-                  />
-                </Field>
-              ))}
-            </div>
-          </Step>
+                <div className="grid grid-cols-2 gap-3">
+                  {(
+                    [
+                      ['amortisation_period', t('brpLabelAmortisation')],
+                      ['feed_cost_period', t('brpLabelFeedCost')],
+                      ['drug_cost_period', t('brpLabelDrugsMed')],
+                      ['overhead_cost_period', t('brpLabelLabOverhead')],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <Field
+                      key={key}
+                      label={label}
+                      issues={semenIssues}
+                      name={key}
+                    >
+                      <input
+                        type="number"
+                        min="0"
+                        className="nf-input w-full text-sm"
+                        style={inputStyle(semenIssues, key)}
+                        value={semenForm[key]}
+                        onChange={(e) =>
+                          setSemenForm({ ...semenForm, [key]: e.target.value })
+                        }
+                      />
+                    </Field>
+                  ))}
+                </div>
+              </Step>
+            </>
+          )}
         </EntryModal>
       )}
 
       {/* ── ANIMAL DETAILS POPUP ── */}
+      <GiltSelectionDialog
+        open={giltDialog !== null}
+        farrow={giltDialog?.farrow ?? null}
+        draftId={giltDialog?.draftId ?? null}
+        onClose={() => setGiltDialog(null)}
+        onChanged={() => loadData()}
+      />
+
+      <SemenLotDetails
+        lotId={semenLotOpen}
+        onClose={() => setSemenLotOpen(null)}
+        onOpenAnimal={(id) => {
+          setSemenLotOpen(null);
+          setDetailsAnimalId(id);
+        }}
+      />
+
       <AnimalDetailsModal
         animalId={detailsAnimalId}
         onClose={() => setDetailsAnimalId(null)}

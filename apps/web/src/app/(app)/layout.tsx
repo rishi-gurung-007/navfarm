@@ -50,7 +50,7 @@ import { ContextNavProvider } from '../../components/shell/ContextNav';
 import { PROFILE_ITEMS } from '../../components/shell/ProfilePopover';
 import { ThemeIconButton } from '../../components/shell/ThemeIconButton';
 import { resolveLobFamily } from '@/lib/lob';
-import { LIVESTOCK_SECTIONS } from '@/components/console/livestock/livestock-page-shell';
+import { LIVESTOCK_MENU_SECTIONS } from '@/components/console/livestock/livestock-page-shell';
 import { FINANCE_SECTIONS } from '@/components/console/finance/finance-page-shell';
 import { EXPENSE_SECTIONS } from '@/components/console/expenses/expense-shell';
 import { REPORT_SECTIONS } from '@/components/console/reports/reports-shell';
@@ -392,7 +392,7 @@ export default function ConsoleLayout({
     { label: t('navBatchRecords'), href: '/batches/records' },
     { label: t('navBatchTransfers'), href: '/batches/transfers' },
   ];
-  const livestockChildren = LIVESTOCK_SECTIONS.map((section) => ({
+  const livestockChildren = LIVESTOCK_MENU_SECTIONS.map((section) => ({
     label:
       section.key === 'register' && lobFamily === 'DAIRY'
         ? t('dairyCowRegister')
@@ -416,6 +416,7 @@ export default function ConsoleLayout({
   const inventoryChildren = [
     { label: t('invStockBalance'), href: '/inventory/balance' },
     { label: t('invGoodsReceipt'), href: '/inventory/goods-receipt' },
+    { label: t('invQcInspection'), href: '/inventory/qc-inspection' },
     { label: t('invTransfers'), href: '/inventory/transfers' },
     { label: t('invStockAdjustment'), href: '/inventory/stock-adjustment' },
     { label: t('invLedger'), href: '/inventory/ledger' },
@@ -472,6 +473,13 @@ export default function ConsoleLayout({
       return ai - bi;
     })
     .map((c) => ({ label: tLabel(c.label), href: `/master-data/${c.key}` }));
+  // QC Parameters is a master the item card's QC Specification picks from (client, 9 Nov), so it is listed with the masters, right after
+  // Item. Its page is its own panel, not a config-driven table, so it is not in MASTER_DATA_CONFIGS.
+  {
+    const qcParameters = { label: t('navQcParameters'), href: '/master-data/qc-parameter' };
+    const afterItem = masterDataChildren.findIndex((c) => c.href === '/master-data/item');
+    masterDataChildren.splice(afterItem === -1 ? masterDataChildren.length : afterItem + 1, 0, qcParameters);
+  }
 
   let navItems: AppShellNavItem[] = [];
 
@@ -731,7 +739,6 @@ export default function ConsoleLayout({
         children: [
           { label: t('navSettingsArea'), href: '/settings/area' },
           { label: t('navParameters'), href: '/settings/parameters' },
-          { label: t('navQcParameters'), href: '/settings/qc' },
         ],
       },
     ];

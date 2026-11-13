@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDateTime } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -191,10 +192,7 @@ function AuditValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
     if (!Number.isNaN(d.getTime())) {
       return (
         <span className="font-mono" style={{ color: 'var(--text-primary)' }}>
-          {d.toLocaleString(undefined, {
-            dateStyle: 'medium',
-            timeStyle: 'short',
-          })}
+          {formatDateTime(d)}
         </span>
       );
     }
@@ -682,10 +680,7 @@ export default function AuditPage() {
                         style={{ color: 'var(--text-secondary)' }}
                       >
                         {log.created_at
-                          ? new Date(log.created_at).toLocaleString(undefined, {
-                              dateStyle: 'medium',
-                              timeStyle: 'short',
-                            })
+                          ? formatDateTime(log.created_at)
                           : NA}
                       </TableCell>
                       <TableCell className="px-5">

@@ -1,12 +1,15 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, isNull, count, sql, inArray } from 'drizzle-orm';
+import { eq, and, like, isNull, count, sql, inArray, gte, lte } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateJournalDto, UpdateJournalDto, QueryJournalDto } from './dto/journal.dto';
+import { journalOrderBy } from './journal-order';
+import { postingDateRangeIssue } from './journal-date-range';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -27,6 +30,7 @@ export class JournalService {
   constructor(
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
+    private readonly numberSeriesService: NumberSeriesService,
   ) { }
 
   private get db(): MySql2Database<typeof schema> {
@@ -37,22 +41,24 @@ export class JournalService {
     return tenantDb;
   }
 
-  // `executor` must be the active transaction when called from inside one (both
-  // callers below do this) — `.for('update')` locks the counted rows so a second
-  // concurrent call blocks until the first commits its insert, instead of both
-  // reading the same count and generating the same journal number. This is the
-  // hottest of the document-number generators — every domain's GL auto-posting
-  // routes through `createAndPostSystemJournal`.
+  /**
+   * The readable journal number (JE-000001), from the company's Journal series: the one configured on the Number
+   * Series master, else a built-in default made the first time a journal is written and carrying on after the highest
+   * number the company already holds. `executor` must be the active transaction when called from inside one (both
+   * callers below do this): the series row is locked until the journal is inserted, so two postings never share a
+   * number and a failed posting gives its number back. This is the hottest of the document-number generators — every
+   * domain's GL auto-posting routes through `createAndPostSystemJournal` — so the series is found with one lookup and
+   * the taken-code check asks about one candidate, not the whole table.
+   */
   private async generateJournalNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
-    const [row] = await executor
-      .select({
-        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.journalHeader.journal_no}, 4) AS UNSIGNED)), 0)`,
-      })
-      .from(schema.journalHeader)
-      .where(and(eq(schema.journalHeader.tenant_id, tenantId), eq(schema.journalHeader.company_id, companyId)))
-      .for('update');
-    const seq = Number(row?.maxSeq || 0) + 1;
-    return `JE-${String(seq).padStart(6, '0')}`;
+    const seriesCode = await this.numberSeriesService.seriesCodeForDocument(
+      tenantId,
+      companyId,
+      { seriesCode: 'JOURNAL', seriesName: 'Journal Entry Number', documentType: 'JOURNAL', prefix: 'JE', separator: '-', seqLength: 6 },
+      async () => (await this.db.select({ no: schema.journalHeader.journal_no }).from(schema.journalHeader)
+        .where(and(eq(schema.journalHeader.tenant_id, tenantId), eq(schema.journalHeader.company_id, companyId)))).map((r) => r.no),
+    );
+    return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, executor);
   }
 
   private sumLines(lines: { debit_amount?: number; credit_amount?: number }[]) {
@@ -341,6 +347,10 @@ export class JournalService {
     if (query.status) conditions.push(eq(schema.journalHeader.status, query.status));
     if (query.source) conditions.push(eq(schema.journalHeader.source, query.source));
     if (query.search) conditions.push(like(schema.journalHeader.journal_no, `%${query.search}%`));
+    const rangeIssue = postingDateRangeIssue(query.dateFrom, query.dateTo);
+    if (rangeIssue) throw new BadRequestException(rangeIssue);
+    if (query.dateFrom) conditions.push(gte(schema.journalHeader.posting_date, query.dateFrom.slice(0, 10)));
+    if (query.dateTo) conditions.push(lte(schema.journalHeader.posting_date, query.dateTo.slice(0, 10)));
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
@@ -349,6 +359,7 @@ export class JournalService {
       .select()
       .from(schema.journalHeader)
       .where(and(...conditions))
+      .orderBy(...journalOrderBy(query.sort, query.dir))
       .limit(limit)
       .offset(offset);
   }

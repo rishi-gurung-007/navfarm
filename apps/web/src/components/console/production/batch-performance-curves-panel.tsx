@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import {
@@ -311,7 +312,7 @@ export default function BatchPerformanceCurvesPanel({
                       )}
                     </td>
                     <td className="px-3 py-2 font-mono" style={S.muted}>
-                      {c.date}
+                      {formatDate(c.date)}
                     </td>
                     <td className="px-3 py-2 font-mono">
                       {targetFeed > 0

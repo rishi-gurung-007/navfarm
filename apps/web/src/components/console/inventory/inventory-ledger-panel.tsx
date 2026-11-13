@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -29,10 +31,12 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Badge } from '@/components/ui/badge';
 import { Dialog } from '@/components/ui/dialog';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { Field } from '@/components/ui/field';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import InventoryLedgerDetail, {
-  formatBcEntryType,
-  formatBcDocumentType,
+  formatTransactionType,
+  formatDocumentType,
   isInboundEntry,
 } from './inventory-ledger-detail';
 
@@ -239,221 +243,237 @@ export default function InventoryLedgerPanel() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Stats & export — no heading of its own: the page title already names the ledger. */}
-      <div className="flex flex-wrap items-center justify-end gap-3">
-        <div className="flex items-center gap-2">
-          <Badge variant="neutral" className="text-xs font-mono">
-            {rows.length} {rows.length === 1 ? 'entry' : 'entries'}
-          </Badge>
-          <button
-            type="button"
-            onClick={() => exportLedger('xlsx')}
-            disabled={!!exporting}
-            className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition hover:bg-[var(--surface-raised)] disabled:cursor-not-allowed disabled:opacity-60"
-            style={{ ...S.surface, ...S.primary }}
-            title="Download every entry matching the filters as an Excel file"
-          >
-            {exporting === 'xlsx' ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <FileSpreadsheet className="h-3.5 w-3.5" />
-            )}{' '}
-            Export Excel
-          </button>
-          <button
-            type="button"
-            onClick={() => exportLedger('csv')}
-            disabled={!!exporting}
-            className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition hover:bg-[var(--surface-raised)] disabled:cursor-not-allowed disabled:opacity-60"
-            style={{ ...S.surface, ...S.primary }}
-            title="Download every entry matching the filters as a CSV file"
-          >
-            {exporting === 'csv' ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Download className="h-3.5 w-3.5" />
-            )}{' '}
-            Export CSV
-          </button>
-          {hasActiveFilters && (
+      <PageHeader
+        title={t('invLedgerTitle')}
+        actions={
+          <div className="flex items-center gap-2">
+            <Badge variant="neutral" className="text-xs font-mono">
+              {rows.length} {rows.length === 1 ? 'entry' : 'entries'}
+            </Badge>
             <button
               type="button"
-              onClick={resetFilters}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium hover:bg-[var(--surface-raised)] transition"
-              style={S.sub}
+              onClick={() => exportLedger('xlsx')}
+              disabled={!!exporting}
+              className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition hover:bg-[var(--surface-raised)] disabled:cursor-not-allowed disabled:opacity-60"
+              style={{ ...S.surface, ...S.primary }}
+              title="Download every entry matching the filters as an Excel file"
             >
-              <RotateCcw className="h-3 w-3" /> Reset Filters
+              {exporting === 'xlsx' ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="h-3.5 w-3.5" />
+              )}{' '}
+              Export Excel
             </button>
-          )}
-        </div>
-      </div>
+            <button
+              type="button"
+              onClick={() => exportLedger('csv')}
+              disabled={!!exporting}
+              className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition hover:bg-[var(--surface-raised)] disabled:cursor-not-allowed disabled:opacity-60"
+              style={{ ...S.surface, ...S.primary }}
+              title="Download every entry matching the filters as a CSV file"
+            >
+              {exporting === 'csv' ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}{' '}
+              Export CSV
+            </button>
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium hover:bg-[var(--surface-raised)] transition"
+                style={S.sub}
+              >
+                <RotateCcw className="h-3 w-3" /> Reset Filters
+              </button>
+            )}
+          </div>
+        }
+      />
 
       {/* Filter Controls Bar (Business Central standard dimensions & filters) */}
       <div
-        className="flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border p-2.5"
+        className="flex flex-wrap items-end gap-3 rounded-[var(--radius-md)] border p-3"
         style={S.surface}
       >
         {/* Document No / Batch search */}
-        <div className="relative">
-          <input
-            type="text"
-            value={documentNo}
-            onChange={(e) => setDocumentNo(e.target.value)}
-            placeholder="Search Document No., Item, Batch, Ext. Doc No…"
-            className={`${inputCls} w-60 pl-7`}
-            style={S.input}
-          />
-          <Search
-            className="absolute left-2 top-2 h-3.5 w-3.5"
-            style={S.muted}
-          />
-        </div>
+        <Field label={t('ilpSearch')} htmlFor="ilp-search">
+          <div className="relative">
+            <input
+              id="ilp-search"
+              type="text"
+              value={documentNo}
+              onChange={(e) => setDocumentNo(e.target.value)}
+              placeholder="Search Document No., Item, Batch, Ext. Doc No…"
+              className={`${inputCls} w-60 pl-8 h-9`}
+              style={S.input}
+            />
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
+              style={S.muted}
+            />
+          </div>
+        </Field>
 
         {/* Location Code Filter */}
-        <div className="min-w-[12rem] max-w-[190px]">
-          <SearchableSelect
-            ariaLabel="Location Code"
-            value={warehouseId}
-            onChange={setWarehouseId}
-            options={[
-              {
-                value: '',
-                code: 'ALL',
-                name: 'All Locations',
-                label: 'All Locations (Location Code)',
-              },
-              ...warehouses.map((wh) => ({
-                value: wh.warehouse_id,
-                code: wh.warehouse_code,
-                name: wh.warehouse_name,
-                label: `${wh.warehouse_code} — ${wh.warehouse_name}`,
-              })),
-            ]}
-            columnHeaders={['Code', 'Location Name']}
-            columns={[
-              { key: 'code', label: 'Code' },
-              { key: 'name', label: 'Location Name' },
-            ]}
-            placeholder="All Locations"
-            triggerClassName="nf-input-sm w-full h-9"
-          />
-        </div>
+        <Field label={t('ilpLocation')} htmlFor="ilp-location">
+          <div className="min-w-[12rem] max-w-[190px]">
+            <SearchableSelect
+              id="ilp-location"
+              ariaLabel="Location Code"
+              value={warehouseId}
+              onChange={setWarehouseId}
+              options={[
+                {
+                  value: '',
+                  code: 'ALL',
+                  name: 'All Locations',
+                  label: 'All Locations (Location Code)',
+                },
+                ...warehouses.map((wh) => ({
+                  value: wh.warehouse_id,
+                  code: wh.warehouse_code,
+                  name: wh.warehouse_name,
+                  label: `${wh.warehouse_code} — ${wh.warehouse_name}`,
+                })),
+              ]}
+              columnHeaders={['Code', 'Location Name']}
+              columns={[
+                { key: 'code', label: 'Code' },
+                { key: 'name', label: 'Location Name' },
+              ]}
+              placeholder="All Locations"
+              triggerClassName="nf-input-sm w-full h-9"
+            />
+          </div>
+        </Field>
 
         {/* Item Filter */}
-        <div className="min-w-[13rem] max-w-[200px]">
-          <SearchableSelect
-            ariaLabel="Item"
-            value={itemId}
-            onChange={setItemId}
-            options={[
-              {
-                value: '',
-                code: 'ALL',
-                name: t('ilpAllItemsOptions', { count: items.length }),
-                label: t('ilpAllItemsOptions', { count: items.length }),
-              },
-              ...items.map((it) => ({
-                value: it.item_id,
-                code: it.item_code,
-                name: it.item_name,
-                label: `${it.item_code} — ${it.item_name}`,
-              })),
-            ]}
-            columnHeaders={['Code', 'Item Name']}
-            columns={[
-              { key: 'code', label: 'Code' },
-              { key: 'name', label: 'Item Name' },
-            ]}
-            placeholder={t('ilpAllItemsOptions', { count: items.length })}
-            triggerClassName="nf-input-sm w-full h-9"
-          />
-        </div>
+        <Field label={t('ilpItemLabel')} htmlFor="ilp-item">
+          <div className="min-w-[13rem] max-w-[200px]">
+            <SearchableSelect
+              id="ilp-item"
+              ariaLabel="Item"
+              value={itemId}
+              onChange={setItemId}
+              options={[
+                {
+                  value: '',
+                  code: 'ALL',
+                  name: t('ilpAllItemsOptions', { count: items.length }),
+                  label: t('ilpAllItemsOptions', { count: items.length }),
+                },
+                ...items.map((it) => ({
+                  value: it.item_id,
+                  code: it.item_code,
+                  name: it.item_name,
+                  label: `${it.item_code} — ${it.item_name}`,
+                })),
+              ]}
+              columnHeaders={['Code', 'Item Name']}
+              columns={[
+                { key: 'code', label: 'Code' },
+                { key: 'name', label: 'Item Name' },
+              ]}
+              placeholder={t('ilpAllItemsOptions', { count: items.length })}
+              triggerClassName="nf-input-sm w-full h-9"
+            />
+          </div>
+        </Field>
 
         {/* Entry Type Filter (Transaction Ledger Structure Row 11) */}
-        <div className="min-w-[9rem]">
-          <SearchableSelect
-            ariaLabel="Entry Type"
-            value={entryType}
-            onChange={setEntryType}
-            options={[
-              { value: '', label: 'All Entry Types' },
-              { value: 'POSITIVE', label: 'Positive (+)' },
-              { value: 'NEGATIVE', label: 'Negative (-)' },
-              { value: 'TRANSFER', label: 'Transfer' },
-              { value: 'OVERHEAD', label: 'Overhead' },
-              { value: 'DESCRIPTIVE', label: 'Descriptive' },
-            ]}
-            columnHeaders={false}
-            triggerClassName="nf-input-sm min-w-[9rem] h-9"
-          />
-        </div>
+        <Field label={t('ilpType')} htmlFor="ilp-entry-type">
+          <div className="min-w-[9rem]">
+            <SearchableSelect
+              id="ilp-entry-type"
+              ariaLabel="Entry Type"
+              value={entryType}
+              onChange={setEntryType}
+              options={[
+                { value: '', label: 'All Entry Types' },
+                { value: 'POSITIVE', label: 'Positive (+)' },
+                { value: 'NEGATIVE', label: 'Negative (-)' },
+                { value: 'TRANSFER', label: 'Transfer' },
+                { value: 'OVERHEAD', label: 'Overhead' },
+                { value: 'DESCRIPTIVE', label: 'Descriptive' },
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[9rem] h-9"
+            />
+          </div>
+        </Field>
 
         {/* Transaction Type Filter (Transaction Ledger Structure Row 12) */}
-        <div className="min-w-[11rem]">
-          <SearchableSelect
-            ariaLabel="Transaction Type"
-            value={transactionType}
-            onChange={setTransactionType}
-            options={[
-              { value: '', label: t('ilpAllTransactionTypes') },
-              { value: 'PURCHASE', label: 'Purchase' },
-              { value: 'CONSUMPTION', label: 'Consumption' },
-              { value: 'OUTPUT', label: 'Output' },
-              { value: 'TRANSFER_SHIPMENT', label: 'Transfer_Shipment' },
-              { value: 'TRANSFER_RECEIPT', label: 'Transfer_Receipt' },
-              { value: 'SALES', label: 'Sales' },
-              { value: 'VARIANCE_POSITIVE', label: 'Variance_Positive' },
-              { value: 'VARIANCE_NEGATIVE', label: 'Variance_Negative' },
-              { value: 'OVERHEAD', label: 'Overhead' },
-              { value: 'DESCRIPTIVE', label: 'Descriptive' },
-              { value: 'BIO_HARVEST', label: 'Harvest (bio-asset slaughter)' },
-              { value: 'REVERSAL', label: 'Reversal' },
-            ]}
-            columnHeaders={false}
-            triggerClassName="nf-input-sm min-w-[11rem] h-9"
-          />
-        </div>
+        <Field label={t('ilpTransactionType')} htmlFor="ilp-transaction-type">
+          <div className="min-w-[11rem]">
+            <SearchableSelect
+              id="ilp-transaction-type"
+              ariaLabel="Transaction Type"
+              value={transactionType}
+              onChange={setTransactionType}
+              options={[
+                { value: '', label: t('ilpAllTransactionTypes') },
+                { value: 'PURCHASE', label: 'Purchase' },
+                { value: 'CONSUMPTION', label: 'Consumption' },
+                { value: 'OUTPUT', label: 'Output' },
+                { value: 'TRANSFER_SHIPMENT', label: 'Transfer_Shipment' },
+                { value: 'TRANSFER_RECEIPT', label: 'Transfer_Receipt' },
+                { value: 'SALES', label: 'Sales' },
+                { value: 'VARIANCE_POSITIVE', label: 'Variance_Positive' },
+                { value: 'VARIANCE_NEGATIVE', label: 'Variance_Negative' },
+                { value: 'OVERHEAD', label: 'Overhead' },
+                { value: 'DESCRIPTIVE', label: 'Descriptive' },
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[11rem] h-9"
+            />
+          </div>
+        </Field>
 
         {/* Sort By */}
-        <div className="min-w-[10rem]">
-          <SearchableSelect
-            ariaLabel="Sort By"
-            value={sortBy}
-            onChange={(val) => setSortBy(val as 'created_at' | 'posting_date')}
-            options={[
-              { value: 'created_at', label: 'Recently Posted First' },
-              { value: 'posting_date', label: 'Posting Date' },
-            ]}
-            columnHeaders={false}
-            triggerClassName="nf-input-sm min-w-[10rem] h-9"
-          />
-        </div>
+        <Field label={t('ilpSortBy')} htmlFor="ilp-sort-by">
+          <div className="min-w-[10rem]">
+            <SearchableSelect
+              id="ilp-sort-by"
+              ariaLabel="Sort By"
+              value={sortBy}
+              onChange={(val) =>
+                setSortBy(val as 'created_at' | 'posting_date')
+              }
+              options={[
+                { value: 'created_at', label: 'Recently Posted First' },
+                { value: 'posting_date', label: 'Posting Date' },
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[10rem] h-9"
+            />
+          </div>
+        </Field>
 
-        {/* Date Range */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-medium" style={S.muted}>
-            {t('ilpFrom')}
-          </span>
-          <input
-            type="date"
+        {/* Date Range: From */}
+        <Field label={t('ilpFrom')} htmlFor="ilp-date-from">
+          <DateInput
+            id="ilp-date-from"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
-            className={inputCls}
+            className={`${inputCls} h-9`}
             style={S.input}
           />
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-medium" style={S.muted}>
-            {t('ilpTo')}
-          </span>
-          <input
-            type="date"
+        </Field>
+
+        {/* Date Range: To */}
+        <Field label={t('ilpTo')} htmlFor="ilp-date-to">
+          <DateInput
+            id="ilp-date-to"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
-            className={inputCls}
+            className={`${inputCls} h-9`}
             style={S.input}
           />
-        </div>
+        </Field>
       </div>
 
       <Toast variant="danger" message={error} onClose={() => setError('')} />
@@ -464,7 +484,7 @@ export default function InventoryLedgerPanel() {
         style={S.surface}
       >
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm min-w-[1250px]">
+          <table className="w-full border-collapse text-left text-sm min-w-[1320px]">
             <TableHeader>
               <tr className="border-b border-(--row-border)">
                 <TableHead className="whitespace-nowrap w-20">
@@ -496,6 +516,9 @@ export default function InventoryLedgerPanel() {
                 <TableHead className="whitespace-nowrap text-right w-28">
                   {t('ilpRemaining')}
                 </TableHead>
+                <TableHead className="whitespace-nowrap text-center w-16">
+                  UOM
+                </TableHead>
                 <TableHead className="whitespace-nowrap text-right w-24">
                   {t('ilpRate')}
                 </TableHead>
@@ -517,7 +540,7 @@ export default function InventoryLedgerPanel() {
               {loading ? (
                 <tr>
                   <TableCell
-                    colSpan={15}
+                    colSpan={16}
                     className="py-12 text-center"
                     style={S.sub}
                   >
@@ -531,7 +554,7 @@ export default function InventoryLedgerPanel() {
               ) : rows.length === 0 ? (
                 <tr>
                   <TableCell
-                    colSpan={15}
+                    colSpan={16}
                     className="py-12 text-center"
                     style={S.sub}
                   >
@@ -572,7 +595,7 @@ export default function InventoryLedgerPanel() {
                         className="whitespace-nowrap font-medium"
                         style={S.primary}
                       >
-                        {row.posting_date}
+                        {formatDate(row.posting_date)}
                       </TableCell>
 
                       {/* Document No. & External Document No. */}
@@ -585,7 +608,7 @@ export default function InventoryLedgerPanel() {
                             {row.document_no}
                           </span>
                           <span className="text-[10px]" style={S.muted}>
-                            {formatBcDocumentType(row.document_type)}
+                            {formatDocumentType(row.document_type)}
                             {row.external_reference_no
                               ? ` • Ext: ${row.external_reference_no}`
                               : ''}
@@ -624,7 +647,7 @@ export default function InventoryLedgerPanel() {
                           className="text-[11px] font-semibold"
                           title={row.transaction_type}
                         >
-                          {formatBcEntryType(row.transaction_type)}
+                          {formatTransactionType(row.transaction_type)}
                         </Badge>
                       </TableCell>
 
@@ -667,9 +690,6 @@ export default function InventoryLedgerPanel() {
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 4,
                             })}
-                        <span className="ml-1 text-[10px] font-normal text-[var(--text-muted)]">
-                          {row.uom}
-                        </span>
                       </TableCell>
 
                       {/* Remaining Quantity */}
@@ -690,9 +710,6 @@ export default function InventoryLedgerPanel() {
                                 minimumFractionDigits: 2,
                                 maximumFractionDigits: 4,
                               })}
-                              <span className="ml-0.5 text-[10px] text-[var(--text-muted)]">
-                                {row.uom}
-                              </span>
                             </span>
                           ) : (
                             NA
@@ -700,6 +717,14 @@ export default function InventoryLedgerPanel() {
                         ) : (
                           <span style={S.muted}>{NA}</span>
                         )}
+                      </TableCell>
+
+                      {/* UOM: its own column, so the quantities read as plain numbers. */}
+                      <TableCell
+                        className="whitespace-nowrap text-center font-mono text-xs uppercase"
+                        style={S.sub}
+                      >
+                        {row.uom || '—'}
                       </TableCell>
 
                       {/* Unit Cost */}
@@ -731,7 +756,7 @@ export default function InventoryLedgerPanel() {
                                 ? `${row.lot_lines} lots — open the entry to see which`
                                 : row.serial_no
                                   ? `Serial No(s): ${row.serial_no}`
-                                  : `Lot: ${row.lot_no}${row.expiry_date ? ` (Exp: ${String(row.expiry_date).slice(0, 10)})` : ''}`
+                                  : `Lot: ${row.lot_no}${row.expiry_date ? ` (Exp: ${formatDate(row.expiry_date)})` : ''}`
                             }
                           >
                             {Number(row.lot_lines) > 0

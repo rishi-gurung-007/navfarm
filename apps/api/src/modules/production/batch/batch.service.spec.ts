@@ -4,6 +4,8 @@ import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
+import { BioCostingExitService } from '../../finance/bio-costing/bio-costing-exit.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
@@ -76,12 +78,43 @@ describe('BatchService', () => {
           provide: AuditLogService,
           useValue: { log: jest.fn().mockResolvedValue({}) },
         },
+        {
+          provide: BioCostingExitService,
+          useValue: {
+            clearOnDeath: jest
+              .fn()
+              .mockResolvedValue({ cleared: 0, reason: 'NO_PROFILE' }),
+          },
+        },
+        {
+          provide: AnimalBookValueService,
+          useValue: {
+            valueOf: jest.fn().mockResolvedValue({
+              acquisition: 0,
+              capitalised: 0,
+              amortised: 0,
+              fairValue: 0,
+              exits: 0,
+              bookValue: 0,
+              hasRows: false,
+            }),
+            valuesFor: jest.fn().mockResolvedValue(new Map()),
+            refreshCache: jest.fn().mockResolvedValue(undefined),
+          },
+        },
         { provide: InventoryLedgerService, useValue: {} },
-        { provide: GlPostingService, useValue: {} },
+        {
+          provide: GlPostingService,
+          useValue: {
+            animalAssetAccountId: jest.fn().mockResolvedValue(undefined),
+            animalAssetAccountIds: jest.fn().mockResolvedValue(new Map()),
+          },
+        },
         {
           provide: NumberSeriesService,
           useValue: {
             generateNext: jest.fn().mockResolvedValue('BATCH-000001'),
+            ensureCompanySeries: jest.fn().mockResolvedValue(undefined),
           },
         },
         {
@@ -122,9 +155,72 @@ describe('BatchService', () => {
 
     service = module.get<BatchService>(BatchService);
     numberSeriesService = module.get<NumberSeriesService>(NumberSeriesService);
+    // The closed-period guard reads reporting_period; specs that are not about it leave the period open.
+    jest
+      .spyOn(service as any, 'assertBioPeriodOpen')
+      .mockResolvedValue(undefined);
   });
 
   describe('create', () => {
+    describe('an opening quantity of zero', () => {
+      const bioDto = (over: object = {}) =>
+        ({
+          company_id: 'comp-1',
+          lob_id: 'lob-piggery',
+          costing_method: 'BIO_ASSET',
+          tracking_mode: 'BATCH_WISE',
+          start_date: '2026-11-06',
+          uom: 'HEAD',
+          opening_quantity: 0,
+          input_lines: [{ item_id: 'item-1', quantity: 0, uom: 'HEAD' }],
+          ...over,
+        }) as any;
+
+      it('is refused for an ordinary create, bio-asset or not', async () => {
+        await expect(service.create(bioDto(), 'tenant-123')).rejects.toThrow(
+          'opening quantity greater than zero',
+        );
+        await expect(
+          service.create(bioDto({ costing_method: 'FIFO' }), 'tenant-123'),
+        ).rejects.toThrow('opening quantity greater than zero');
+      });
+
+      it('is still refused for a non-bio-asset batch when an internal caller asks for an empty opening', async () => {
+        await expect(
+          service.create(
+            bioDto({ costing_method: 'FIFO' }),
+            'tenant-123',
+            undefined,
+            { opensEmpty: true },
+          ),
+        ).rejects.toThrow('opening quantity greater than zero');
+      });
+
+      it('still refuses a line with no quantity when the opening is not empty-allowed, and a negative quantity always', async () => {
+        await expect(
+          service.create(bioDto({ opening_quantity: 5 }), 'tenant-123'),
+        ).rejects.toThrow('greater than zero for all batch input lines');
+        await expect(
+          service.create(
+            bioDto({ opening_quantity: -1 }),
+            'tenant-123',
+            undefined,
+            { opensEmpty: true },
+          ),
+        ).rejects.toThrow('opening quantity greater than zero');
+        await expect(
+          service.create(
+            bioDto({
+              input_lines: [{ item_id: 'item-1', quantity: -2, uom: 'HEAD' }],
+            }),
+            'tenant-123',
+            undefined,
+            { opensEmpty: true },
+          ),
+        ).rejects.toThrow('greater than zero for all batch input lines');
+      });
+    });
+
     it('delegates batch_no generation to NumberSeriesService and persists the result', async () => {
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
@@ -167,6 +263,116 @@ describe('BatchService', () => {
         mockDb,
       );
       expect(result.batch_no).toBe('BATCH-000001');
+    });
+
+    it('numbers a litter lot from its own LITTER_LOT series, makes that series first if the company has none, and marks the header', async () => {
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue([
+                { nob_id: 'nob-1', costing_method_allowed: 'BIO_ASSET' },
+              ]),
+          }),
+        }),
+      });
+      const insertValues = jest.fn().mockResolvedValue({});
+      mockDbTransaction.mockImplementation(async (cb: any) => cb(mockDb));
+      mockDbInsert.mockReturnValue({ values: insertValues });
+      (numberSeriesService.generateNext as jest.Mock).mockClear();
+      (numberSeriesService.generateNext as jest.Mock).mockResolvedValueOnce(
+        'LIT-000001',
+      );
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        batch_no: 'LIT-000001',
+      } as any);
+
+      const result = await service.create(
+        {
+          company_id: 'comp-1',
+          lob_id: 'lob-piggery',
+          costing_method: 'BIO_ASSET',
+          start_date: '2026-05-29',
+          opening_quantity: 10,
+          uom: 'HEAD',
+          input_lines: [
+            { item_id: 'item-1', quantity: 10, uom: 'HEAD', rate: 0 },
+          ],
+        } as any,
+        'tenant-123',
+        { userId: 'user-1' },
+        { litterLot: true },
+      );
+
+      expect(
+        (numberSeriesService as any).ensureCompanySeries,
+      ).toHaveBeenCalledWith(
+        'tenant-123',
+        'comp-1',
+        expect.objectContaining({ seriesCode: 'LITTER_LOT', prefix: 'LIT' }),
+        expect.any(Function),
+      );
+      expect(numberSeriesService.generateNext).toHaveBeenCalledWith(
+        'LITTER_LOT',
+        'tenant-123',
+        'comp-1',
+        mockDb,
+      );
+      expect(insertValues).toHaveBeenCalledWith(
+        expect.objectContaining({
+          batch_no: 'LIT-000001',
+          is_litter_lot: true,
+        }),
+      );
+      expect(result.batch_no).toBe('LIT-000001');
+    });
+
+    it('leaves an ordinary batch unmarked and numbered from the BATCH series', async () => {
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue([
+                { nob_id: 'nob-1', costing_method_allowed: 'FIFO' },
+              ]),
+          }),
+        }),
+      });
+      const insertValues = jest.fn().mockResolvedValue({});
+      mockDbTransaction.mockImplementation(async (cb: any) => cb(mockDb));
+      mockDbInsert.mockReturnValue({ values: insertValues });
+      (numberSeriesService.generateNext as jest.Mock).mockClear();
+      jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+        ...activeBatch,
+        batch_no: 'BATCH-000001',
+      } as any);
+
+      await service.create(
+        {
+          company_id: 'comp-1',
+          lob_id: 'lob-piggery',
+          costing_method: 'FIFO',
+          start_date: '2026-01-01',
+          opening_quantity: 100,
+          uom: 'HEAD',
+          input_lines: [{ item_id: 'item-1', quantity: 100, uom: 'HEAD' }],
+        } as any,
+        'tenant-123',
+        { userId: 'user-1' },
+      );
+
+      expect(numberSeriesService.generateNext).toHaveBeenCalledWith(
+        'BATCH',
+        'tenant-123',
+        'comp-1',
+        mockDb,
+      );
+      expect(insertValues).toHaveBeenCalledWith(
+        expect.objectContaining({ is_litter_lot: false }),
+      );
     });
 
     it('saves an ANIMAL_WISE draft with no animals, opening quantity 0 and nothing claimed', async () => {
@@ -2578,67 +2784,264 @@ describe('BatchService', () => {
       ).toHaveBeenCalledWith('batch-1');
     });
 
-    // F5: the animal's own registered value leaves her ledger at death in a bio-asset batch too; before, only the
-    // batch's per-head share of its accumulated costs was written off, so a dead sow kept her 28,000.
-    it("writes a dead animal's own book value out of her ledger in a bio-asset batch, beside the batch's share", async () => {
-      jest.spyOn(service, 'findOne').mockResolvedValue({
-        ...animalWiseBatch,
-        costing_method: 'BIO_ASSET',
-        input_lines: [],
-      } as any);
-      jest.spyOn(service as any, 'ensureBioState').mockResolvedValue({
-        current_quantity: '4',
-        nca_book_value: '3772',
-        stage: 'MATURE',
+    // F5 + bio-asset costing Phase 2 (X5): a death writes off ONE figure on her own ledger, her whole derived book value;
+    // the herd and the GL give up her own capitalised cost, not the herd's per-head average.
+    describe('a named animal dies in a BIO_ASSET batch (X5)', () => {
+      const countSelect = (n: string) => ({
+        from: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue([{ n }]) }),
       });
-      jest.spyOn(service as any, 'evaluateKpi').mockResolvedValue(undefined);
-      (module.get(GlPostingService) as any).postBatchCostEntry = jest
-        .fn()
-        .mockResolvedValue({});
-      mockDbSelect.mockReturnValueOnce(
-        chain([
+      // `inGl`: her acquisition was journalled (the receipt's, or her registration's), so what leaves the GL is her whole book value.
+      const prime = (
+        animalLevelRows: string,
+        derived: Record<string, unknown>,
+        inGl = false,
+      ) => {
+        jest
+          .spyOn(service as any, 'animalAcquisitionIsInGl')
+          .mockResolvedValue(inGl);
+        jest.spyOn(service, 'findOne').mockResolvedValue({
+          ...animalWiseBatch,
+          costing_method: 'BIO_ASSET',
+          input_lines: [],
+        } as any);
+        jest.spyOn(service as any, 'ensureBioState').mockResolvedValue({
+          current_quantity: '4',
+          nca_book_value: '3772',
+          stage: 'PREMATURE',
+        });
+        jest.spyOn(service as any, 'evaluateKpi').mockResolvedValue(undefined);
+        const gl = { postBatchCostEntry: jest.fn().mockResolvedValue({}) };
+        (module.get(GlPostingService) as any).postBatchCostEntry =
+          gl.postBatchCostEntry;
+        (module.get(AnimalBookValueService) as any).valueOf = jest
+          .fn()
+          .mockResolvedValue(derived);
+        mockDbSelect
+          .mockReturnValueOnce(
+            chain([
+              {
+                ...liveSow,
+                item_id: 'item-sow',
+                book_value: '28000',
+                nob_id: 'n',
+                lob_id: 'l',
+              },
+            ]),
+          )
+          .mockReturnValueOnce(countSelect(animalLevelRows));
+        const inserted: any[] = [];
+        const sets: any[] = [];
+        mockDbInsert.mockImplementation(() => ({
+          values: jest.fn((v: any) => {
+            inserted.push(v);
+            return Promise.resolve({});
+          }),
+        }));
+        mockDbUpdate.mockImplementation(() => ({
+          set: jest.fn((v: any) => {
+            sets.push(v);
+            return { where: jest.fn().mockResolvedValue({}) };
+          }),
+        }));
+        return { gl, inserted, sets };
+      };
+      const sow = {
+        acquisition: 28000,
+        capitalised: 500,
+        amortised: 0,
+        fairValue: 0,
+        exits: 0,
+        bookValue: 28500,
+        hasRows: true,
+      };
+
+      it('writes ONE ledger row for her: the whole book value, 28 500, not a share row and a register row', async () => {
+        const { inserted } = prime('12', sow);
+        await service.addTransaction(
+          'batch-1',
           {
-            ...liveSow,
-            item_id: 'item-sow',
-            book_value: '28000',
-            nob_id: 'n',
-            lob_id: 'l',
-          },
-        ]),
-      );
-      const inserted: any[] = [];
-      mockDbInsert.mockImplementation(() => ({
-        values: jest.fn((v: any) => {
-          inserted.push(v);
-          return Promise.resolve({});
-        }),
-      }));
-      mockDbUpdate.mockImplementation(() => ({
-        set: jest.fn(() => ({ where: jest.fn().mockResolvedValue({}) })),
-      }));
-
-      await service.addTransaction(
-        'batch-1',
-        {
-          transaction_date: '2026-10-01',
-          transaction_type: 'MORTALITY',
+            transaction_date: '2026-10-01',
+            transaction_type: 'MORTALITY',
+            animal_id: 'a-1',
+          } as any,
+          'tenant-123',
+        );
+        const ledger = inserted.filter((v) => v.document_type === 'MORTALITY');
+        expect(ledger).toHaveLength(1);
+        expect(ledger[0]).toMatchObject({
           animal_id: 'a-1',
-        } as any,
-        'tenant-123',
-      );
-
-      const ledger = inserted.filter((v) => v.entry_type === 'MORTALITY');
-      // The batch's share of its accumulated costs (3772 / 4 head), under her own item.
-      expect(ledger.find((v) => v.batch_id)).toMatchObject({
-        animal_id: 'a-1',
-        bio_asset_item_id: 'item-sow',
-        cost_amount: '-943',
+          bio_asset_item_id: 'item-sow',
+          cost_amount: '-28500',
+          batch_id: 'batch-1',
+        });
+        expect(
+          (module.get(AnimalBookValueService) as any).refreshCache,
+        ).toHaveBeenCalledWith(['a-1']);
       });
-      // Her own registered value, out of her own ledger.
-      expect(ledger.find((v) => !v.batch_id)).toMatchObject({
-        animal_id: 'a-1',
-        bio_asset_item_id: 'item-sow',
-        cost_amount: '-28000',
+
+      it("clears what the costing runs amortised her to date against the acquisition cost (the BBP's accumulated-amortisation leg), with the death date", async () => {
+        prime('12', sow);
+        await service.addTransaction(
+          'batch-1',
+          {
+            transaction_date: '2026-10-01',
+            transaction_type: 'MORTALITY',
+            animal_id: 'a-1',
+          } as any,
+          'tenant-123',
+          { userId: 'u-1' } as any,
+        );
+        expect(
+          module.get(BioCostingExitService).clearOnDeath,
+        ).toHaveBeenCalledWith('a-1', '2026-10-01', 'tenant-123', 'u-1');
+      });
+
+      it('takes her OWN capitalised cost (500) out of the herd and the journal, where the batch holds animal-level cost', async () => {
+        const { gl, sets } = prime('12', sow);
+        await service.addTransaction(
+          'batch-1',
+          {
+            transaction_date: '2026-10-01',
+            transaction_type: 'MORTALITY',
+            animal_id: 'a-1',
+          } as any,
+          'tenant-123',
+        );
+        expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+          expect.objectContaining({
+            transactionType: 'BIO_MORTALITY_PREMATURE',
+            amount: 500,
+          }),
+        );
+        expect(sets.find((v) => v.nca_book_value !== undefined)).toMatchObject({
+          nca_book_value: '3272',
+          current_quantity: '3',
+        });
+      });
+
+      it('takes her whole book value (28 500: what she cost, plus her capitalised cost) out of the GL once her acquisition is journalled, and only her capitalised 500 out of the herd', async () => {
+        const { gl, sets } = prime('12', sow, true);
+        await service.addTransaction(
+          'batch-1',
+          {
+            transaction_date: '2026-10-01',
+            transaction_type: 'MORTALITY',
+            animal_id: 'a-1',
+          } as any,
+          'tenant-123',
+        );
+        expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+          expect.objectContaining({
+            transactionType: 'BIO_MORTALITY_PREMATURE',
+            amount: 28500,
+          }),
+        );
+        expect(sets.find((v) => v.nca_book_value !== undefined)).toMatchObject({
+          nca_book_value: '3272',
+          current_quantity: '3',
+        });
+      });
+
+      it('never writes off less than her capitalised cost, whatever her book value says', async () => {
+        const { gl } = prime(
+          '12',
+          { ...sow, capitalised: 600, bookValue: 100 },
+          true,
+        );
+        await service.addTransaction(
+          'batch-1',
+          {
+            transaction_date: '2026-10-01',
+            transaction_type: 'MORTALITY',
+            animal_id: 'a-1',
+          } as any,
+          'tenant-123',
+        );
+        expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+          expect.objectContaining({ amount: 600 }),
+        );
+      });
+
+      it('falls back to the herd average (3772 / 4 = 943) where the batch has no animal-level cost, still one ledger row', async () => {
+        const { gl, inserted } = prime('0', sow);
+        await service.addTransaction(
+          'batch-1',
+          {
+            transaction_date: '2026-10-01',
+            transaction_type: 'MORTALITY',
+            animal_id: 'a-1',
+          } as any,
+          'tenant-123',
+        );
+        expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+          expect.objectContaining({ amount: 943 }),
+        );
+        expect(
+          inserted.filter((v) => v.document_type === 'MORTALITY'),
+        ).toHaveLength(1);
+      });
+
+      it('never takes more out of the herd than the herd holds', async () => {
+        const { gl } = prime('12', { ...sow, capitalised: 9999 });
+        await service.addTransaction(
+          'batch-1',
+          {
+            transaction_date: '2026-10-01',
+            transaction_type: 'MORTALITY',
+            animal_id: 'a-1',
+          } as any,
+          'tenant-123',
+        );
+        expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+          expect.objectContaining({ amount: 3772 }),
+        );
+      });
+    });
+
+    describe("whether an animal's acquisition is in the GL", () => {
+      const chainOf = (rows: unknown[]) => ({
+        from: jest.fn().mockReturnValue({
+          where: jest
+            .fn()
+            .mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }),
+        }),
+      });
+      const isInGl = () => (service as any).animalAcquisitionIsInGl('a-1');
+
+      it('is, for an animal registered with no receipt, when her registration has a posted journal', async () => {
+        mockDbSelect
+          .mockReturnValueOnce(
+            chainOf([
+              { animal_code: 'PIG-2026-0009', source_receipt_id: null },
+            ]),
+          )
+          .mockReturnValueOnce(chainOf([{ id: 'j-1' }]));
+        await expect(isInGl()).resolves.toBe(true);
+      });
+
+      it('is, for an animal from a receipt, when the receipt has a posted journal', async () => {
+        mockDbSelect
+          .mockReturnValueOnce(
+            chainOf([
+              { animal_code: 'PIG-2026-0009', source_receipt_id: 'r-1' },
+            ]),
+          )
+          .mockReturnValueOnce(chainOf([{ receipt_no: 'GR-000007' }]))
+          .mockReturnValueOnce(chainOf([{ id: 'j-1' }]));
+        await expect(isInGl()).resolves.toBe(true);
+      });
+
+      it('is not, for an animal registered before those journals existed', async () => {
+        mockDbSelect
+          .mockReturnValueOnce(
+            chainOf([
+              { animal_code: 'PIG-2025-0001', source_receipt_id: null },
+            ]),
+          )
+          .mockReturnValueOnce(chainOf([]));
+        await expect(isInGl()).resolves.toBe(false);
       });
     });
 
@@ -2729,6 +3132,8 @@ describe('BatchService', () => {
       (service as any).ledgerService = { writePositiveEntry };
       (service as any).glPostingService = {
         postInventoryLedgerEntry: jest.fn().mockResolvedValue({}),
+        animalAssetAccountId: jest.fn().mockResolvedValue(undefined),
+        animalAssetAccountIds: jest.fn().mockResolvedValue(new Map()),
       };
       inserted = [];
       mockDbInsert.mockImplementation((table: unknown) => ({
@@ -2914,7 +3319,11 @@ describe('BatchService', () => {
       expect(ledgerRow).toBeDefined();
       // TRANSFORMATION is the entry type the IAS 41 roll-forward maps to its
       // harvest-transfers bucket, which is otherwise always zero.
-      expect(ledgerRow!.values.entry_type).toBe('TRANSFORMATION');
+      expect(ledgerRow!.values).toMatchObject({
+        entry_type: 'NEGATIVE',
+        transaction_type: 'CONSUMPTION',
+        document_type: 'BATCH_HARVEST',
+      });
       expect(ledgerRow!.values.batch_id).toBe('batch-1');
       // The movement must equal the reduction in carrying value.
       expect(Number(ledgerRow!.values.cost_amount)).toBe(-12000);
@@ -2922,6 +3331,66 @@ describe('BatchService', () => {
   });
 
   describe('findAll', () => {
+    it('names a litter lot by the litter it holds, and any other batch by its number', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              orderBy: jest.fn().mockReturnValue({
+                limit: jest.fn().mockReturnValue({
+                  offset: jest.fn().mockResolvedValue([
+                    {
+                      ...activeBatch,
+                      batch_id: 'lot1',
+                      batch_no: 'LIT-000001',
+                      is_litter_lot: true,
+                      total_cost: null,
+                      closing_quantity: '10.0000',
+                    },
+                    {
+                      ...activeBatch,
+                      batch_id: 'b9',
+                      batch_no: 'BATCH-000009',
+                      is_litter_lot: false,
+                      total_cost: null,
+                      closing_quantity: '20.0000',
+                    },
+                  ]),
+                }),
+              }),
+            }),
+          }),
+        }) // batch rows
+        .mockReturnValueOnce({
+          from: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+        }) // cost-bearing transactions
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            innerJoin: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue([
+                {
+                  batch_id: 'lot1',
+                  sow: 'PIG-2025-0013',
+                  farrowed: '2026-05-29',
+                  lot_no: 'LOT-00004',
+                },
+              ]),
+            }),
+          }),
+        }); // the litters the lots hold
+
+      const rows = await service.findAll({ limit: 50 } as any, 'tenant-123');
+
+      expect(rows.find((r) => r.batch_id === 'lot1')?.display_name).toBe(
+        'Litter of PIG-2025-0013, farrowed 2026-05-29 (LOT-00004)',
+      );
+      expect(rows.find((r) => r.batch_id === 'b9')?.display_name).toBe(
+        'BATCH-000009',
+      );
+    });
+
     it('reports accumulated cost as wip_value so the dashboard tile is not structurally zero', async () => {
       // The console's WIP tile reads b.wip_value. Nothing in the API ever
       // returned that field, so Number(undefined) || 0 made the tile read
@@ -3303,6 +3772,23 @@ describe('BatchService', () => {
       expect(Number(setCall.monthly_amortization_rate)).toBeCloseTo(187.5);
     });
 
+    it('refuses to mature a batch of registered animals: each animal is costed from her own start age, not by one herd switch', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue({
+        ...bioBatch,
+        tracking_mode: 'ANIMAL_WISE',
+        animal_tracking: 'REGISTERED',
+      } as any);
+      await expect(
+        service.matureBioAsset(
+          'batch-1',
+          { residual_value_per_unit: 500, productive_life_months: 24 },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/holds registered animals.*Bio-Asset Costing Runs/);
+      expect(mockDbSelect).not.toHaveBeenCalled(); // refused before the bio-asset state is read
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
     it('rejects maturing a batch that is already MATURE', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValue(bioBatch as any);
 
@@ -3421,11 +3907,14 @@ describe('BatchService', () => {
       });
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
-          where: jest
-            .fn()
-            .mockResolvedValue([
-              { posting_date: '2026-02-01', entry_type: 'AMORTIZATION' },
-            ]),
+          where: jest.fn().mockResolvedValue([
+            {
+              posting_date: '2026-02-01',
+              entry_type: 'NEGATIVE',
+              transaction_type: 'VARIANCE_NEGATIVE',
+              document_type: 'BATCH_AMORTIZATION',
+            },
+          ]),
         }),
       });
 
@@ -3436,6 +3925,170 @@ describe('BatchService', () => {
           'tenant-123',
         ),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('amortizeBioAsset — guards (bio-asset costing Phase 1, X2/X4)', () => {
+    const bioBatch = {
+      ...activeBatch,
+      batch_no: 'BATCH-000001',
+      costing_method: 'BIO_ASSET',
+      input_lines: [{ item_id: 'item-piglet' }],
+    };
+    const state = (extra: Record<string, unknown> = {}) => ({
+      state_id: 'state-1',
+      batch_id: 'batch-1',
+      stage: 'MATURE',
+      current_quantity: '10.0000',
+      nca_book_value: '45000.0000',
+      monthly_amortization_rate: '187.500000',
+      residual_value_per_unit: '0',
+      productive_life_months: 36,
+      matured_at: '2026-01-15',
+      ...extra,
+    });
+    const prime = (st: Record<string, unknown>) => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(bioBatch as any);
+      const gl = {
+        postBatchCostEntry: jest.fn().mockResolvedValue({ journal_id: 'j-1' }),
+      };
+      (service as any).glPostingService = gl;
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest
+            .fn()
+            .mockReturnValue({ limit: jest.fn().mockResolvedValue([st]) }),
+        }),
+      });
+      mockDbSelect.mockReturnValueOnce({
+        from: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue([]) }),
+      });
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
+      const inserted: any[] = [];
+      mockDbInsert.mockReturnValue({
+        values: jest.fn((v: any) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      });
+      return { gl, inserted };
+    };
+
+    it('refuses a posting date before the batch matured, and posts nothing', async () => {
+      const { gl, inserted } = prime(state());
+      await expect(
+        service.amortizeBioAsset(
+          'batch-1',
+          { posting_date: '2026-01-10' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/matured on 2026-01-15/);
+      expect(gl.postBatchCostEntry).not.toHaveBeenCalled();
+      expect(inserted).toEqual([]);
+    });
+
+    it('allows the last month of the useful life and refuses the month after it', async () => {
+      const ok = prime(state({ productive_life_months: 3 }));
+      await service.amortizeBioAsset(
+        'batch-1',
+        { posting_date: '2026-03-31' },
+        'tenant-123',
+      ); // months 0,1,2 are the three runs
+      expect(ok.gl.postBatchCostEntry).toHaveBeenCalledTimes(1);
+
+      mockDbSelect.mockReset();
+      const late = prime(state({ productive_life_months: 3 }));
+      await expect(
+        service.amortizeBioAsset(
+          'batch-1',
+          { posting_date: '2026-04-30' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/useful life of 3 months/);
+      expect(late.gl.postBatchCostEntry).not.toHaveBeenCalled();
+    });
+
+    it('never takes the herd below its residual: the journal, the ledger row and the carrying value share the capped charge', async () => {
+      // 10 head x 90 residual = 900; carrying 1000 leaves 100 of room, the schedule would charge 1875.
+      const { gl, inserted } = prime(
+        state({
+          nca_book_value: '1000.0000',
+          residual_value_per_unit: '90.000000',
+        }),
+      );
+      await service.amortizeBioAsset(
+        'batch-1',
+        { posting_date: '2026-02-15' },
+        'tenant-123',
+      );
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionType: 'BIO_AMORTIZATION',
+          amount: 100,
+        }),
+      );
+      const set = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock
+        .calls[0][0];
+      expect(Number(set.nca_book_value)).toBe(900);
+      expect(Number(inserted[0].cost_amount)).toBe(-100);
+    });
+
+    it('reads a negative residual as none, so it cannot lift the cap above the carrying value', async () => {
+      const { gl, inserted } = prime(
+        state({
+          nca_book_value: '1000.0000',
+          residual_value_per_unit: '-12.000000',
+        }),
+      );
+      await service.amortizeBioAsset(
+        'batch-1',
+        { posting_date: '2026-02-15' },
+        'tenant-123',
+      );
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 1000 }),
+      );
+      expect(Number(inserted[0].cost_amount)).toBe(-1000);
+    });
+
+    it('refuses when the carrying value is already at the residual', async () => {
+      const { gl, inserted } = prime(
+        state({
+          nca_book_value: '900.0000',
+          residual_value_per_unit: '90.000000',
+        }),
+      );
+      await expect(
+        service.amortizeBioAsset(
+          'batch-1',
+          { posting_date: '2026-02-15' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/already at the residual/);
+      expect(gl.postBatchCostEntry).not.toHaveBeenCalled();
+      expect(inserted).toEqual([]);
+    });
+
+    it('stops at a closed reporting period before anything is posted', async () => {
+      const { gl, inserted } = prime(state());
+      (service as any).assertBioPeriodOpen.mockRejectedValueOnce(
+        new BadRequestException('Reporting period 2026-02 is closed.'),
+      );
+      await expect(
+        service.amortizeBioAsset(
+          'batch-1',
+          { posting_date: '2026-02-15' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/closed/);
+      expect(gl.postBatchCostEntry).not.toHaveBeenCalled();
+      expect(inserted).toEqual([]);
     });
   });
 
@@ -3497,6 +4150,811 @@ describe('BatchService', () => {
       const setCall = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock
         .calls[0][0];
       expect(Number(setCall.nca_book_value)).toBeCloseTo(35000);
+    });
+  });
+
+  describe('a herd costed animal by animal is not also amortised or revalued as a batch (Phase 4)', () => {
+    const registered = {
+      ...activeBatch,
+      batch_no: 'BATCH-000001',
+      costing_method: 'BIO_ASSET',
+      animal_tracking: 'REGISTERED',
+      input_lines: [],
+    };
+    // the count joins the animal to her item: costed by a profile, or by her item's costing terms
+    const countOf = (n: string) =>
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          innerJoin: jest
+            .fn()
+            .mockReturnValue({ where: jest.fn().mockResolvedValue([{ n }]) }),
+        }),
+      });
+
+    it('refuses to amortise it when any of its animals has a costing profile or an item with costing terms, and writes nothing', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(registered as any);
+      countOf('3');
+      await expect(
+        service.amortizeBioAsset(
+          'batch-1',
+          { posting_date: '2026-10-20' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/costed one by one by their items' costing terms/);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses a batch fair-value change the same way', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(registered as any);
+      countOf('1');
+      await expect(
+        service.recordFairValue(
+          'batch-1',
+          { posting_date: '2026-10-20', fair_value_per_unit: 100 },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/Bio-Asset Costing Runs/);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('lets a registered herd with no profiled animal carry on down the batch path', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(registered as any);
+      countOf('0');
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest
+            .fn()
+            .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+        }),
+      }); // no bio state: the next step's own refusal
+      await expect(
+        service.amortizeBioAsset(
+          'batch-1',
+          { posting_date: '2026-10-20' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/Bio-asset state not found/);
+    });
+  });
+
+  describe('recordFairValue — stage account and rate (bio-asset costing Phase 1, X3)', () => {
+    const bioBatch = {
+      ...activeBatch,
+      batch_no: 'BATCH-000001',
+      costing_method: 'BIO_ASSET',
+      input_lines: [{ item_id: 'item-piglet' }],
+    };
+    const prime = (st: Record<string, unknown>, amortizationRuns?: number) => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(bioBatch as any);
+      const gl = {
+        postBatchCostEntry: jest.fn().mockResolvedValue({ journal_id: 'j-1' }),
+      };
+      (service as any).glPostingService = gl;
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest
+            .fn()
+            .mockReturnValue({ limit: jest.fn().mockResolvedValue([st]) }),
+        }),
+      });
+      if (amortizationRuns !== undefined) {
+        mockDbSelect.mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest
+              .fn()
+              .mockResolvedValue([{ runs: String(amortizationRuns) }]),
+          }),
+        });
+      }
+      mockDbUpdate.mockReturnValue({
+        set: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue({}) }),
+      });
+      const inserted: any[] = [];
+      mockDbInsert.mockReturnValue({
+        values: jest.fn((v: any) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      });
+      return { gl, inserted };
+    };
+
+    it("posts a pre-mature herd's revaluation to the pre-mature account type, not the mature one", async () => {
+      const { gl } = prime({
+        state_id: 's',
+        batch_id: 'batch-1',
+        stage: 'PREMATURE',
+        current_quantity: '10.0000',
+        nca_book_value: '1000.0000',
+      });
+      await service.recordFairValue(
+        'batch-1',
+        { fair_value_per_unit: 150, posting_date: '2026-03-01' },
+        'tenant-123',
+      );
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionType: 'BIO_FAIR_VALUE_PREMATURE',
+          amount: 500,
+        }),
+      );
+    });
+
+    it("re-spreads a mature herd's charge over the runs that remain, from the new carrying value", async () => {
+      // 10 head, carrying 40 000 -> fair value 3 500 each = 35 000. Residual 500 x 10 = 5 000. 36-month life, 6 runs done.
+      const { gl } = prime(
+        {
+          state_id: 's',
+          batch_id: 'batch-1',
+          stage: 'MATURE',
+          current_quantity: '10.0000',
+          nca_book_value: '40000.0000',
+          monthly_amortization_rate: '187.500000',
+          residual_value_per_unit: '500.000000',
+          productive_life_months: 36,
+        },
+        6,
+      );
+      await service.recordFairValue(
+        'batch-1',
+        { fair_value_per_unit: 3500, posting_date: '2026-03-01' },
+        'tenant-123',
+      );
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionType: 'BIO_FAIR_VALUE',
+          amount: 5000,
+          reverseDirection: true,
+        }),
+      );
+      const set = (mockDbUpdate.mock.results[0].value.set as jest.Mock).mock
+        .calls[0][0];
+      expect(Number(set.nca_book_value)).toBe(35000);
+      expect(set.monthly_amortization_rate).toBe('100.000000'); // (35 000 - 5 000) / 30 runs / 10 head
+    });
+
+    it('refuses a negative fair value, so the carrying value never needs flooring', async () => {
+      const { gl } = prime({
+        state_id: 's',
+        batch_id: 'batch-1',
+        stage: 'MATURE',
+        current_quantity: '10.0000',
+        nca_book_value: '1000.0000',
+      });
+      await expect(
+        service.recordFairValue(
+          'batch-1',
+          { fair_value_per_unit: -1, posting_date: '2026-03-01' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/negative/);
+      expect(gl.postBatchCostEntry).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('ensureBioState — a mature herd is opened at its ledger value, never at a made-up one (X1)', () => {
+    const matureGroup = {
+      ...activeBatch,
+      batch_no: 'BATCH-000009',
+      current_stage_code: 'GESTATION',
+      closing_quantity: '8',
+      opening_quantity: '8',
+    };
+    const noState = () =>
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest
+            .fn()
+            .mockReturnValue({ limit: jest.fn().mockResolvedValue([]) }),
+        }),
+      });
+    const ledgerTotal = (total: string) =>
+      mockDbSelect.mockReturnValueOnce({
+        from: jest
+          .fn()
+          .mockReturnValue({ where: jest.fn().mockResolvedValue([{ total }]) }),
+      });
+
+    it('refuses to open a mature herd that has nothing on the bio-asset ledger, and creates no state row', async () => {
+      noState();
+      ledgerTotal('0');
+      const inserted: any[] = [];
+      mockDbInsert.mockReturnValue({
+        values: jest.fn((v: any) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      });
+      await expect(
+        (service as any).ensureBioState(matureGroup, 'batch-9'),
+      ).rejects.toThrow(/no carrying value/);
+      expect(inserted).toEqual([]);
+    });
+
+    it('opens it at the ledger total, not heads x 28 000', async () => {
+      noState();
+      ledgerTotal('25000.5');
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue([{ nca_book_value: '25000.5000' }]),
+          }),
+        }),
+      });
+      const inserted: any[] = [];
+      mockDbInsert.mockReturnValue({
+        values: jest.fn((v: any) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      });
+      await (service as any).ensureBioState(matureGroup, 'batch-9');
+      expect(inserted[0]).toMatchObject({
+        stage: 'MATURE',
+        nca_book_value: '25000.5000',
+      });
+      expect(inserted[0].nca_book_value).not.toBe('224000');
+    });
+
+    it('still opens a pre-mature herd at nil without asking the ledger', async () => {
+      noState();
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([{ nca_book_value: '0.0000' }]),
+          }),
+        }),
+      });
+      const inserted: any[] = [];
+      mockDbInsert.mockReturnValue({
+        values: jest.fn((v: any) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      });
+      await (service as any).ensureBioState(
+        { ...matureGroup, current_stage_code: 'FLUSH' },
+        'batch-9',
+      );
+      expect(inserted[0]).toMatchObject({
+        stage: 'PREMATURE',
+        nca_book_value: '0.0000',
+      });
+    });
+  });
+
+  describe("postConsumptionGroup — a pre-mature bio-asset issue is capitalised onto each animal's own ledger (Phase 2)", () => {
+    const bioBatch = {
+      ...activeBatch,
+      batch_no: 'BATCH-000002',
+      costing_method: 'BIO_ASSET',
+      tracking_mode: 'ANIMAL_WISE',
+      input_lines: [],
+    };
+
+    it('writes one CONSUMPTION row per share, carrying the animal and the issue it belongs to, and the shares add up to the capitalised cost', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(bioBatch as any);
+      jest.spyOn(service as any, 'ensureBioState').mockResolvedValue({
+        current_quantity: '2',
+        nca_book_value: '10',
+        stage: 'PREMATURE',
+      });
+      jest
+        .spyOn(service as any, 'animalsPastCostingStart')
+        .mockResolvedValue(new Set());
+      jest.spyOn(service as any, 'evaluateKpi').mockResolvedValue(undefined);
+      const written: any[] = [];
+      (service as any).ledgerService = {
+        writeNegativeEntry: jest.fn((p: any) => {
+          written.push(p);
+          return Promise.resolve({
+            ledger_id: 'L1',
+            amount: '-6.0000',
+            rate: '0.2',
+          });
+        }),
+      };
+      (service as any).glPostingService = {
+        postInventoryLedgerEntry: jest.fn().mockResolvedValue({}),
+        animalAssetAccountId: jest.fn().mockResolvedValue(undefined),
+        animalAssetAccountIds: jest.fn().mockResolvedValue(new Map()),
+      };
+      const inserted: any[] = [];
+      const sets: any[] = [];
+      mockDbInsert.mockImplementation(() => ({
+        values: jest.fn((v: any) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      }));
+      mockDbUpdate.mockImplementation(() => ({
+        set: jest.fn((v: any) => {
+          sets.push(v);
+          return { where: jest.fn().mockResolvedValue({}) };
+        }),
+      }));
+
+      await service.postConsumptionGroup(
+        'batch-1',
+        {
+          item_id: 'feed',
+          uom: 'KG',
+          transaction_date: '2026-10-01',
+          shares: [
+            { animal_id: 'a1', quantity: 10 },
+            { animal_id: 'a2', quantity: 20 },
+          ],
+        },
+        'tenant-123',
+      );
+
+      const rows = inserted.filter(
+        (v) => v.document_type === 'BATCH' && v.entry_type === 'OVERHEAD',
+      );
+      expect(rows.map((r) => [r.animal_id, r.cost_amount, r.quantity])).toEqual(
+        [
+          ['a1', '2', '10'],
+          ['a2', '4', '20'],
+        ],
+      );
+      expect(new Set(rows.map((r) => r.document_line_id))).toEqual(
+        new Set([written[0].documentLineId]),
+      );
+      expect(sets.find((v) => v.nca_book_value !== undefined)).toMatchObject({
+        nca_book_value: '16',
+      }); // 10 + 6, once
+      expect(
+        (module.get(AnimalBookValueService) as any).refreshCache,
+      ).toHaveBeenCalledWith(['a1', 'a2']);
+    });
+
+    it('writes nothing to the ledger for a mature herd, whose feed is expensed, not capitalised', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(bioBatch as any);
+      jest.spyOn(service as any, 'ensureBioState').mockResolvedValue({
+        current_quantity: '2',
+        nca_book_value: '10',
+        stage: 'MATURE',
+      });
+      jest
+        .spyOn(service as any, 'animalsPastCostingStart')
+        .mockResolvedValue(new Set());
+      jest.spyOn(service as any, 'evaluateKpi').mockResolvedValue(undefined);
+      (service as any).ledgerService = {
+        writeNegativeEntry: jest.fn().mockResolvedValue({
+          ledger_id: 'L1',
+          amount: '-6.0000',
+          rate: '0.2',
+        }),
+      };
+      (service as any).glPostingService = {
+        postInventoryLedgerEntry: jest.fn().mockResolvedValue({}),
+        animalAssetAccountId: jest.fn().mockResolvedValue(undefined),
+        animalAssetAccountIds: jest.fn().mockResolvedValue(new Map()),
+      };
+      const inserted: any[] = [];
+      mockDbInsert.mockImplementation(() => ({
+        values: jest.fn((v: any) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      }));
+      mockDbUpdate.mockImplementation(() => ({
+        set: jest.fn(() => ({ where: jest.fn().mockResolvedValue({}) })),
+      }));
+      await service.postConsumptionGroup(
+        'batch-1',
+        {
+          item_id: 'feed',
+          uom: 'KG',
+          transaction_date: '2026-10-01',
+          shares: [{ animal_id: 'a1', quantity: 10 }],
+        },
+        'tenant-123',
+      );
+      expect(
+        inserted.filter(
+          (v) => v.document_type === 'BATCH' && v.entry_type === 'OVERHEAD',
+        ),
+      ).toEqual([]);
+    });
+
+    describe('per animal: capitalised until her costing start date, expensed after (Phase 2)', () => {
+      const setup = (pastStart: string[]) => {
+        jest.spyOn(service, 'findOne').mockResolvedValue(bioBatch as any);
+        jest.spyOn(service as any, 'ensureBioState').mockResolvedValue({
+          current_quantity: '2',
+          nca_book_value: '10',
+          stage: 'PREMATURE',
+        });
+        jest
+          .spyOn(service as any, 'animalsPastCostingStart')
+          .mockResolvedValue(new Set(pastStart));
+        jest.spyOn(service as any, 'evaluateKpi').mockResolvedValue(undefined);
+        const written: any[] = [];
+        (service as any).ledgerService = {
+          writeNegativeEntry: jest.fn((p: any) => {
+            written.push(p);
+            return Promise.resolve({
+              ledger_id: `L${written.length}`,
+              amount: `-${(p.quantity * 0.2).toFixed(4)}`,
+              rate: '0.2',
+            });
+          }),
+        };
+        (service as any).glPostingService = {
+          postInventoryLedgerEntry: jest.fn().mockResolvedValue({}),
+          animalAssetAccountId: jest.fn().mockResolvedValue(undefined),
+          animalAssetAccountIds: jest.fn().mockResolvedValue(new Map()),
+        };
+        const inserted: any[] = [];
+        const sets: any[] = [];
+        mockDbInsert.mockImplementation(() => ({
+          values: jest.fn((v: any) => {
+            inserted.push(v);
+            return Promise.resolve({});
+          }),
+        }));
+        mockDbUpdate.mockImplementation(() => ({
+          set: jest.fn((v: any) => {
+            sets.push(v);
+            return { where: jest.fn().mockResolvedValue({}) };
+          }),
+        }));
+        return { written, inserted, sets };
+      };
+      const group = (
+        shares: Array<{ animal_id: string; quantity: number }>,
+        extra: object = {},
+      ) =>
+        service.postConsumptionGroup(
+          'batch-1',
+          {
+            item_id: 'feed',
+            uom: 'KG',
+            transaction_date: '2026-10-01',
+            shares,
+            ...extra,
+          },
+          'tenant-123',
+        );
+
+      it('an animal past her start is issued as an expense entry and writes nothing to the bio-asset ledger', async () => {
+        const { written, inserted, sets } = setup(['a1']);
+        await group([{ animal_id: 'a1', quantity: 10 }]);
+        expect(
+          written.map((w) => [w.transactionType, w.glMappingType]),
+        ).toEqual([['CONSUMPTION', 'BIO_CONSUMPTION_MATURE']]);
+        expect(
+          inserted.filter(
+            (v) => v.document_type === 'BATCH' && v.entry_type === 'OVERHEAD',
+          ),
+        ).toEqual([]);
+        expect(
+          sets.find((v) => v.nca_book_value !== undefined),
+        ).toBeUndefined();
+      });
+
+      it('a group of one animal before and one after her start becomes two entries: only the first is capitalised', async () => {
+        const { written, inserted, sets } = setup(['a2']);
+        const result = await group([
+          { animal_id: 'a1', quantity: 10 },
+          { animal_id: 'a2', quantity: 20 },
+        ]);
+        expect(
+          written.map((w) => [w.transactionType, w.glMappingType, w.quantity]),
+        ).toEqual([
+          ['CONSUMPTION', 'BIO_CONSUMPTION_PREMATURE', 10],
+          ['CONSUMPTION', 'BIO_CONSUMPTION_MATURE', 20],
+        ]);
+        const rows = inserted.filter(
+          (v) => v.document_type === 'BATCH' && v.entry_type === 'OVERHEAD',
+        );
+        expect(rows.map((r) => [r.animal_id, r.cost_amount])).toEqual([
+          ['a1', '2'],
+        ]);
+        expect(sets.find((v) => v.nca_book_value !== undefined)).toMatchObject({
+          nca_book_value: '12',
+        }); // 10 + 2, not + 6
+        expect(
+          result.transactions.map((t) => [t.animal_id, t.quantity]),
+        ).toEqual([
+          ['a1', 10],
+          ['a2', 20],
+        ]);
+        expect(
+          (module.get(AnimalBookValueService) as any).refreshCache,
+        ).toHaveBeenCalledWith(['a1']);
+      });
+
+      it('splits the lots between the two entries in the order given', async () => {
+        const { written } = setup(['a2']);
+        await group(
+          [
+            { animal_id: 'a1', quantity: 10 },
+            { animal_id: 'a2', quantity: 20 },
+          ],
+          {
+            lots: [
+              { lotNo: 'L-1', quantity: 15 },
+              { lotNo: 'L-2', quantity: 15 },
+            ],
+          },
+        );
+        expect(written[0].lots).toEqual([{ lotNo: 'L-1', quantity: 10 }]);
+        expect(written[1].lots).toEqual([
+          { lotNo: 'L-1', quantity: 5 },
+          { lotNo: 'L-2', quantity: 15 },
+        ]);
+      });
+    });
+  });
+
+  describe("a piglet lot's capitalised feed and overhead go into the account its birth cost and deaths are in", () => {
+    // LIT-000022 on nf_devco, 11 Nov 2026: its weaner feed was debited to the pre-mature herd account (152100) while a piglet's death
+    // is credited to the BIO_LITTER_BIRTH debit (170400 Weaners Inventory), so a death took out of 170400 value that had gone into 152100.
+    const lot = {
+      ...activeBatch,
+      batch_no: 'LIT-000022',
+      costing_method: 'BIO_ASSET',
+      tracking_mode: 'BATCH_WISE',
+      input_lines: [],
+    };
+    const setup = (stage: 'PREMATURE' | 'MATURE', madeByFarrowing = true) => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(lot as any);
+      jest.spyOn(service as any, 'ensureBioState').mockResolvedValue({
+        current_quantity: '12',
+        nca_book_value: '0',
+        stage,
+      });
+      jest
+        .spyOn(service as any, 'animalsPastCostingStart')
+        .mockResolvedValue(new Set());
+      jest.spyOn(service as any, 'evaluateKpi').mockResolvedValue(undefined);
+      jest
+        .spyOn(service as any, 'batchClassAccount')
+        .mockResolvedValue(undefined);
+      // The farrowing that made the batch, if one did.
+      mockDbSelect.mockReturnValue({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest
+              .fn()
+              .mockResolvedValue(madeByFarrowing ? [{ id: 'farrow-1' }] : []),
+          }),
+        }),
+      });
+      (service as any).ledgerService = {
+        writeNegativeEntry: jest.fn().mockResolvedValue({
+          ledger_id: 'L1',
+          amount: '-5.5200',
+          rate: '0.575',
+        }),
+      };
+      const gl = {
+        postInventoryLedgerEntry: jest.fn().mockResolvedValue({}),
+        postBatchCostEntry: jest.fn().mockResolvedValue({}),
+        mappedAccount: jest.fn().mockResolvedValue('acct-weaners'),
+        animalAssetAccountId: jest.fn().mockResolvedValue(undefined),
+        animalAssetAccountIds: jest.fn().mockResolvedValue(new Map()),
+      };
+      (service as any).glPostingService = gl;
+      mockDbInsert.mockImplementation(() => ({
+        values: jest.fn().mockResolvedValue({}),
+      }));
+      mockDbUpdate.mockImplementation(() => ({
+        set: jest.fn(() => ({ where: jest.fn().mockResolvedValue({}) })),
+      }));
+      return gl;
+    };
+    // What a posted day issues for a batch-wise batch: one share, no animal.
+    const postDay = () =>
+      service.postConsumptionGroup(
+        'batch-1',
+        {
+          item_id: 'feed',
+          uom: 'KG',
+          transaction_date: '2026-01-11',
+          shares: [{ quantity: 9.6 }],
+        },
+        'tenant-123',
+      );
+    const debitOf = (gl: ReturnType<typeof setup>) =>
+      gl.postInventoryLedgerEntry.mock.calls[0][2];
+
+    it("debits a posted day's feed to the BIO_LITTER_BIRTH debit account", async () => {
+      const gl = setup('PREMATURE');
+      await postDay();
+      expect(gl.mappedAccount).toHaveBeenCalledWith(
+        'tenant-123',
+        'comp-1',
+        'BIO_LITTER_BIRTH',
+        'debit',
+        expect.anything(),
+      );
+      expect(debitOf(gl)).toEqual({ debitAccountId: 'acct-weaners' });
+    });
+
+    it('debits a feed entry recorded on its own there too', async () => {
+      const gl = setup('PREMATURE');
+      await service.addTransaction(
+        'batch-1',
+        {
+          transaction_date: '2026-01-11',
+          transaction_type: 'CONSUMPTION',
+          item_id: 'feed',
+          quantity: 9.6,
+          uom: 'KG',
+        } as any,
+        'tenant-123',
+      );
+      expect(debitOf(gl)).toEqual({ debitAccountId: 'acct-weaners' });
+    });
+
+    it('debits capitalised overhead there too', async () => {
+      const gl = setup('PREMATURE');
+      await service.addTransaction(
+        'batch-1',
+        {
+          transaction_date: '2026-01-11',
+          transaction_type: 'OVERHEAD',
+          quantity: 2,
+          rate: 3,
+          uom: 'HOUR',
+        } as any,
+        'tenant-123',
+      );
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionType: 'BIO_OVERHEAD_PREMATURE',
+          amount: 6,
+          debitAccountId: 'acct-weaners',
+        }),
+      );
+    });
+
+    it("leaves a batch no farrowing made to the mapping's account", async () => {
+      const gl = setup('PREMATURE', false);
+      await postDay();
+      expect(debitOf(gl).debitAccountId).toBeUndefined();
+    });
+
+    it('leaves expensed feed to the mapping: nothing is capitalised into the lot', async () => {
+      const gl = setup('MATURE');
+      await postDay();
+      expect(debitOf(gl)).toEqual({});
+      expect(gl.mappedAccount).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('releaseHeadToAnimals (gilt selection, Phase 5)', () => {
+    const lot = {
+      ...activeBatch,
+      batch_no: 'BATCH-000008',
+      costing_method: 'BIO_ASSET',
+      tracking_mode: 'BATCH_WISE',
+      closing_quantity: '10',
+      opening_quantity: '10',
+      input_lines: [{ item_id: 'piglet' }],
+    };
+    const setup = (
+      state: { current_quantity: string; nca_book_value: string },
+      batch: object = lot,
+    ) => {
+      jest.spyOn(service, 'findOne').mockResolvedValue(batch as any);
+      jest
+        .spyOn(service as any, 'ensureBioState')
+        .mockResolvedValue({ stage: 'PREMATURE', ...state });
+      jest
+        .spyOn(service as any, 'applyMortalityEffects')
+        .mockResolvedValue(undefined);
+      mockDbSelect.mockReturnValue({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            orderBy: jest.fn().mockReturnValue({
+              limit: jest
+                .fn()
+                .mockResolvedValue([{ item_id: 'piglet', lot_no: 'LOT-1' }]),
+            }),
+          }),
+        }),
+      });
+      const inserted: any[] = [];
+      const sets: any[] = [];
+      mockDbInsert.mockImplementation(() => ({
+        values: jest.fn((v: any) => {
+          inserted.push(v);
+          return Promise.resolve({});
+        }),
+      }));
+      mockDbUpdate.mockImplementation(() => ({
+        set: jest.fn((v: any) => {
+          sets.push(v);
+          return { where: jest.fn().mockResolvedValue({}) };
+        }),
+      }));
+      return { inserted, sets };
+    };
+    const release = (quantity: number) =>
+      service.releaseHeadToAnimals(
+        'b-8',
+        { quantity, date: '2026-10-20', reference: 'GS-2026-00001' },
+        'tenant-123',
+      );
+
+    it('takes the average value of the head it releases, and one ledger row records the head and the value leaving', async () => {
+      const { inserted, sets } = setup({
+        current_quantity: '10',
+        nca_book_value: '18.334',
+      });
+      const r = await release(4);
+      expect(r).toEqual({ per_head: 1.8334, total: 7.3336, remaining: 6 });
+      expect(sets.find((v) => v.nca_book_value !== undefined)).toMatchObject({
+        current_quantity: '6',
+        nca_book_value: '11.0004',
+      });
+      expect(inserted[0]).toMatchObject({
+        entry_type: 'TRANSFER',
+        transaction_type: 'TRANSFER_SHIPMENT',
+        document_type: 'GILT_SELECTION',
+        document_no: 'GS-2026-00001',
+        quantity: '-4',
+        cost_amount: '-7.3336',
+        batch_id: 'b-8',
+        lot_no: 'LOT-1',
+      });
+      expect(sets.find((v) => v.status === 'CLOSED')).toBeUndefined();
+    });
+
+    it("releases at a given value per head (a litter's own cost) and the batch loses just that, not its average", async () => {
+      const { inserted, sets } = setup({
+        current_quantity: '98',
+        nca_book_value: '6189.47',
+      });
+      const r = await service.releaseHeadToAnimals(
+        'b-8',
+        {
+          quantity: 3,
+          date: '2026-10-20',
+          reference: 'GS-2026-00001',
+          value_per_head: 1.8334,
+        },
+        'tenant-123',
+      );
+      expect(r).toEqual({ per_head: 1.8334, total: 5.5002, remaining: 95 });
+      expect(sets.find((v) => v.nca_book_value !== undefined)).toMatchObject({
+        current_quantity: '95',
+        nca_book_value: '6183.9698',
+      });
+      expect(inserted[0]).toMatchObject({
+        cost_amount: '-5.5002',
+        cost_amount_each_unit: '1.8334',
+      });
+    });
+
+    it('lets the last head take whatever is left and leaves the emptied batch ACTIVE for a user to close (Rishi, 19 Oct)', async () => {
+      const { sets } = setup({ current_quantity: '3', nca_book_value: '10' });
+      const r = await release(3);
+      expect(r).toMatchObject({ total: 10, remaining: 0 });
+      expect(sets.find((v) => v.status === 'CLOSED')).toBeUndefined();
+    });
+
+    it('refuses more head than the batch holds, and a batch of registered animals', async () => {
+      setup({ current_quantity: '3', nca_book_value: '10' });
+      await expect(release(4)).rejects.toThrow(
+        'holds 3 head; 4 cannot be selected',
+      );
+      setup(
+        { current_quantity: '3', nca_book_value: '10' },
+        { ...lot, tracking_mode: 'ANIMAL_WISE' },
+      );
+      await expect(release(1)).rejects.toThrow(
+        'already holds registered animals',
+      );
     });
   });
 
@@ -3562,7 +5020,8 @@ describe('BatchService', () => {
 
       expect(mockLedgerService.writePositiveEntry).toHaveBeenCalledWith(
         expect.objectContaining({
-          transactionType: 'BIO_HARVEST',
+          transactionType: 'OUTPUT',
+          glMappingType: 'BIO_HARVEST',
           quantity: 400,
           rate: 50, // 20000 / 400
         }),
@@ -3578,6 +5037,139 @@ describe('BatchService', () => {
         expect.arrayContaining([
           expect.objectContaining({ closing_quantity: '0.0000' }),
         ]),
+      );
+    });
+  });
+
+  describe("a pre-mature herd's exits leave the pre-mature asset account", () => {
+    // farrowings: the farrowing that made the batch, if one did (a piglet lot).
+    const prime = (stage: string, farrowings: object[] = []) => {
+      jest.spyOn(service, 'findOne').mockResolvedValue({
+        ...activeBatch,
+        batch_no: 'BATCH-000001',
+        costing_method: 'BIO_ASSET',
+        tracking_mode: 'BATCH_WISE',
+        stage_id: 'stage-weaner',
+        input_lines: [{ item_id: 'item-piglet' }],
+      } as any);
+      const gl = {
+        postInventoryLedgerEntry: jest.fn().mockResolvedValue({}),
+        postBatchCostEntry: jest.fn().mockResolvedValue({}),
+        mappedAccount: jest.fn(async (_t: string, _c: string, type: string) =>
+          type === 'BIO_LITTER_BIRTH' ? 'acct-weaners' : 'acct-1050',
+        ),
+      };
+      (service as any).glPostingService = gl;
+      (service as any).ledgerService = {
+        writePositiveEntry: jest.fn().mockResolvedValue({ ledger_id: 'l-1' }),
+      };
+      mockDbSelect.mockReturnValue({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue(farrowings),
+          }),
+        }),
+      });
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([
+              {
+                state_id: 's-1',
+                batch_id: 'batch-1',
+                stage,
+                current_quantity: '10.0000',
+                nca_book_value: '40000.0000',
+              },
+            ]),
+          }),
+        }),
+      });
+      mockDbUpdate.mockImplementation(() => ({
+        set: jest.fn(() => ({ where: jest.fn().mockResolvedValue({}) })),
+      }));
+      mockDbInsert.mockImplementation(() => ({
+        values: jest.fn().mockResolvedValue({}),
+      }));
+      return gl;
+    };
+
+    it("credits the pre-mature account for a sale's proceeds and takes the gain or loss against it", async () => {
+      const gl = prime('PREMATURE');
+      await service.disposeBioAsset(
+        'batch-1',
+        {
+          disposal_type: 'SOLD',
+          quantity: 4,
+          posting_date: '2026-10-01',
+          sale_proceeds: 5000,
+        } as any,
+        'tenant-123',
+      );
+      expect(gl.mappedAccount).toHaveBeenCalledWith(
+        'tenant-123',
+        expect.anything(),
+        'BIO_MORTALITY_PREMATURE',
+        'credit',
+        expect.anything(),
+      );
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionType: 'BIO_SALE_PROCEEDS',
+          creditAccountId: 'acct-1050',
+        }),
+      );
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionType: 'BIO_DISPOSAL_SOLD',
+          debitAccountId: 'acct-1050',
+        }),
+      );
+    });
+
+    it("takes a piglet lot's sale out of the lot's own account, where its birth cost and feed went", async () => {
+      const gl = prime('PREMATURE', [{ id: 'farrow-1' }]);
+      await service.disposeBioAsset(
+        'batch-1',
+        {
+          disposal_type: 'SOLD',
+          quantity: 4,
+          posting_date: '2026-10-01',
+          sale_proceeds: 5000,
+        } as any,
+        'tenant-123',
+      );
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionType: 'BIO_SALE_PROCEEDS',
+          creditAccountId: 'acct-weaners',
+        }),
+      );
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionType: 'BIO_DISPOSAL_SOLD',
+          debitAccountId: 'acct-weaners',
+        }),
+      );
+    });
+
+    it("leaves a mature herd to the mapping's mature account", async () => {
+      const gl = prime('MATURE');
+      await service.disposeBioAsset(
+        'batch-1',
+        {
+          disposal_type: 'SOLD',
+          quantity: 4,
+          posting_date: '2026-10-01',
+          sale_proceeds: 5000,
+        } as any,
+        'tenant-123',
+      );
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transactionType: 'BIO_SALE_PROCEEDS',
+          creditAccountId: undefined,
+        }),
       );
     });
   });
@@ -3599,7 +5191,16 @@ describe('BatchService', () => {
         postInventoryLedgerEntry: jest
           .fn()
           .mockResolvedValue({ journal_id: 'j-1' }),
+        mappedAccount: jest.fn().mockResolvedValue('acct-1050'),
       };
+      // Not a piglet lot: no farrowing made it (herd-account.ts).
+      mockDbSelect.mockReturnValue({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            limit: jest.fn().mockResolvedValue([]),
+          }),
+        }),
+      });
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
           where: jest.fn().mockReturnValue({

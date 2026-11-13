@@ -6,7 +6,7 @@
  *
  * Why the top-up exists at all (final review, C1): batches now stand in sheds
  * (batch-helpers.ts SHED_ROLES_BY_STAGE), so each feed entry draws from the
- * silo attached to its shed — and applyFifo confines the draw to that one
+ * silo attached to its shed — and allocateAndCostOutbound confines the draw to that one
  * warehouse and refuses a short one. Chapter 02 stocks every silo with a flat
  * 2,000 kg, before any batch exists; a 120-sow gestation batch eats about
  * 300 kg a day, so its dry-sow silo ran out on day seven and the rebuild died

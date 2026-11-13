@@ -20,6 +20,8 @@ export const FINANCE_SECTIONS = [
   { key: "balance-sheet", href: "/finance/balance-sheet", labelKey: "finBalanceSheet" },
   { key: "trial-balance", href: "/finance/trial-balance", labelKey: "finTrialBalance" },
   { key: "bio-asset-reconciliation", href: "/finance/bio-asset-reconciliation", labelKey: "finBioAssetReconciliation" },
+  { key: "bio-costing-runs", href: "/finance/bio-costing-runs", labelKey: "finBioCostingRuns" },
+  { key: "fa-conversions", href: "/finance/fa-conversions", labelKey: "finFaConversions" },
   { key: "batch-cost-variance", href: "/finance/batch-cost-variance", labelKey: "finBatchCostVariance" },
 ] as const;
 
@@ -51,7 +53,7 @@ function useFinancePageState() {
   return { ready, mayView };
 }
 
-export function FinancePageShell({ activeKey, children }: { activeKey: FinanceTabKey; children: React.ReactNode }) {
+export function FinancePageShell({ activeKey, titleAddon, children }: { activeKey: FinanceTabKey; /** A control beside the page title, to its right (an info tooltip). */ titleAddon?: React.ReactNode; children: React.ReactNode }) {
   const { t } = useLanguage();
   const { ready, mayView } = useFinancePageState();
 
@@ -77,12 +79,14 @@ export function FinancePageShell({ activeKey, children }: { activeKey: FinanceTa
     activeKey === "profit-loss" ? t("finProfitLossTitle") :
     activeKey === "balance-sheet" ? t("finBalanceSheetTitle") :
     activeKey === "trial-balance" ? t("finTrialBalanceTitle") :
+    activeKey === "bio-costing-runs" ? t("finBioCostingRunsTitle") :
+    activeKey === "fa-conversions" ? t("finFaConversionsTitle") :
     activeKey === "batch-cost-variance" ? t("finBatchCostVarianceTitle") :
     t("finBioAssetReconciliationTitle");
 
   return (
     <ConsolePage>
-      <PageHeader title={title} description={t("finPageDescription")} />
+      <PageHeader title={title} description={t("finPageDescription")} titleAddon={titleAddon} />
       {children}
     </ConsolePage>
   );

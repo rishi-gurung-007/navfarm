@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -26,6 +28,7 @@ import { StatRow, StatCard } from '@/components/ui/stat-row';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 import { AnimalMultiSelect, type AnimalOption } from './animal-multi-select';
+import { animalLocationOptions, useCompanyLocations } from '../piggery/animal-locations';
 
 type Row = Record<string, any>;
 
@@ -63,6 +66,8 @@ export default function BatchTransferPanel() {
   const [open, setOpen] = useState(false);
   const [fromBatchId, setFromBatchId] = useState('');
   const [toBatchId, setToBatchId] = useState('');
+  // The pen, crate or shed on the destination batch's farm the animals move to. Empty keeps each animal's own.
+  const [toLocationId, setToLocationId] = useState('');
   const [transferDate, setTransferDate] = useState(today);
   const [wholeBatch, setWholeBatch] = useState(true);
   const [reason, setReason] = useState('');
@@ -122,6 +127,24 @@ export default function BatchTransferPanel() {
     id: fromBatchId,
     loaded: pagedSources.options,
   });
+  const toBatch = usePickedRow({
+    path: '/batch',
+    idParam: 'batchId',
+    idKey: 'batch_id',
+    id: toBatchId,
+    loaded: pagedDestinations.options,
+  });
+  const allLocations = useCompanyLocations(open, companyId);
+  const locationOptions = useMemo(
+    () => animalLocationOptions(allLocations, (toBatch as Row | null)?.farm_id ?? null),
+    [allLocations, toBatch],
+  );
+  // A batch on another farm than the source's: the animals cannot keep their pens, so a location is required.
+  const changesFarm = useMemo(() => {
+    const from = (fromBatch as Row | null)?.farm_id;
+    const to = (toBatch as Row | null)?.farm_id;
+    return !!from && !!to && from !== to;
+  }, [fromBatch, toBatch]);
 
   // The transferable pool is per-source-batch and always refetched — a batch's
   // membership changes with every mortality, sale or earlier transfer, so a
@@ -141,9 +164,15 @@ export default function BatchTransferPanel() {
     setSelected(new Set());
   }, [fromBatchId]);
 
+  // The same rule as the Batches page (batch-panel.tsx) and the API: a batch of this area, or one with no area
+  // recorded. Strict equality hid every batch in an area workspace, since none carries an area (11 Nov 2026).
   const inArea = useCallback(
     (list: Row[]) =>
-      areaId ? list.filter((b) => b.operational_area_id === areaId) : list,
+      areaId
+        ? list.filter(
+            (b) => !b.operational_area_id || b.operational_area_id === areaId,
+          )
+        : list,
     [areaId],
   );
   const sourceBatches = useMemo(
@@ -181,6 +210,7 @@ export default function BatchTransferPanel() {
   const resetForm = () => {
     setFromBatchId('');
     setToBatchId('');
+    setToLocationId('');
     setTransferDate(today());
     setWholeBatch(true);
     setReason('');
@@ -209,6 +239,8 @@ export default function BatchTransferPanel() {
         return setFormError('Enter how many head to move.');
     } else if (!wholeBatch && selected.size === 0)
       return setFormError(t('btErrorNoAnimals'));
+    if (!headcountMode && changesFarm && !toLocationId)
+      return setFormError('The destination batch is on another farm. Choose the location there the animals move to.');
 
     setSaving(true);
     try {
@@ -226,6 +258,7 @@ export default function BatchTransferPanel() {
           : wholeBatch
             ? {}
             : { animal_ids: [...selected] }),
+        ...(!headcountMode && toLocationId ? { to_location_id: toLocationId } : {}),
         ...(reason.trim() ? { reason: reason.trim() } : {}),
         ...(remarks.trim() ? { remarks: remarks.trim() } : {}),
       });
@@ -365,7 +398,7 @@ export default function BatchTransferPanel() {
                     {r.transfer_no}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-[var(--text-secondary)]">
-                    {r.transfer_date}
+                    {formatDate(r.transfer_date)}
                   </td>
                   <td className="px-4 py-3">
                     <span className="inline-flex items-center gap-2 whitespace-nowrap">
@@ -467,10 +500,26 @@ export default function BatchTransferPanel() {
                 remote={pagedDestinations}
               />
             </label>
+            {!headcountMode && (
+              <label className="block">
+                <span className="nf-text-label">
+                  Destination location{changesFarm ? ' *' : ''}
+                </span>
+                <SearchableSelect
+                  ariaLabel="Destination location"
+                  value={toLocationId}
+                  onChange={(val) => setToLocationId(val)}
+                  options={locationOptions}
+                  placeholder={changesFarm ? 'Choose a pen on the destination farm' : 'Keep each animal in its location'}
+                  searchPlaceholder="Search pens, crates, sheds…"
+                  disabled={!toBatchId}
+                  onClear={() => setToLocationId('')}
+                />
+              </label>
+            )}
             <label className="block">
               <span className="nf-text-label">{t('btTransferDate')}</span>
-              <input
-                type="date"
+              <DateInput
                 value={transferDate}
                 onChange={(e) => setTransferDate(e.target.value)}
                 className="nf-input w-full text-sm"
@@ -612,7 +661,7 @@ export default function BatchTransferPanel() {
             ? t('btDetailDescription', {
                 from: viewing.from_batch_no || batchNo(viewing.from_batch_id),
                 to: viewing.to_batch_no || batchNo(viewing.to_batch_id),
-                date: viewing.transfer_date,
+                date: formatDate(viewing.transfer_date),
               })
             : ''
         }

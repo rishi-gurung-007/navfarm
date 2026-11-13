@@ -1,13 +1,22 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
-import { Search, Loader2, Inbox, Ban } from 'lucide-react';
+import { Search, Loader2, Inbox, Ban, Eye } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import { api } from '@/services/api-client';
 import { Dialog } from '@/components/ui/dialog';
 import { Toast } from '@/components/ui/toast';
 import { Pagination } from '@/components/ui/pagination';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { getActiveCompanyId } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -51,7 +60,7 @@ function OriginChain({
             {' '}
             ·{' '}
             {t('pkChainStarted', {
-              date: String(node.start_date).slice(0, 10),
+              date: formatDate(node.start_date),
             })}
           </span>
         )}
@@ -247,47 +256,91 @@ export default function PacksPanel() {
           {t('pkNoPacksGeneratedYet')}
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {pagedFiltered.map((row) => (
-            <button
-              key={row.qr_id}
-              onClick={() => setViewing(row)}
-              className="flex flex-col items-start gap-2 rounded-[var(--radius-md)] border p-3 text-left transition hover:bg-(--surface-raised)"
-              style={{ ...S.surface, opacity: row.is_voided ? 0.5 : 1 }}
-            >
-              <div className="flex w-full items-center justify-between">
-                <span className="text-xs font-semibold" style={S.primary}>
-                  {row.pack_no}
-                </span>
-                {row.is_voided && (
-                  <Badge variant="danger">{t('pkVoided')}</Badge>
-                )}
-                {row.grade && !row.is_voided && (
-                  <Badge variant="accent">
-                    {t('pkGrade', { grade: row.grade })}
-                  </Badge>
-                )}
-              </div>
-              <div className="flex w-full justify-center rounded-lg bg-white p-2">
-                <QRCode value={JSON.stringify(row.qr_data)} size={96} />
-              </div>
-              <div className="w-full text-[11px]" style={S.sub}>
-                <p style={S.primary}>{itemLabel(row.item_id)}</p>
-                <p>{t('pkBatchLabel', { batch: batchLabel(row.batch_id) })}</p>
-                <p>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('pkColPack')}</TableHead>
+              <TableHead>{t('pkItem')}</TableHead>
+              <TableHead>{t('pkLotNo')}</TableHead>
+              <TableHead>{t('pkBatch')}</TableHead>
+              <TableHead>{t('pkColQuantity')}</TableHead>
+              <TableHead>{t('pkColProduced')}</TableHead>
+              <TableHead>{t('pkColExpiry')}</TableHead>
+              <TableHead>{t('pkGradeLabel')}</TableHead>
+              <TableHead>{t('pkStatus')}</TableHead>
+              <TableHead className="text-right">{t('action')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {pagedFiltered.map((row) => (
+              <TableRow
+                key={row.qr_id}
+                onClick={() => setViewing(row)}
+                className="cursor-pointer"
+                style={{ opacity: row.is_voided ? 0.55 : 1 }}
+              >
+                <TableCell>
+                  <div className="flex items-center gap-3">
+                    <div className="shrink-0 rounded bg-white p-1">
+                      <QRCode value={JSON.stringify(row.qr_data)} size={36} />
+                    </div>
+                    <span
+                      className="whitespace-nowrap font-mono font-semibold"
+                      style={S.primary}
+                    >
+                      {row.pack_no}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell className="whitespace-nowrap">
+                  {itemLabel(row.item_id)}
+                </TableCell>
+                <TableCell className="whitespace-nowrap font-mono">
+                  {row.lot_no || NA}
+                </TableCell>
+                <TableCell className="whitespace-nowrap">
+                  {batchLabel(row.batch_id)}
+                </TableCell>
+                <TableCell className="whitespace-nowrap">
                   {formatQuantity(row.net_weight)} {row.pack_uom}
-                  {row.gross_weight
-                    ? ` ${t('pkGrossWeightSuffix', { gross: formatQuantity(row.gross_weight) })}`
-                    : ''}
-                </p>
-                <p>
-                  {row.production_date}
-                  {row.expiry_date ? ` → ${row.expiry_date}` : ''}
-                </p>
-              </div>
-            </button>
-          ))}
-        </div>
+                </TableCell>
+                <TableCell className="whitespace-nowrap">
+                  {row.production_date ? formatDate(row.production_date) : NA}
+                </TableCell>
+                <TableCell className="whitespace-nowrap">
+                  {row.expiry_date ? formatDate(row.expiry_date) : NA}
+                </TableCell>
+                <TableCell>
+                  {row.grade ? (
+                    <Badge variant="accent">{row.grade}</Badge>
+                  ) : (
+                    NA
+                  )}
+                </TableCell>
+                <TableCell>
+                  {row.is_voided ? (
+                    <Badge variant="danger">{t('pkVoided2')}</Badge>
+                  ) : (
+                    <Badge variant="success">{t('pkActive')}</Badge>
+                  )}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setViewing(row);
+                    }}
+                  >
+                    <Eye className="h-3.5 w-3.5" /> {t('pkView')}
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
 
       {!loading && filtered.length > 0 && (
@@ -387,8 +440,8 @@ export default function PacksPanel() {
                   {t('pkProductionExpiry')}
                 </p>
                 <p style={S.primary}>
-                  {viewing.production_date}{' '}
-                  {viewing.expiry_date ? `→ ${viewing.expiry_date}` : ''}
+                  {formatDate(viewing.production_date)}{' '}
+                  {viewing.expiry_date ? `→ ${formatDate(viewing.expiry_date)}` : ''}
                 </p>
               </div>
               <div>
@@ -424,6 +477,47 @@ export default function PacksPanel() {
                 </p>
               </div>
             </div>
+            {viewing.qr_data?.type === 'SEMEN_LOT' &&
+              (viewing.qr_data.label ||
+                viewing.qr_data.colorant ||
+                viewing.qr_data.week ||
+                viewing.qr_data.destination_farm) && (
+                <div className="grid w-full grid-cols-2 gap-3 text-xs">
+                  {(
+                    [
+                      [t('pkSemenLabel'), viewing.qr_data.label],
+                      [t('pkSemenColorant'), viewing.qr_data.colorant],
+                      [
+                        t('pkSemenWeek'),
+                        viewing.qr_data.week
+                          ? `${viewing.qr_data.week}${viewing.qr_data.week_year ? ` / ${viewing.qr_data.week_year}` : ''}`
+                          : null,
+                      ],
+                      [
+                        t('pkSemenFor'),
+                        typeof viewing.qr_data.destination_farm === 'object'
+                          ? [
+                              viewing.qr_data.destination_farm?.code,
+                              viewing.qr_data.destination_farm?.name,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ')
+                          : viewing.qr_data.destination_farm,
+                      ],
+                    ] as Array<[string, string | null | undefined]>
+                  ).map(([label, value]) => (
+                    <div key={label}>
+                      <p
+                        className="font-semibold uppercase tracking-wider"
+                        style={S.muted}
+                      >
+                        {label}
+                      </p>
+                      <p style={S.primary}>{value || NA}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             {viewing.origin_batch_chain && (
               <div className="w-full">
                 <p

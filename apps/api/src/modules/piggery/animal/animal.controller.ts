@@ -2,7 +2,7 @@ import { Controller, Get, Post, Put, Patch, Param, Body, Query, Req, UseGuards }
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { AnimalService } from './animal.service';
 import { AnimalActivityService } from './animal-activity.service';
-import { BulkTransitionAnimalStageDto, CreateAnimalDto, UpdateAnimalDto, DisposeAnimalDto, MarkOutOfProductionDto, QueryAnimalDto, TransitionAnimalStageDto } from './dto/animal.dto';
+import { BulkTransitionAnimalStageDto, MoveAnimalLocationDto, CreateAnimalDto, UpdateAnimalDto, DisposeAnimalDto, MarkOutOfProductionDto, QueryAnimalDto, TransitionAnimalStageDto } from './dto/animal.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -74,7 +74,9 @@ export class AnimalController {
   @ApiParam({ name: 'id', description: 'Animal UUID' })
   async findOne(@Param('id') id: string) {
     const result = await this.animalService.findOne(id);
-    return { success: true, message: 'Animal retrieved.', data: withExitDates(result) };
+    // The card's worked-out facts (amortisation window, litter lot and colour, birth and current weight) ride with the animal, so every card that opens her shows them.
+    const facts = await this.activityService.cardFacts(result);
+    return { success: true, message: 'Animal retrieved.', data: { ...withExitDates(result), ...facts } };
   }
 
   @Put(':id')
@@ -99,6 +101,15 @@ export class AnimalController {
       ? `${result.moved} animal(s) moved, ${result.failed.length} could not be moved.`
       : `${result.moved} animal(s) moved.`;
     return { success: true, message, data: result };
+  }
+
+  @Post('move-location')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'edit')
+  @ApiOperation({ summary: 'Move animals to another pen, crate or shed on the farm of their batch — batch, stage and value stay as they are' })
+  async moveLocation(@Body() dto: MoveAnimalLocationDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const result = await this.animalService.moveLocation(dto, tenantId, req.user);
+    return { success: true, message: `${result.moved} animal(s) moved to ${result.to_location_code ?? 'the new location'}.`, data: result };
   }
 
   @Post(':id/transition-stage')
@@ -146,6 +157,15 @@ export class AnimalController {
   async getActivity(@Param('id') id: string) {
     const result = await this.activityService.getActivity(id);
     return { success: true, message: 'Animal activity retrieved.', data: result };
+  }
+
+  @Get(':id/parity-expense')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'view')
+  @ApiOperation({ summary: "A sow's cost parity by parity: feed, medicine and semen, overhead and amortisation in each parity's window, split into what went into her book value and what was expensed" })
+  @ApiParam({ name: 'id', description: 'Animal UUID' })
+  async getParityExpense(@Param('id') id: string) {
+    const result = await this.activityService.getParityExpense(id);
+    return { success: true, message: 'Parity expense retrieved.', data: result };
   }
 
   @Get(':id/bio-asset-ledger')

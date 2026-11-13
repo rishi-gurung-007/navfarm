@@ -34,7 +34,12 @@ describe('secondary production reference scope', () => {
         ),
     };
     const cls = {
-      get: (key: string) => (key === 'tenantDb' ? db : undefined),
+      get: (key: string) =>
+        key === 'tenantPostingTransaction'
+          ? true
+          : key === 'tenantDb'
+            ? db
+            : undefined,
     } as unknown as ClsService;
     const service = new QcService(cls, audit);
 
@@ -81,7 +86,12 @@ describe('secondary production reference scope', () => {
         ),
     };
     const cls = {
-      get: (key: string) => (key === 'tenantDb' ? db : undefined),
+      get: (key: string) =>
+        key === 'tenantPostingTransaction'
+          ? true
+          : key === 'tenantDb'
+            ? db
+            : undefined,
     } as unknown as ClsService;
     const service = new QrCodeService(cls, audit, {} as any);
 

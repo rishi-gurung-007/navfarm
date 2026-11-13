@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { mergeLifecycleFeedRows } from './utils/master-csv';
 import { useState, useRef } from 'react';
@@ -1236,8 +1237,8 @@ export default function MasterDataImportModal({
                           <span>
                             {r.payload.breed_code || r.raw.breed_code} ➔{' '}
                             {r.payload.stage_code || r.raw.stage_code} (
-                            {r.payload.category || NA}, {r.payload.period_from}-
-                            {r.payload.period_to} {r.payload.calc_unit})
+                            {r.payload.category || NA}, {formatDate(r.payload.period_from)}-
+                            {formatDate(r.payload.period_to)} {r.payload.calc_unit})
                           </span>
                         ) : (
                           <span>

@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDateTime } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -490,10 +491,7 @@ export default function AdminDashboardPage() {
                   <div className="text-right">
                     <div className="text-[10px] font-mono" style={S.muted}>
                       {log.created_at
-                        ? new Date(log.created_at).toLocaleString(undefined, {
-                            dateStyle: 'medium',
-                            timeStyle: 'short',
-                          })
+                        ? formatDateTime(log.created_at)
                         : NA}
                     </div>
                   </div>

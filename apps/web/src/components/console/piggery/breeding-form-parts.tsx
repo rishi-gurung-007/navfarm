@@ -1,5 +1,6 @@
 "use client";
 
+import { formatDate } from "@/utils/date-short";
 import { createContext, useContext, useState, type CSSProperties, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, Circle, Layers, X, XCircle } from "lucide-react";
 import type { RemoteOptions } from "@/modules/master-data/SearchableEntitySelect";
@@ -11,8 +12,8 @@ const surface: CSSProperties = { backgroundColor: "var(--surface)", borderColor:
 const raised: CSSProperties = { backgroundColor: "var(--surface-raised)", borderColor: "var(--border)" };
 
 /**
- * A fresh form is empty, so every required field is "wrong" — showing that in red before anyone has touched anything is
- * noise. Errors appear inline once the user has started (or tried to save); Save stays disabled throughout.
+ * A fresh form is empty, so every required field is "wrong" — showing that in red while the user is still filling it in
+ * is noise. Errors appear inline only once Save has been clicked, and from then on follow every change.
  */
 const EngagedContext = createContext(true);
 
@@ -43,13 +44,20 @@ export function EntryModal({
 }) {
   const blocking = errorsOf(issues);
   const [engaged, setEngaged] = useState(false);
+  // Save is always clickable: with something wrong it shows what, instead of sitting greyed out with no explanation.
+  const submit = (e: React.FormEvent) => {
+    if (blocking.length) {
+      e.preventDefault();
+      setEngaged(true);
+      return;
+    }
+    onSubmit(e);
+  };
   return (
     <EngagedContext.Provider value={engaged}>
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
       <form
-        onSubmit={onSubmit}
-        onClickCapture={() => setEngaged(true)}
-        onInputCapture={() => setEngaged(true)}
+        onSubmit={submit}
         noValidate
         className="rounded-[var(--radius-lg)] border w-full max-w-4xl max-h-[92vh] flex flex-col shadow-2xl"
         style={{ ...surface, ["--field-error" as string]: engaged ? "var(--danger)" : "var(--border)", ["--field-warn" as string]: "var(--warning)" } as CSSProperties}
@@ -81,14 +89,14 @@ export function EntryModal({
             {blocking.length
               ? engaged
                 ? `${blocking.length} thing${blocking.length === 1 ? "" : "s"} to fix before saving`
-                : "Work down the steps — Save unlocks when they are complete."
+                : "Fill in the steps, then Save — anything missing is shown then."
               : "Everything the system checks is in order."}
           </p>
           <div className="flex gap-2">
             <Button type="button" size="sm" variant="secondary" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" size="sm" disabled={submitting || blocking.length > 0}>
+            <Button type="submit" size="sm" disabled={submitting}>
               {submitting ? savingLabel : submitLabel}
             </Button>
           </div>
@@ -180,7 +188,7 @@ export function ChecksPanel({ issues }: { issues: Issue[] }) {
     <div className="rounded-[var(--radius-md)] border p-3 space-y-2" style={raised} aria-live="polite">
       <p className="text-xs font-bold" style={{ color: "var(--text-primary)" }}>Checks</p>
       {!engaged && issues.some((i) => i.level === "error") && (
-        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Rules show here as you fill the form in.</p>
+        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Anything missing is listed here when you click Save.</p>
       )}
       {!errors.length && !warns.length && !issues.some((i) => i.level === "error") && (
         <p className="text-[11px] flex items-center gap-1.5" style={{ color: "var(--success)" }}>
@@ -230,10 +238,13 @@ export function BatchPicker({
   noun,
   issues,
   remote,
+  disabled,
 }: {
   id: string;
   batches: Row[];
   remote?: RemoteOptions;
+  /** Fixed by something the form was started from (a collection plan), so not changed here. */
+  disabled?: boolean;
   value: string;
   onChange: (batchId: string) => void;
   countOf: (batchId: string) => number;
@@ -251,10 +262,12 @@ export function BatchPicker({
         placeholder={usable.length ? "Choose the batch" : `No animal-wise batch holds a ${noun}`}
         options={usable.map((b) => ({
           value: b.batch_id,
-          label: `${b.batch_no} · ${b.stage_name || b.current_stage_code || "no stage"} · ${countOf(b.batch_id)} ${noun}${countOf(b.batch_id) === 1 ? "" : "s"}`,
+          label: `${b.batch_no} · ${countOf(b.batch_id)} ${noun}${countOf(b.batch_id) === 1 ? "" : "s"}`,
+          batch_no: b.batch_no,
+          head: `${countOf(b.batch_id)} ${noun}${countOf(b.batch_id) === 1 ? "" : "s"}`,
         }))}
-        columnHeaders={false}
-        disabled={!usable.length}
+        columns={[{ key: "batch_no", label: "Batch" }, { key: "head", label: "Held" }]}
+        disabled={!usable.length || disabled}
         remote={remote}
       />
       {!usable.length && (
@@ -271,5 +284,41 @@ export function BatchPicker({
         </p>
       )}
     </Field>
+  );
+}
+
+/**
+ * What a form that carries out a collection plan was told by it, so the technician sees what was decided in planning and does
+ * not have to retype it: the day, who asked, the outside reference, the farm it is for, and which boar goes to which collector.
+ */
+export function PlanSummary({ plan, referenceLabel, destination }: { plan: Row; referenceLabel?: string | null; destination?: string | null }) {
+  const facts: Array<[string, string | null]> = [
+    ["Planned for", `${plan.weekday ?? ""} ${formatDate(plan.collection_date)}`.trim()],
+    ["Breeding line", plan.breed_code ?? null],
+    ["For farm", destination ?? null],
+    [referenceLabel?.trim() || "Reference", plan.reference ?? null],
+    ["Requested by", plan.requested_by ?? null],
+  ];
+  const boars: Row[] = (plan.lines ?? []).filter((l: Row) => l.status === "PLANNED");
+  return (
+    <div className="rounded-[var(--radius-md)] border p-3 space-y-2 text-xs" style={{ backgroundColor: "var(--accent-muted)", borderColor: "var(--accent)" }}>
+      <p className="font-bold" style={{ color: "var(--text-primary)" }}>
+        Recording plan <span className="font-mono" style={{ color: "var(--accent)" }}>{plan.plan_no}</span> — filled in from the plan
+      </p>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
+        {facts.filter(([, v]) => v).map(([k, v]) => (
+          <div key={k} className="flex gap-2">
+            <dt style={{ color: "var(--text-muted)" }}>{k}</dt>
+            <dd className="font-semibold" style={{ color: "var(--text-primary)" }}>{v}</dd>
+          </div>
+        ))}
+      </dl>
+      {boars.length > 0 && (
+        <p style={{ color: "var(--text-secondary)" }}>
+          To collect: {boars.map((l) => `${l.boar_code}${l.collector_code ? ` (${l.collector_code})` : ""}`).join(", ")}
+        </p>
+      )}
+      {plan.notes && <p style={{ color: "var(--text-muted)" }}>{plan.notes}</p>}
+    </div>
   );
 }

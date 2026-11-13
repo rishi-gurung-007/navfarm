@@ -6,7 +6,13 @@ import { api } from '../src/services/api-client';
 jest.mock('../src/services/api-client', () => ({
   api: {
     get: jest.fn(),
+    put: jest.fn(),
   },
+}));
+
+jest.mock('../src/hooks/useAuth', () => ({
+  getStoredUser: () => ({ userType: 'TENANT_ADMIN' }),
+  hasPermission: () => true,
 }));
 
 jest.mock('../src/hooks/useLanguage', () => ({
@@ -124,11 +130,24 @@ describe('AnimalDetailsModal', () => {
     {
       ledger_id: 'led-1',
       posting_date: '2025-01-15',
-      entry_type: 'ACQUISITION',
+      entry_type: 'POSITIVE',
+      // What the API returns: the event the row is, read from its codes; the card names the posting by it.
+      event: 'ACQUISITION',
       unit_cost: '450.00',
       quantity: 1,
       computed_cost: '450.00',
       posting_reference: 'GRN-2025-001',
+    },
+    // What the API actually returns: the bio_asset_ledger row's own column names. The card read other names for these
+    // three and showed a dash for every capitalised feed cost.
+    {
+      entry_id: 'led-2',
+      posting_date: '2025-01-16',
+      entry_type: 'CONSUMPTION',
+      cost_amount_each_unit: '28.0000',
+      quantity: '2.5500',
+      cost_amount: '71.4000',
+      document_no: 'BATCH-000001',
     },
   ];
 
@@ -197,7 +216,7 @@ describe('AnimalDetailsModal', () => {
 
     await waitFor(() => {
       expect(screen.getByText('23071 g/d')).toBeTruthy();
-      expect(screen.getByText('Between 2026-10-01 and 2026-10-08')).toBeTruthy();
+      expect(screen.getByText('Between 01/10/26 and 08/10/26')).toBeTruthy();
       expect(screen.getByText('24.0 kg')).toBeTruthy();
       expect(screen.getByText('3.5', { selector: 'span' })).toBeTruthy();
     });
@@ -290,7 +309,48 @@ describe('AnimalDetailsModal', () => {
 
     await waitFor(() => {
       expect(screen.getByText('GRN-2025-001')).toBeTruthy();
-      expect(screen.getByText('ACQUISITION')).toBeTruthy();
+      expect(screen.getAllByText('Acquisition').length).toBeGreaterThan(0);
+    });
+  });
+
+  it('shows the residual in force and where it comes from, and the latest month\'s charge', async () => {
+    (api.get as jest.Mock).mockImplementation((url: string) => {
+      if (url === '/animal/animal-1') return Promise.resolve({ ...mockAnimal, residual_effective: 307.5, residual_source: 'ITEM', amortisation_monthly: '19.8603', latest_amortisation_date: '2026-03-31' });
+      if (url === '/animal/animal-1/bio-asset-ledger') return Promise.resolve(mockLedger);
+      return Promise.resolve([]);
+    });
+    render(<AnimalDetailsModal animalId="animal-1" onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getAllByText('DEMO-POR100-SOW-01').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByText('Costing & Valuation'));
+    expect(await screen.findByText(/307\.50/)).toBeTruthy();
+    expect(screen.getByText('From her item')).toBeTruthy();
+    expect(screen.getByText(/Latest charge, /)).toBeTruthy();
+  });
+
+  it('has no way to give one animal a residual of her own: the residual is the item\'s', async () => {
+    (api.get as jest.Mock).mockImplementation((url: string) => {
+      if (url === '/animal/animal-1') return Promise.resolve({ ...mockAnimal, residual_effective: 307.5, residual_source: 'ITEM', residual_value: '412.3400' });
+      if (url === '/animal/animal-1/bio-asset-ledger') return Promise.resolve(mockLedger);
+      return Promise.resolve([]);
+    });
+    render(<AnimalDetailsModal animalId="animal-1" onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getAllByText('DEMO-POR100-SOW-01').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByText('Costing & Valuation'));
+    expect(await screen.findByText(/307\.50/)).toBeTruthy(); // the item's figure, not the 412.34 once stored on her
+    expect(screen.queryByText(/412\.34/)).toBeNull();
+    expect(screen.queryByText('Override for this animal')).toBeNull();
+    expect(screen.queryByLabelText('Her residual')).toBeNull();
+    expect(api.put).not.toHaveBeenCalled();
+  });
+
+  it('shows the cost of a ledger row under the API\'s own column names (unit cost, amount, document)', async () => {
+    render(<AnimalDetailsModal animalId="animal-1" onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getAllByText('DEMO-POR100-SOW-01').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByText('Costing & Valuation'));
+    await waitFor(() => {
+      expect(screen.getAllByText('BATCH-000001').length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/71\.40/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/28\.00/).length).toBeGreaterThan(0);
     });
   });
 });

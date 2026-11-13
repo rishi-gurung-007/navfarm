@@ -12,6 +12,7 @@ const INVENTORY_SECTIONS = [
   { key: "balance", href: "/inventory/balance", labelKey: "invStockBalance" },
   { key: "feed-forecast", href: "/inventory/feed-forecast", labelKey: "invFeedForecast" },
   { key: "goods-receipt", href: "/inventory/goods-receipt", labelKey: "invGoodsReceipt" },
+  { key: "qc-inspection", href: "/inventory/qc-inspection", labelKey: "invQcInspection" },
   { key: "transfers", href: "/inventory/transfers", labelKey: "invTransfers" },
   { key: "stock-adjustment", href: "/inventory/stock-adjustment", labelKey: "invStockAdjustment" },
   { key: "ledger", href: "/inventory/ledger", labelKey: "invLedger" },
@@ -51,6 +52,7 @@ function useInventoryPageState() {
       user.userType === "TENANT_ADMIN" ||
       user.userType === "SYSTEM_ADMIN" ||
       hasPermission(user, "INVENTORY", "GOODS_RECEIPT", "can_view") ||
+      hasPermission(user, "INVENTORY", "QC_INSPECTION", "can_view") ||
       hasPermission(user, "INVENTORY", "STOCK_COUNT", "can_view") ||
       hasPermission(user, "INVENTORY", "STOCK_TRANSFER", "can_view") ||
       hasPermission(user, "INVENTORY", "STOCK_ADJUSTMENT", "can_view") ||
@@ -63,10 +65,20 @@ function useInventoryPageState() {
   return { ready, scope, activeLob, mayView };
 }
 
-export function InventoryPageShell({ activeKey, fill = false, title: titleOverride, children }: {
-  activeKey: InventoryTabKey; fill?: boolean;
+export function InventoryPageShell({
+  activeKey,
+  fill = false,
+  title: titleOverride,
+  showHeader = true,
+  actions,
+  children,
+}: {
+  activeKey: InventoryTabKey;
+  fill?: boolean;
   /** The page's own heading, e.g. the Feed Forecast view it shows (Rishi, 14 Oct); defaults to the section's title. */
   title?: string;
+  showHeader?: boolean;
+  actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const { t } = useLanguage();
@@ -92,6 +104,7 @@ export function InventoryPageShell({ activeKey, fill = false, title: titleOverri
   const title = titleOverride ? titleOverride :
     activeKey === "feed-forecast" ? t("invFeedForecastTitle") :
     activeKey === "goods-receipt" ? t("invGoodsReceiptTitle") :
+    activeKey === "qc-inspection" ? t("invQcInspectionTitle") :
     activeKey === "transfers" ? t("invTransfersTitle") :
     activeKey === "stock-adjustment" ? t("invStockAdjustmentTitle") :
     activeKey === "ledger" ? t("invLedgerTitle") :
@@ -103,7 +116,7 @@ export function InventoryPageShell({ activeKey, fill = false, title: titleOverri
     // Plan S: a feed screen holds its header and filters still; only its table scrolls.
     <ConsolePage fill={fill}>
       {/* No tab row: the Inventory & Stock menu in the sidebar opens each of these pages directly. */}
-      <PageHeader title={title} sticky={!fill} />
+      {showHeader && <PageHeader title={title} actions={actions} sticky={!fill} />}
       {children}
     </ConsolePage>
   );

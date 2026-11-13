@@ -9,6 +9,7 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { QcInspectionService } from '../qc-inspection/qc-inspection.service';
 import { BadRequestException } from '@nestjs/common';
 import * as schema from '../../../core/database/schema';
 import { plainToInstance } from 'class-transformer';
@@ -17,6 +18,22 @@ import { UpdateGoodsReceiptDto } from './dto/goods-receipt.dto';
 
 describe('GoodsReceiptService', () => {
   let service: GoodsReceiptService;
+
+  // Items are not QC-required in these tests; the QC path is proved against MySQL and in qc-inspection.rules.spec.ts.
+  const qcInspectionMock = {
+    qcRequiredItemIds: jest.fn().mockResolvedValue(new Set<string>()),
+    resolveSeries: jest.fn().mockResolvedValue('QC_INSPECTION'),
+    raiseForReceiptLine: jest.fn().mockResolvedValue({ inspection_id: 'insp-1', inspection_no: 'QC-000001' }),
+  };
+
+  const numberSeriesMock = {
+    generateNextNumberById: jest.fn().mockResolvedValue({ next_number: 'TEST-001' }),
+    ensureCompanySeries: jest.fn().mockResolvedValue(undefined),
+    seriesCodeForDocument: jest.fn().mockResolvedValue('GOODS_RECEIPT'),
+    previewCode: jest.fn(),
+    generateNextNumbersById: jest.fn(),
+    generateNext: jest.fn().mockResolvedValue('GR-000007'),
+  };
 
   const mockDbSelect = jest.fn();
   const mockDbUpdate = jest.fn();
@@ -86,9 +103,10 @@ describe('GoodsReceiptService', () => {
         { provide: ClsService, useValue: transactionCls(mockDb) },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: InventoryLedgerService, useValue: { writePositiveEntry: mockWritePositiveEntry } },
-        { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+        { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}), hasMapping: jest.fn().mockResolvedValue(false), postBatchCostEntry: jest.fn() } },
         { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
-        { provide: NumberSeriesService, useValue: { generateNextNumberById: jest.fn().mockResolvedValue({ next_number: 'TEST-001' }) } },
+        { provide: NumberSeriesService, useValue: numberSeriesMock },
+        { provide: QcInspectionService, useValue: qcInspectionMock },
       ],
     }).compile();
 
@@ -150,10 +168,62 @@ describe('GoodsReceiptService', () => {
 
       expect(mockWritePositiveEntry).not.toHaveBeenCalled();
       expect(values).toHaveBeenCalledWith(expect.objectContaining({
-        entry_type: 'PURCHASE', document_type: 'GOODS_RECEIPT', document_no: 'GR-000099', document_line_id: 'line-sow',
+        entry_type: 'POSITIVE', transaction_type: 'PURCHASE', document_type: 'GOODS_RECEIPT', document_no: 'GR-000099', document_line_id: 'line-sow',
         bio_asset_item_id: 'sow-item', quantity: '5.0000', remaining_quantity: '5.0000', cost_amount: '7500.0000',
         cost_amount_each_unit: '1500.0000', warehouse_id: 'wh-1', uom: 'HEAD',
       }));
+    });
+
+    describe('the journal for animals received (Dr Biological Assets / Cr Trade Payables)', () => {
+      const glMock = { postInventoryLedgerEntry: jest.fn(), hasMapping: jest.fn(), postBatchCostEntry: jest.fn(), assetAccountForItem: jest.fn() };
+      const sowLine = { line_id: 'line-sow', item_id: 'sow-item', quantity: '5', uom: 'HEAD', rate: '1500', lot_no: null };
+
+      const postAnimals = async (mapped: boolean) => {
+        glMock.postInventoryLedgerEntry.mockReset();
+        glMock.hasMapping.mockReset().mockResolvedValue(mapped);
+        glMock.postBatchCostEntry.mockReset().mockResolvedValue({});
+        glMock.assetAccountForItem.mockReset().mockResolvedValue('acct-1060');
+        const module: TestingModule = await Test.createTestingModule({
+          providers: [
+            GoodsReceiptService,
+            { provide: ClsService, useValue: transactionCls(mockDb) },
+            { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+            { provide: InventoryLedgerService, useValue: { writePositiveEntry: mockWritePositiveEntry } },
+            { provide: GlPostingService, useValue: glMock },
+            { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
+            { provide: NumberSeriesService, useValue: numberSeriesMock },
+        { provide: QcInspectionService, useValue: qcInspectionMock },
+          ],
+        }).compile();
+        service = module.get<GoodsReceiptService>(GoodsReceiptService);
+        jest.spyOn(service, 'findOne')
+          .mockResolvedValueOnce({ ...draftReceipt, receipt_no: 'GR-000099', posting_date: '2026-10-14', supplier_id: null, lines: [sowLine] } as any)
+          .mockResolvedValueOnce({ ...draftReceipt, supplier_id: null, status: 'POSTED' } as any);
+        mockDbSelect.mockReturnValueOnce(activeWarehouse());
+        mockDbSelect.mockReturnValueOnce(nonSiloWarehouse());
+        mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ item_id: 'sow-item', nob_id: 'nob-1', lob_id: 'lob-1' }]) }) });
+        mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
+        mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
+        await service.post('gr-1', 'tenant-123', { userId: 'user-1' });
+      };
+
+      it('posts what the receipt says the animals cost, recorded against the receipt, with no inventory journal', async () => {
+        await postAnimals(true);
+        expect(glMock.hasMapping).toHaveBeenCalledWith('tenant-123', 'comp-1', 'BIO_ACQUISITION', { nobId: 'nob-1', lobId: 'lob-1' });
+        expect(glMock.postBatchCostEntry).toHaveBeenCalledWith(expect.objectContaining({
+          transactionType: 'BIO_ACQUISITION', amount: 7500, documentNo: 'GR-000099', documentLineId: 'line-sow', postingDate: '2026-10-14',
+          sourceDocumentType: 'GOODS_RECEIPT', nobId: 'nob-1', lobId: 'lob-1', userId: 'user-1',
+          // carried in the class account the profiles that cover the item agree on
+          debitAccountId: 'acct-1060',
+        }));
+        expect(glMock.assetAccountForItem).toHaveBeenCalledWith('tenant-123', 'comp-1', 'sow-item');
+        expect(glMock.postInventoryLedgerEntry).not.toHaveBeenCalled();
+      });
+
+      it('posts no journal where the BIO_ACQUISITION mapping is not set up, as before', async () => {
+        await postAnimals(false);
+        expect(glMock.postBatchCostEntry).not.toHaveBeenCalled();
+      });
     });
 
     it('allows posting when the receipt has no supplier_id at all', async () => {
@@ -167,7 +237,7 @@ describe('GoodsReceiptService', () => {
 
       const result = await service.post('gr-3', 'tenant-123', { userId: 'user-1' });
 
-      expect(mockDbSelect).toHaveBeenCalledTimes(3); // warehouse-active + silo-destination + biological-asset reads — no supplier lookup needed
+      expect(mockDbSelect).toHaveBeenCalledTimes(4); // warehouse-active + silo-destination + biological-asset + the line's costing reads — no supplier lookup needed
       expect(result.status).toBe('POSTED');
     });
 
@@ -242,6 +312,69 @@ describe('GoodsReceiptService', () => {
   // Ruling M6: a posting re-checks silo levels once, only after its
   // transaction has committed, and nothing that goes wrong in that re-check
   // can fail the posting it follows.
+  describe('a STANDARD-costed item received at another price', () => {
+    const glMock = { postInventoryLedgerEntry: jest.fn(), hasMapping: jest.fn(), postPurchasePriceVariance: jest.fn() };
+    const line = (rate: string) => ({ ...draftReceipt, supplier_id: null, lines: [{ line_id: 'line-1', item_id: 'item-1', quantity: '5', uom: 'KG', rate }] });
+
+    const postWith = async (rate: string, costing: object[], mapped = true) => {
+      glMock.postInventoryLedgerEntry.mockReset().mockResolvedValue({});
+      glMock.postPurchasePriceVariance.mockReset().mockResolvedValue({});
+      glMock.hasMapping.mockReset().mockResolvedValue(mapped);
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          GoodsReceiptService,
+          { provide: ClsService, useValue: transactionCls(mockDb) },
+          { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
+          { provide: InventoryLedgerService, useValue: { writePositiveEntry: mockWritePositiveEntry } },
+          { provide: GlPostingService, useValue: glMock },
+          { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
+          { provide: NumberSeriesService, useValue: numberSeriesMock },
+        { provide: QcInspectionService, useValue: qcInspectionMock },
+        ],
+      }).compile();
+      service = module.get<GoodsReceiptService>(GoodsReceiptService);
+      jest.spyOn(service, 'findOne')
+        .mockResolvedValueOnce(line(rate) as any)
+        .mockResolvedValueOnce({ ...line(rate), status: 'POSTED' } as any);
+      mockDbSelect.mockReturnValueOnce(activeWarehouse());
+      mockDbSelect.mockReturnValueOnce(nonSiloWarehouse());
+      mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([{ affectedRows: 1 }]) }) });
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) }); // no line is a bio asset
+      mockDbSelect.mockReturnValueOnce(createQueryChain(costing));
+      return service.post('gr-3', 'tenant-123', { userId: 'user-1' });
+    };
+
+    it('goes into stock at the standard cost, and what was paid above it is posted as a price variance', async () => {
+      await postWith('12', [{ valuation_method: 'STANDARD', standard_cost: '10.000000' }]);
+      expect(mockWritePositiveEntry).toHaveBeenCalledWith(expect.objectContaining({ rate: 10, quantity: 5, transactionType: 'PURCHASE' }));
+      // paid 12, standard 10, 5 units: 10.00 over
+      expect(glMock.postPurchasePriceVariance).toHaveBeenCalledWith(expect.anything(), 10, 'user-1');
+    });
+
+    it('a price below standard is a favourable variance (negative)', async () => {
+      await postWith('8', [{ valuation_method: 'STANDARD', standard_cost: '10.000000' }]);
+      expect(mockWritePositiveEntry).toHaveBeenCalledWith(expect.objectContaining({ rate: 10 }));
+      expect(glMock.postPurchasePriceVariance).toHaveBeenCalledWith(expect.anything(), -10, 'user-1');
+    });
+
+    it('a price equal to the standard has no variance to post', async () => {
+      await postWith('10', [{ valuation_method: 'STANDARD', standard_cost: '10.000000' }]);
+      expect(glMock.postPurchasePriceVariance).not.toHaveBeenCalled();
+    });
+
+    it('an item of another method goes in at the price paid, with no variance', async () => {
+      await postWith('12', [{ valuation_method: 'FIFO', standard_cost: '10.000000' }]);
+      expect(mockWritePositiveEntry).toHaveBeenCalledWith(expect.objectContaining({ rate: 12 }));
+      expect(glMock.postPurchasePriceVariance).not.toHaveBeenCalled();
+    });
+
+    it('goes in at the price paid when the variance mappings are not set up, so the payable is never short', async () => {
+      await postWith('12', [{ valuation_method: 'STANDARD', standard_cost: '10.000000' }], false);
+      expect(mockWritePositiveEntry).toHaveBeenCalledWith(expect.objectContaining({ rate: 12 }));
+      expect(glMock.postPurchasePriceVariance).not.toHaveBeenCalled();
+    });
+  });
+
   describe('feed alert hook', () => {
     const postedReceipt = () => {
       jest.spyOn(service, 'findOne')
@@ -259,9 +392,10 @@ describe('GoodsReceiptService', () => {
           { provide: ClsService, useValue: cls },
           { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
           { provide: InventoryLedgerService, useValue: { writePositiveEntry: mockWritePositiveEntry } },
-          { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+          { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}), hasMapping: jest.fn().mockResolvedValue(false), postBatchCostEntry: jest.fn() } },
           { provide: SiloFeedService, useValue: { assertCanReceive: mockAssertCanReceive } },
-          { provide: NumberSeriesService, useValue: { generateNextNumberById: jest.fn().mockResolvedValue({ next_number: 'TEST-001' }) } },
+          { provide: NumberSeriesService, useValue: numberSeriesMock },
+        { provide: QcInspectionService, useValue: qcInspectionMock },
           { provide: FeedAlertService, useValue: feedAlerts },
         ],
       }).compile();
@@ -297,6 +431,8 @@ describe('GoodsReceiptService', () => {
       postedReceipt();
       // The biological-asset lookup of the post itself (14 Oct): no line is one.
       mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue([]) }) });
+      // The line's costing lookup (valuation method and standard cost): an ordinary item.
+      mockDbSelect.mockReturnValueOnce(createQueryChain([]));
       // The hook's own read of the receipt warehouse fails: the receipt is already posted and must stay posted.
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({
@@ -358,9 +494,10 @@ describe('GoodsReceiptService', () => {
           { provide: ClsService, useValue: cls },
           { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
           { provide: InventoryLedgerService, useValue: { writePositiveEntry: jest.fn().mockResolvedValue({ entry_no: 1 }) } },
-          { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}) } },
+          { provide: GlPostingService, useValue: { postInventoryLedgerEntry: jest.fn().mockResolvedValue({}), hasMapping: jest.fn().mockResolvedValue(false), postBatchCostEntry: jest.fn() } },
           { provide: SiloFeedService, useValue: { assertCanReceive: jest.fn().mockResolvedValue(undefined) } },
-          { provide: NumberSeriesService, useValue: { generateNextNumberById: jest.fn().mockResolvedValue({ next_number: 'TEST-001' }) } },
+          { provide: NumberSeriesService, useValue: numberSeriesMock },
+        { provide: QcInspectionService, useValue: qcInspectionMock },
         ],
       }).compile();
 
@@ -405,6 +542,43 @@ describe('GoodsReceiptService', () => {
       ]);
       await expect(service.create({ ...validReceiptDto, warehouse_id: 'wh-1' } as any, 'tenant-1'))
         .rejects.toThrow('The selected location is inactive.');
+    });
+
+    // The GRN number comes from the company's Goods Receipt number series, drawn inside the
+    // insert transaction; it used to be MAX(receipt_no)+1 and ignored the Number Series master.
+    describe('GRN numbering', () => {
+      let values: jest.Mock;
+
+      beforeEach(() => {
+        useFarmScope(cls, grasmere);
+        rows.set(schema.locationMaster, [
+          { location_id: 'wh-1', parent: 'farm-g', farm_id: 'farm-g', company_id: 'co-1', lob_id: 'lob-pig', is_active: true, deleted_at: null },
+        ]);
+        values = jest.fn().mockResolvedValue(undefined);
+        mockDbInsert.mockReset();
+        mockDbInsert.mockReturnValue({ values });
+        Object.values(numberSeriesMock).forEach((fn) => fn.mockClear());
+        numberSeriesMock.seriesCodeForDocument.mockResolvedValue('GOODS_RECEIPT');
+        jest.spyOn(service as any, 'insertLines').mockResolvedValue(undefined);
+        jest.spyOn(service, 'findOne').mockResolvedValue({ receipt_id: 'x' } as any);
+      });
+
+      it('asks for the company\'s Goods Receipt series, then draws from it inside the insert transaction', async () => {
+        await service.create(validReceiptDto as any, 'tenant-1');
+
+        expect(numberSeriesMock.seriesCodeForDocument).toHaveBeenCalledWith(
+          'tenant-1', 'co-1', expect.objectContaining({ seriesCode: 'GOODS_RECEIPT', documentType: 'GOODS_RECEIPT', prefix: 'GR', seqLength: 6 }), expect.any(Function));
+        expect(numberSeriesMock.generateNext).toHaveBeenCalledWith('GOODS_RECEIPT', 'tenant-1', 'co-1', mockDb);
+        expect(values).toHaveBeenCalledWith(expect.objectContaining({ receipt_no: 'GR-000007' }));
+      });
+
+      it('draws from the series configured on the Number Series master, whatever code it has', async () => {
+        numberSeriesMock.seriesCodeForDocument.mockResolvedValue('NS-GRN');
+
+        await service.create(validReceiptDto as any, 'tenant-1');
+
+        expect(numberSeriesMock.generateNext).toHaveBeenCalledWith('NS-GRN', 'tenant-1', 'co-1', mockDb);
+      });
     });
 
     it('refuses to move a draft receipt into an inactive location on update', async () => {
@@ -507,5 +681,60 @@ describe('GoodsReceiptService', () => {
       expect(insertedRows[0].serial_no).toBe('SN001, SN002, SN003');
     });
   });
-});
 
+  describe('numbers taken from the item tracking series', () => {
+    const capture = () => {
+      const insertedRows: any[] = [];
+      mockDbInsert.mockReturnValue({
+        values: jest.fn().mockImplementation((val) => {
+          insertedRows.push(...(Array.isArray(val) ? val : [val]));
+          return Promise.resolve([{ insertId: 1 }]);
+        }),
+      });
+      return insertedRows;
+    };
+
+    beforeEach(() => numberSeriesMock.generateNextNumbersById.mockReset());
+
+    it('takes an automatic lot number from the series inside the save, rather than previewing it', async () => {
+      const rows = capture();
+      numberSeriesMock.generateNextNumbersById.mockResolvedValue({ next_number: 'LOT-00007', numbers: ['LOT-00007'] });
+      mockDbSelect.mockReturnValueOnce(found({ item_id: 'item-lot', item_code: 'LOTITEM', is_lot_tracked: true, is_serial_tracked: false, tracking_series_id: 'ts-lot' }));
+
+      await (service as any).insertLines('receipt-1', [{ item_id: 'item-lot', quantity: 5, uom: 'KG' }], 'comp-1', 'tenant-1', mockDb);
+
+      expect(numberSeriesMock.generateNextNumbersById).toHaveBeenCalledWith('ts-lot', 1, 'tenant-1', 'comp-1', mockDb);
+      expect(rows[0].lot_no).toBe('LOT-00007');
+    });
+
+    it('takes all of a receipt\'s automatic serial numbers in one allocation', async () => {
+      const rows = capture();
+      numberSeriesMock.generateNextNumbersById.mockResolvedValue({ next_number: 'SN-00021', numbers: ['SN-00021', 'SN-00022', 'SN-00023'] });
+      mockDbSelect.mockReturnValueOnce(found({ item_id: 'item-ser', item_code: 'SERITEM', is_lot_tracked: false, is_serial_tracked: true, tracking_series_id: 'ts-ser' }));
+
+      await (service as any).insertLines('receipt-1', [{ item_id: 'item-ser', quantity: 3, uom: 'PCS' }], 'comp-1', 'tenant-1', mockDb);
+
+      expect(numberSeriesMock.generateNextNumbersById).toHaveBeenCalledTimes(1);
+      expect(numberSeriesMock.generateNextNumbersById).toHaveBeenCalledWith('ts-ser', 3, 'tenant-1', 'comp-1', mockDb);
+      expect(rows[0].serial_no).toBe('SN-00021, SN-00022, SN-00023');
+    });
+
+    it('does not take a number for a lot the user typed', async () => {
+      capture();
+      mockDbSelect.mockReturnValueOnce(found({ item_id: 'item-lot', item_code: 'LOTITEM', is_lot_tracked: true, tracking_series_id: 'ts-lot' }));
+      await (service as any).insertLines('receipt-1', [{ item_id: 'item-lot', quantity: 5, uom: 'KG', lot_no: 'SUPPLIER-LOT-9' }], 'comp-1', 'tenant-1', mockDb);
+      expect(numberSeriesMock.generateNextNumbersById).not.toHaveBeenCalled();
+    });
+
+    it('refuses a serial the ledger already holds, as it does when the receipt posts', async () => {
+      mockDbSelect.mockReturnValueOnce(createQueryChain([{ serial_no: 'SN-00021, SN-00022' }]));
+      await expect((service as any).assertSerialsNotReceived(mockDb, 'tenant-1', 'item-ser', 'SERITEM', ['SN-00022']))
+        .rejects.toThrow(/already been received for item 'SERITEM'/);
+    });
+
+    it('lets a serial through when the ledger holds only a longer one that contains it (SN-1 vs SN-10)', async () => {
+      mockDbSelect.mockReturnValueOnce(createQueryChain([{ serial_no: 'SN-10' }]));
+      await expect((service as any).assertSerialsNotReceived(mockDb, 'tenant-1', 'item-ser', 'SERITEM', ['SN-1'])).resolves.toBeUndefined();
+    });
+  });
+});

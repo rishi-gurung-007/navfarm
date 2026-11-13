@@ -17,6 +17,7 @@ const ROUTE_GRANTS: Array<[path: string, anyOf: Grant[]]> = [
   ['/livestock', [['PIGGERY', 'ANIMAL']]],
   ['/inventory/balance', [['INVENTORY', 'LEDGER']]],
   ['/inventory/goods-receipt', [['INVENTORY', 'GOODS_RECEIPT']]],
+  ['/inventory/qc-inspection', [['INVENTORY', 'QC_INSPECTION']]],
   ['/inventory/transfers', [['INVENTORY', 'STOCK_TRANSFER']]],
   ['/inventory/stock-adjustment', [['INVENTORY', 'STOCK_ADJUSTMENT']]],
   ['/inventory/ledger', [['INVENTORY', 'LEDGER']]],
@@ -77,6 +78,7 @@ const ROUTE_GRANTS: Array<[path: string, anyOf: Grant[]]> = [
 /** Master-data screens whose grant is not MASTER_DATA/<KEY IN CAPITALS>. */
 const MASTER_DATA_GRANTS: Record<string, Grant> = {
   stage: ['PRODUCTION', 'STAGE'],
+  'qc-parameter': ['PRODUCTION', 'QC_PARAMETER'],
   'number-series': ['SYSTEM', 'NUMBER_SERIES'],
   animal: ['PIGGERY', 'ANIMAL'],
   'alert-rule': ['NOTIFICATION', 'ALERT_RULE'],

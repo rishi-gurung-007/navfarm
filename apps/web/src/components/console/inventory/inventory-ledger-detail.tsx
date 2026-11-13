@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate, formatDateTime } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -59,7 +60,7 @@ function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 }
 
-export const BC_ENTRY_TYPES: Record<string, string> = {
+export const TRANSACTION_TYPE_LABELS: Record<string, string> = {
   PURCHASE: 'Purchase',
   CONSUMPTION: 'Consumption',
   OUTPUT: 'Output',
@@ -69,22 +70,16 @@ export const BC_ENTRY_TYPES: Record<string, string> = {
   VARIANCE_POSITIVE: 'Variance_Positive',
   VARIANCE_NEGATIVE: 'Variance_Negative',
   BATCH_CONSUMPTION: 'Consumption',
-  // A bio-asset batch's feed is a consumption too; the pre-mature/mature split only decides the GL accounts.
-  BIO_CONSUMPTION_PREMATURE: 'Consumption',
-  BIO_CONSUMPTION_MATURE: 'Consumption',
   BATCH_INPUT: 'Consumption',
   BATCH_OUTPUT: 'Output',
-  BIO_OUTPUT: 'Output',
-  BIO_HARVEST: 'Harvest',
-  REVERSAL: 'Reversal',
   OVERHEAD: 'Overhead',
   DESCRIPTIVE: 'Descriptive',
 };
 
-export const formatBcEntryType = (type?: string) => {
+export const formatTransactionType = (type?: string) => {
   if (!type) return NA;
   const upper = type.toUpperCase();
-  if (BC_ENTRY_TYPES[upper]) return BC_ENTRY_TYPES[upper];
+  if (TRANSACTION_TYPE_LABELS[upper]) return TRANSACTION_TYPE_LABELS[upper];
   return upper.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 };
 
@@ -103,10 +98,7 @@ export const isInboundEntry = (entry: {
 };
 
 /** `quantity` tells a Transfer's receiving leg ("Receipt") from its shipping leg ("Transfer"). */
-export const formatBcEntryTypeLabel = (
-  entryType?: string,
-  quantity?: unknown,
-) => {
+export const formatEntryType = (entryType?: string, quantity?: unknown) => {
   if (!entryType) return NA;
   const upper = entryType.toUpperCase();
   if (upper === 'POSITIVE') return 'Positive (+)';
@@ -118,7 +110,7 @@ export const formatBcEntryTypeLabel = (
   return upper.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 };
 
-export const BC_DOCUMENT_TYPES: Record<string, string> = {
+export const DOCUMENT_TYPE_LABELS: Record<string, string> = {
   GOODS_RECEIPT: 'GRN',
   STOCK_TRANSFER: 'Transfer Order',
   STOCK_ADJUSTMENT: 'Stock Adjustment',
@@ -126,9 +118,9 @@ export const BC_DOCUMENT_TYPES: Record<string, string> = {
   DAILY_ENTRY: 'Daily Operations Entry',
 };
 
-export const formatBcDocumentType = (type?: string) => {
+export const formatDocumentType = (type?: string) => {
   if (!type) return NA;
-  return BC_DOCUMENT_TYPES[type.toUpperCase()] || type.replace(/_/g, ' ');
+  return DOCUMENT_TYPE_LABELS[type.toUpperCase()] || type.replace(/_/g, ' ');
 };
 
 export const getSourceDocumentRoute = (documentType?: string) => {
@@ -298,7 +290,7 @@ export default function InventoryLedgerDetail({
                 Transaction Type:
               </span>
               <span className="font-mono text-xs font-bold" style={S.primary}>
-                {formatBcEntryType(entry.transaction_type)}
+                {formatTransactionType(entry.transaction_type)}
               </span>
             </div>
             <div
@@ -313,12 +305,12 @@ export default function InventoryLedgerDetail({
               </span>
               <StatusBadge
                 status={isPositive ? 'POSITIVE' : entry.entry_type}
-                label={formatBcEntryTypeLabel(entry.entry_type, entry.quantity)}
+                label={formatEntryType(entry.entry_type, entry.quantity)}
               />
             </div>
             {entry.document_type && (
               <Badge variant="neutral" className="text-xs">
-                {formatBcDocumentType(entry.document_type)}
+                {formatDocumentType(entry.document_type)}
               </Badge>
             )}
           </div>
@@ -329,7 +321,7 @@ export default function InventoryLedgerDetail({
             <span className="flex items-center gap-1">
               <Calendar className="h-3.5 w-3.5" style={S.muted} />
               Posting Date:{' '}
-              <strong style={S.primary}>{entry.posting_date}</strong>
+              <strong style={S.primary}>{formatDate(entry.posting_date)}</strong>
             </span>
             {entry.external_reference_no && (
               <span className="flex items-center gap-1">
@@ -353,7 +345,7 @@ export default function InventoryLedgerDetail({
               className="flex items-center gap-1.5 text-xs"
             >
               <ExternalLink className="h-3.5 w-3.5" /> View{' '}
-              {formatBcDocumentType(entry.document_type)}
+              {formatDocumentType(entry.document_type)}
             </Button>
           )}
           {!isStandalone && onOpenFullPage && (
@@ -619,7 +611,7 @@ export default function InventoryLedgerDetail({
                 Transaction Type
               </p>
               <p className="mt-0.5 font-mono font-bold" style={S.primary}>
-                {formatBcEntryType(entry.transaction_type)}
+                {formatTransactionType(entry.transaction_type)}
               </p>
             </div>
 
@@ -633,10 +625,7 @@ export default function InventoryLedgerDetail({
               <div className="mt-0.5">
                 <StatusBadge
                   status={isPositive ? 'POSITIVE' : entry.entry_type}
-                  label={formatBcEntryTypeLabel(
-                    entry.entry_type,
-                    entry.quantity,
-                  )}
+                  label={formatEntryType(entry.entry_type, entry.quantity)}
                 />
               </div>
             </div>
@@ -769,7 +758,7 @@ export default function InventoryLedgerDetail({
                 className="mt-0.5 font-mono"
                 style={entry.expiry_date ? S.primary : S.muted}
               >
-                {entry.expiry_date || NA}
+                {entry.expiry_date ? formatDate(entry.expiry_date) : NA}
               </p>
             </div>
 
@@ -857,7 +846,7 @@ export default function InventoryLedgerDetail({
                     </TableCell>
                     <TableCell className="py-2.5 px-3 font-mono" style={S.sub}>
                       {lot.expiry_date
-                        ? String(lot.expiry_date).slice(0, 10)
+                        ? formatDate(lot.expiry_date)
                         : NA}
                     </TableCell>
                     <TableCell
@@ -1005,7 +994,7 @@ export default function InventoryLedgerDetail({
                         style={S.primary}
                       >
                         {issue.posting_date
-                          ? String(issue.posting_date).slice(0, 10)
+                          ? formatDate(issue.posting_date)
                           : NA}
                       </TableCell>
                       <TableCell
@@ -1015,7 +1004,7 @@ export default function InventoryLedgerDetail({
                         {issue.document_no || NA}
                       </TableCell>
                       <TableCell className="py-2.5 px-3" style={S.sub}>
-                        {formatBcEntryType(
+                        {formatTransactionType(
                           issue.transaction_type || issue.document_type,
                         )}
                       </TableCell>
@@ -1224,7 +1213,7 @@ export default function InventoryLedgerDetail({
                         className="py-2.5 px-3 font-mono"
                         style={S.primary}
                       >
-                        {app.application_date || NA}
+                        {app.application_date ? formatDate(app.application_date) : NA}
                       </TableCell>
                       <TableCell
                         className="py-2.5 px-3 font-mono font-medium"
@@ -1235,7 +1224,7 @@ export default function InventoryLedgerDetail({
                           : app.document_no || 'Inbound Layer'}
                       </TableCell>
                       <TableCell className="py-2.5 px-3" style={S.sub}>
-                        {formatBcEntryType(
+                        {formatTransactionType(
                           app.transaction_type || app.document_type,
                         )}
                       </TableCell>
@@ -1362,7 +1351,7 @@ export default function InventoryLedgerDetail({
             <span className="flex items-center gap-1 font-mono" style={S.muted}>
               <Clock className="h-3 w-3" /> System Created:{' '}
               <span style={S.sub}>
-                {new Date(entry.created_at).toLocaleString()}
+                {formatDateTime(entry.created_at)}
               </span>
             </span>
           )}

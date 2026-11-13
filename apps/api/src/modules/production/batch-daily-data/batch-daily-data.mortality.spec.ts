@@ -297,7 +297,7 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
         transaction_type: 'MORTALITY',
         quantity: 1,
         animal_id: A1,
-        mortality_detail: { reason_id: R1 },
+        mortality_detail: { reason_id: R1, weight_kg: 18.5 },
         remarks: expect.stringContaining('Dead weight 18.5 kg'),
         skip_scheduler_count: true,
       }),
@@ -305,7 +305,7 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
         transaction_type: 'MORTALITY',
         quantity: 1,
         animal_id: A3,
-        mortality_detail: { cause_of_death: 'Crushed by sow' },
+        mortality_detail: { cause_of_death: 'Crushed by sow', weight_kg: 22 },
         remarks: expect.stringContaining('Dead weight 22 kg'),
       }),
     ]);
@@ -460,14 +460,14 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
       expect.objectContaining({
         quantity: 1,
         animal_id: undefined,
-        mortality_detail: { reason_id: R1 },
+        mortality_detail: { reason_id: R1, weight_kg: 15 },
         remarks: expect.stringContaining('Dead weight 15 kg'),
         skip_scheduler_count: true,
       }),
       expect.objectContaining({
         quantity: 1,
         animal_id: undefined,
-        mortality_detail: { cause_of_death: 'Crushed' },
+        mortality_detail: { cause_of_death: 'Crushed', weight_kg: 12.25 },
         remarks: expect.stringContaining('Dead weight 12.25 kg'),
       }),
     ]);
@@ -533,13 +533,13 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
 
     await aw({
       entered_value: 1,
-      mortality_animals: [{ dead_weight_kg: 9.25, reason_text: 'Crushed' }],
+      mortality_animals: [{ dead_weight_kg: 9.25, reason_text: 'Crushed', disposal_destination: ' Burial ' }],
     });
     expect(txCalls()).toEqual([
       expect.objectContaining({
         quantity: 1,
         animal_id: A1,
-        mortality_detail: { cause_of_death: 'Crushed' },
+        mortality_detail: { cause_of_death: 'Crushed', weight_kg: 9.25, disposal_method: 'Burial' },
         remarks: expect.stringContaining('Dead weight 9.25 kg'),
         skip_scheduler_count: false,
       }),
@@ -555,9 +555,10 @@ describe('BatchDailyDataService - mortality count names the animals that died', 
         d.animal_id,
         d.dead_weight_kg,
         d.reason_text,
+        d.disposal_destination,
         d.posted,
       ]),
-    ).toEqual([[A1, '9.25', 'Crushed', true]]);
+    ).toEqual([[A1, '9.25', 'Crushed', 'Burial', true]]);
   });
 
   it('animal-wise: an animal already dead cannot die again (Rishi, 13 Oct)', async () => {

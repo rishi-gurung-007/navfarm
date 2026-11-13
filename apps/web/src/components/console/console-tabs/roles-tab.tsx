@@ -18,13 +18,7 @@ import { useLanguage } from '../../../hooks/useLanguage';
 import type { TranslationKeys } from '../../../utils/translations';
 import { Dialog } from '../../ui/dialog';
 import { Badge } from '../../ui/badge';
-import {
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from '../../ui/table';
+import { RolePermissionMatrix } from './role-permission-matrix';
 import { SearchableEntitySelect } from '../../../modules/master-data/SearchableEntitySelect';
 
 interface RolesTabProps {
@@ -100,6 +94,12 @@ const DEFAULT_RESOURCES = [
     resource: 'GOODS_RECEIPT',
     name: 'GRN',
     nameKey: 'grpTitle',
+  },
+  {
+    module_code: 'INVENTORY',
+    resource: 'QC_INSPECTION',
+    name: 'Incoming QC Inspections',
+    nameKey: 'rolIncomingQc',
   },
   {
     module_code: 'INVENTORY',
@@ -239,6 +239,21 @@ const DEFAULT_RESOURCES = [
     resource: 'REASON',
     name: 'Reasons',
     nameKey: 'rolReasons',
+  },
+  {
+    module_code: 'MASTER_DATA',
+    resource: 'BREEDING_LINE_SETUP',
+    name: 'Breeding Line Setup',
+  },
+  {
+    module_code: 'MASTER_DATA',
+    resource: 'BCS_SCALE',
+    name: 'Body Condition Scale',
+  },
+  {
+    module_code: 'MASTER_DATA',
+    resource: 'GENETIC_LEVEL_BAND',
+    name: 'Genetic Level Bands',
   },
   {
     module_code: 'MASTER_DATA',
@@ -388,8 +403,8 @@ const DEFAULT_RESOURCES = [
   {
     module_code: 'PIGGERY',
     resource: 'ANIMAL',
-    name: 'Animal Register',
-    nameKey: 'animalHerdRegister',
+    name: 'Animal Register & AI Station',
+    nameKey: 'rolAnimalAiStation',
   },
   // SYSTEM
   {
@@ -1019,77 +1034,13 @@ export default function RolesTab({
                 </span>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-left text-xs">
-                  <TableHeader className="bg-transparent">
-                    <tr
-                      className="border-b"
-                      style={{ borderColor: 'var(--row-border)' }}
-                    >
-                      <TableHead className="h-auto px-0 pb-3">
-                        {t('roleColModuleResource')}
-                      </TableHead>
-                      {[
-                        { k: 'roleColView', label: 'View' },
-                        { k: 'roleColCreate', label: 'Create' },
-                        { k: 'roleColEdit', label: 'Edit' },
-                        { k: 'roleColDelete', label: 'Delete' },
-                        { k: 'roleColApprove', label: 'Approve' },
-                      ].map(({ k, label }) => (
-                        <TableHead
-                          key={label}
-                          className="h-auto px-0 pb-3 text-center w-20"
-                        >
-                          {t(k as any)}
-                        </TableHead>
-                      ))}
-                    </tr>
-                  </TableHeader>
-                  <TableBody>
-                    {permissions.map((p, idx) => (
-                      <TableRow key={idx} style={S.textPrimary}>
-                        <TableCell className="px-0 py-3.5 font-semibold">
-                          <div style={S.textPrimary}>
-                            {p.nameKey
-                              ? t(p.nameKey as TranslationKeys)
-                              : p.name}
-                          </div>
-                          <div
-                            className="text-[9px] font-mono mt-0.5"
-                            style={S.textMuted}
-                          >
-                            {p.module_code} • {p.resource}
-                          </div>
-                        </TableCell>
-                        {[
-                          'can_view',
-                          'can_create',
-                          'can_edit',
-                          'can_delete',
-                          'can_approve',
-                        ].map((key) => (
-                          <TableCell
-                            key={key}
-                            className="px-0 py-3.5 text-center"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={p[key]}
-                              disabled={selectedRole.is_system_role}
-                              onChange={() => handleToggleCheckbox(idx, key)}
-                              className="w-4 h-4 rounded-[var(--radius-xs)] border accent-[var(--accent)] cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 focus:ring-0 focus:ring-offset-0"
-                              style={{
-                                backgroundColor: 'var(--input-bg)',
-                                borderColor: 'var(--input-border)',
-                              }}
-                            />
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </table>
-              </div>
+              <RolePermissionMatrix
+                permissions={permissions}
+                disabled={Boolean(selectedRole.is_system_role)}
+                onToggle={handleToggleCheckbox}
+                label={(p) => (p.nameKey ? t(p.nameKey as TranslationKeys) : (p.name ?? p.resource))}
+                columnLabel={(k) => t(k as TranslationKeys)}
+              />
             )}
           </Card>
         ) : (

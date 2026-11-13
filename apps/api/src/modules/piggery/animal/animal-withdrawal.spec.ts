@@ -89,6 +89,25 @@ describe('recorded treatment withdrawal', () => {
         recordAnimalEntry: jest.fn().mockResolvedValue(null),
         postAnimalDisposalJournal: jest.fn(),
       } as any,
+      {
+        valueOf: jest.fn().mockResolvedValue({
+          acquisition: 0,
+          capitalised: 0,
+          amortised: 0,
+          fairValue: 0,
+          exits: 0,
+          bookValue: 0,
+          hasRows: false,
+        }),
+        valuesFor: jest.fn().mockResolvedValue(new Map()),
+        refreshCache: jest.fn().mockResolvedValue(undefined),
+      } as any,
+      {
+        assignAnimal: jest.fn().mockResolvedValue({
+          assigned: false,
+          reason: 'NO_MATCHING_PROFILE',
+        }),
+      } as any,
     );
     jest
       .spyOn(service, 'findOne')

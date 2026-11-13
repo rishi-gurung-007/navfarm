@@ -1,3 +1,4 @@
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import type { PiggeryStage } from './piggery-lifecycle-stepper';
 
@@ -122,7 +123,7 @@ export function buildLifecycleStages({
         : null;
       daysRange =
         endDay !== null ? `Day ${startDay} – ${endDay}` : `Day ${startDay}`;
-      dateRange = to && to !== from ? `${from} → ${to}` : from;
+      dateRange = to && to !== from ? `${formatDate(from)} → ${formatDate(to)}` : formatDate(from);
     }
 
     return {

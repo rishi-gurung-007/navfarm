@@ -10,6 +10,13 @@ import { BatchService } from '../../production/batch/batch.service';
 import { BatchTransferService } from '../../production/batch/batch-transfer.service';
 import { SemenLotService } from './semen-lot.service';
 import { AnimalService } from '../animal/animal.service';
+import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { LitterCostService } from '../litter-cost/litter-cost.service';
+import { BreedingLineSetupService } from '../../master-data/breeding-line/breeding-line-setup.service';
+import { CollectionPlanService } from './collection-plan.service';
+import { SemenDestinationService } from '../../master-data/breeding-line/semen-destination.service';
+import { GiltSelectionService } from '../gilt-selection/gilt-selection.service';
+import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { BreedingService } from './breeding.service';
 import * as schema from '../../../core/database/schema';
@@ -18,6 +25,7 @@ import {
   PregCheckMethod,
   ConceptionResult,
 } from './dto/breeding.dto';
+import { bioEventOf } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 /**
  * The `recordMating`/`recordPregnancyCheck`/`recordFarrowing`/
@@ -67,11 +75,16 @@ describe('BreedingService', () => {
 
   let capturedWhere: unknown;
 
-  const pigletLots = { createLot: jest.fn() };
+  const pigletLots = { createLot: jest.fn(), createWeanerBatch: jest.fn() };
   const batchService = { recordMortality: jest.fn(), transferStage: jest.fn() };
   const batchTransfers = { create: jest.fn() };
   const semenLots = { postCollection: jest.fn(), issueDoses: jest.fn() };
   const animals = { transitionStage: jest.fn() };
+  const animalBookValue = { refreshCache: jest.fn() };
+  const giltSelection = { selectAtWeaning: jest.fn() };
+  const lineSetups = { findEffective: jest.fn() };
+  const plans = { assertCollectable: jest.fn(), markCollected: jest.fn() };
+  const destination = { check: jest.fn() };
 
   /** Awaitable at any point, so .where(), .limit() and .orderBy() all resolve. */
   const chain = (result: unknown[]) => {
@@ -84,6 +97,7 @@ describe('BreedingService', () => {
       limit: () => self,
       for: () => self,
       orderBy: () => self,
+      groupBy: () => self,
       innerJoin: () => self,
       leftJoin: () => self,
       then: (ok: any, err: any) => Promise.resolve(result).then(ok, err),
@@ -103,6 +117,11 @@ describe('BreedingService', () => {
     batchTransfers.create.mockReset().mockResolvedValue({});
     semenLots.postCollection.mockReset();
     semenLots.issueDoses.mockReset().mockResolvedValue(undefined);
+    // No rule row for the line or the company unless a test gives one: nothing is checked.
+    lineSetups.findEffective.mockReset().mockResolvedValue(null);
+    plans.assertCollectable.mockReset().mockResolvedValue({ plan: { plan_id: 'plan-1' }, warnings: [] });
+    plans.markCollected.mockReset().mockResolvedValue(undefined);
+    destination.check.mockReset().mockResolvedValue({ verdict: 'OK', message: null });
     animals.transitionStage.mockReset().mockResolvedValue({});
     // gender and animal_code are read by the resolveSowAndBoar guard: a fixture
     // without them reads as a non-female animal and refuses before the test's
@@ -159,6 +178,16 @@ describe('BreedingService', () => {
         { provide: BatchTransferService, useValue: batchTransfers },
         { provide: SemenLotService, useValue: semenLots },
         { provide: AnimalService, useValue: animals },
+        { provide: AnimalBookValueService, useValue: animalBookValue },
+        { provide: GiltSelectionService, useValue: giltSelection },
+        { provide: BreedingLineSetupService, useValue: lineSetups },
+        { provide: CollectionPlanService, useValue: plans },
+        { provide: SemenDestinationService, useValue: destination },
+        LitterCostService,
+        {
+          provide: GlPostingService,
+          useValue: { postBatchCostEntry: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -243,9 +272,16 @@ describe('BreedingService', () => {
         { breed_id: 'breed-large-white', gestation_days: 113 },
       ]);
 
+      jest
+        .spyOn(service as any, 'assertLotUsable')
+        .mockResolvedValue({ semen_batch_id: 'sb-1' });
+      jest
+        .spyOn(service as any, 'boarOfSemenLot')
+        .mockResolvedValue({ boarId: null, poolBoarIds: [] });
       const result = await service.recordMating(
         {
           sow_animal_id: 'sow-1',
+          semen_lot_id: 'sb-1',
           mating_type: MatingType.AI,
           mating_date: '2026-03-01',
         },
@@ -296,6 +332,7 @@ describe('BreedingService', () => {
         {
           sow_animal_id: 'sow-1',
           farrowing_date: '2026-06-23',
+          piglet_item_id: 'item-piglet',
           piglets_born_live: 12,
           piglets_stillborn: 1,
           piglets_mummified: 0,
@@ -327,6 +364,7 @@ describe('BreedingService', () => {
         {
           sow_animal_id: 'gilt-1',
           farrowing_date: '2026-06-23',
+          piglet_item_id: 'item-piglet',
           piglets_born_live: 10,
         },
         'tenant-1',
@@ -351,6 +389,7 @@ describe('BreedingService', () => {
         {
           sow_animal_id: 'sow-1',
           farrowing_date: '2026-06-23',
+          piglet_item_id: 'item-piglet',
           piglets_born_live: 10,
         },
         'tenant-1',
@@ -364,8 +403,8 @@ describe('BreedingService', () => {
   // Parity counts completed pregnancies, post weaning (decisions.md, TDD row 27): farrowing
   // numbers the litter, weaning completes it. Farrowing used to add one itself, the stage move
   // out of farrowing added another, and weaning added none.
-  describe('parity completes at weaning', () => {
-    it('does not move parity_count at farrowing, and numbers the litter parity + 1', async () => {
+  describe('parity rises at farrowing', () => {
+    it('raises parity_count to the litter number at farrowing', async () => {
       rows.set(schema.animalRegister, [
         {
           animal_id: 'sow-1',
@@ -381,6 +420,7 @@ describe('BreedingService', () => {
         {
           sow_animal_id: 'sow-1',
           farrowing_date: '2026-06-23',
+          piglet_item_id: 'item-piglet',
           piglets_born_live: 12,
         },
         'tenant-1',
@@ -388,12 +428,12 @@ describe('BreedingService', () => {
 
       const setArgs = mockDbUpdate.mock.results[0].value.set.mock.calls[0][0];
       expect(result.parity_number).toBe(3);
-      expect(setArgs).not.toHaveProperty('parity_count');
+      expect(setArgs.parity_count).toBe(3);
       expect(setArgs.status).toBe('LACTATING');
       expect(setArgs.total_piglets_born_live).toBe(36);
     });
 
-    it('refuses a second farrowing while the last litter is not weaned (litter number above parity_count)', async () => {
+    it('refuses a second farrowing while the last litter is not weaned (an unweaned litter on record)', async () => {
       rows.set(schema.animalRegister, [
         {
           animal_id: 'sow-1',
@@ -413,6 +453,7 @@ describe('BreedingService', () => {
           {
             sow_animal_id: 'sow-1',
             farrowing_date: '2026-06-23',
+            piglet_item_id: 'item-piglet',
             piglets_born_live: 9,
           },
           'tenant-1',
@@ -437,6 +478,7 @@ describe('BreedingService', () => {
         {
           sow_animal_id: 'sow-1',
           farrowing_date: '2026-06-23',
+          piglet_item_id: 'item-piglet',
           piglets_born_live: 9,
         },
         'tenant-1',
@@ -479,13 +521,14 @@ describe('BreedingService', () => {
       expect(result.parity_count).toBe(3);
     });
 
-    it('does not count the litter or its piglets twice when the same weaning is posted again', async () => {
+    it('refuses to wean a litter that was already weaned, leaving the sow and piglets untouched', async () => {
       rows.set(schema.farrowingRecord, [
         {
           farrow_id: 'f-1',
           sow_animal_id: 'sow-1',
           parity_number: 3,
           piglets_weaned: 11,
+          weaning_date: '2026-07-21',
           notes: null,
         },
       ]);
@@ -499,17 +542,14 @@ describe('BreedingService', () => {
         },
       ]);
 
-      await service.recordWeaning(
-        'f-1',
-        { weaning_date: '2026-07-21', piglets_weaned: 11 } as any,
-        'tenant-1',
-      );
-
-      const sowSet = mockDbUpdate.mock.results[0].value.set.mock.calls[1][0];
-      expect(sowSet).toMatchObject({
-        parity_count: 3,
-        total_piglets_weaned: 31,
-      });
+      await expect(
+        service.recordWeaning(
+          'f-1',
+          { weaning_date: '2026-07-22', piglets_weaned: 11 } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow('already weaned');
+      expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
     // Agreed 9 Oct: a weaned sow goes to Dry Sow, by the ordinary stage move.
@@ -600,6 +640,7 @@ describe('BreedingService', () => {
         {
           sow_animal_id: 'sow-1',
           farrowing_date: '2026-10-09',
+          piglet_item_id: 'item-piglet',
           piglets_born_live: 9,
           ...over,
         } as any,
@@ -690,24 +731,160 @@ describe('BreedingService', () => {
         piglet_lot_no: 'LOT-00009',
         piglet_batch_no: 'BATCH-000010',
       });
+      expect(result.message).toContain('12 piglets stay with');
       expect(result.message).toContain(
-        '12 piglets held as lot LOT-00009 in batch BATCH-000010',
+        'as litter LOT-00009; no batch is made until the weaning',
       );
+      expect(result.message).not.toContain('in batch');
     });
 
-    it('records the litter alone, and says so, when no piglet item is chosen', async () => {
+    describe('the week 4 alert (BBP: Gilt Week 4 Selection Due)', () => {
+      const recent = new Date(Date.now() - 10 * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      const old = new Date(Date.now() - 30 * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      const row = (over: object) => ({
+        farrow_id: 'f1',
+        farrowing_date: old,
+        piglets_weaned: 0,
+        piglets_born_live: 10,
+        foster_received: 0,
+        fostered_out: 0,
+        piglet_batch_id: 'b-pig',
+        piglet_lot_no: 'LOT-1',
+        sow_code: 'SOW-1',
+        ...over,
+      });
+
+      it('flags a litter still on its sow at 28 days or more, with the head in its lot, and raises one alert for it', async () => {
+        rows.set(schema.farrowingRecord, [
+          row({}),
+          row({ farrow_id: 'f2', farrowing_date: recent }),
+          row({ farrow_id: 'f3', piglets_weaned: 9 }),
+        ]);
+        rows.set(schema.batchHeader, [
+          {
+            batch_id: 'b-pig',
+            batch_no: 'BATCH-8',
+            tenant_id: 'tenant-1',
+            company_id: 'co-1',
+            lob_id: 'lob-1',
+            head: '10',
+          },
+        ]);
+        const list: any[] = await service.getFarrowingRecords('tenant-1');
+        const by = Object.fromEntries(list.map((f) => [f.farrow_id, f]));
+        expect([by.f1.week4_due, by.f2.week4_due, by.f3.week4_due]).toEqual([
+          true,
+          false,
+          false,
+        ]);
+        expect(by.f1.piglets_in_lot).toBe(10);
+        expect(by.f3.piglets_in_lot).toBeNull();
+        const alerts = mockDbInsert.mock.results
+          .flatMap((r) =>
+            (r.value.values as jest.Mock).mock.calls.map(([v]) => v),
+          )
+          .filter((v) => v?.alert_type === 'GILT_WEEK4');
+        expect(alerts).toHaveLength(1);
+        expect(alerts[0]).toMatchObject({
+          severity: 'CRITICAL',
+          batch_id: 'b-pig',
+          title: 'Gilt Week 4 Selection Due — SOW-1, lot LOT-1',
+        });
+      });
+    });
+
+    it("says how many of a litter's weaned piglets were kept as gilts", async () => {
+      rows.set(schema.farrowingRecord, [
+        {
+          farrow_id: 'f1',
+          farrowing_date: '2026-09-11',
+          piglets_weaned: 11,
+          piglets_born_live: 11,
+          foster_received: 0,
+          fostered_out: 0,
+          piglet_batch_id: null,
+        },
+        {
+          farrow_id: 'f2',
+          farrowing_date: '2026-08-07',
+          piglets_weaned: 12,
+          piglets_born_live: 13,
+          foster_received: 0,
+          fostered_out: 0,
+          piglet_batch_id: null,
+        },
+      ]);
+      rows.set(schema.giltSelectionGilt, [{ farrow_id: 'f1', n: '1' }]);
+      const list: any[] = await service.getFarrowingRecords('tenant-1');
+      expect(
+        Object.fromEntries(list.map((f) => [f.farrow_id, f.gilts_selected])),
+      ).toEqual({ f1: 1, f2: 0 });
+    });
+
+    it("opens the litter at the sow's cost over the piglets born alive, records it as the litter's cost per piglet, and says so", async () => {
       rows.set(schema.animalRegister, [sow]);
+      pigletLots.createLot.mockResolvedValue({
+        batch_id: 'b-pig',
+        batch_no: 'BATCH-000010',
+        lot_no: 'LOT-00009',
+      });
+      const birth = jest
+        .spyOn((service as any).litterCost, 'allocateAtBirth')
+        .mockResolvedValue({
+          note: ' Litter cost at birth 16.50 moved.',
+          perPiglet: '1.650000',
+          moved: 16.5,
+          journal: 'JE-000140',
+        });
       const result: any = await service.recordFarrowing(
         {
           sow_animal_id: 'sow-1',
           farrowing_date: '2026-10-09',
-          piglets_born_live: 11,
+          piglets_born_live: 10,
+          piglet_item_id: 'item-piglet',
         } as any,
         'tenant-1',
       );
+      expect(birth).toHaveBeenCalledWith(
+        expect.objectContaining({
+          piglet_batch_id: 'b-pig',
+          farrowing_date: '2026-10-09',
+        }),
+        expect.anything(),
+        10,
+        'tenant-1',
+        undefined,
+      );
+      const sets = mockDbUpdate.mock.results.flatMap((r) =>
+        (r.value.set as jest.Mock).mock.calls.map(([v]) => v),
+      );
+      expect(
+        sets.find((v) => v && v.cost_per_piglet === '1.650000'),
+      ).toBeDefined();
+      expect(result.cost_per_piglet).toBe('1.650000');
+      expect(result.message).toContain(
+        'Litter cost at birth 16.50 moved. Journal JE-000140 posted (Dr Piglets Inventory / Cr Biological Asset WIP)',
+      );
+    });
+
+    it('refuses a farrowing with live piglets and no piglet item, so no litter goes without a ledger entry', async () => {
+      rows.set(schema.animalRegister, [sow]);
+      await expect(
+        service.recordFarrowing(
+          {
+            sow_animal_id: 'sow-1',
+            farrowing_date: '2026-10-09',
+            piglets_born_live: 11,
+          } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow('Choose the piglet item');
       expect(pigletLots.createLot).not.toHaveBeenCalled();
-      expect(result.piglet_batch_id).toBeNull();
-      expect(result.message).toContain('No piglet lot was created');
+      expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
     it('makes no lot for a litter with nothing born alive', async () => {
@@ -777,6 +954,365 @@ describe('BreedingService', () => {
       expect(result.message).toContain('10 moved to the destination batch');
     });
 
+    describe('a new weaner batch at weaning', () => {
+      beforeEach(() => {
+        pigletLots.createWeanerBatch
+          .mockReset()
+          .mockResolvedValue({ batch_id: 'b-new', batch_no: 'BATCH-000050' });
+      });
+
+      it('creates the batch from the lot with the stage and pen of the form, then moves the weaned head into it', async () => {
+        litter();
+        const result: any = await wean({
+          new_batch_stage_code: 'WEANER',
+          new_batch_pen_id: 'pen-7',
+        });
+
+        expect(pigletLots.createWeanerBatch).toHaveBeenCalledWith(
+          expect.objectContaining({
+            lot_batch_id: 'b-pig',
+            stage_code: 'WEANER',
+            pen_id: 'pen-7',
+            start_date: '2026-11-06',
+          }),
+          'tenant-1',
+          undefined,
+        );
+        expect(batchTransfers.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            to_batch_id: 'b-new',
+            quantity: 10,
+            transfer_type: 'PARTIAL',
+            reason: 'WEANING',
+          }),
+          'tenant-1',
+          'b-pig',
+          undefined,
+        );
+        expect(result.message).toContain(
+          '10 moved to the new weaner batch BATCH-000050',
+        );
+        // the batch exists before the transfer that fills it
+        expect(
+          pigletLots.createWeanerBatch.mock.invocationCallOrder[0],
+        ).toBeLessThan(batchTransfers.create.mock.invocationCallOrder[0]);
+      });
+
+      it('works without a pen, and moves only what is left after the losses and the gilts', async () => {
+        giltSelection.selectAtWeaning.mockReset().mockResolvedValue({
+          selection_no: 'GS-1',
+          created: [{ animal_code: 'PIG-1' }, { animal_code: 'PIG-2' }],
+        });
+        litter({ farrowing_date: '2026-10-09' });
+        await wean({
+          new_batch_stage_code: 'WEANER',
+          gilts: [
+            { rfid_tag: 'G1', no_of_teats: 16 },
+            { rfid_tag: 'G2', no_of_teats: 15 },
+          ],
+        });
+        expect(pigletLots.createWeanerBatch).toHaveBeenCalledWith(
+          expect.objectContaining({ pen_id: undefined }),
+          'tenant-1',
+          undefined,
+        );
+        expect(batchTransfers.create).toHaveBeenCalledWith(
+          expect.objectContaining({ quantity: 8, to_batch_id: 'b-new' }),
+          'tenant-1',
+          'b-pig',
+          undefined,
+        );
+      });
+
+      it('creates no empty batch when every weaned piglet became a gilt', async () => {
+        giltSelection.selectAtWeaning.mockReset().mockResolvedValue({
+          selection_no: 'GS-1',
+          created: [{ animal_code: 'PIG-1' }, { animal_code: 'PIG-2' }],
+        });
+        litter({ farrowing_date: '2026-10-09' });
+        const result: any = await wean({
+          piglets_weaned: 2,
+          new_batch_stage_code: 'WEANER',
+          gilts: [
+            { rfid_tag: 'G1', no_of_teats: 16 },
+            { rfid_tag: 'G2', no_of_teats: 15 },
+          ],
+        });
+        expect(pigletLots.createWeanerBatch).not.toHaveBeenCalled();
+        expect(batchTransfers.create).not.toHaveBeenCalled();
+        expect(result.message).toContain('no weaner batch was created');
+      });
+
+      it('refuses a new batch together with an existing batch or a stage, and a pen with no stage — before anything is written', async () => {
+        litter();
+        await expect(
+          wean({ new_batch_stage_code: 'WEANER', move_to_batch_id: 'b' }),
+        ).rejects.toThrow('choose one');
+        await expect(
+          wean({
+            new_batch_stage_code: 'WEANER',
+            move_to_stage_code: 'NURSERY',
+          }),
+        ).rejects.toThrow('choose one');
+        await expect(wean({ new_batch_pen_id: 'pen-7' })).rejects.toThrow(
+          'needs its stage',
+        );
+        expect(pigletLots.createWeanerBatch).not.toHaveBeenCalled();
+        expect(batchService.recordMortality).not.toHaveBeenCalled();
+      });
+
+      it('does not make a second batch when a weaning is posted again', async () => {
+        litter({ piglets_weaned: 10 });
+        await expect(wean({ new_batch_stage_code: 'WEANER' })).rejects.toThrow(
+          'already weaned',
+        );
+        expect(pigletLots.createWeanerBatch).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('fostering', () => {
+      const foster = (over: object = {}, dto: object = {}) => {
+        litter({
+          company_id: 'co-1',
+          farrowing_date: '2026-10-01',
+          fostered_out: 0,
+          foster_received: 0,
+          ...over,
+        });
+        rows.set(schema.batchBioAssetState, [{ current_quantity: '12' }]);
+        batchTransfers.create.mockResolvedValue({ transfer_no: 'BTR-1' });
+        return service.fosterPiglets(
+          'f-1',
+          {
+            to_farrow_id: 'f-2',
+            quantity: 3,
+            foster_date: '2026-10-05',
+            ...dto,
+          } as any,
+          'tenant-1',
+        );
+      };
+
+      it('moves the head between the two piglet lots, updates both litters and links them', async () => {
+        const result: any = await foster();
+
+        expect(batchTransfers.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            to_batch_id: 'b-pig',
+            quantity: 3,
+            reason: 'FOSTERING',
+            transfer_type: 'PARTIAL',
+          }),
+          'tenant-1',
+          'b-pig',
+          undefined,
+        );
+        const sets = mockDbUpdate.mock.results.flatMap((r) =>
+          (r.value.set as jest.Mock).mock.calls.map(([v]) => v),
+        );
+        expect(sets).toEqual(
+          expect.arrayContaining([{ fostered_out: 3 }, { foster_received: 3 }]),
+        );
+        const link = mockDbInsert.mock.results
+          .flatMap((r) =>
+            (r.value.values as jest.Mock).mock.calls.map(([v]) => v),
+          )
+          .find((v) => v?.from_farrow_id === 'f-1');
+        expect(link).toMatchObject({
+          to_farrow_id: 'f-2',
+          quantity: 3,
+          transfer_no: 'BTR-1',
+        });
+        expect(result.message).toContain('3 piglets fostered');
+      });
+
+      it('refuses the same litter, a weaned litter, more piglets than the lot holds, and a date before the farrowing', async () => {
+        await expect(
+          service.fosterPiglets(
+            'f-1',
+            {
+              to_farrow_id: 'f-1',
+              quantity: 1,
+              foster_date: '2026-10-05',
+            } as any,
+            'tenant-1',
+          ),
+        ).rejects.toThrow('different litter');
+        await expect(foster({ piglets_weaned: 9 })).rejects.toThrow(
+          'already weaned',
+        );
+        await expect(foster({}, { quantity: 13 })).rejects.toThrow(
+          'holds 12 piglets',
+        );
+        await expect(foster({}, { foster_date: '2026-09-30' })).rejects.toThrow(
+          'before',
+        );
+        expect(batchTransfers.create).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("the sow's lactation cost passes to the litter (Phase 3)", () => {
+      const setup = (held: { own: number; shared: number }, nca = '100') => {
+        animalBookValue.refreshCache.mockClear();
+        litter({ batch_id: 'b-sows', farrowing_date: '2026-10-09' });
+        rows.set(schema.batchBioAssetState, [
+          { current_quantity: '12', nca_book_value: nca, stage: 'PREMATURE' },
+        ]);
+        rows.set(schema.batchHeader, [
+          {
+            batch_id: 'b-sows',
+            batch_no: 'BATCH-000001',
+            company_id: 'co-1',
+            nob_id: 'n1',
+            lob_id: 'l1',
+          },
+        ]);
+        rows.set(schema.bioAssetLedger, [{ item_id: 'item-piglet' }]);
+        jest
+          .spyOn((service as any).litterCost, 'capitalisedLactationCost')
+          .mockResolvedValue(held);
+      };
+      const allocation = () =>
+        mockDbInsert.mock.results
+          .flatMap((r) =>
+            (r.value.values as jest.Mock).mock.calls.map(([v]) => v),
+          )
+          .find(
+            (v) => Array.isArray(v) && bioEventOf(v[0]) === 'COST_ALLOCATION',
+          );
+
+      it("writes the sow's own part against HER ledger, her batch's share against the batch, and the whole to the lot", async () => {
+        setup({ own: 60, shared: 15 });
+        const result: any = await wean({});
+
+        const rowsWritten = allocation();
+        expect(
+          rowsWritten.map((e: any) => [e.animal_id, Number(e.cost_amount)]),
+        ).toEqual([
+          ['sow-1', -60],
+          [null, -15],
+          [null, 75],
+        ]);
+        expect(
+          rowsWritten.reduce(
+            (n: number, e: any) => n + Number(e.cost_amount),
+            0,
+          ),
+        ).toBe(0); // nothing created or lost
+        expect(animalBookValue.refreshCache).toHaveBeenCalledWith(['sow-1']);
+        const farrowSet = mockDbUpdate.mock.results
+          .flatMap((r) => (r.value.set as jest.Mock).mock.calls.map(([v]) => v))
+          .find((v) => v && 'cost_per_piglet' in v);
+        expect(Number(farrowSet.cost_per_piglet)).toBeCloseTo(7.5); // 75 over 10 weaned
+        expect(result.message).toContain('Lactation cost 75.00 moved');
+      });
+
+      it('has nothing to take from her when it was all expensed, so a sow past her costing start hands nothing over', async () => {
+        setup({ own: 0, shared: 0 });
+        const result: any = await wean({});
+        expect(allocation()).toBeUndefined();
+        expect(animalBookValue.refreshCache).not.toHaveBeenCalled();
+        expect(result.message).not.toContain('Lactation cost');
+      });
+
+      it('gives in proportion when her batch carries less than the two parts', async () => {
+        setup({ own: 60, shared: 40 }, '50');
+        await wean({});
+        expect(
+          allocation().map((e: any) => [e.animal_id, Number(e.cost_amount)]),
+        ).toEqual([
+          ['sow-1', -30],
+          [null, -20],
+          [null, 50],
+        ]);
+      });
+
+      it('moves nothing when the sow batch carries nothing', async () => {
+        setup({ own: 60, shared: 0 }, '0');
+        const result: any = await wean({});
+        expect(allocation()).toBeUndefined();
+        expect(result.message).not.toContain('Lactation cost');
+      });
+    });
+
+    it("counts gilts already selected before the weaning in the litter's weaned total, and spreads the cost over them too", async () => {
+      litter({ farrowing_date: '2026-10-09' });
+      rows.set(schema.giltSelectionGilt, [{ n: '3' }]);
+      const allocate = jest
+        .spyOn((service as any).litterCost, 'allocate')
+        .mockResolvedValue({ note: '', perPiglet: null, moved: 0 });
+      const result: any = await wean({ piglets_weaned: 9 });
+      expect(allocate).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        { asOf: '2026-11-06', divisor: 12 },
+        'tenant-1',
+        undefined,
+      );
+      expect(result.piglets_weaned).toBe(12);
+      expect(result.message).toContain(
+        '12 piglets weaned (3 already selected as gilts)',
+      );
+      const farrowSet = mockDbUpdate.mock.results
+        .flatMap((r) => (r.value.set as jest.Mock).mock.calls.map(([v]) => v))
+        .find((v) => v && 'cost_per_piglet' in v);
+      expect(farrowSet.piglets_weaned).toBe(12);
+    });
+
+    describe('gilts selected in the weaning form (one event)', () => {
+      const gilts = [
+        { rfid_tag: 'G1', no_of_teats: 16 },
+        { rfid_tag: 'G2', no_of_teats: 15 },
+      ];
+      beforeEach(() => {
+        giltSelection.selectAtWeaning.mockReset().mockResolvedValue({
+          selection_no: 'GS-2026-00001',
+          created: [{ animal_code: 'PIG-1' }, { animal_code: 'PIG-2' }],
+        });
+      });
+
+      it('takes the gilts from the weaned piglets first, and moves only the rest to the destination batch', async () => {
+        litter({ farrowing_date: '2026-10-09' });
+        const result: any = await wean({ move_to_batch_id: 'b-weaner', gilts });
+
+        expect(giltSelection.selectAtWeaning).toHaveBeenCalledWith(
+          { farrow_id: 'f-1', piglet_batch_id: 'b-pig' },
+          gilts,
+          expect.objectContaining({ date: '2026-11-06' }),
+          'tenant-1',
+          undefined,
+        );
+        expect(batchTransfers.create).toHaveBeenCalledWith(
+          expect.objectContaining({ quantity: 8, reason: 'WEANING' }),
+          'tenant-1',
+          'b-pig',
+          undefined,
+        );
+        expect(result.message).toContain(
+          '2 gilts selected (GS-2026-00001): PIG-1, PIG-2',
+        );
+        expect(result.message).toContain('8 moved to the destination batch');
+      });
+
+      it('moves nothing when every weaned piglet was selected as a gilt', async () => {
+        litter({ farrowing_date: '2026-10-09' });
+        await wean({ piglets_weaned: 2, move_to_batch_id: 'b-weaner', gilts });
+        expect(batchTransfers.create).not.toHaveBeenCalled();
+      });
+
+      it('refuses a gilt under 15 teats, and more gilts than piglets weaned, before anything is written', async () => {
+        litter({ farrowing_date: '2026-10-09' });
+        await expect(
+          wean({ gilts: [{ rfid_tag: 'G1', no_of_teats: 14 }] }),
+        ).rejects.toThrow(/14 teats.*at least 15/);
+        await expect(wean({ piglets_weaned: 1, gilts })).rejects.toThrow(
+          /2 gilts cannot be selected from 1 weaned/,
+        );
+        expect(giltSelection.selectAtWeaning).not.toHaveBeenCalled();
+        expect(batchService.recordMortality).not.toHaveBeenCalled();
+      });
+    });
+
     it('leaves an emptied piglet lot open for a user to close (Rishi, 19 Oct), and says so', async () => {
       const closed = () =>
         mockDbUpdate.mock.results.some((r) =>
@@ -832,7 +1368,7 @@ describe('BreedingService', () => {
       );
       await expect(
         wean({ move_to_batch_id: 'b', move_to_stage_code: 'WEANER' }),
-      ).rejects.toThrow('a batch or on to a stage, not both');
+      ).rejects.toThrow('choose one');
       litter({ piglet_batch_id: null });
       await expect(wean({ move_to_batch_id: 'b-weaner' })).rejects.toThrow(
         'has no piglet lot to move',
@@ -842,12 +1378,12 @@ describe('BreedingService', () => {
 
     it('does not move the same piglets twice when a weaning is posted again', async () => {
       litter({ piglets_weaned: 10 });
-      await wean({});
-      expect(batchService.recordMortality).not.toHaveBeenCalled();
-      expect(batchTransfers.create).not.toHaveBeenCalled();
+      await expect(wean({})).rejects.toThrow('already weaned');
       await expect(wean({ move_to_batch_id: 'b-weaner' })).rejects.toThrow(
         'already weaned',
       );
+      expect(batchService.recordMortality).not.toHaveBeenCalled();
+      expect(batchTransfers.create).not.toHaveBeenCalled();
     });
   });
 
@@ -969,6 +1505,10 @@ describe('BreedingService', () => {
         '2026-10-09',
         'tenant-1',
         undefined,
+        {
+          sow: expect.objectContaining({ animal_id: expect.any(String) }),
+          batchId: expect.anything(),
+        },
       );
 
       semenLots.issueDoses.mockRejectedValueOnce(
@@ -1002,9 +1542,10 @@ describe('BreedingService', () => {
         is_active: true,
         current_batch_id: 'b-boar',
       };
+      // Every insert shares one `values` mock, so read it once: the rows in the order they were inserted.
       const insertedRows = () =>
-        mockDbInsert.mock.results.flatMap((r: any) =>
-          r.value.values.mock.calls.map((c: any[]) => c[0]),
+        (mockDbInsert.mock.results[0]?.value.values.mock.calls ?? []).map(
+          (c: any[]) => c[0],
         );
 
       it('makes ONE lot of the boars together, names every boar on it, and splits the typed cost between them', async () => {
@@ -1068,7 +1609,391 @@ describe('BreedingService', () => {
           'tenant-1',
         );
         expect(result.pooled_boars).toBeUndefined();
-        expect(insertedRows()).toHaveLength(1);
+        // the lot, and the one result of the one boar who gave it
+        expect(insertedRows()).toHaveLength(2);
+      });
+
+      // What the line's setup puts on the lot (plan 2026-11-02, Phase 5).
+      describe('the label, colorant and destination the line puts on a lot', () => {
+        const rule = (over: object = {}) => ({
+          setup_id: 's', breed_id: 'b-line', pooling_allowed: true, min_boars_per_lot: null, max_boars_per_lot: null,
+          min_rest_days: null, min_motility_pct: null, rule_enforcement: 'WARN', reference_required: false, reference_label: null,
+          label_template: null, include_year: false, colorant_name: null, colorant_item_id: null, colorant_qty_per_lot: null,
+          destination_rule: 'ANY', destination_farm_ids: null, ...over,
+        });
+        const posted = (over: object = {}) => ({ lot_no: 'LOT-1', expiry_date: null, warehouse_id: 'store-1', qr_id: 'qr', pack_no: 'PACK-1', colorant_cost: 0, ...over });
+        const lastPost = () => semenLots.postCollection.mock.calls[0][0];
+
+        it('labels a single-boar lot from the line\'s template: the boar\'s tag and the ISO week (Z-Line: <boar tag>-<week>)', async () => {
+          rows.set(schema.animalRegister, [{ ...boar, rfid_tag: 'BLXA9988', breed_id: 'b-line' }]);
+          rows.set(schema.breedMaster, [{ code: 'Z-Line' }]);
+          lineSetups.findEffective.mockResolvedValue(rule({ label_template: '{BOAR_TAG}-{WEEK}' }));
+          semenLots.postCollection.mockResolvedValue(posted());
+          const out: any = await service.recordSemenCollection(collection({ output_item_id: 'item-1' }), 'tenant-1');
+          expect(lastPost().label).toBe('BLXA9988-41');
+          expect(lastPost().week).toEqual({ no: 41, year: 2026 });
+          expect(out.label).toBe('BLXA9988-41');
+          expect(out.week_no).toBe(41);
+          expect(out.message).toContain('as BLXA9988-41:');
+        });
+
+        it('labels a pooled lot POOLL-<week> (L-Line), the prefix being plain text', async () => {
+          rows.set(schema.animalRegister, [{ ...boar, breed_id: 'b-line' }, { ...boar2, breed_id: 'b-line' }]);
+          lineSetups.findEffective.mockResolvedValue(rule({ label_template: 'POOLL-{WEEK}' }));
+          semenLots.postCollection.mockResolvedValue(posted());
+          await service.recordSemenCollection(collection({ output_item_id: 'item-1', pool_boar_animal_ids: ['boar-2'] }), 'tenant-1');
+          expect(lastPost().label).toBe('POOLL-41');
+        });
+
+        it('falls back to the boar\'s animal code when he has no tag, and puts the year where the template says {YEAR}', async () => {
+          rows.set(schema.animalRegister, [{ ...boar, breed_id: 'b-line' }]);
+          lineSetups.findEffective.mockResolvedValue(rule({ label_template: '{BOAR_TAG}-{WEEK}-{YEAR}' }));
+          semenLots.postCollection.mockResolvedValue(posted());
+          await service.recordSemenCollection(collection({ output_item_id: 'item-1' }), 'tenant-1');
+          expect(lastPost().label).toBe('BOAR-1-41-2026');
+        });
+
+        it('puts no label on a lot whose line has no template, or no setup', async () => {
+          rows.set(schema.animalRegister, [boar]);
+          semenLots.postCollection.mockResolvedValue(posted());
+          const out: any = await service.recordSemenCollection(collection({ output_item_id: 'item-1' }), 'tenant-1');
+          expect(out.label).toBeNull();
+          expect(lastPost().colorant).toBeUndefined();
+          expect(out.destination_farm_id).toBeNull();
+        });
+
+        it('records the colorant by name, and issues it from stock when the setup names an item and a quantity', async () => {
+          rows.set(schema.animalRegister, [{ ...boar, breed_id: 'b-line' }]);
+          lineSetups.findEffective.mockResolvedValue(rule({ colorant_name: 'Green', colorant_item_id: 'item-dye', colorant_qty_per_lot: '2.000' }));
+          semenLots.postCollection.mockResolvedValue(posted({ colorant_cost: 20 }));
+          const out: any = await service.recordSemenCollection(collection({ output_item_id: 'item-1', feed_cost_period: 100 }), 'tenant-1');
+          expect(lastPost().colorant).toEqual({ name: 'Green', itemId: 'item-dye', quantity: 2 });
+          // the colorant's cost is part of the lot's: 100 of the boar's cost + 20 of colorant over 40 doses
+          expect(out.colorant_name).toBe('Green');
+          expect(out.colorant_cost).toBe('20.0000');
+          expect(out.running_cost_period).toBe('120.0000');
+          expect(out.unit_cost_per_dose).toBe('3.000000');
+        });
+
+        it('records a colorant that is only a name with no stock issued and no cost', async () => {
+          rows.set(schema.animalRegister, [{ ...boar, breed_id: 'b-line' }]);
+          lineSetups.findEffective.mockResolvedValue(rule({ colorant_name: 'Red' }));
+          semenLots.postCollection.mockResolvedValue(posted());
+          const out: any = await service.recordSemenCollection(collection({ output_item_id: 'item-1', feed_cost_period: 100 }), 'tenant-1');
+          expect(lastPost().colorant).toEqual({ name: 'Red', itemId: null, quantity: null });
+          expect(out.colorant_name).toBe('Red');
+          expect(out.colorant_cost).toBeNull();
+          expect(out.unit_cost_per_dose).toBe('2.500000');
+        });
+
+        it('stores the line\'s one destination on the lot, and the plan\'s when it has one', async () => {
+          rows.set(schema.animalRegister, [{ ...boar, breed_id: 'b-line' }]);
+          lineSetups.findEffective.mockResolvedValue(rule({ destination_rule: 'ONE', destination_farm_ids: ['farm-multiplier'] }));
+          const one: any = await service.recordSemenCollection(collection(), 'tenant-1');
+          expect(one.destination_farm_id).toBe('farm-multiplier');
+          plans.assertCollectable.mockResolvedValue({ plan: { plan_id: 'plan-1', destination_farm_id: 'farm-chosen' }, warnings: [] });
+          const planned: any = await service.recordSemenCollection(collection({ plan_id: '11111111-1111-4111-8111-111111111111' }), 'tenant-1');
+          expect(planned.destination_farm_id).toBe('farm-chosen');
+        });
+      });
+
+      // A lot is for the farms its line says (plan 2026-11-02, Phase 5).
+      describe('using a lot at a mating, against its destination', () => {
+        const lot = { semen_batch_id: 'sb-1', lot_no: 'LOT-1', boar_animal_id: 'boar-1', company_id: 'co-1', output_item_id: 'item-1', inventory_posted: false, doses_collected: '40', doses_used_internal: '0', doses_sold: '0', collection_date: '2026-10-01', expiry_date: null };
+        const mating = (over: object = {}) => ({ sow_animal_id: 'sow-1', boar_animal_id: 'boar-1', semen_lot_id: 'sb-1', mating_type: 'AI', mating_date: '2026-10-09', semen_dose_qty: 1, ...over }) as any;
+        beforeEach(() => {
+          // The same setup the mating-with-a-lot test above uses: the sow is read through resolveSowAndBoar, in batch-1.
+          const sow = { animal_id: 'sow-1', tenant_id: 'tenant-1', company_id: 'co-1', animal_code: 'SOW-001', gender: 'F', parity_count: 0, is_active: true, current_batch_id: 'batch-1' };
+          rows.set(schema.animalRegister, [sow]);
+          rows.set(schema.breedingRecord, []);
+          rows.set(schema.semenBatch, [{ ...lot, tenant_id: 'tenant-1' }]);
+          jest.spyOn(service as any, 'resolveSowAndBoar').mockResolvedValue({ sow, companyId: 'co-1', boarAnimalId: 'boar-1' });
+        });
+
+        it('refuses a mating on a farm the lot is not for, when the line blocks, and uses no doses', async () => {
+          destination.check.mockResolvedValue({ verdict: 'BLOCK', message: 'Semen lot LOT-1 is for MUL100; POR100 is not its destination.' });
+          await expect(service.recordMating(mating(), 'tenant-1')).rejects.toThrow('Semen lot LOT-1 is for MUL100; POR100 is not its destination.');
+          expect(semenLots.issueDoses).not.toHaveBeenCalled();
+          expect(insertedRows()).toHaveLength(0);
+        });
+
+        it('lets it through with a warning when the line only warns', async () => {
+          destination.check.mockResolvedValue({ verdict: 'WARN', message: 'Semen lot LOT-1 is for MUL100; POR100 is not its destination.' });
+          const out: any = await service.recordMating(mating(), 'tenant-1');
+          expect(out.warnings).toEqual(['Semen lot LOT-1 is for MUL100; POR100 is not its destination.']);
+          expect(semenLots.issueDoses).toHaveBeenCalled();
+        });
+
+        it('says nothing when the lot may be used there', async () => {
+          const out: any = await service.recordMating(mating(), 'tenant-1');
+          expect(out.warnings).toEqual([]);
+        });
+      });
+
+      // A collection carries out a plan (plan 2026-11-02, Phase 4).
+      describe('against a collection plan', () => {
+        const PLAN = '11111111-1111-4111-8111-111111111111';
+        const result = (boarId: string, over: object = {}) => ({ boar_animal_id: boarId, doses: 40, ...over });
+        const noDoses = (over: object = {}) => {
+          const { doses_collected, ...rest } = collection(over);
+          return rest as any;
+        };
+        const rule = (over: object = {}) => ({
+          setup_id: 's', breed_id: null, pooling_allowed: true, min_boars_per_lot: null, max_boars_per_lot: null,
+          min_rest_days: null, min_motility_pct: null, rule_enforcement: 'WARN', reference_required: false, reference_label: null, ...over,
+        });
+
+        it('checks every boar tapped (the rejected one too) against the plan, stores the plan on the lot, and marks them collected', async () => {
+          rows.set(schema.animalRegister, [boar, boar2]);
+          const out: any = await service.recordSemenCollection(
+            noDoses({ plan_id: PLAN, boar_results: [result('boar-1'), result('boar-2', { accepted: false, doses: undefined, reject_reason: 'bad' })] }),
+            'tenant-1',
+          );
+          const [tapped, date] = plans.assertCollectable.mock.calls[0].slice(1, 3);
+          expect(plans.assertCollectable.mock.calls[0][0]).toBe(PLAN);
+          expect(tapped.map((b: any) => b.animal_code)).toEqual(['BOAR-1', 'BOAR-2']);
+          expect(date).toBe('2026-10-09');
+          expect(insertedRows()[0].plan_id).toBe(PLAN);
+          expect(plans.markCollected).toHaveBeenCalledWith(PLAN, ['boar-1', 'boar-2'], out.semen_batch_id);
+        });
+
+        it('carries the plan\'s own warnings (a different day) into the collection\'s', async () => {
+          rows.set(schema.animalRegister, [boar]);
+          plans.assertCollectable.mockResolvedValue({ plan: { plan_id: PLAN }, warnings: ['Plan CP-1 was for 2026-10-10; this collection is dated 2026-10-09.'] });
+          const out: any = await service.recordSemenCollection(collection({ plan_id: PLAN }), 'tenant-1');
+          expect(out.warnings).toEqual(['Plan CP-1 was for 2026-10-10; this collection is dated 2026-10-09.']);
+        });
+
+        it('records nothing when the plan refuses the boars', async () => {
+          rows.set(schema.animalRegister, [boar]);
+          plans.assertCollectable.mockRejectedValue(new BadRequestException('BOAR-1 is not a boar still to be collected in plan CP-1.'));
+          await expect(service.recordSemenCollection(collection({ plan_id: PLAN }), 'tenant-1')).rejects.toThrow('not a boar still to be collected');
+          expect(insertedRows()).toHaveLength(0);
+          expect(plans.markCollected).not.toHaveBeenCalled();
+        });
+
+        it('needs a plan on a line that asks for an outside reference, naming the reference', async () => {
+          rows.set(schema.animalRegister, [boar]);
+          lineSetups.findEffective.mockResolvedValue(rule({ reference_required: true, reference_label: 'Breeding Web reference' }));
+          await expect(service.recordSemenCollection(collection(), 'tenant-1')).rejects.toThrow('A Breeding Web reference is required for this line: record the collection against a plan that carries it.');
+          expect(insertedRows()).toHaveLength(0);
+          await service.recordSemenCollection(collection({ plan_id: PLAN }), 'tenant-1');
+          expect(insertedRows().length).toBeGreaterThan(0);
+        });
+
+        it('needs no plan on a line that asks for no reference', async () => {
+          rows.set(schema.animalRegister, [boar]);
+          await service.recordSemenCollection(collection(), 'tenant-1');
+          expect(plans.assertCollectable).not.toHaveBeenCalled();
+          expect(plans.markCollected).not.toHaveBeenCalled();
+          expect(insertedRows()[0].plan_id).toBeNull();
+        });
+      });
+
+      // What each boar gave (plan 2026-11-02, Phase 2).
+      describe('per-boar results', () => {
+        const result = (boarId: string, over: object = {}) => ({
+          boar_animal_id: boarId,
+          doses: 40,
+          volume_ml: 200,
+          morphology_pct: 86,
+          motility_pct: 80,
+          ...over,
+        });
+        const noDoses = (over: object = {}) => {
+          const { doses_collected, ...rest } = collection(over);
+          return rest as any;
+        };
+
+        it('derives the lot\'s doses and volume from the accepted boars, and stores one result per boar', async () => {
+          rows.set(schema.animalRegister, [boar, boar2]);
+          const out: any = await service.recordSemenCollection(
+            noDoses({
+              pool_boar_animal_ids: ['boar-2'],
+              feed_cost_period: 80,
+              overhead_cost_period: 20,
+              boar_results: [result('boar-1', { doses: 40, volume_ml: 200.5 }), result('boar-2', { doses: 30, volume_ml: 150.25 })],
+            }),
+            'tenant-1',
+          );
+          expect(out.doses_collected).toBe('70');
+          expect(out.volume_ml).toBe('350.75');
+          expect(out.unit_cost_per_dose).toBe('1.428571'); // 100 over the 70 doses the boars gave
+          const [lot, contributors, results] = insertedRows();
+          expect(lot.doses_collected).toBe('70');
+          expect(contributors).toHaveLength(2);
+          expect(results).toEqual([
+            expect.objectContaining({ semen_batch_id: lot.semen_batch_id, boar_animal_id: 'boar-1', doses: 40, volume_ml: '200.5', morphology_pct: '86', accepted: true, sort_order: 0 }),
+            expect.objectContaining({ boar_animal_id: 'boar-2', doses: 30, volume_ml: '150.25', sort_order: 1 }),
+          ]);
+        });
+
+        it('needs no lot doses when results are given, and refuses lot doses that disagree with them', async () => {
+          rows.set(schema.animalRegister, [boar]);
+          await expect(
+            service.recordSemenCollection(collection({ doses_collected: 99, boar_results: [result('boar-1')] }), 'tenant-1'),
+          ).rejects.toThrow("The boars' doses add up to 40, not 99.");
+          await expect(service.recordSemenCollection(noDoses(), 'tenant-1')).rejects.toThrow('Doses collected is required.');
+          expect(insertedRows()).toHaveLength(0);
+        });
+
+        it('refuses a lot boar with no result, and accepted doses that are not whole', async () => {
+          rows.set(schema.animalRegister, [boar, boar2]);
+          await expect(
+            service.recordSemenCollection(noDoses({ pool_boar_animal_ids: ['boar-2'], boar_results: [result('boar-1')] }), 'tenant-1'),
+          ).rejects.toThrow('BOAR-2 is in the lot but has no result.');
+          rows.set(schema.animalRegister, [boar]);
+          await expect(
+            service.recordSemenCollection(noDoses({ boar_results: [result('boar-1', { doses: 10.5 })] }), 'tenant-1'),
+          ).rejects.toThrow('doses must be a whole number');
+          expect(insertedRows()).toHaveLength(0);
+        });
+
+        it('records a rejected ejaculate as a result only: no doses, no place in the lot, no share of its cost', async () => {
+          rows.set(schema.animalRegister, [boar, boar2]);
+          const out: any = await service.recordSemenCollection(
+            noDoses({
+              feed_cost_period: 50,
+              boar_results: [result('boar-1'), result('boar-2', { accepted: false, doses: 25, reject_reason: 'discoloured' })],
+            }),
+            'tenant-1',
+          );
+          expect(out.doses_collected).toBe('40');
+          expect(out.pooled_boars).toBeUndefined();
+          const rowsOut = insertedRows();
+          // the lot and the results: no contributor rows, the lot is a single-boar lot
+          expect(rowsOut).toHaveLength(2);
+          expect(rowsOut[1]).toEqual([
+            expect.objectContaining({ boar_animal_id: 'boar-1', accepted: true, doses: 40 }),
+            expect.objectContaining({ boar_animal_id: 'boar-2', accepted: false, doses: null, reject_reason: 'discoloured' }),
+          ]);
+        });
+
+        it('refuses a rejection with no reason, and an accepted result for a boar outside the lot', async () => {
+          rows.set(schema.animalRegister, [boar, boar2]);
+          await expect(
+            service.recordSemenCollection(noDoses({ boar_results: [result('boar-1'), result('boar-2', { accepted: false })] }), 'tenant-1'),
+          ).rejects.toThrow('say why the ejaculate was rejected');
+          await expect(
+            service.recordSemenCollection(noDoses({ boar_results: [result('boar-1'), result('boar-2')] }), 'tenant-1'),
+          ).rejects.toThrow("has an accepted result but is not one of the lot's boars");
+        });
+
+        it('judges each boar\'s own motility against the line, and a rejected boar\'s rest too', async () => {
+          rows.set(schema.animalRegister, [boar, boar2]);
+          rows.set(schema.semenBoarResult, [{ boar: 'boar-2', lot: 'old-lot' }] as any);
+          rows.set(schema.semenBatch, [{ id: 'old-lot', date: '2026-10-08' }] as any);
+          lineSetups.findEffective.mockResolvedValue({
+            setup_id: 's', breed_id: null, pooling_allowed: true, min_boars_per_lot: null, max_boars_per_lot: null,
+            min_rest_days: 3, min_motility_pct: '70.00', rule_enforcement: 'WARN',
+          });
+          const out: any = await service.recordSemenCollection(
+            noDoses({
+              feed_cost_period: 0,
+              boar_results: [result('boar-1', { motility_pct: 60 }), result('boar-2', { accepted: false, reject_reason: 'bad', motility_pct: 10 })],
+            }),
+            'tenant-1',
+          );
+          expect(out.warnings).toEqual([
+            'BOAR-2 was collected 1 day ago; this line rests a boar 3 days or more.',
+            "BOAR-1's motility 60% is under the line's minimum of 70%.",
+          ]);
+        });
+
+        it('gives a single-boar lot recorded without results a result of its own, and a pooled one none', async () => {
+          rows.set(schema.animalRegister, [boar]);
+          await service.recordSemenCollection(collection({ motility_pct: 80, volume_ml: 120 }), 'tenant-1');
+          expect(insertedRows()[1]).toEqual([
+            expect.objectContaining({ boar_animal_id: 'boar-1', doses: 40, volume_ml: '120', motility_pct: '80', accepted: true }),
+          ]);
+        });
+
+        it('refuses a collector who does not hold the Semen Collector role', async () => {
+          rows.set(schema.animalRegister, [boar]);
+          rows.set(schema.userMaster, []);
+          await expect(
+            service.recordSemenCollection(noDoses({ boar_results: [result('boar-1', { collector_id: 'c-1' })] }), 'tenant-1'),
+          ).rejects.toThrow('Select active users with the Semen Collector role.');
+        });
+      });
+
+      // The line's own rules (plan 2026-11-02, Phase 1): read from the breeding_line_setup row, never a constant.
+      describe('breeding line rules', () => {
+        const rule = (over: object = {}) => ({
+          setup_id: 's-1',
+          breed_id: 'b-tempo',
+          pooling_allowed: true,
+          min_boars_per_lot: null,
+          max_boars_per_lot: null,
+          min_rest_days: null,
+          min_motility_pct: null,
+          rule_enforcement: 'WARN',
+          ...over,
+        });
+
+        it('looks the rules up by the primary boar\'s breed and his company', async () => {
+          rows.set(schema.animalRegister, [{ ...boar, breed_id: 'b-tempo' }]);
+          await service.recordSemenCollection(collection(), 'tenant-1');
+          expect(lineSetups.findEffective).toHaveBeenCalledWith('b-tempo', 'tenant-1', 'co-1');
+        });
+
+        it('refuses a pooled lot on a line that is never pooled, and posts nothing', async () => {
+          rows.set(schema.animalRegister, [boar, boar2]);
+          lineSetups.findEffective.mockResolvedValue(rule({ pooling_allowed: false }));
+          await expect(
+            service.recordSemenCollection(collection({ output_item_id: 'item-1', pool_boar_animal_ids: ['boar-2'] }), 'tenant-1'),
+          ).rejects.toThrow('This line is never pooled');
+          expect(semenLots.postCollection).not.toHaveBeenCalled();
+          expect(insertedRows()).toHaveLength(0);
+        });
+
+        it('refuses more boars than the line allows in a lot', async () => {
+          rows.set(schema.animalRegister, [boar, boar2]);
+          lineSetups.findEffective.mockResolvedValue(rule({ max_boars_per_lot: 1 }));
+          await expect(
+            service.recordSemenCollection(collection({ pool_boar_animal_ids: ['boar-2'] }), 'tenant-1'),
+          ).rejects.toThrow('at most 1 boar in a lot; 2 were chosen');
+        });
+
+        it('lets a single boar through on a line that is never pooled', async () => {
+          rows.set(schema.animalRegister, [boar]);
+          lineSetups.findEffective.mockResolvedValue(rule({ pooling_allowed: false, max_boars_per_lot: 1 }));
+          const result: any = await service.recordSemenCollection(collection(), 'tenant-1');
+          expect(result.warnings).toEqual([]);
+          expect(insertedRows()).toHaveLength(2);
+        });
+
+        it('warns, and still records, a boar collected inside the line\'s rest days when the line only warns', async () => {
+          rows.set(schema.animalRegister, [boar]);
+          // the mock returns what the aliased select would: the boar and the date of his last collection
+          rows.set(schema.semenBatch, [{ boar: 'boar-1', date: '2026-10-08' }] as any);
+          lineSetups.findEffective.mockResolvedValue(rule({ min_rest_days: 3 }));
+          const result: any = await service.recordSemenCollection(collection({ feed_cost_period: 0 }), 'tenant-1');
+          expect(result.warnings).toEqual(['BOAR-1 was collected 1 day ago; this line rests a boar 3 days or more.']);
+          expect(insertedRows()).toHaveLength(2);
+        });
+
+        it('stops that same collection when the line blocks', async () => {
+          rows.set(schema.animalRegister, [boar]);
+          rows.set(schema.semenBatch, [{ boar: 'boar-1', date: '2026-10-08' }] as any);
+          lineSetups.findEffective.mockResolvedValue(rule({ min_rest_days: 3, rule_enforcement: 'BLOCK' }));
+          await expect(service.recordSemenCollection(collection({ feed_cost_period: 0 }), 'tenant-1')).rejects.toThrow('this line rests a boar 3 days or more');
+          expect(insertedRows()).toHaveLength(0);
+        });
+
+        it('does not worry about a boar rested long enough, or never collected', async () => {
+          rows.set(schema.animalRegister, [boar]);
+          rows.set(schema.semenBatch, [{ boar: 'boar-1', date: '2026-10-05' }] as any);
+          lineSetups.findEffective.mockResolvedValue(rule({ min_rest_days: 3 }));
+          expect(((await service.recordSemenCollection(collection({ feed_cost_period: 0 }), 'tenant-1')) as any).warnings).toEqual([]);
+        });
+
+        it('judges the motility entered against the line\'s own floor', async () => {
+          rows.set(schema.animalRegister, [boar]);
+          lineSetups.findEffective.mockResolvedValue(rule({ min_motility_pct: '70.00' }));
+          const result: any = await service.recordSemenCollection(collection({ motility_pct: 62 }), 'tenant-1');
+          expect(result.warnings).toEqual(["Motility 62% is under the line's minimum of 70%."]);
+        });
       });
 
       it('refuses to pool an animal that is not a boar, one that is inactive, or one that does not exist', async () => {
@@ -1241,15 +2166,37 @@ describe('BreedingService', () => {
 
     it('stores the sow company, never the body company', async () => {
       rows.set(schema.breedingRecord, []);
+      jest
+        .spyOn(service as any, 'assertLotUsable')
+        .mockResolvedValue({ semen_batch_id: 'sb-1' });
+      jest
+        .spyOn(service as any, 'boarOfSemenLot')
+        .mockResolvedValue({ boarId: null, poolBoarIds: [] });
       const result = await service.recordMating(
         {
           sow_animal_id: 'sow-1',
+          semen_lot_id: 'sb-1',
           mating_type: MatingType.AI,
           mating_date: '2026-03-01',
         } as any,
         'tenant-1',
       );
       expect(result.company_id).toBe('co-1');
+    });
+
+    it('refuses an AI service that names no semen lot', async () => {
+      rows.set(schema.breedingRecord, []);
+      await expect(
+        service.recordMating(
+          {
+            sow_animal_id: 'sow-1',
+            mating_type: MatingType.AI,
+            mating_date: '2026-03-01',
+          } as any,
+          'tenant-1',
+        ),
+      ).rejects.toThrow('needs the semen lot');
+      expect(mockDbInsert).not.toHaveBeenCalled();
     });
 
     it('refuses a body company_id that differs from the sow company, before any insert', async () => {
@@ -1271,6 +2218,7 @@ describe('BreedingService', () => {
             sow_animal_id: 'sow-1',
             company_id: 'co-other',
             farrowing_date: '2026-06-23',
+            piglet_item_id: 'item-piglet',
             piglets_born_live: 8,
           } as any,
           'tenant-1',
@@ -1319,6 +2267,7 @@ describe('BreedingService', () => {
             sow_animal_id: 'sow-1',
             batch_id: 'batch-kintyre',
             farrowing_date: '2026-06-23',
+            piglet_item_id: 'item-piglet',
             piglets_born_live: 8,
           } as any,
           'tenant-1',
@@ -1440,6 +2389,7 @@ describe('BreedingService', () => {
           {
             sow_animal_id: 'sow-k',
             farrowing_date: '2026-09-01',
+            piglet_item_id: 'item-piglet',
             piglets_born_live: 8,
           } as any,
           'tenant-1',
@@ -1624,12 +2574,24 @@ describe('BreedingService', () => {
     });
 
     it('files the mating, the litter and the collection under the batch the animal stands in', async () => {
-      const mating: any = await service.recordMating(mate(), 'tenant-1');
+      jest
+        .spyOn(service as any, 'assertLotUsable')
+        .mockResolvedValue({ semen_batch_id: 'sb-1' });
+      jest
+        .spyOn(service as any, 'boarOfSemenLot')
+        .mockResolvedValue({ boarId: null, poolBoarIds: [] });
+      const mating: any = await service.recordMating(
+        mate({ semen_lot_id: 'sb-1' }),
+        'tenant-1',
+      );
       expect(mating.batch_id).toBe('batch-1');
       rows.set(schema.breedingRecord, [
         { breeding_id: 'br-open', mating_date: '2026-01-01' },
       ]);
-      const litter: any = await service.recordFarrowing(farrow(), 'tenant-1');
+      const litter: any = await service.recordFarrowing(
+        farrow({ piglet_item_id: 'item-piglet' }),
+        'tenant-1',
+      );
       expect(litter.batch_id).toBe('batch-1');
       rows.set(
         schema.animalRegister,
@@ -1804,6 +2766,13 @@ describe('BreedingService', () => {
       await expect(
         service.recordFarrowing(farrow({ piglets_born_live: 0 }), 'tenant-1'),
       ).rejects.toThrow('at least one piglet');
+      // TDD row 12: a Total Born that is not born alive + born dead + mummified is refused.
+      await expect(
+        service.recordFarrowing(
+          farrow({ piglets_born_live: 10, piglets_stillborn: 1, piglets_mummified: 1, piglets_total_born: 13 }),
+          'tenant-1',
+        ),
+      ).rejects.toThrow('must equal born alive 10 + born dead 1 + mummified 1 = 12');
       await expect(
         service.recordFarrowing(
           farrow({ piglets_born_live: 11.5 }),

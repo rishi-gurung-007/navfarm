@@ -5,7 +5,7 @@ import FacilityOccupancyPanel from "@/components/console/piggery/facility-occupa
 
 export default function PiggeryFacilityOccupancyPage() {
   return (
-    <LivestockPageShell activeKey="facility">
+    <LivestockPageShell activeKey="facility" hideTitle>
       <FacilityOccupancyPanel />
     </LivestockPageShell>
   );

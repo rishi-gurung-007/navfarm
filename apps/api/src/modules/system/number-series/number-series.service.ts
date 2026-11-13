@@ -10,6 +10,7 @@ import {
   BadRequestException,
   HttpException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import {
@@ -44,7 +45,11 @@ import { NobLobResolutionService } from '../../core/operational-area/nob-lob-res
 import {
   formatSeriesCode,
   formatSeriesStem,
+  incrementOf,
   nextSequence,
+  resetPeriodOf,
+  seriesCounter,
+  trailingNumber,
   nextSequenceInStem,
   segmentFields,
   assertCodeFits,
@@ -67,6 +72,24 @@ const hasIssuedNumbers = (row: {
   last_no_used?: string | null;
   current_seq?: number | string | null;
 }): boolean => !!row.last_no_used || Number(row.current_seq ?? 0) > 0;
+
+/**
+ * Lot, serial and item numbers are always numbered: a series with no digit count set is read as 4, as these paths
+ * always did. (Zero digits means "no number" only for a master whose code is its own name — see formatSeriesCode.)
+ */
+const withDigits = <T extends { seq_length?: number | null }>(series: T): T =>
+  series.seq_length && series.seq_length > 0
+    ? series
+    : { ...series, seq_length: 4 };
+
+/** What to write so the series remembers the reset period it just issued in; nothing for a series that never resets. */
+const periodStamp = (
+  series: { reset_frequency?: string | null },
+  now: Date,
+): { last_reset_period?: string } => {
+  const period = resetPeriodOf(series.reset_frequency, now);
+  return period ? { last_reset_period: period } : {};
+};
 
 const toMysqlTimestamp = (date: Date = new Date()) =>
   date.toISOString().slice(0, 19).replace('T', ' ');
@@ -96,6 +119,12 @@ export const DOCUMENT_TABLES: Record<string, AnyMySqlTable> = {
   requisition: schema.requisition,
   'item-application': schema.inventoryApplication,
   application: schema.inventoryApplication,
+  'goods-receipt': schema.goodsReceipt,
+  'qc-inspection': schema.qcInspection,
+  'batch-transfer': schema.batchTransfer,
+  'stock-transfer': schema.stockTransfer,
+  'stock-adjustment': schema.stockAdjustment,
+  journal: schema.journalHeader,
 };
 
 export const resolveSeriesTable = (key: string): AnyMySqlTable | undefined =>
@@ -201,6 +230,8 @@ const scopeKeyConditions = (
 
 @Injectable()
 export class NumberSeriesService {
+  private readonly logger = new Logger(NumberSeriesService.name);
+
   constructor(
     private readonly cls: ClsService,
     private readonly auditService: AuditLogService,
@@ -294,6 +325,9 @@ export class NumberSeriesService {
         description: defaults.seriesName,
         document_type: defaults.documentType,
         prefix,
+        // Kept equal to the prefix, as the seeded and form-saved series are (updateSeries keeps them in step):
+        // a series made here with the code empty failed verify-demo-flow's "every series carries a prefix" check.
+        no_series_code: prefix,
         separator,
         seq_length: defaults.seqLength,
         current_seq: currentSeq,
@@ -301,6 +335,55 @@ export class NumberSeriesService {
         manual_nos: true,
       })
       .onDuplicateKeyUpdate({ set: { description: defaults.seriesName } });
+  }
+
+  /**
+   * The series a document draws its number from, as a code to hand to generateNext().
+   *
+   * The series configured on the Number Series master for this document type wins, whatever code it was given
+   * (resolveSeriesFor). A company that has none gets the built-in default, made the first time it is needed and
+   * carrying on after any number the company already holds, so nobody has to know a series exists before they can
+   * save a document. A series that exists but is blocked is returned as it is, so the draw fails as "inactive"
+   * instead of quietly making a second series beside it: each document type has exactly one.
+   *
+   * Call it before the document's transaction opens: it reads, and may insert, on the connection.
+   */
+  async seriesCodeForDocument(
+    tenantId: string,
+    companyId: string | null | undefined,
+    defaults: Parameters<NumberSeriesService['ensureCompanySeries']>[2],
+    loadExistingCodes: Parameters<
+      NumberSeriesService['ensureCompanySeries']
+    >[3],
+  ): Promise<string> {
+    const configured = await this.resolveSeriesFor(
+      defaults.documentType,
+      null,
+      tenantId,
+      companyId,
+      this.db,
+    );
+    if (configured) return configured;
+    const [existing] = await this.db
+      .select({ code: schema.noSeries.code })
+      .from(schema.noSeries)
+      .where(
+        and(
+          eq(schema.noSeries.tenant_id, tenantId),
+          companyCondition(schema.noSeries.company_id, companyId),
+          eq(schema.noSeries.document_type, defaults.documentType),
+          isNull(schema.noSeries.deleted_at),
+        ),
+      )
+      .limit(1);
+    if (existing) return existing.code;
+    await this.ensureCompanySeries(
+      tenantId,
+      companyId,
+      defaults,
+      loadExistingCodes,
+    );
+    return defaults.seriesCode;
   }
 
   /**
@@ -336,19 +419,16 @@ export class NumberSeriesService {
     // Templates and company counters are independent after company creation.
     conditions.push(companyCondition(schema.noSeries.company_id, companyId));
 
-    let series: typeof schema.noSeries.$inferSelect | undefined;
-    try {
-      const [found] = await executor
-        .select()
-        .from(schema.noSeries)
-        .where(and(...conditions))
-        .orderBy(sql`${schema.noSeries.company_id} IS NULL`)
-        .limit(1)
-        .for('update');
-      series = found;
-    } catch {
-      // In mock DB test contexts or query failure, fall through
-    }
+    // A database failure here (a lock wait timeout, a dropped connection) must surface as that, not be
+    // read as "no such series" and answered with a misleading NotFound.
+    const [found] = await executor
+      .select()
+      .from(schema.noSeries)
+      .where(and(...conditions))
+      .orderBy(sql`${schema.noSeries.company_id} IS NULL`)
+      .limit(1)
+      .for('update');
+    let series: typeof schema.noSeries.$inferSelect | undefined = found;
 
     if (!series) {
       const normalizedMaster = seriesCode.toUpperCase().replaceAll('-', '_');
@@ -402,6 +482,7 @@ export class NumberSeriesService {
       .set({
         current_seq: nextSeq,
         last_no_used: formattedCode,
+        ...periodStamp(series, now),
         updated_at: toMysqlTimestamp(now) as any,
       })
       .where(eq(schema.noSeries.id, series.id));
@@ -423,19 +504,21 @@ export class NumberSeriesService {
     const field = MASTER_CODE_COLUMNS[master];
     const table = resolveSeriesTable(master.toLowerCase().replaceAll('_', '-'));
     const columns = table ? getTableColumns(table) : undefined;
-    const occupied = new Set<string>();
-    if (table && field && columns?.[field]) {
-      const occupiedConditions = scopeKeyConditions(
-        columns,
-        tenantId,
-        companyId,
-      );
-      const rows = await executor
-        .select({ code: columns[field] })
+    // Taken codes are looked up one candidate at a time, not loaded wholesale: a table like the journal holds
+    // every posting the company has ever made, and this runs on each one.
+    const codeColumn = table && field ? columns?.[field] : undefined;
+    const keyConditions = codeColumn
+      ? scopeKeyConditions(columns!, tenantId, companyId)
+      : [];
+    const isTaken = async (candidate: string): Promise<boolean> => {
+      if (!codeColumn || !table) return false;
+      const [hit] = await executor
+        .select({ code: codeColumn })
         .from(table)
-        .where(and(...occupiedConditions));
-      for (const row of rows) occupied.add(String(row.code).toUpperCase());
-    }
+        .where(and(...keyConditions, eq(codeColumn, candidate)))
+        .limit(1);
+      return !!hit;
+    };
     const segments = await this.resolveSegmentValues(
       series,
       record,
@@ -451,26 +534,45 @@ export class NumberSeriesService {
     const stem = segmentFields(series).length
       ? formatSeriesStem(series, now, segments)
       : '';
-    let sequence = stem
-      ? nextSequenceInStem(
-          stem,
-          series.seq_separator || series.separator || '-',
-          occupied,
-        )
-      : nextSequence(series, now);
+    const step = incrementOf(series);
+    let sequence: number;
+    if (stem) {
+      const stemSeparator = series.seq_separator || series.separator || '-';
+      // Only the codes that share the stem: the next number within it is the highest of theirs, plus the step.
+      const siblings =
+        codeColumn && table
+          ? (
+              await executor
+                .select({ code: codeColumn })
+                .from(table)
+                .where(
+                  and(
+                    ...keyConditions,
+                    like(
+                      codeColumn,
+                      `${(stem + stemSeparator).replace(/[\\%_]/g, '\\$&')}%`,
+                    ),
+                  ),
+                )
+            ).map((row) => String(row.code).toUpperCase())
+          : [];
+      sequence = nextSequenceInStem(stem, stemSeparator, siblings) - 1 + step;
+    } else {
+      sequence = nextSequence(series, now);
+    }
     let code = formatSeriesCode(series, sequence, now, segments);
     // With no sequence there is nothing to advance, so a clash is final. Saying
     // so beats looping forever on a code that cannot change.
     if (series.seq_length <= 0) {
-      if (occupied.has(code.toUpperCase())) {
+      if (await isTaken(code)) {
         throw new ConflictException(
           `Code "${code}" already exists. This series has no number, so its code comes entirely from the fields — ` +
             `two records with the same values cannot both have one. Rename, or give the series a sequence.`,
         );
       }
     } else {
-      while (occupied.has(code.toUpperCase()))
-        code = formatSeriesCode(series, ++sequence, now, segments);
+      while (await isTaken(code))
+        code = formatSeriesCode(series, (sequence += step), now, segments);
     }
     // Option C: an over-long code is refused, never trimmed. Codes are identity,
     // and trimming turns two different names into one code.
@@ -589,18 +691,12 @@ export class NumberSeriesService {
         isNull(schema.noSeries.deleted_at),
       ];
       conditions.push(companyCondition(schema.noSeries.company_id, companyId));
-      try {
-        const [row] = await executor
-          .select({ id: schema.noSeries.id })
-          .from(schema.noSeries)
-          .where(and(...conditions))
-          .limit(1);
-        if (row) return true;
-      } catch {
-        // Fall through
-      }
-
-      return false;
+      const [row] = await executor
+        .select({ id: schema.noSeries.id })
+        .from(schema.noSeries)
+        .where(and(...conditions))
+        .limit(1);
+      return !!row;
     };
 
     if (typeValue) {
@@ -2057,13 +2153,15 @@ export class NumberSeriesService {
    * If lock acquisition exceeds 5 seconds, returns HTTP 503:
    * "Item code generation busy, please retry."
    */
-  async generateNextNumberById(
+  async generateNextNumbersById(
     id: string,
+    count: number,
     tenantId?: string,
     companyId?: string | null,
     externalTx?: any,
   ): Promise<{
     next_number: string;
+    numbers: string[];
     series: typeof schema.noSeries.$inferSelect;
   }> {
     const executeInTx = async (tx: MySql2Database<typeof schema>) => {
@@ -2108,37 +2206,36 @@ export class NumberSeriesService {
         );
       }
 
-      const increment = series.increment_by || 1;
-      const padDigits =
-        series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
-      const prefix =
-        series.no_series_code ?? (series.code ? `${series.code}-` : '');
-      let nextCode: string;
-
-      if (series.last_no_used) {
-        const match = series.last_no_used.match(/(\d+)$/);
-        if (match) {
-          const numStr = match[1];
-          const nextVal = parseInt(numStr, 10) + increment;
-          nextCode = `${prefix}${String(nextVal).padStart(padDigits, '0')}`;
-        } else {
-          nextCode = `${prefix}${String(increment).padStart(padDigits, '0')}`;
-        }
-      } else {
-        nextCode = `${prefix}${String(increment).padStart(padDigits, '0')}`;
+      // The same sequence rule and formatter as generateNext() and every preview, so a lot or serial from here
+      // reads exactly like the one previewed on the GRN: LOT-00007, not LOT00007.
+      // `count` numbers are taken under the one lock and written back together, so a receipt of 40 serials is one
+      // allocation, and nobody else can be handed a number from the middle of it.
+      const now = new Date();
+      const increment = incrementOf(series);
+      const first = nextSequence(series, now);
+      const numbers: string[] = [];
+      for (let i = 0; i < Math.max(1, count); i++) {
+        numbers.push(
+          formatSeriesCode(withDigits(series), first + i * increment, now),
+        );
       }
+      const sequence = first + (numbers.length - 1) * increment;
+      const nextCode = numbers[numbers.length - 1];
 
       await tx
         .update(schema.noSeries)
         .set({
+          current_seq: sequence,
           last_no_used: nextCode,
+          ...periodStamp(series, now),
           updated_at: toMysqlTimestamp() as any,
         })
         .where(eq(schema.noSeries.id, id));
 
       return {
-        next_number: nextCode,
-        series: { ...series, last_no_used: nextCode },
+        next_number: numbers[0],
+        numbers,
+        series: { ...series, current_seq: sequence, last_no_used: nextCode },
       };
     };
 
@@ -2165,6 +2262,25 @@ export class NumberSeriesService {
     }
   }
 
+  async generateNextNumberById(
+    id: string,
+    tenantId?: string,
+    companyId?: string | null,
+    externalTx?: any,
+  ): Promise<{
+    next_number: string;
+    series: typeof schema.noSeries.$inferSelect;
+  }> {
+    const { next_number, series } = await this.generateNextNumbersById(
+      id,
+      1,
+      tenantId,
+      companyId,
+      externalTx,
+    );
+    return { next_number, series };
+  }
+
   /**
    * Previews the next number without updating last_no_used.
    */
@@ -2179,25 +2295,12 @@ export class NumberSeriesService {
       );
     }
 
-    const increment = series.increment_by || 1;
-    const padDigits =
-      series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
-    const prefix =
-      series.no_series_code ?? (series.code ? `${series.code}-` : '');
-    let nextCode: string;
-
-    if (series.last_no_used) {
-      const match = series.last_no_used.match(/(\d+)$/);
-      if (match) {
-        const numStr = match[1];
-        const nextVal = parseInt(numStr, 10) + increment;
-        nextCode = `${prefix}${String(nextVal).padStart(padDigits, '0')}`;
-      } else {
-        nextCode = `${prefix}${String(increment).padStart(padDigits, '0')}`;
-      }
-    } else {
-      nextCode = `${prefix}${String(increment).padStart(padDigits, '0')}`;
-    }
+    const now = new Date();
+    const nextCode = formatSeriesCode(
+      withDigits(series),
+      nextSequence(series, now),
+      now,
+    );
 
     return {
       next_number: nextCode,
@@ -2223,28 +2326,17 @@ export class NumberSeriesService {
       );
     }
 
-    const increment = series.increment_by || 1;
-
-    let startVal = increment;
-    if (series.last_no_used) {
-      const match = series.last_no_used.match(/(\d+)$/);
-      if (match) {
-        startVal = parseInt(match[1], 10) + increment;
-      }
-    } else if (series.starting_no) {
-      const match = series.starting_no.match(/(\d+)$/);
-      if (match) {
-        startVal = parseInt(match[1], 10);
-      }
-    }
-
-    // Formatted like every other series code (prefix, separator, digits). This path used to glue the prefix to
-    // the digits itself and dropped the separator, so a GRN issued LOT00007 and SN00020 from series configured
-    // as LOT-00000 and SN-00000, while every other path gave LOT-00001.
+    const increment = incrementOf(series);
+    // Formatted like every other series code (prefix, separator, digits) and counted by the same rule as the
+    // allocator: this path used to glue the prefix to the digits itself and dropped the separator, so a GRN
+    // issued LOT00007 and SN00020 from series configured as LOT-00000 and SN-00000.
     const now = new Date();
+    const first = nextSequence(series, now);
     const numbers: string[] = [];
     for (let i = 0; i < Math.max(1, count); i++) {
-      numbers.push(formatSeriesCode(series, startVal + i * increment, now));
+      numbers.push(
+        formatSeriesCode(withDigits(series), first + i * increment, now),
+      );
     }
 
     return {
@@ -2288,6 +2380,7 @@ export class NumberSeriesService {
       if (shouldUpdate) {
         const updates: any = {
           last_no_used: usedCode,
+          ...periodStamp(series, new Date()),
           updated_at: toMysqlTimestamp() as any,
         };
         if (newMatch) {
@@ -2298,8 +2391,12 @@ export class NumberSeriesService {
           .set(updates)
           .where(eq(schema.noSeries.id, id));
       }
-    } catch {
-      // Non-fatal if recording last number encounters an issue
+    } catch (err) {
+      // Recording the last number must not fail a posting that has already succeeded, but it must not vanish
+      // either: a series that stops advancing issues the same lot or serial again.
+      this.logger.warn(
+        `Could not record '${usedCode}' as used on number series ${id}: ${(err as Error)?.message ?? err}`,
+      );
     }
   }
 
@@ -2541,7 +2638,33 @@ export class NumberSeriesService {
         message: `No active Number Series found for '${masterType}'.`,
       };
     }
-    const previewRes = await this.previewNextNumberById(series.id);
+    // The number the save will issue. Everything but Item is issued by generateNext(), which also skips codes
+    // already taken, so it is previewed by the same function. Item is numbered by its template's counter, which
+    // reuses a stale draft's number rather than skipping it, so there the plain counter is the true answer.
+    let parsedRecord: Record<string, unknown> = {};
+    if (record) {
+      try {
+        const parsed = JSON.parse(record);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+          parsedRecord = parsed as Record<string, unknown>;
+      } catch {
+        parsedRecord = {};
+      }
+    }
+    const previewNo =
+      normalizedType === 'ITEM'
+        ? (await this.previewNextNumberById(series.id)).next_number
+        : (
+            await this.nextAvailableCode(
+              series,
+              series.tenant_id ?? tenantId ?? '',
+              series.company_id ?? null,
+              this.db,
+              new Date(),
+              parsedRecord,
+            )
+          ).code;
+    const previewRes = { next_number: previewNo };
     return {
       generated: true,
       series_id: series.id,
@@ -2563,21 +2686,17 @@ export class NumberSeriesService {
     const series = await this.findOneById(id);
     if (!series) return;
 
-    let formattedNumber = usedNumber;
-    const prefix =
-      series.no_series_code ?? (series.code ? `${series.code}-` : '');
-    const padDigits =
-      series.seq_length && series.seq_length > 0 ? series.seq_length : 4;
-    const match = usedNumber.match(/(\d+)$/);
-    if (match && prefix) {
-      const numVal = parseInt(match[1], 10);
-      formattedNumber = `${prefix}${String(numVal).padStart(padDigits, '0')}`;
-    }
+    // Only ever forward. Activating an older draft (ITM-0013 after ITM-0014 was issued) must not wind the
+    // series back to 0013, where the next preview would hand out 0014 again.
+    const used = trailingNumber(usedNumber);
+    if (used <= seriesCounter(series)) return;
 
     await this.db
       .update(schema.noSeries)
       .set({
-        last_no_used: formattedNumber,
+        current_seq: used,
+        last_no_used: usedNumber,
+        ...periodStamp(series, new Date()),
         updated_at: toMysqlTimestamp() as any,
       })
       .where(eq(schema.noSeries.id, id));

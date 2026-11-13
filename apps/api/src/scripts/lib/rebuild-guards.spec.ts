@@ -42,6 +42,7 @@ describe('rebuild guards', () => {
     expect(parseRebuildArgs(['--apply', '--preset=small']).preset).toBe('small');
     expect(parseRebuildArgs(['--apply', '--preset=full']).preset).toBe('full');
     expect(parseRebuildArgs(['--apply', '--preset=lean']).preset).toBe('lean');
+    expect(parseRebuildArgs(['--apply', '--preset=costing']).preset).toBe('costing');
     expect(() => parseRebuildArgs(['--preset=huge'])).toThrow("Unknown preset 'huge'");
   });
 

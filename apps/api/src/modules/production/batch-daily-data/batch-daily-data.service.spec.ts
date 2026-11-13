@@ -959,7 +959,7 @@ describe('BatchDailyDataService', () => {
           animal_id: 'a-1',
           transaction_date: '2026-09-08',
           // The reason entered for the death goes with it (typed here, so as its cause), with its dead weight.
-          mortality_detail: { cause_of_death: 'Crushed' },
+          mortality_detail: { cause_of_death: 'Crushed', weight_kg: 10 },
           remarks: expect.stringContaining('Dead weight 10 kg'),
           skip_scheduler_count: false, // a named animal is counted by the register, not by this line
         }),
@@ -1908,7 +1908,7 @@ describe('BatchDailyDataService', () => {
    * (silo_shed_link, Task 1) — the source is whichever attached silo
    * currently holds the item this line posts (D9: a silo holds one item, so
    * at most one attached silo can). Until now the CONSUMPTION leg wrote its
-   * ledger row with no warehouse_id at all, so applyFifo drew the feed from
+   * ledger row with no warehouse_id at all, so allocateAndCostOutbound drew the feed from
    * whichever layer in the company happened to be oldest.
    */
   describe('lot rules on a consumption', () => {

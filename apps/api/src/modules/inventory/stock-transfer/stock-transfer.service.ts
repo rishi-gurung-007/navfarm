@@ -1,3 +1,4 @@
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import {
   Injectable,
@@ -16,6 +17,7 @@ import {
   sql,
   desc,
   inArray,
+  ne,
 } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
@@ -44,7 +46,9 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
+import { SemenDestinationService } from '../../master-data/breeding-line/semen-destination.service';
 import { grossDoaRef, parseReceiptDoa, receiptSplit } from './receipt-doa';
+import { QcInspectionService } from '../qc-inspection/qc-inspection.service';
 import {
   OPEN_TRANSFER_STATUSES,
   transferStatusFor,
@@ -113,6 +117,7 @@ export class StockTransferService {
     private readonly auditService: AuditLogService,
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
+    private readonly numberSeriesService: NumberSeriesService,
     // Silo capacity is kilograms and a feed line can be entered in any unit
     // the item is stocked in, so the capacity guard below needs the tenant's
     // own uom_conversion_master rather than an assumption about the unit.
@@ -122,7 +127,49 @@ export class StockTransferService {
     private readonly siloFeedService: SiloFeedService,
     // Re-check feed thresholds only after the stock posting commits.
     @Optional() private readonly feedAlerts?: FeedAlertService,
+    // A semen lot may only go where its line's setup says (Phase 5 of the AI Station plan).
+    @Optional() private readonly semenDestination?: SemenDestinationService,
+    // An item marked QC required is not written to the ledger when it is received: an inspection is raised, and the entry is written when it is accepted.
+    @Optional() private readonly qcInspections?: QcInspectionService,
   ) {}
+
+  /** Which of these items are QC required: a receipt of them raises an inspection instead of writing the ledger. */
+  private async qcRequired(itemIds: string[]): Promise<Set<string>> {
+    return this.qcInspections ? this.qcInspections.qcRequiredItemIds([...new Set(itemIds)]) : new Set<string>();
+  }
+
+  /**
+   * Receipts waiting on their QC inspection, shaped like the ledger rows they will become, so a transfer's received and in-transit quantities count
+   * them: what has arrived and is being inspected is no longer in transit. Once the inspection is closed its real ledger rows take over.
+   */
+  private async pendingQcReceipts(transferNo: string, companyId: string, tenantId: string) {
+    const rows = await this.db
+      .select()
+      .from(schema.qcInspection)
+      .where(
+        and(
+          eq(schema.qcInspection.tenant_id, tenantId),
+          eq(schema.qcInspection.company_id, companyId),
+          eq(schema.qcInspection.source_doc_type, 'TRANSFER_RECEIPT'),
+          eq(schema.qcInspection.source_doc_no, transferNo),
+          ne(schema.qcInspection.status, 'CLOSED'),
+        ),
+      );
+    return rows.map((r) => ({
+      ledger_id: `qc:${r.inspection_id}`,
+      document_no: r.source_doc_no,
+      document_line_id: r.source_line_id,
+      item_id: r.item_id,
+      transaction_type: 'TRANSFER_RECEIPT',
+      quantity: r.quantity,
+      rate: r.rate,
+      amount: r.amount,
+      lot_no: r.lot_no,
+      serial_no: r.serial_no,
+      external_reference_no: null,
+      qc_pending: true,
+    }));
+  }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -132,31 +179,54 @@ export class StockTransferService {
     return tenantDb;
   }
 
-  // `executor` must be the active transaction when called from inside one (see
-  // `create()`) — `.for('update')` locks the counted rows so a second concurrent
-  // call blocks until the first commits its insert, instead of both reading the
-  // same count and generating the same transfer number.
+  /**
+   * The readable transfer number (TR-000001), from the company's Stock Transfer series: the one configured on the
+   * Number Series master, else a built-in default made the first time a transfer is saved and carrying on after the
+   * highest number the company already holds. `executor` must be the active transaction when called from inside one
+   * (see `create()`): the series row is locked until the transfer is inserted, so two concurrent transfers never
+   * share a number and a failed save gives its number back.
+   */
   private async generateTransferNo(
     tenantId: string,
     companyId: string,
     executor: MySql2Database<typeof schema> = this.db,
   ): Promise<string> {
-    const [row] = await executor
-      .select({
-        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.stockTransfer.transfer_no}, 4) AS UNSIGNED)), 0)`,
-      })
-      .from(schema.stockTransfer)
-      .where(
-        and(
-          eq(schema.stockTransfer.tenant_id, tenantId),
-          eq(schema.stockTransfer.company_id, companyId),
-        ),
-      )
-      .for('update');
-    const seq = Number(row?.maxSeq || 0) + 1;
-    return `TR-${String(seq).padStart(6, '0')}`;
+    const seriesCode = await this.numberSeriesService.seriesCodeForDocument(
+      tenantId,
+      companyId,
+      {
+        seriesCode: 'STOCK_TRANSFER',
+        seriesName: 'Stock Transfer Number',
+        documentType: 'STOCK_TRANSFER',
+        prefix: 'TR',
+        separator: '-',
+        seqLength: 6,
+      },
+      async () =>
+        (
+          await this.db
+            .select({ no: schema.stockTransfer.transfer_no })
+            .from(schema.stockTransfer)
+            .where(
+              and(
+                eq(schema.stockTransfer.tenant_id, tenantId),
+                eq(schema.stockTransfer.company_id, companyId),
+              ),
+            )
+        ).map((r) => r.no),
+    );
+    return this.numberSeriesService.generateNext(
+      seriesCode,
+      tenantId,
+      companyId,
+      executor,
+    );
   }
 
+  /**
+   * Creates a DRAFT Transfer Order. The source and destination must differ, the source must be on the user's active farm, and the
+   * company inside their scope. Nothing moves in stock until a shipment is posted.
+   */
   async create(
     dto: CreateStockTransferDto,
     tenantId: string,
@@ -182,8 +252,13 @@ export class StockTransferService {
         'Destination location',
       );
 
+      // A semen lot is only sent where its line's setup says: refused, or warned about, as the setup says.
+      const semenWarnings =
+        (await this.semenDestination?.assertTransferAllowed(dto.to_warehouse_id, dto.lines.map((l) => l.lot_no), tenantId)) ?? [];
+
       const created = await this.createRecord(dto, tenantId, userPayload);
-      return this.findOne(created.transfer_id);
+      const transfer = await this.findOne(created.transfer_id);
+      return semenWarnings.length ? { ...transfer, warnings: semenWarnings } : transfer;
     });
   }
 
@@ -274,6 +349,9 @@ export class StockTransferService {
     return this.createRecord(dto, tenantId, userPayload);
   }
 
+  /**
+   * For a feed release, reads the requisition lines the transfer lines come from, so each transfer can be tied to its requisition, farm and main location.
+   */
   private async loadFeedReleaseContext(
     dto: CreateStockTransferDto,
     tenantId: string,
@@ -335,6 +413,9 @@ export class StockTransferService {
     return { requisition: requisitions[0], source, mill, destination };
   }
 
+  /**
+   * Inserts the transfer header as DRAFT with a number from the company's series, then its lines.
+   */
   private async createRecord(
     dto: CreateStockTransferDto,
     tenantId: string,
@@ -372,6 +453,9 @@ export class StockTransferService {
     return { transfer_id: transferId, transfer_no: transferNo };
   }
 
+  /**
+   * Inserts a draft's lines. Biological assets are refused (they are not held in stock). Ship date, receipt date, unit cost and amount are folded into the line remarks.
+   */
   private async insertLines(
     transferId: string,
     lines: CreateStockTransferDto['lines'],
@@ -717,6 +801,26 @@ export class StockTransferService {
     }
   }
 
+  /** What receipts against a shipment line that are still waiting on QC have taken out of In Transit. */
+  private async pendingQcAmount(receiptNos: string[], lineId: string): Promise<number> {
+    if (!receiptNos.length) return 0;
+    const [row] = await this.db
+      .select({ amount: sql<string>`COALESCE(SUM(${schema.qcInspection.amount}), 0)` })
+      .from(schema.qcInspection)
+      .where(
+        and(
+          eq(schema.qcInspection.source_doc_type, 'TRANSFER_EVENT'),
+          inArray(schema.qcInspection.source_doc_no, receiptNos),
+          eq(schema.qcInspection.source_line_id, lineId),
+          ne(schema.qcInspection.status, 'CLOSED'),
+        ),
+      );
+    return Number(row?.amount ?? 0);
+  }
+
+  /**
+   * Every Inventory Ledger row posted under this transfer's number, used to work out what has shipped and been received. Empty if the read fails.
+   */
   private async getLedgerHistory(
     transferNo: string,
     companyId: string,
@@ -771,6 +875,10 @@ export class StockTransferService {
     }
   }
 
+  /**
+   * Adds shipped, received and DOA (dead on arrival) quantities to each line from the ledger rows posted for it.
+   * A receipt's `external_reference_no` carries its DOA quantity, in one of three shapes (twin row, gross marker, `DOA:n` marker).
+   */
   private enrichLinesWithQuantities(
     lines: any[],
     ledgerEntries: any[],
@@ -801,16 +909,16 @@ export class StockTransferService {
       let twinDoa = 0;
       let markerDoa = 0;
       let grossDoa = 0;
-      for (const e of lineReceipts) {
-        const qty = Number(e.quantity || 0);
-        const parsed = parseReceiptDoa(e.external_reference_no);
+      for (const receiptEntry of lineReceipts) {
+        const receiptQty = Number(receiptEntry.quantity || 0);
+        const parsed = parseReceiptDoa(receiptEntry.external_reference_no);
         if (parsed.kind === 'twin') {
-          twinDoa += qty;
+          twinDoa += receiptQty;
         } else if (parsed.kind === 'gross') {
-          qty_received += Math.max(0, qty - parsed.doa);
+          qty_received += Math.max(0, receiptQty - parsed.doa);
           grossDoa += parsed.doa;
         } else {
-          qty_received += qty;
+          qty_received += receiptQty;
           if (parsed.kind === 'marker') markerDoa += parsed.doa;
         }
       }
@@ -878,6 +986,9 @@ export class StockTransferService {
     });
   }
 
+  /**
+   * One transfer with its lines and quantities, if it is inside the user's farm, company and line-of-business scope; NotFound otherwise.
+   */
   async findOne(id: string) {
     const scope = farmScope(this.cls);
     const conditions = [
@@ -927,7 +1038,7 @@ export class StockTransferService {
     );
     const enrichedLines = this.enrichLinesWithQuantities(
       lines,
-      ledgerEntries,
+      [...ledgerEntries, ...(await this.pendingQcReceipts(transfer.transfer_no, transfer.company_id, transfer.tenant_id))],
       transfer.status,
     );
     const [shipped, received] = await Promise.all([
@@ -959,8 +1070,8 @@ export class StockTransferService {
     transferIds: string[],
     tenantId: string,
   ): Promise<Map<string, SourceLink>> {
-    const out = new Map<string, SourceLink>();
-    if (!transferIds.length) return out;
+    const linksByTransferId = new Map<string, SourceLink>();
+    if (!transferIds.length) return linksByTransferId;
     const rows = await this.db
       .select({
         transfer_id: schema.stockTransferLine.transfer_id,
@@ -1035,7 +1146,7 @@ export class StockTransferService {
       );
     for (const r of rows) {
       const link =
-        out.get(r.transfer_id) ??
+        linksByTransferId.get(r.transfer_id) ??
         ({
           source_requisition_id: r.requisition_id,
           source_requisition_no: r.req_no,
@@ -1060,11 +1171,14 @@ export class StockTransferService {
         link.source_loading_sheet_id ??= r.loading_sheet_id;
         link.source_loading_sheet_no ??= r.loading_sheet_no;
       }
-      out.set(r.transfer_id, link);
+      linksByTransferId.set(r.transfer_id, link);
     }
-    return out;
+    return linksByTransferId;
   }
 
+  /**
+   * A page of transfers in the user's scope. `direction` limits it to transfers leaving (OUTBOUND) or arriving at (INBOUND) the user's farm.
+   */
   async findAll(query: QueryStockTransferDto, tenantId: string) {
     const conditions: any[] = [
       eq(schema.stockTransfer.tenant_id, tenantId),
@@ -1153,6 +1267,9 @@ export class StockTransferService {
     }));
   }
 
+  /**
+   * Transfers that are in transit to the user's farm and waiting to be received.
+   */
   async getPendingReceipts(query: QueryStockTransferDto, tenantId: string) {
     return this.findAll(
       { ...query, status: 'IN_TRANSIT', direction: 'INBOUND' },
@@ -1160,6 +1277,9 @@ export class StockTransferService {
     );
   }
 
+  /**
+   * The receipts already posted against transfers, read from the ledger, each split into good and DOA quantity.
+   */
   async getReceiptHistory(query: QueryStockTransferDto, tenantId: string) {
     const scope = farmScope(this.cls);
     const conditions: any[] = [
@@ -1308,7 +1428,7 @@ export class StockTransferService {
 
     return filteredReceipts.map((r) => {
       const parentTransfer = transferMap.get(r.transfer_no);
-      const it = itemMap.get(r.item_id!);
+      const itemRow = itemMap.get(r.item_id!);
       const authorName =
         (r.created_by && userMap.get(r.created_by)) || r.created_by || 'System';
 
@@ -1332,8 +1452,8 @@ export class StockTransferService {
         warehouse_id: r.warehouse_id,
         transfer_status: parentTransfer?.transfer_status || 'RECEIVED',
         item_id: r.item_id,
-        item_code: it?.item_code || r.item_code || r.item_id,
-        item_name: it?.item_name || r.item_name || '—',
+        item_code: itemRow?.item_code || r.item_code || r.item_id,
+        item_name: itemRow?.item_name || r.item_name || '—',
         quantity: good_qty,
         doa_quantity: doa_qty,
         uom: r.uom,
@@ -1346,6 +1466,9 @@ export class StockTransferService {
     });
   }
 
+  /**
+   * Refuses a change to a transfer that is no longer DRAFT.
+   */
   private assertDraft(transfer: { status: string }) {
     if (transfer.status !== 'DRAFT') {
       throw new BadRequestException(
@@ -1434,18 +1557,18 @@ export class StockTransferService {
         received: received.get(l.line_id) ?? 0,
       })),
     );
-    const set: Record<string, unknown> = {
+    const statusUpdate: Record<string, unknown> = {
       status,
       updated_by: userPayload?.userId || null,
       updated_at: toMysqlTimestamp(),
     };
     if (status === 'POSTED') {
-      set.posted_at = toMysqlTimestamp();
-      set.posted_by = userPayload?.userId || null;
+      statusUpdate.posted_at = toMysqlTimestamp();
+      statusUpdate.posted_by = userPayload?.userId || null;
     }
     const [claim] = await this.db
       .update(schema.stockTransfer)
-      .set(set as any)
+      .set(statusUpdate as any)
       .where(
         and(
           eq(schema.stockTransfer.transfer_id, id),
@@ -1460,6 +1583,9 @@ export class StockTransferService {
     return status;
   }
 
+  /**
+   * Edits a DRAFT transfer's header; when lines are sent, they replace the existing ones. Refused once anything has shipped or the transfer has left DRAFT.
+   */
   async update(
     id: string,
     dto: UpdateStockTransferDto,
@@ -1482,6 +1608,13 @@ export class StockTransferService {
       await this.assertNotShipped(transfer, tenantId, 'edited');
       this.assertDraft(transfer);
       await this.assertWarehouses(fromWarehouseId, toWarehouseId);
+      // Changing the destination or the lines is checked again: a semen lot may only go where its line's setup says.
+      if (dto.lines || dto.to_warehouse_id !== undefined) {
+        const lotNos = dto.lines
+          ? dto.lines.map((l) => l.lot_no)
+          : (await this.db.select({ lot_no: schema.stockTransferLine.lot_no }).from(schema.stockTransferLine).where(eq(schema.stockTransferLine.transfer_id, id))).map((l) => l.lot_no);
+        await this.semenDestination?.assertTransferAllowed(toWarehouseId, lotNos, tenantId);
+      }
 
       const updates: any = {
         updated_by: userPayload?.userId || null,
@@ -1556,6 +1689,9 @@ export class StockTransferService {
     });
   }
 
+  /**
+   * Cancels (soft-deletes) a DRAFT transfer that has not shipped, and records it in the audit log.
+   */
   async remove(id: string, tenantId: string, userPayload?: any) {
     return withTenantTransaction(this.cls, async () => {
       const transfer = await this.loadForMutation(id, tenantId);
@@ -1653,6 +1789,9 @@ export class StockTransferService {
     }
   }
 
+  /**
+   * Posts a draft in one step: a direct transfer, meaning one shipment covering every line plus its matching receipt, in one transaction.
+   */
   async post(id: string, tenantId: string, userPayload?: any) {
     // Compatibility wrapper (Task 10): the atomic one-step posting is now a
     // direct transfer — one shipment covering every line plus its matching
@@ -2024,6 +2163,12 @@ export class StockTransferService {
         status: 'POSTED',
         created_by: userPayload?.userId || null,
       });
+      const qcItems = await this.qcRequired(
+        dto.lines
+          .map((l) => transfer.lines.find((tl) => tl.line_id === l.line_id)?.item_id)
+          .filter((id): id is string => !!id),
+      );
+      let qcSeries: string | null = null;
       for (const input of dto.lines) {
         const shipmentLine = shipmentLines.find(
           (sl) => sl.line_id === input.line_id,
@@ -2100,7 +2245,7 @@ export class StockTransferService {
           lineId: line.line_id,
         });
         const closesShipmentLine = input.quantity >= leftOnShipment - 1e-9;
-        const amount = closesShipmentLine
+        const remainingValue = closesShipmentLine
           ? await this.ledgerService.transferShipmentRemainingValue({
               tenantId,
               shipmentNo: shipment.shipment_no,
@@ -2108,6 +2253,19 @@ export class StockTransferService {
               receiptNos: prior.receiptNos,
             })
           : undefined;
+        // Earlier receipts still waiting on a QC inspection have taken their value out of In Transit but are not in the ledger yet.
+        const amount =
+          remainingValue === undefined
+            ? undefined
+            : Math.max(
+                0,
+                Math.round(
+                  (remainingValue -
+                    (await this.pendingQcAmount(prior.receiptNos, line.line_id))) *
+                    10000,
+                ) / 10000,
+              );
+        const heldForQc = qcItems.has(line.item_id);
         // WP4a: several serials on one shipment line land as one layer PER
         // SERIAL (qty 1 each, the Goods Receipt's shape) — a single layer named
         // "SN1,SN2" matched no consumer. A partial receipt takes the next
@@ -2117,7 +2275,41 @@ export class StockTransferService {
           .map((v) => v.trim())
           .filter(Boolean);
         let receivedSerialNo = shipmentLine.serial_no;
-        if (shippedSerials.length > 1) {
+        if (heldForQc) {
+          // QC required: no ledger entry yet. The inspection holds the quantity (this receipt line still counts it as received) and writes the
+          // entry, one layer per serial where there are several, when it is accepted.
+          if (shippedSerials.length > 1) {
+            receivedSerialNo = serialsForReceipt(
+              shipmentLine.serial_no,
+              prior.qty,
+              input.quantity,
+            ).join(',');
+          }
+          qcSeries ??= await this.qcInspections!.resolveSeries(
+            tenantId,
+            transfer.company_id,
+          );
+          await this.qcInspections!.raise({
+            tenantId,
+            seriesCode: qcSeries,
+            userId: userPayload?.userId,
+            companyId: transfer.company_id,
+            sourceDocType: 'TRANSFER_EVENT',
+            sourceDocNo: receiptNo,
+            sourceLineId: line.line_id,
+            sourcePostingDate: dto.posting_date,
+            parentDocNo: transfer.transfer_no,
+            itemId: line.item_id,
+            lotNo: shipmentLine.lot_no,
+            serialNo: receivedSerialNo,
+            quantity: input.quantity,
+            uom: line.uom,
+            rate,
+            amount: amount ?? Math.round(input.quantity * rate * 10000) / 10000,
+            warehouseId: transfer.to_warehouse_id,
+            returnWarehouseId: transfer.from_warehouse_id,
+          });
+        } else if (shippedSerials.length > 1) {
           const serials = serialsForReceipt(
             shipmentLine.serial_no,
             prior.qty,
@@ -2433,10 +2625,13 @@ export class StockTransferService {
           isNull(schema.transferShipment.deleted_at),
         ),
       );
-    const map = new Map<string, number>();
+    const shippedByLine = new Map<string, number>();
     for (const r of rows)
-      map.set(r.line_id, (map.get(r.line_id) ?? 0) + Number(r.qty));
-    return map;
+      shippedByLine.set(
+        r.line_id,
+        (shippedByLine.get(r.line_id) ?? 0) + Number(r.qty),
+      );
+    return shippedByLine;
   }
 
   /**
@@ -2469,15 +2664,21 @@ export class StockTransferService {
           isNull(schema.transferReceipt.deleted_at),
         ),
       );
-    const map = new Map<string, { qty: number; receiptNos: string[] }>();
+    const receivedByShipmentLine = new Map<
+      string,
+      { qty: number; receiptNos: string[] }
+    >();
     for (const r of rows) {
       if (!r.shipment_line_id) continue;
-      const entry = map.get(r.shipment_line_id) ?? { qty: 0, receiptNos: [] };
+      const entry = receivedByShipmentLine.get(r.shipment_line_id) ?? {
+        qty: 0,
+        receiptNos: [],
+      };
       entry.qty += Number(r.qty);
       if (r.receipt_no) entry.receiptNos.push(r.receipt_no);
-      map.set(r.shipment_line_id, entry);
+      receivedByShipmentLine.set(r.shipment_line_id, entry);
     }
-    return map;
+    return receivedByShipmentLine;
   }
 
   /**
@@ -2525,10 +2726,13 @@ export class StockTransferService {
           isNull(schema.transferReceipt.deleted_at),
         ),
       );
-    const map = new Map<string, number>();
+    const receivedByLine = new Map<string, number>();
     for (const r of rows)
-      map.set(r.line_id, (map.get(r.line_id) ?? 0) + Number(r.qty));
-    return map;
+      receivedByLine.set(
+        r.line_id,
+        (receivedByLine.get(r.line_id) ?? 0) + Number(r.qty),
+      );
+    return receivedByLine;
   }
 
   /**
@@ -2628,11 +2832,19 @@ export class StockTransferService {
       }
 
       // Fetch existing shipment history for this transfer order
-      const existingLedger = await this.getLedgerHistory(
-        transfer.transfer_no,
-        transfer.company_id,
-        tenantId,
-      );
+      // Receipts waiting on a QC inspection count as received: they have left transit.
+      const existingLedger = [
+        ...(await this.getLedgerHistory(
+          transfer.transfer_no,
+          transfer.company_id,
+          tenantId,
+        )),
+        ...(await this.pendingQcReceipts(
+          transfer.transfer_no,
+          transfer.company_id,
+          tenantId,
+        )),
+      ];
       const enrichedLines = this.enrichLinesWithQuantities(
         transfer.lines,
         existingLedger,
@@ -2867,11 +3079,19 @@ export class StockTransferService {
       await this.assertSiloDestination(transfer, transfer.lines, tenantId);
 
       // Fetch the shipment and receipt entries previously posted for this transfer
-      const existingLedger = await this.getLedgerHistory(
-        transfer.transfer_no,
-        transfer.company_id,
-        tenantId,
-      );
+      // Receipts waiting on a QC inspection count as received: they have left transit.
+      const existingLedger = [
+        ...(await this.getLedgerHistory(
+          transfer.transfer_no,
+          transfer.company_id,
+          tenantId,
+        )),
+        ...(await this.pendingQcReceipts(
+          transfer.transfer_no,
+          transfer.company_id,
+          tenantId,
+        )),
+      ];
       const enrichedLines = this.enrichLinesWithQuantities(
         transfer.lines,
         existingLedger,
@@ -2892,6 +3112,7 @@ export class StockTransferService {
         lotNo?: string;
         serialNo?: string;
         doaSerialNo?: string;
+        goodSerialNo?: string;
       }> = [];
 
       for (const line of enrichedLines) {
@@ -3004,6 +3225,11 @@ export class StockTransferService {
               line.serial_no ||
               undefined,
             doaSerialNo: doaSerials || undefined,
+            goodSerialNo:
+              allocatedSerials ||
+              (rawShipSerials.length === 0
+                ? shipmentEntry?.serial_no || line.serial_no || undefined
+                : undefined),
           });
         }
       }
@@ -3014,64 +3240,101 @@ export class StockTransferService {
         );
       }
 
+      const qcItems = await this.qcRequired(
+        itemsToReceive.map((i) => i.line.item_id),
+      );
+      let qcSeries: string | null = null;
       for (const item of itemsToReceive) {
         // One receipt for everything that arrived, DOA included. The DOA is then written off against
         // this very receipt (not oldest-first across the location), so the receipt's remaining
         // quantity is the good stock left and the loss is costed at what this transfer brought in.
         const arrivedQty = item.receivedQty + item.doaQty;
-        const receipt = await this.ledgerService.writePositiveEntry({
-          tenantId,
-          companyId: transfer.company_id,
-          itemId: item.line.item_id,
-          documentType: 'STOCK_TRANSFER',
-          documentNo: transfer.transfer_no,
-          documentLineId: item.line.line_id,
-          postingDate: receiptPostingDate,
-          transactionType: 'TRANSFER_RECEIPT',
-          entryType: 'TRANSFER',
-          quantity: arrivedQty,
-          uom: item.line.uom,
-          rate: item.rate,
-          lotNo: item.lotNo,
-          serialNo: item.serialNo,
-          warehouseId: transfer.to_warehouse_id,
-          userId: userPayload?.userId,
-          externalReferenceNo:
-            item.doaQty > 0
-              ? grossDoaRef(item.doaQty)
-              : dto.remarks
-                ? dto.remarks.slice(0, 50)
-                : undefined,
-        });
-        await this.glPostingService.postInventoryLedgerEntry(
-          receipt,
-          userPayload?.userId,
-        );
-
-        if (item.doaQty > 0) {
-          const doaAdjustment = await this.ledgerService.writeNegativeEntry({
+        // QC required: the good quantity is not stock yet. An inspection holds it (it has left transit, so the transfer counts it as received),
+        // and its entry is written when the inspection is accepted. Only the DOA part, if any, is written now: it is received and written off at once.
+        const heldForQc = qcItems.has(item.line.item_id) && item.receivedQty > 0;
+        if (heldForQc) {
+          qcSeries ??= await this.qcInspections!.resolveSeries(
+            tenantId,
+            transfer.company_id,
+          );
+          await this.qcInspections!.raise({
+            tenantId,
+            seriesCode: qcSeries,
+            userId: userPayload?.userId,
+            companyId: transfer.company_id,
+            sourceDocType: 'TRANSFER_RECEIPT',
+            sourceDocNo: transfer.transfer_no,
+            sourceLineId: item.line.line_id,
+            sourcePostingDate: receiptPostingDate,
+            parentDocNo: transfer.transfer_no,
+            poNo: dto.remarks ? dto.remarks.slice(0, 50) : null,
+            itemId: item.line.item_id,
+            lotNo: item.lotNo,
+            serialNo: item.goodSerialNo,
+            quantity: item.receivedQty,
+            uom: item.line.uom,
+            rate: item.rate,
+            warehouseId: transfer.to_warehouse_id,
+            entryType: 'TRANSFER',
+            returnWarehouseId: transfer.from_warehouse_id,
+          });
+        }
+        const writeQty = heldForQc ? item.doaQty : arrivedQty;
+        if (writeQty > 0) {
+          const receipt = await this.ledgerService.writePositiveEntry({
             tenantId,
             companyId: transfer.company_id,
             itemId: item.line.item_id,
-            documentType: 'STOCK_ADJUSTMENT',
-            documentNo: `${transfer.transfer_no}-DOA`,
+            documentType: 'STOCK_TRANSFER',
+            documentNo: transfer.transfer_no,
             documentLineId: item.line.line_id,
             postingDate: receiptPostingDate,
-            transactionType: 'VARIANCE_NEGATIVE',
-            entryType: 'ADJUSTMENT',
-            quantity: item.doaQty,
+            transactionType: 'TRANSFER_RECEIPT',
+            entryType: 'TRANSFER',
+            quantity: writeQty,
             uom: item.line.uom,
+            rate: item.rate,
             lotNo: item.lotNo,
-            serialNo: item.doaSerialNo,
+            serialNo: heldForQc ? item.doaSerialNo : item.serialNo,
             warehouseId: transfer.to_warehouse_id,
             userId: userPayload?.userId,
-            externalReferenceNo: 'MRT-017',
-            sourceLedgerId: receipt.ledger_id,
+            externalReferenceNo:
+              item.doaQty > 0
+                ? grossDoaRef(item.doaQty)
+                : dto.remarks
+                  ? dto.remarks.slice(0, 50)
+                  : undefined,
           });
           await this.glPostingService.postInventoryLedgerEntry(
-            doaAdjustment,
+            receipt,
             userPayload?.userId,
           );
+
+          if (item.doaQty > 0) {
+            const doaAdjustment = await this.ledgerService.writeNegativeEntry({
+              tenantId,
+              companyId: transfer.company_id,
+              itemId: item.line.item_id,
+              documentType: 'STOCK_ADJUSTMENT',
+              documentNo: `${transfer.transfer_no}-DOA`,
+              documentLineId: item.line.line_id,
+              postingDate: receiptPostingDate,
+              transactionType: 'VARIANCE_NEGATIVE',
+              entryType: 'NEGATIVE',
+              quantity: item.doaQty,
+              uom: item.line.uom,
+              lotNo: item.lotNo,
+              serialNo: item.doaSerialNo,
+              warehouseId: transfer.to_warehouse_id,
+              userId: userPayload?.userId,
+              externalReferenceNo: 'MRT-017',
+              sourceLedgerId: receipt.ledger_id,
+            });
+            await this.glPostingService.postInventoryLedgerEntry(
+              doaAdjustment,
+              userPayload?.userId,
+            );
+          }
         }
       }
 
@@ -3149,11 +3412,19 @@ export class StockTransferService {
         );
       }
 
-      const existingLedger = await this.getLedgerHistory(
-        transfer.transfer_no,
-        transfer.company_id,
-        tenantId,
-      );
+      // Receipts waiting on a QC inspection count as received: they have left transit.
+      const existingLedger = [
+        ...(await this.getLedgerHistory(
+          transfer.transfer_no,
+          transfer.company_id,
+          tenantId,
+        )),
+        ...(await this.pendingQcReceipts(
+          transfer.transfer_no,
+          transfer.company_id,
+          tenantId,
+        )),
+      ];
       const enrichedLines = this.enrichLinesWithQuantities(
         transfer.lines,
         existingLedger,

@@ -3,6 +3,7 @@ import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { FinancialReportsService } from './financial-reports.service';
 import { ClsService } from 'nestjs-cls';
 import { FARM_SCOPE_KEY, FarmScope } from '../../../common/farm-scope';
+import { bioCodesOfEvent } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 describe('FinancialReportsService', () => {
   let service: FinancialReportsService;
@@ -32,6 +33,36 @@ describe('FinancialReportsService', () => {
   });
 
   describe('getBiologicalAssetRollForward', () => {
+  let itemAcquisitionRows: unknown[] = [];
+  beforeEach(() => { itemAcquisitionRows = []; });
+  // Bio-asset costing, Phase 6: the by-profile query (ledger joined to animal and profile) and, when runs exist, the run journal lines.
+  // the ledger rows with her animal and her item (two left joins)
+  const breakdownRows = (rows: unknown[] = []) => ({ from: jest.fn().mockReturnValue({ leftJoin: jest.fn().mockReturnValue({ leftJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(rows) }) }) }) });
+  const runJournalLines = (rows: unknown[] = []) => ({ from: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(rows) }) }) }) });
+    it('counts a goods receipt of animals only for the part not yet registered (each registered animal has her own ACQUISITION row)', async () => {
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            orderBy: jest.fn().mockResolvedValue([
+              { entry_id: 'p-1', ...bioCodesOfEvent('PURCHASE'), document_type: 'GOODS_RECEIPT', posting_date: '2026-01-05', cost_amount: '1700.0000', quantity: '2.0000', remaining_quantity: '0.0000', batch_id: null, animal_id: null },
+              { entry_id: 'a-1', ...bioCodesOfEvent('ACQUISITION'), posting_date: '2026-01-05', cost_amount: '850.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-1' },
+              { entry_id: 'a-2', ...bioCodesOfEvent('ACQUISITION'), posting_date: '2026-01-05', cost_amount: '850.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-2' },
+              { entry_id: 'p-2', ...bioCodesOfEvent('PURCHASE'), document_type: 'GOODS_RECEIPT', posting_date: '2026-01-06', cost_amount: '1200.0000', quantity: '2.0000', remaining_quantity: '1.0000', batch_id: null, animal_id: null },
+              { entry_id: 'a-3', ...bioCodesOfEvent('ACQUISITION'), posting_date: '2026-01-06', cost_amount: '600.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-3' },
+            ]),
+          }),
+        }),
+      });
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ groupBy: jest.fn().mockResolvedValue([]) }) }) }) }) });
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(itemAcquisitionRows) }) }); // the costed items' own acquisition accounts
+      mockDbSelect.mockReturnValueOnce(breakdownRows());
+      const res = await service.getBiologicalAssetRollForward('tenant-1', 'comp-1', '2026-01-01', '2026-12-31');
+      // 2 x 850 registered + 600 registered + the one animal of the second receipt still to register (600) = 2 900, not 4 600
+      expect(res.movements.acquisitions).toBe(2900);
+      expect(res.closingCarryingValue).toBe(2900);
+      expect(res.assetTypeBreakdown).toEqual({ batchCarryingValue: 600, animalCarryingValue: 2300 });
+    });
+
     it('computes opening value, movements, closing value, and GL reconciliation', async () => {
       // 1. Mock bio_asset_ledger query
       mockDbSelect.mockReturnValueOnce({
@@ -41,7 +72,7 @@ describe('FinancialReportsService', () => {
               // Prior period entry (Opening)
               {
                 entry_id: 'e-1',
-                entry_type: 'ACQUISITION',
+                ...bioCodesOfEvent('ACQUISITION'),
                 posting_date: '2025-12-01',
                 cost_amount: '10000.0000',
                 quantity: '10.0000',
@@ -51,7 +82,7 @@ describe('FinancialReportsService', () => {
               // Current period entries (Movements)
               {
                 entry_id: 'e-2',
-                entry_type: 'CONSUMPTION',
+                ...bioCodesOfEvent('CONSUMPTION'),
                 posting_date: '2026-02-15',
                 cost_amount: '2500.0000',
                 quantity: '10.0000',
@@ -60,7 +91,7 @@ describe('FinancialReportsService', () => {
               },
               {
                 entry_id: 'e-3',
-                entry_type: 'AMORTIZATION',
+                ...bioCodesOfEvent('AMORTIZATION'),
                 posting_date: '2026-03-31',
                 cost_amount: '-500.0000',
                 quantity: '10.0000',
@@ -69,7 +100,7 @@ describe('FinancialReportsService', () => {
               },
               {
                 entry_id: 'e-4',
-                entry_type: 'TRANSFORMATION',
+                ...bioCodesOfEvent('TRANSFORMATION'),
                 posting_date: '2026-05-20',
                 cost_amount: '-3000.0000',
                 quantity: '-3.0000',
@@ -78,7 +109,7 @@ describe('FinancialReportsService', () => {
               },
               {
                 entry_id: 'e-5',
-                entry_type: 'ACQUISITION',
+                ...bioCodesOfEvent('ACQUISITION'),
                 posting_date: '2026-04-01',
                 cost_amount: '3500.0000',
                 quantity: '1.0000',
@@ -113,6 +144,9 @@ describe('FinancialReportsService', () => {
         }),
       });
 
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(itemAcquisitionRows) }) }); // the costed items' own acquisition accounts
+      mockDbSelect.mockReturnValueOnce(breakdownRows());
+
       const res = await service.getBiologicalAssetRollForward('tenant-1', 'comp-1', '2026-01-01', '2026-12-31');
 
       expect(res.openingCarryingValue).toBe(10000);
@@ -128,6 +162,145 @@ describe('FinancialReportsService', () => {
       expect(res.assetTypeBreakdown.animalCarryingValue).toBe(3500);
     });
 
+
+    it('counts each costed item\'s own acquisition account (not 1050/1060) in the GL it reconciles to, or the herd reads as a variance', async () => {
+      itemAcquisitionRows = [{ id: 'gl-item' }];
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockResolvedValue([
+        { entry_id: 'e-1', ...bioCodesOfEvent('ACQUISITION'), posting_date: '2026-03-01', cost_amount: '850.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-1' },
+        { entry_id: 'e-2', ...bioCodesOfEvent('AMORTIZATION'), posting_date: '2026-04-30', cost_amount: '-50.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-1' },
+      ]) }) }) });
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ groupBy: jest.fn().mockResolvedValue([
+        { gl_account_id: 'gl-item', account_code: '1103', account_name: 'GP-Imp-F Acquisition Cost', account_type: 'ASSET', parent_account_id: null, total_debit: '850.0000', total_credit: '0.0000' },
+        { gl_account_id: 'gl-1065', account_code: '1065', account_name: 'Accumulated Amortisation - Bio Assets', account_type: 'ASSET', parent_account_id: null, total_debit: '0.0000', total_credit: '50.0000' },
+        { gl_account_id: 'gl-cash', account_code: '1010', account_name: 'Cash', account_type: 'ASSET', parent_account_id: null, total_debit: '999.0000', total_credit: '0.0000' },
+      ]) }) }) }) }) });
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(itemAcquisitionRows) }) });
+      mockDbSelect.mockReturnValueOnce(breakdownRows());
+      const res = await service.getBiologicalAssetRollForward('tenant-1', 'comp-1', '2026-01-01', '2026-12-31');
+      expect(res.closingCarryingValue).toBe(800);
+      expect(res.glReconciliation.glAccounts.map((a: any) => a.account_code).sort()).toEqual(['1065', '1103']); // not Cash
+      expect(res.glReconciliation.isReconciled).toBe(true);
+    });
+
+    it('counts each amortised item\'s own accumulated amortisation account (V1.3: one per item, not 1065) in the GL it reconciles to', async () => {
+      itemAcquisitionRows = [{ id: 'gl-item', accum: 'gl-item-accum' }];
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockResolvedValue([
+        { entry_id: 'e-1', ...bioCodesOfEvent('ACQUISITION'), posting_date: '2026-03-01', cost_amount: '850.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-1' },
+        { entry_id: 'e-2', ...bioCodesOfEvent('AMORTIZATION'), posting_date: '2026-04-30', cost_amount: '-50.0000', quantity: '1.0000', batch_id: null, animal_id: 'animal-1' },
+      ]) }) }) });
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ groupBy: jest.fn().mockResolvedValue([
+        { gl_account_id: 'gl-item', account_code: '1103', account_name: 'GP-Imp-F Acquisition Cost', account_type: 'ASSET', parent_account_id: null, total_debit: '850.0000', total_credit: '0.0000' },
+        { gl_account_id: 'gl-item-accum', account_code: '1123', account_name: 'GP-Imp-F Accumulated Amortization', account_type: 'ASSET', parent_account_id: null, total_debit: '0.0000', total_credit: '50.0000' },
+        { gl_account_id: 'gl-cash', account_code: '1010', account_name: 'Cash', account_type: 'ASSET', parent_account_id: null, total_debit: '999.0000', total_credit: '0.0000' },
+      ]) }) }) }) }) });
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(itemAcquisitionRows) }) });
+      mockDbSelect.mockReturnValueOnce(breakdownRows());
+      const res = await service.getBiologicalAssetRollForward('tenant-1', 'comp-1', '2026-01-01', '2026-12-31');
+      expect(res.glReconciliation.glAccounts.map((a: any) => a.account_code).sort()).toEqual(['1103', '1123']);
+      expect(res.glReconciliation.isReconciled).toBe(true);
+    });
+
+    it('counts the accumulated amortisation account in the GL it reconciles to, since the ledger\'s carrying value is net of the amortisation', async () => {
+      // 1. Mock bio_asset_ledger query
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          where: jest.fn().mockReturnValue({
+            orderBy: jest.fn().mockResolvedValue([
+              // Prior period entry (Opening)
+              {
+                entry_id: 'e-1',
+                ...bioCodesOfEvent('ACQUISITION'),
+                posting_date: '2025-12-01',
+                cost_amount: '10000.0000',
+                quantity: '10.0000',
+                batch_id: 'batch-1',
+                animal_id: null,
+              },
+              // Current period entries (Movements)
+              {
+                entry_id: 'e-2',
+                ...bioCodesOfEvent('CONSUMPTION'),
+                posting_date: '2026-02-15',
+                cost_amount: '2500.0000',
+                quantity: '10.0000',
+                batch_id: 'batch-1',
+                animal_id: null,
+              },
+              {
+                entry_id: 'e-3',
+                ...bioCodesOfEvent('AMORTIZATION'),
+                posting_date: '2026-03-31',
+                cost_amount: '-500.0000',
+                quantity: '10.0000',
+                batch_id: 'batch-1',
+                animal_id: null,
+              },
+              {
+                entry_id: 'e-4',
+                ...bioCodesOfEvent('TRANSFORMATION'),
+                posting_date: '2026-05-20',
+                cost_amount: '-3000.0000',
+                quantity: '-3.0000',
+                batch_id: 'batch-1',
+                animal_id: null,
+              },
+              {
+                entry_id: 'e-5',
+                ...bioCodesOfEvent('ACQUISITION'),
+                posting_date: '2026-04-01',
+                cost_amount: '3500.0000',
+                quantity: '1.0000',
+                batch_id: null,
+                animal_id: 'animal-1',
+              },
+            ]),
+          }),
+        }),
+      });
+
+      // 2. Mock GL journal account balances
+      mockDbSelect.mockReturnValueOnce({
+        from: jest.fn().mockReturnValue({
+          innerJoin: jest.fn().mockReturnValue({
+            innerJoin: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                groupBy: jest.fn().mockResolvedValue([
+                  {
+                    gl_account_id: 'gl-1050',
+                    account_code: '1050',
+                    account_name: 'Biological Assets - Pre-mature',
+                    account_type: 'ASSET',
+                    parent_account_id: null,
+                    total_debit: '13000.0000',
+                    total_credit: '0.0000',
+                  },
+                  {
+                    gl_account_id: 'gl-1065',
+                    account_code: '1065',
+                    account_name: 'Accumulated Amortisation - Bio Assets',
+                    account_type: 'ASSET',
+                    parent_account_id: null,
+                    total_debit: '0.0000',
+                    total_credit: '500.0000',
+                  },
+                ]),
+              }),
+            }),
+          }),
+        }),
+      });
+
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(itemAcquisitionRows) }) }); // the costed items' own acquisition accounts
+      mockDbSelect.mockReturnValueOnce(breakdownRows());
+
+      const res = await service.getBiologicalAssetRollForward('tenant-1', 'comp-1', '2026-01-01', '2026-12-31');
+
+      expect(res.closingCarryingValue).toBe(12500);
+      expect(res.glReconciliation.glAccounts.map((a: any) => a.account_code).sort()).toEqual(['1050', '1065']);
+      expect(res.glReconciliation.totalGlBalance).toBe(12500); // 13000 - 500
+      expect(res.glReconciliation.isReconciled).toBe(true);
+    });
+
     it('excludes another LOB on the selected farm and marks GL reconciliation unavailable', async () => {
       let capturedLedgerWhere: any;
       mockDbSelect.mockReturnValueOnce({
@@ -139,6 +312,7 @@ describe('FinancialReportsService', () => {
         }),
       });
 
+      mockDbSelect.mockReturnValueOnce(breakdownRows());
       const scopedService = await serviceWithScope({
         farmId: 'farm-1',
         restricted: true,
@@ -157,7 +331,8 @@ describe('FinancialReportsService', () => {
       expect(rendered.sql).toContain('`bio_asset_ledger`.`lob_id` = ?');
       expect(rendered.sql).toContain('FROM batch_header bf WHERE bf.farm_id = ?');
       expect(rendered.params).toEqual(expect.arrayContaining(['lob-piggery', 'farm-1']));
-      expect(mockDbSelect).toHaveBeenCalledTimes(1);
+      expect(mockDbSelect).toHaveBeenCalledTimes(2); // the ledger, and the by-profile breakdown; no GL query for a farm
+      expect(res.costingTieOut).toMatchObject({ available: false, rows: [] });
       expect(res.glReconciliation).toMatchObject({
         available: false,
         status: 'UNAVAILABLE',
@@ -193,6 +368,8 @@ describe('FinancialReportsService', () => {
         }),
       });
 
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(itemAcquisitionRows) }) }); // the costed items' own acquisition accounts
+      mockDbSelect.mockReturnValueOnce(breakdownRows());
       const scopedService = await serviceWithScope({
         farmId: null,
         restricted: true,
@@ -220,6 +397,69 @@ describe('FinancialReportsService', () => {
         totalGlBalance: 0,
         variance: 0,
         isReconciled: true,
+      });
+    });
+
+    describe('by costing profile, and the tie-out of the run journals to the GL (Phase 6)', () => {
+      const run = (o: Record<string, unknown>) => ({
+        ...bioCodesOfEvent('AMORTIZATION'), posting_date: '2026-09-30', amount: '-82.1447', run_id: 'r1', animal_id: 'a1',
+        item_method: 'AMORTIZATION', item_code: 'GP-Imp-F', expense_gl: 'gl-exp', accum_gl: 'gl-acc', fv_gl: null, died: 0, ...o,
+      });
+      const line = (o: Record<string, unknown>) => ({ account_id: 'gl-exp', code: '5100', name: 'Amortization Expense', source: 'BIO_COSTING_RUN', posting_date: '2026-09-30', debit: '0', credit: '0', ...o });
+      // an account with no journal line in the window has its name looked up on its own
+      const nameLookup = () => ({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ code: '5100', name: 'Amortization Expense' }]) }) }) });
+      const call = async (breakdown: unknown[], gl: unknown[], lookups = 0) => {
+        mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ orderBy: jest.fn().mockResolvedValue([]) }) }) });
+        mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ groupBy: jest.fn().mockResolvedValue([]) }) }) }) }) });
+      mockDbSelect.mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(itemAcquisitionRows) }) }); // the costed items' own acquisition accounts
+        mockDbSelect.mockReturnValueOnce(breakdownRows(breakdown));
+        mockDbSelect.mockReturnValueOnce(runJournalLines(gl));
+        for (let i = 0; i < lookups; i++) mockDbSelect.mockReturnValueOnce(nameLookup());
+        return service.getBiologicalAssetRollForward('tenant-1', 'comp-1', '2026-09-01', '2026-09-30');
+      };
+
+      it('splits the roll-forward by profile, with its amortisation, and ties the run journals to the GL: expense, and accumulated amortisation', async () => {
+        const res: any = await call(
+          [run({ ...bioCodesOfEvent('ACQUISITION'), posting_date: '2024-02-07', amount: '392.8', run_id: null }), run({})],
+          [
+            line({ debit: '82.1447' }),
+            line({ account_id: 'gl-acc', code: '2150', name: 'Accumulated amortisation', credit: '82.1447' }),
+          ],
+        );
+        expect(res.byProfile).toEqual([expect.objectContaining({ key: 'P:GP-Imp-F', opening: 392.8, amortisation: -82.1447, closing: 310.6553 })]);
+        const by = (role: string) => res.costingTieOut.rows.find((r: any) => r.role === role);
+        expect(by('AMORTISATION_EXPENSE')).toMatchObject({ account_code: '5100', basis: 'PERIOD', ledger: 82.1447, gl: 82.1447, reconciled: true });
+        expect(by('ACCUMULATED_AMORTISATION')).toMatchObject({ account_code: '2150', basis: 'TO_DATE', ledger: 82.1447, gl: 82.1447, reconciled: true });
+      });
+
+      it('leaves out of every item an animal that no item costs (and batch-level cost): no item code, no accounts to tie to', async () => {
+        const res: any = await call(
+          [run({ ...bioCodesOfEvent('ACQUISITION'), posting_date: '2024-02-07', amount: '100', run_id: null, item_method: null, item_code: null, expense_gl: 'x', accum_gl: 'y' }), run({})],
+          [line({ debit: '82.1447' }), line({ account_id: 'gl-acc', code: '2150', name: 'Accumulated amortisation', credit: '82.1447' })],
+        );
+        expect(res.byProfile.map((r: any) => r.key)).toEqual(expect.arrayContaining(['P:GP-Imp-F']));
+        expect(res.byProfile.some((r: any) => r.key === 'P:null')).toBe(false);
+      });
+
+      it('shows a difference when a death\'s amortisation was never cleared: the ledger expects nothing, the GL still holds it', async () => {
+        const res: any = await call(
+          [run({ died: 1 })],
+          [line({ account_id: 'gl-acc', code: '2150', name: 'Accumulated amortisation', credit: '82.1447' })],
+          1,
+        );
+        expect(res.costingTieOut.rows.find((r: any) => r.role === 'ACCUMULATED_AMORTISATION')).toMatchObject({ ledger: 0, gl: 82.1447, difference: 82.1447, reconciled: false });
+      });
+
+      it('clears: a death with its exit journal leaves nothing in the account on either side', async () => {
+        const res: any = await call(
+          [run({ died: 1 })],
+          [
+            line({ account_id: 'gl-acc', code: '2150', name: 'Accumulated amortisation', credit: '82.1447' }),
+            line({ account_id: 'gl-acc', code: '2150', name: 'Accumulated amortisation', source: 'BIO_ASSET_EXIT', posting_date: '2026-10-05', debit: '82.1447' }),
+          ],
+          1,
+        );
+        expect(res.costingTieOut.rows.find((r: any) => r.role === 'ACCUMULATED_AMORTISATION')).toMatchObject({ ledger: 0, gl: 0, reconciled: true });
       });
     });
   });

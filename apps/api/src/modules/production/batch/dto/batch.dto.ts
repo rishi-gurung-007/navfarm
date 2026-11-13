@@ -16,7 +16,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { SCHEDULER_SOURCES } from '../../scheduler-header/dto/scheduler-header.dto';
 import type { SchedulerSource } from '../../scheduler-header/dto/scheduler-header.dto';
 
@@ -457,6 +457,26 @@ export class MortalityDetailDto {
   @IsUUID()
   @IsOptional()
   reason_id?: string;
+
+  @ApiProperty({
+    description:
+      'Weight at death (kg). Mandatory for a costed breeding asset; it is kept on the animal as her exit weight.',
+    required: false,
+  })
+  @IsNumber()
+  @IsOptional()
+  weight_kg?: number;
+}
+
+/** One dead animal's weight at death, for a death recorded for several animals at once. */
+export class AnimalDeathWeightDto {
+  @ApiProperty({ description: 'The animal' })
+  @IsUUID()
+  animal_id: string;
+
+  @ApiProperty({ description: 'Weight at death (kg)' })
+  @IsNumber()
+  weight_kg: number;
 }
 
 /**
@@ -695,6 +715,17 @@ export class RecordMortalityDto {
   @Type(() => MortalityDetailDto)
   @IsOptional()
   mortality_detail?: MortalityDetailDto;
+
+  @ApiProperty({
+    description: 'Weight at death of each animal in animal_ids (mandatory for a costed breeding asset)',
+    required: false,
+    type: [AnimalDeathWeightDto],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AnimalDeathWeightDto)
+  @IsOptional()
+  animal_weights?: AnimalDeathWeightDto[];
 }
 
 export class BatchOutputLineInput {
@@ -828,6 +859,26 @@ export class QueryBatchDto {
 
   @ApiProperty({
     description:
+      'Include the piglet lots farrowings make (a litter on its sow, not a production batch). Left out unless asked for, as a picker of batches should not offer them.',
+    required: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  includeLitterLots?: boolean;
+
+  @ApiProperty({
+    description:
+      'Only the piglet lots that are active and still hold piglets, each with the batch of its sow (`sow_batch_no`), `sow_code` and `piglets_label` (the piglets held). For picking the litter a born-on-farm animal came from.',
+    required: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  litterLotsOnly?: boolean;
+
+  @ApiProperty({
+    description:
       'One batch by id, in the same shape as the list — a paged picker reads the batch it shows but has not loaded this way.',
     required: false,
   })
@@ -897,6 +948,7 @@ export class RecordFairValueDto {
 
   @ApiProperty({ description: 'New fair value per unit', example: 28000 })
   @IsNumber()
+  @Min(0)
   @IsNotEmpty()
   fair_value_per_unit: number;
 }

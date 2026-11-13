@@ -5,6 +5,7 @@ import * as mysql from 'mysql2/promise';
 import * as schema from '../core/database/schema';
 import { SEED_KEY_BY_ITEM_NAME } from './lib/seed-item-catalog';
 import { seedCode } from './lib/seed-series-code';
+import { bioCodes } from '../modules/inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 /**
  * Fills the master-data and configuration tables that no earlier seed touches,
@@ -584,17 +585,16 @@ export async function seedDemoGaps() {
         const batches = await db.select().from(schema.batchHeader).where(eq(schema.batchHeader.company_id, c.company_id));
         for (const b of batches) {
           const qty = Number(b.opening_quantity);
-          // Named `entry_type` so it is greppable against the values the IAS 41
-          // roll-forward classifies — see bio-asset-entry-types.spec.ts.
+          // The codes come from the Bio Asset Ledger's own map, so the roll-forward classifies these rows the way it does real ones.
           const rows = [
-            { entry_type: 'ACQUISITION', date: b.start_date, qty, amount: qty * 26000, doc: `ACQ-${b.batch_no}` },
-            { entry_type: 'FAIR_VALUE_ADJMT', date: '2026-08-01', qty: 0, amount: qty * 1200, doc: `APP-${b.batch_no}` },
-            { entry_type: 'AMORTIZATION', date: '2026-08-31', qty: 0, amount: -(qty * 450), doc: `AMT-${b.batch_no}` },
+            { codes: bioCodes.batchReceipt({ born: false }), date: b.start_date, qty, amount: qty * 26000, doc: `ACQ-${b.batch_no}` },
+            { codes: bioCodes.fairValue({ source: 'BATCH', gain: true }), date: '2026-08-01', qty: 0, amount: qty * 1200, doc: `APP-${b.batch_no}` },
+            { codes: bioCodes.amortisation({ source: 'BATCH' }), date: '2026-08-31', qty: 0, amount: -(qty * 450), doc: `AMT-${b.batch_no}` },
           ];
           for (const r of rows) {
             await db.insert(schema.bioAssetLedger).values({
               entry_id: randomUUID(), tenant_id: tenantId, company_id: c.company_id,
-              bio_asset_item_id: bio, entry_type: r.entry_type, document_no: r.doc,
+              bio_asset_item_id: bio, ...r.codes, document_no: r.doc,
               posting_date: r.date, asset_tracking_type: 'BATCH', batch_no: b.batch_no,
               stage: b.current_stage_code, status: 'POSTED', quantity: d4(r.qty),
               cost_amount: d4(r.amount), cost_amount_each_unit: qty ? d4(r.amount / qty) : '0.0000',

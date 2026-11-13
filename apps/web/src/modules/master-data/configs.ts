@@ -1,4 +1,5 @@
 import type { MasterDataConfig, MasterDataField } from './types';
+import { ANIMAL_ACCOUNT_NOTE, GL_MAPPING_TYPE_RULES, mappingDimensions, type MappingDimension, type MappingPath } from './gl-mapping-fields';
 
 const STATUS_OPTIONS = [
   { value: 'ACTIVE', label: 'Active' },
@@ -963,6 +964,12 @@ const numberSeries: MasterDataConfig = {
         { value: 'LOT', label: 'Lot' },
         { value: 'SERIAL', label: 'Serial' },
         { value: 'APPLICATION', label: 'Item Application' },
+        { value: 'GOODS_RECEIPT', label: 'Goods Receipt (GRN)' },
+        { value: 'QC_INSPECTION', label: 'QC Inspection' },
+        { value: 'BATCH_TRANSFER', label: 'Batch Transfer' },
+        { value: 'STOCK_TRANSFER', label: 'Stock Transfer' },
+        { value: 'STOCK_ADJUSTMENT', label: 'Stock Adjustment' },
+        { value: 'JOURNAL', label: 'Journal Entry' },
         { value: 'QR_PACK', label: 'QR Pack' },
       ],
       helpText:
@@ -1379,12 +1386,15 @@ const animal: MasterDataConfig = {
       label: 'Source Batch',
       type: 'select-entity',
       createOnly: true,
-      entityEndpoint: '/batch',
+      entityEndpoint: '/batch?litterLotsOnly=true&limit=100',
       entityValueKey: 'batch_id',
-      entityLabelKeys: ['batch_no'],
+      entityLabelKeys: ['sow_batch_no', 'sow_code', 'piglets_label'],
+      selectedLabelKey: 'sow_batch_no',
+      entityColumnHeaders: ['Batch No.', 'Sow', 'Piglets'],
       visibleWhen: { anyOf: [{ key: 'entry_type', equals: 'BORN_ON_FARM' }] },
       requiredWhen: { anyOf: [{ key: 'entry_type', equals: 'BORN_ON_FARM' }] },
-      helpText: 'The farrowing batch this animal was born from.',
+      helpText:
+        "The litter this animal was born from (only litters that still hold piglets are listed). Its cost per piglet becomes the animal's acquisition cost.",
       section: 'Acquisition',
     },
     // An imported animal's cost is read off its goods receipt by the API and anything
@@ -1518,9 +1528,9 @@ const animal: MasterDataConfig = {
       type: 'number',
       step: '0.01',
       min: 0,
-      editOnly: true,
+      hideInForm: true,
       helpText:
-        'Set from acquisition cost at creation; adjust here afterward. Reconciles with D365BC: each animal is a Child Fixed Asset there, and BC posts acquisition and returns the FA Ledger Entry reference (Bio Asset BBP). No BC connector yet \u2014 this is a local figure.',
+        "Worked out from the animal's bio-asset ledger (acquisition + capitalised cost - amortisation +/- fair value); it cannot be typed.",
       section: 'Bio-Asset',
     },
     {
@@ -1529,9 +1539,9 @@ const animal: MasterDataConfig = {
       type: 'number',
       step: '0.01',
       min: 0,
-      editOnly: true,
+      hideInForm: true,
       helpText:
-        'Reconciles with D365BC: each animal is a Child Fixed Asset there, and BC posts acquisition and returns the FA Ledger Entry reference (Bio Asset BBP). No BC connector yet \u2014 this is a local figure.',
+        "Worked out from the animal's bio-asset ledger (acquisition + capitalised cost - amortisation +/- fair value); it cannot be typed.",
       section: 'Bio-Asset',
     },
     {
@@ -1540,25 +1550,9 @@ const animal: MasterDataConfig = {
       type: 'number',
       step: '0.01',
       min: 0,
-      editOnly: true,
-      section: 'Bio-Asset',
-    },
-    {
-      key: 'amortisation_monthly',
-      label: 'Monthly Amortisation',
-      type: 'number',
-      step: '0.01',
-      min: 0,
-      editOnly: true,
-      section: 'Bio-Asset',
-    },
-    {
-      key: 'residual_value',
-      label: 'Residual Value',
-      type: 'number',
-      step: '0.01',
-      min: 0,
-      editOnly: true,
+      hideInForm: true,
+      helpText:
+        "Worked out from the animal's bio-asset ledger; it cannot be typed.",
       section: 'Bio-Asset',
     },
     {
@@ -2411,6 +2405,26 @@ const trackingLockReason = (
   return parts.join(' · ') || undefined;
 };
 
+// The Bio Asset Costing tab of the Item Card (TDD, Item Card customization and row 8). It is for a biological asset only; a term shows once the
+// method that uses it is chosen. Once an animal of the item has been charged by a costing run the terms are fixed (the API refuses a change too).
+const BIO_SECTION = 'Bio Asset Costing';
+const bioWhen = (
+  methods: string[],
+  extra: Array<{ key: string; equals: string | string[] }> = [],
+): NonNullable<MasterDataField['visibleWhen']> => ({
+  allOf: [
+    { key: 'is_biological_asset', equals: true },
+    { key: 'bio_costing_method', equals: methods },
+    ...extra,
+  ],
+});
+const BIO_ANY = bioWhen(['AMORTIZATION', 'FAIR_VALUE']);
+const BIO_AMORT = bioWhen(['AMORTIZATION']);
+const bioLock: Pick<MasterDataField, 'lockWhenRowFlag' | 'lockReason'> = {
+  lockWhenRowFlag: 'bio_costing_locked',
+  lockReason: () =>
+    'an animal of this item has been charged by a costing run — its costing terms are fixed',
+};
 const item: MasterDataConfig = {
   key: 'item',
   owner: 'BC',
@@ -2618,14 +2632,16 @@ const item: MasterDataConfig = {
       key: 'valuation_method',
       label: 'Valuation Method',
       type: 'select-entity',
-      lockWhenRowFlag: 'has_inventory',
-      lockReason: () =>
-        'this item already has inventory entries — create a new item for a different valuation method',
+      lockWhenRowFlag: 'valuation_locked',
+      lockReason: (row) =>
+        row.is_biological_asset
+          ? 'a biological asset keeps its normal costing method — its costing is on the Bio Asset Costing tab'
+          : 'this item already has inventory entries — create a new item for a different valuation method',
       entityEndpoint: '/costing-method',
       entityValueKey: 'method_code',
       entityLabelKeys: ['method_code', 'method_name'],
       helpText:
-        'Leave blank to inherit the LOB default. Cannot be changed once the item has inventory entries.',
+        'Leave blank to inherit the LOB default. Cannot be changed once the item has inventory entries, or once it is a biological asset.',
       section: 'Units & Valuation',
     },
     // Asked immediately after the method that demands it, and only then: on any
@@ -2750,8 +2766,20 @@ const item: MasterDataConfig = {
       key: 'is_inventoriable',
       label: 'Inventoriable',
       type: 'boolean',
+      visibleWhen: { allOf: [{ key: 'is_biological_asset', notEquals: true }] },
       helpText:
         'Held as stock, with a balance and a valuation. Off for services and consumables that are expensed on receipt.',
+      section: 'Inventory',
+    },
+    // Incoming QC (3 Nov). A QC-required item is not written to the inventory ledger when it is received: an inspection is raised and the
+    // entry is posted when the inspection is completed and accepted. Its checks are on the QC Specification button of the item card.
+    {
+      key: 'is_qc_required',
+      label: 'QC Required',
+      type: 'boolean',
+      visibleWhen: { allOf: [{ key: 'is_biological_asset', notEquals: true }] },
+      helpText:
+        'Each received lot is inspected first. It enters stock only when the QC inspection is completed and accepted. Add the checks under QC Specification.',
       section: 'Inventory',
     },
     {
@@ -2861,25 +2889,33 @@ const item: MasterDataConfig = {
       section: 'Identification',
     },
     {
-      key: 'inventory_gl_account',
-      label: 'Inventory GL Account',
+      // The accounts of an item are set once in a Posting Group (Finance, Posting Groups) and picked here. A stock item takes an inventory
+      // group (stock and cost-of-sales accounts); a biological item a biological group (the animal accounts its costing method uses).
+      // The list is inventory groups unless the item is a biological asset; the API takes the last `kind` it is sent.
+      key: 'posting_group_id',
+      label: 'Posting Group',
       type: 'select-entity',
       searchable: true,
-      entityEndpoint: '/gl-account',
-      entityValueKey: 'gl_account_id',
-      entityLabelKeys: ['account_code', 'account_name'],
-      helpText: 'GL account this item posts inventory value to.',
+      entityEndpoint: '/gl-posting-group?isActive=true&kind=INVENTORY',
+      entityValueKey: 'posting_group_id',
+      entityLabelKeys: ['group_code', 'group_name'],
+      dependsOn: 'is_biological_asset',
+      dependsOnMode: 'query',
+      queryParams: { is_biological_asset: 'kind' },
+      queryValueMap: { is_biological_asset: { true: 'BIOLOGICAL' } },
+      helpText:
+        'The group that holds this item\u2019s GL accounts: an inventory group for a stock item, a biological group for an animal item (its accounts must cover the costing method). Set the accounts under Posting Groups.',
       section: 'Accounting',
+      ...bioLock,
     },
     {
-      key: 'cogs_gl_account',
-      label: 'COGS GL Account',
-      type: 'select-entity',
-      searchable: true,
-      entityEndpoint: '/gl-account',
-      entityValueKey: 'gl_account_id',
-      entityLabelKeys: ['account_code', 'account_name'],
-      helpText: 'GL account this item posts cost of goods sold to.',
+      key: 'posting_group_accounts',
+      label: 'Accounts From The Group',
+      type: 'textarea',
+      readOnly: true,
+      hideInForm: false,
+      helpText: 'Read only. Change them on the Posting Group, not on the item.',
+      visibleWhen: { allOf: [{ key: 'posting_group_accounts', notEquals: ['', null, undefined] }] },
       section: 'Accounting',
     },
     {
@@ -2889,6 +2925,155 @@ const item: MasterDataConfig = {
       helpText:
         'A blocked item stays visible/historical but cannot be transacted.',
       section: 'Accounting',
+    },
+    // ── Bio Asset Costing (TDD Item Card). Leave the method empty on a biological item that is not costed yet (PIGLETS, Finisher). ──
+    {
+      key: 'bio_costing_method',
+      label: 'FA/Bio Asset Costing Method',
+      type: 'select',
+      options: [
+        { value: 'AMORTIZATION', label: 'Amortization' },
+        { value: 'FAIR_VALUE', label: 'Fair Value' },
+      ],
+      visibleWhen: { allOf: [{ key: 'is_biological_asset', equals: true }] },
+      helpText:
+        'How the animals of this item are costed. Leave empty for an item that is not costed (yet).',
+      section: BIO_SECTION,
+      ...bioLock,
+    },
+    {
+      key: 'bio_gender',
+      label: 'Gender',
+      type: 'select',
+      options: [
+        { value: 'F', label: 'Female (sow)' },
+        { value: 'M', label: 'Male (boar)' },
+      ],
+      visibleWhen: BIO_ANY,
+      helpText: 'Which animals the item stands for; the residual value applies to females.',
+      section: BIO_SECTION,
+      ...bioLock,
+    },
+    {
+      key: 'bio_start_age_weeks',
+      label: 'Start Period (weeks of age)',
+      type: 'number',
+      min: 0,
+      step: '1',
+      nativeNumber: true,
+      visibleWhen: BIO_ANY,
+      requiredWhen: BIO_ANY,
+      helpText:
+        'Amortization / Fair Value starts when the animal reaches this age (for example, sow 33 and boar 26).',
+      section: BIO_SECTION,
+      ...bioLock,
+    },
+    {
+      key: 'bio_useful_life_months',
+      label: 'Useful Life (months)',
+      type: 'number',
+      min: 1,
+      step: '1',
+      nativeNumber: true,
+      visibleWhen: BIO_AMORT,
+      requiredWhen: BIO_AMORT,
+      helpText: 'Counted from birth (for example, female 36 and male 18).',
+      section: BIO_SECTION,
+      ...bioLock,
+    },
+    {
+      key: 'bio_residual_rule',
+      label: 'Residual Value',
+      type: 'select',
+      options: [
+        { value: 'NONE', label: 'None' },
+        { value: 'FIXED', label: 'Fixed amount' },
+        { value: 'WEIGHT_X_PRICE', label: 'Weight × price per kg' },
+      ],
+      defaultValue: 'NONE',
+      visibleWhen: BIO_AMORT,
+      section: BIO_SECTION,
+      ...bioLock,
+    },
+    {
+      key: 'bio_residual_fixed_amount',
+      label: 'Residual Amount',
+      type: 'number',
+      min: 0,
+      step: '0.01',
+      visibleWhen: bioWhen(['AMORTIZATION'], [{ key: 'bio_residual_rule', equals: 'FIXED' }]),
+      requiredWhen: bioWhen(['AMORTIZATION'], [{ key: 'bio_residual_rule', equals: 'FIXED' }]),
+      section: BIO_SECTION,
+      ...bioLock,
+    },
+    {
+      key: 'bio_residual_weight_kg',
+      label: 'Residual Weight (kg)',
+      type: 'number',
+      min: 0,
+      step: '0.001',
+      visibleWhen: bioWhen(['AMORTIZATION'], [{ key: 'bio_residual_rule', equals: 'WEIGHT_X_PRICE' }]),
+      requiredWhen: bioWhen(['AMORTIZATION'], [{ key: 'bio_residual_rule', equals: 'WEIGHT_X_PRICE' }]),
+      section: BIO_SECTION,
+      ...bioLock,
+    },
+    {
+      key: 'bio_residual_price_per_kg',
+      label: 'Residual Price per kg',
+      type: 'number',
+      min: 0,
+      step: '0.01',
+      visibleWhen: bioWhen(['AMORTIZATION'], [{ key: 'bio_residual_rule', equals: 'WEIGHT_X_PRICE' }]),
+      requiredWhen: bioWhen(['AMORTIZATION'], [{ key: 'bio_residual_rule', equals: 'WEIGHT_X_PRICE' }]),
+      section: BIO_SECTION,
+      ...bioLock,
+    },
+    {
+      key: 'bio_run_frequency',
+      label: 'Frequency',
+      type: 'select',
+      options: [
+        { value: 'WEEKLY', label: 'Weekly' },
+        { value: 'MONTHLY', label: 'Monthly' },
+        { value: 'QUARTERLY', label: 'Quarterly' },
+        { value: 'YEARLY', label: 'Yearly' },
+      ],
+      defaultValue: 'MONTHLY',
+      visibleWhen: BIO_ANY,
+      section: BIO_SECTION,
+      ...bioLock,
+    },
+    {
+      key: 'bio_day_basis',
+      label: 'Days in a Period',
+      type: 'select',
+      options: [
+        { value: 'FREQUENCY_DAYS', label: 'Frequency days (7 / 30 / 90 / 360)' },
+        { value: 'ACTUAL', label: 'Actual days' },
+      ],
+      defaultValue: 'FREQUENCY_DAYS',
+      visibleWhen: BIO_ANY,
+      section: BIO_SECTION,
+      ...bioLock,
+    },
+    {
+      key: 'bio_effective_from',
+      label: 'Costing From',
+      type: 'date',
+      visibleWhen: BIO_ANY,
+      helpText:
+        'The date costing should start for this item. The scheduler never catches up before it; an item without one is not scheduled (a run can still be made by hand).',
+      section: BIO_SECTION,
+      ...bioLock,
+    },
+    {
+      key: 'bio_auto_post',
+      label: 'Post Scheduled Runs Automatically',
+      type: 'boolean',
+      visibleWhen: BIO_ANY,
+      helpText:
+        'Off: a scheduled run is calculated and waits for a person to post it.',
+      section: BIO_SECTION,
     },
     {
       // A Mandatory attribute is on every item in scope, so the form opens with
@@ -5244,17 +5429,36 @@ const glAccount: MasterDataConfig = {
   ],
 };
 
+// What a GL Mapping of the chosen transaction type can be narrowed by, and what its accounts are for (gl-mapping-fields.ts, from the posting code).
+const glRule = (form: Record<string, any>) => GL_MAPPING_TYPE_RULES.find((r) => r.type === String(form.transaction_type ?? '').toUpperCase());
+const glMatchedOn = (dimension: MappingDimension): NonNullable<MasterDataField['visibleWhen']> => ({
+  anyOf: [{ key: 'transaction_type', equals: GL_MAPPING_TYPE_RULES.filter((r) => mappingDimensions(r.type).includes(dimension)).map((r) => r.type) }],
+});
+const GL_PATH_HINT: Record<MappingPath, string> = {
+  INVENTORY: 'Posted from an Inventory Ledger row: matched on Item Category, NOB, LOB, Stage, Valuation Method and Entry Type.',
+  BATCH: 'Posted as a batch or animal cost: matched on NOB, LOB and Stage only.',
+  UNUSED: 'In the starter chart, but no posting reads this type.',
+};
+const glSideHint = (side: 'debit' | 'credit') => (form: Record<string, any>) => {
+  const rule = glRule(form);
+  if (!rule) return undefined;
+  const role = side === 'debit' ? rule.debit : rule.credit;
+  return rule.replaced === side ? `${role}. Replaced by ${ANIMAL_ACCOUNT_NOTE}; this account is the fallback.` : role;
+};
+
 const glMapping: MasterDataConfig = {
   key: 'gl-mapping',
   label: 'GL Mappings',
-  description: 'Maps inventory transaction types to debit/credit GL accounts.',
+  description: 'Maps each posting\'s transaction type to its debit and credit GL accounts. The form shows only the fields that type is matched on.',
   apiBase: '/gl-mapping',
   idKey: 'mapping_id',
   group: 'Finance',
+  isPrimary: true,
   lookupFor: ['gl-account'],
   columns: [
     { key: 'mapping_code', label: 'Code' },
     { key: 'transaction_type', label: 'Transaction Type' },
+    { key: 'entry_type', label: 'Entry Type' },
   ],
   fields: [
     { key: 'company_id', label: 'Company', type: 'text', hideInForm: true },
@@ -5271,6 +5475,8 @@ const glMapping: MasterDataConfig = {
       key: 'item_category_id',
       label: 'Item Category',
       type: 'select-entity',
+      visibleWhen: glMatchedOn('item_category_id'),
+      helpText: 'Leave blank to match every category. Set to send one category\'s stock to its own accounts (e.g. vaccines to Veterinary Inventory).',
       entityEndpoint: '/item-category',
       entityValueKey: 'category_id',
       entityLabelKeys: ['category_code', 'category_name'],
@@ -5283,6 +5489,7 @@ const glMapping: MasterDataConfig = {
       entityValueKey: 'nob_id',
       entityLabelKeys: ['nob_code', 'nob_name'],
       helpText: 'Leave blank to match all NOBs.',
+      visibleWhen: glMatchedOn('nob_id'),
     },
     {
       key: 'lob_id',
@@ -5293,6 +5500,7 @@ const glMapping: MasterDataConfig = {
       entityLabelKeys: ['lob_code', 'lob_name'],
       dependsOn: 'nob_id',
       helpText: 'Leave blank to match all LOBs under the selected NOB.',
+      visibleWhen: glMatchedOn('lob_id'),
     },
     {
       key: 'stage_id',
@@ -5303,6 +5511,7 @@ const glMapping: MasterDataConfig = {
       entityLabelKeys: ['stage_code', 'stage_name'],
       helpText:
         'Leave blank to match all stages (wildcard). Set to make this mapping win only when the batch/animal is in this specific stage.',
+      visibleWhen: glMatchedOn('stage_id'),
     },
     {
       key: 'valuation_method',
@@ -5312,108 +5521,50 @@ const glMapping: MasterDataConfig = {
       entityValueKey: 'method_code',
       entityLabelKeys: ['method_code', 'method_name'],
       helpText: 'Leave blank to match all costing methods.',
+      visibleWhen: glMatchedOn('valuation_method'),
     },
     {
       key: 'transaction_type',
       label: 'Transaction Type',
       type: 'select',
       required: true,
-      // Kept in sync with every transactionType string the GL posting engine actually
-      // writes (GlPostingService.resolveMapping looks up by this exact value) — not a
-      // curated subset. Grouped by originating document/flow for scannability.
+      // The Inventory Ledger's own transaction types (INVENTORY_TRANSACTION_TYPES in the API); gl-mapping-transaction-types.spec.ts holds the two together.
+      helpText:
+        'Which posting this mapping answers. New mappings are made for the Inventory Ledger\'s own types; the BIO_*, mortality and variance types come from the setup seed and are edited only.',
+      // A seeded type (BIO_*, MORTALITY, the variances) is not offered for a new mapping, but one already held is shown as it is.
+      filterOptions: (options, form) => {
+        const held = String(form.transaction_type ?? '');
+        return held && !options.some((o) => o.value === held) ? [...options, { value: held, label: `${held} (system)` }] : options;
+      },
+      hintFor: (form) => { const rule = glRule(form); return rule ? GL_PATH_HINT[rule.path] : undefined; },
       options: [
-        // Inventory documents
-        { value: 'PURCHASE', label: 'Purchase — GRN' },
-        { value: 'CONSUMPTION', label: 'Consumption' },
-        {
-          value: 'TRANSFER_SHIPMENT',
-          label: 'Transfer Out — Transfer Order (Shipment)',
-        },
-        {
-          value: 'TRANSFER_RECEIPT',
-          label: 'Transfer In — Transfer Order (Receipt)',
-        },
-        {
-          value: 'VARIANCE_POSITIVE',
-          label: 'Stock Adjustment — Positive Variance',
-        },
-        {
-          value: 'VARIANCE_NEGATIVE',
-          label: 'Stock Adjustment — Negative Variance',
-        },
-        {
-          value: 'MILL_OUTPUT',
-          label: 'Mill Production Output — feed into a BIN',
-        },
-        // Batch — STANDARD/FIFO costing
-        { value: 'BATCH_INPUT', label: 'Batch — Input Draw (on Activation)' },
-        { value: 'BATCH_CONSUMPTION', label: 'Batch — Daily Consumption' },
-        { value: 'BATCH_OUTPUT', label: 'Batch — Output (on Close)' },
-        {
-          value: 'OUTPUT',
-          label: 'Batch — Output Entry (finished goods in, WIP out)',
-        },
-        {
-          value: 'BATCH_IMPAIRMENT',
-          label: 'Batch — By-Product / Waste Impairment (at-cost vs NRV)',
-        },
-        { value: 'MORTALITY', label: 'Batch — Mortality Write-off' },
-        { value: 'OVERHEAD', label: 'Batch — Overhead' },
-        {
-          value: 'PRICE_VARIANCE',
-          label: 'Batch — Price Variance (Standard Costing)',
-        },
-        {
-          value: 'USAGE_VARIANCE',
-          label: 'Batch — Usage Variance (Standard Costing)',
-        },
-        {
-          value: 'OUTPUT_VARIANCE',
-          label: 'Batch — Output Variance (Standard Costing)',
-        },
-        {
-          value: 'OVERHEAD_VARIANCE',
-          label: 'Batch — Overhead Variance (Standard Costing)',
-        },
-        // Batch — Bio-Asset (IAS 41) costing lifecycle
-        { value: 'BIO_ACQUISITION', label: 'Bio-Asset — Acquisition' },
-        {
-          value: 'BIO_CONSUMPTION_PREMATURE',
-          label: 'Bio-Asset — Consumption (Pre-mature, Capitalized)',
-        },
-        {
-          value: 'BIO_CONSUMPTION_MATURE',
-          label: 'Bio-Asset — Consumption (Mature, Expensed)',
-        },
-        { value: 'BIO_OUTPUT', label: 'Bio-Asset — Output' },
-        {
-          value: 'BIO_MORTALITY_PREMATURE',
-          label: 'Bio-Asset — Mortality (Pre-mature)',
-        },
-        {
-          value: 'BIO_MORTALITY_MATURE',
-          label: 'Bio-Asset — Mortality (Mature)',
-        },
-        {
-          value: 'BIO_OVERHEAD_PREMATURE',
-          label: 'Bio-Asset — Overhead (Pre-mature)',
-        },
-        {
-          value: 'BIO_OVERHEAD_MATURE',
-          label: 'Bio-Asset — Overhead (Mature)',
-        },
-        {
-          value: 'BIO_TRANSFORMATION',
-          label: 'Bio-Asset — Transformation (Pre-mature → Mature)',
-        },
-        { value: 'BIO_AMORTIZATION', label: 'Bio-Asset — Amortization' },
-        { value: 'BIO_FAIR_VALUE', label: 'Bio-Asset — Fair Value Adjustment' },
-        { value: 'BIO_HARVEST', label: 'Bio-Asset — Disposal (Harvest)' },
-        { value: 'BIO_DISPOSAL_SOLD', label: 'Bio-Asset — Disposal (Sold)' },
-        {
-          value: 'BIO_SALE_PROCEEDS',
-          label: 'Bio-Asset — Sale Proceeds (Receivable)',
-        },
+        { value: 'PURCHASE', label: 'Purchase — goods receipt (GRN)' },
+        { value: 'CONSUMPTION', label: 'Consumption — stock issued' },
+        { value: 'OUTPUT', label: 'Output — produced stock in' },
+        { value: 'TRANSFER_SHIPMENT', label: 'Transfer Out — shipment' },
+        { value: 'TRANSFER_RECEIPT', label: 'Transfer In — receipt' },
+        { value: 'SALES', label: 'Sales — stock sold' },
+        { value: 'VARIANCE_POSITIVE', label: 'Stock Adjustment — positive variance' },
+        { value: 'VARIANCE_NEGATIVE', label: 'Stock Adjustment — negative variance' },
+        { value: 'OVERHEAD', label: 'Overhead — no stock moves' },
+        { value: 'DESCRIPTIVE', label: 'Descriptive — observation only' },
+      ],
+    },
+    {
+      key: 'entry_type',
+      label: 'Entry Type',
+      type: 'select',
+      helpText:
+        'Leave blank to match every entry type. Set to make this mapping win only for ledger rows written with this entry type.',
+      visibleWhen: glMatchedOn('entry_type'),
+      // Only the entry types a row of the chosen transaction type is written with.
+      filterOptions: (options, form) => { const rule = glRule(form); return rule ? options.filter((o) => rule.entryTypes.includes(o.value)) : options; },
+      options: [
+        { value: 'POSITIVE', label: 'Positive — stock in' },
+        { value: 'NEGATIVE', label: 'Negative — stock out' },
+        { value: 'TRANSFER', label: 'Transfer — between locations' },
+        { value: 'OVERHEAD', label: 'Overhead — no stock moves' },
+        { value: 'DESCRIPTIVE', label: 'Descriptive — observation only' },
       ],
     },
     {
@@ -5424,6 +5575,7 @@ const glMapping: MasterDataConfig = {
       entityEndpoint: '/gl-account',
       entityValueKey: 'gl_account_id',
       entityLabelKeys: ['account_code', 'account_name'],
+      hintFor: glSideHint('debit'),
     },
     {
       key: 'credit_gl_account_id',
@@ -5433,7 +5585,133 @@ const glMapping: MasterDataConfig = {
       entityEndpoint: '/gl-account',
       entityValueKey: 'gl_account_id',
       entityLabelKeys: ['account_code', 'account_name'],
+      hintFor: glSideHint('credit'),
     },
+  ],
+};
+
+const glPostingGroup: MasterDataConfig = {
+  key: 'gl-posting-group',
+  label: 'Posting Groups',
+  description:
+    'The GL accounts of a class of items, set once. An item picks one group and takes its accounts from it. A biological group holds the animal accounts; an inventory group holds the stock and cost-of-sales accounts.',
+  apiBase: '/gl-posting-group',
+  idKey: 'posting_group_id',
+  group: 'Finance',
+  isPrimary: true,
+  lookupFor: ['item'],
+  columns: [
+    { key: 'group_code', label: 'Code' },
+    { key: 'group_name', label: 'Name' },
+    { key: 'kind', label: 'Kind' },
+    { key: 'item_count', label: 'Items' },
+  ],
+  fields: [
+    { key: 'company_id', label: 'Company', type: 'text', hideInForm: true },
+    { key: 'group_code', label: 'Code', type: 'text', required: true, createOnly: true, placeholder: 'GP-IMP-F', helpText: 'Short and unique within the company. It cannot be changed later.' },
+    { key: 'group_name', label: 'Name', type: 'text', required: true, placeholder: 'Imported gilts' },
+    {
+      key: 'kind',
+      label: 'Kind',
+      type: 'select',
+      required: true,
+      createOnly: true,
+      options: [
+        { value: 'BIOLOGICAL', label: 'Biological (animals)' },
+        { value: 'INVENTORY', label: 'Inventory (stock items)' },
+      ],
+      defaultValue: 'BIOLOGICAL',
+      helpText: 'Biological items take a biological group; stock items an inventory group. It cannot be changed later.',
+    },
+    {
+      key: 'asset_gl_id',
+      label: 'Acquisition Cost Account',
+      type: 'select-entity',
+      searchable: true,
+      entityEndpoint: '/gl-account',
+      entityValueKey: 'gl_account_id',
+      entityLabelKeys: ['account_code', 'account_name'],
+      helpText: 'GL account the animals are carried in. Required.',
+      visibleWhen: { allOf: [{ key: 'kind', equals: 'BIOLOGICAL' }] },
+    },
+    {
+      key: 'accum_amort_gl_id',
+      label: 'Accumulated Amortization Account',
+      type: 'select-entity',
+      searchable: true,
+      entityEndpoint: '/gl-account',
+      entityValueKey: 'gl_account_id',
+      entityLabelKeys: ['account_code', 'account_name'],
+      helpText: 'Credited by each amortization charge. Needed for amortization costing.',
+      visibleWhen: { allOf: [{ key: 'kind', equals: 'BIOLOGICAL' }] },
+    },
+    {
+      key: 'amort_expense_gl_id',
+      label: 'Amortization Expense Account',
+      type: 'select-entity',
+      searchable: true,
+      entityEndpoint: '/gl-account',
+      entityValueKey: 'gl_account_id',
+      entityLabelKeys: ['account_code', 'account_name'],
+      helpText: 'Debited by each amortization charge. Needed for amortization costing.',
+      visibleWhen: { allOf: [{ key: 'kind', equals: 'BIOLOGICAL' }] },
+    },
+    {
+      key: 'fv_gain_gl_id',
+      label: 'Fair Value Gain Account',
+      type: 'select-entity',
+      searchable: true,
+      entityEndpoint: '/gl-account',
+      entityValueKey: 'gl_account_id',
+      entityLabelKeys: ['account_code', 'account_name'],
+      helpText: 'Credited by a fair value gain. Needed for fair value costing.',
+      visibleWhen: { allOf: [{ key: 'kind', equals: 'BIOLOGICAL' }] },
+    },
+    {
+      key: 'fv_loss_gl_id',
+      label: 'Fair Value Loss Account',
+      type: 'select-entity',
+      searchable: true,
+      entityEndpoint: '/gl-account',
+      entityValueKey: 'gl_account_id',
+      entityLabelKeys: ['account_code', 'account_name'],
+      helpText: 'Debited by a fair value loss. Leave empty to post losses to the gain account.',
+      visibleWhen: { allOf: [{ key: 'kind', equals: 'BIOLOGICAL' }] },
+    },
+    {
+      key: 'writeoff_gl_id',
+      label: 'Mortality / Impairment Loss Account',
+      type: 'select-entity',
+      searchable: true,
+      entityEndpoint: '/gl-account',
+      entityValueKey: 'gl_account_id',
+      entityLabelKeys: ['account_code', 'account_name'],
+      helpText: 'Debited when an animal of an item in this group dies.',
+      visibleWhen: { allOf: [{ key: 'kind', equals: 'BIOLOGICAL' }] },
+    },
+    {
+      key: 'inventory_gl_id',
+      label: 'Inventory Account',
+      type: 'select-entity',
+      searchable: true,
+      entityEndpoint: '/gl-account',
+      entityValueKey: 'gl_account_id',
+      entityLabelKeys: ['account_code', 'account_name'],
+      helpText: 'GL account the stock is carried in. Required.',
+      visibleWhen: { allOf: [{ key: 'kind', equals: 'INVENTORY' }] },
+    },
+    {
+      key: 'cogs_gl_id',
+      label: 'COGS Account',
+      type: 'select-entity',
+      searchable: true,
+      entityEndpoint: '/gl-account',
+      entityValueKey: 'gl_account_id',
+      entityLabelKeys: ['account_code', 'account_name'],
+      helpText: 'GL account the cost of stock used or sold is posted to.',
+      visibleWhen: { allOf: [{ key: 'kind', equals: 'INVENTORY' }] },
+    },
+    { key: 'is_active', label: 'Active', type: 'boolean', helpText: 'A group in use by an item cannot be made inactive.' },
   ],
 };
 
@@ -5790,6 +6068,441 @@ const exchangeRate: MasterDataConfig = {
   ],
 };
 
+// AI Station (plan 2026-11-02-ai-station-semen-collection, Phase 1). The rules of each breeding line are master data,
+// not code: nothing below carries a client figure as a default. A row with no Breeding Line is the company default.
+const breedingLineSetup: MasterDataConfig = {
+  key: 'breeding-line-setup',
+  label: 'Breeding Line Setup',
+  singular: 'Breeding Line Setup',
+  apiBase: '/breeding-line-setup',
+  idKey: 'setup_id',
+  group: 'Piggery',
+  isPrimary: true,
+  description:
+    'How each breeding line (Tempo, L-Line, Z-Line) is collected at the AI Station: its collection days, whether and how it is pooled, its colorant, its lot label, where its semen may go, and the rest and motility a collection must respect. A setup with no Breeding Line is the default for any line without its own.',
+  columns: [
+    { key: 'line_label', label: 'Breeding Line' },
+    { key: 'collection_mode', label: 'Collection' },
+    { key: 'collection_weekdays', label: 'Days' },
+    { key: 'pooling_allowed', label: 'Pooled' },
+    { key: 'max_boars_per_lot', label: 'Max Boars / Lot' },
+    { key: 'colorant_name', label: 'Colorant' },
+    { key: 'label_template', label: 'Label' },
+    { key: 'destination_rule', label: 'Destination' },
+  ],
+  supportsNobLobFilter: true,
+  fields: [
+    {
+      key: 'nob_id',
+      label: 'Nature of Business',
+      type: 'select-entity',
+      entityEndpoint: '/setup/wizard/nobs',
+      entityValueKey: 'nob_id',
+      entityLabelKeys: ['nob_code', 'nob_name'],
+      helpText: 'Leave blank if this setup is shared across all business verticals.',
+    },
+    {
+      key: 'lob_id',
+      label: 'Line of Business',
+      type: 'select-entity',
+      entityEndpoint: '/setup/wizard/lobs/{value}',
+      entityValueKey: 'lob_id',
+      entityLabelKeys: ['lob_code', 'lob_name'],
+      dependsOn: 'nob_id',
+      helpText: 'Leave blank if this setup is shared across all LOBs under the selected NOB.',
+    },
+    { key: 'company_id', label: 'Company', type: 'text', hideInForm: true },
+    {
+      key: 'breed_id',
+      label: 'Breeding Line',
+      type: 'select-entity',
+      createOnly: true,
+      searchable: true,
+      entityEndpoint: '/breed',
+      entityValueKey: 'breed_id',
+      entityLabelKeys: ['breed_code', 'breed_name'],
+      helpText:
+        'The line these rules are for. Fixed after create. Leave blank for the company default, read for any line that has no setup of its own.',
+      section: 'Line',
+    },
+    {
+      key: 'collection_mode',
+      label: 'Collection',
+      type: 'select',
+      required: true,
+      defaultValue: 'SCHEDULED',
+      options: [
+        { value: 'SCHEDULED', label: 'Scheduled (fixed weekdays)' },
+        { value: 'ON_REQUEST', label: 'On request' },
+      ],
+      section: 'Collection',
+    },
+    {
+      key: 'collection_weekdays',
+      label: 'Collection Days',
+      type: 'select-entity',
+      multiple: true,
+      entityEndpoint: '/breeding-line-setup/weekday-options',
+      entityValueKey: 'weekday_code',
+      entityLabelKeys: ['weekday_code', 'weekday_name'],
+      emptyMultipleLabel: 'None selected',
+      visibleWhen: { anyOf: [{ key: 'collection_mode', equals: 'SCHEDULED' }] },
+      requiredWhen: { anyOf: [{ key: 'collection_mode', equals: 'SCHEDULED' }] },
+      section: 'Collection',
+    },
+    {
+      key: 'boars_per_collection_day',
+      label: 'Boars per Collection Day',
+      type: 'number',
+      min: 1,
+      step: '1',
+      helpText: 'How many boars of this line are tapped each collection day. Blank = no limit.',
+      section: 'Collection',
+    },
+    {
+      key: 'pooling_allowed',
+      label: 'Semen may be pooled',
+      type: 'boolean',
+      defaultValue: 'true',
+      helpText: 'Off means one boar per lot: the semen is never pooled.',
+      section: 'Pooling',
+    },
+    {
+      key: 'min_boars_per_lot',
+      label: 'Min Boars per Lot',
+      type: 'number',
+      min: 1,
+      step: '1',
+      section: 'Pooling',
+    },
+    {
+      key: 'max_boars_per_lot',
+      label: 'Max Boars per Lot',
+      type: 'number',
+      min: 1,
+      step: '1',
+      section: 'Pooling',
+    },
+    {
+      key: 'colorant_name',
+      label: 'Colorant',
+      type: 'text',
+      maxLength: 50,
+      helpText: 'The colour added to the semen before it is packed (for example Green). Blank = none.',
+      section: 'Colorant & Label',
+    },
+    {
+      key: 'colorant_item_id',
+      label: 'Colorant Item',
+      type: 'select-entity',
+      searchable: true,
+      entityEndpoint: '/item',
+      entityValueKey: 'item_id',
+      entityLabelKeys: ['item_code', 'item_name'],
+      helpText: 'Optional. A stock item the colorant is issued from. Blank = the colorant is only recorded on the lot.',
+      section: 'Colorant & Label',
+    },
+    {
+      key: 'colorant_qty_per_lot',
+      label: 'Colorant Qty per Lot',
+      type: 'number',
+      min: 0,
+      step: '0.001',
+      helpText: 'Needs a colorant item.',
+      section: 'Colorant & Label',
+    },
+    {
+      key: 'label_template',
+      label: 'Lot Label Template',
+      type: 'text',
+      maxLength: 100,
+      placeholder: '{BOAR_TAG}-{WEEK}',
+      helpText:
+        "The text printed on the lot's sachets. Tokens: {LINE} {BOAR_TAG} (the boar's tag, else his animal code; several boars are joined with +) {BOAR_CODE} {WEEK} (the ISO week number) {YEAR} {DATE} {SEQ} (the line's lot of the week, to tell two apart). Anything else is printed as typed. Blank = no label.",
+      section: 'Colorant & Label',
+    },
+    {
+      key: 'destination_rule',
+      label: 'Destination',
+      type: 'select',
+      required: true,
+      defaultValue: 'ANY',
+      options: [
+        { value: 'ANY', label: 'Any farm' },
+        { value: 'LIST', label: 'A list of farms' },
+        { value: 'ONE', label: 'One farm' },
+      ],
+      section: 'Destination',
+    },
+    {
+      key: 'destination_farm_ids',
+      label: 'Destination Farms',
+      type: 'select-entity',
+      multiple: true,
+      searchable: true,
+      entityEndpoint: '/location?locationType=FARM&rootOnly=true&isActive=true',
+      entityValueKey: 'location_id',
+      entityLabelKeys: ['location_code', 'location_name'],
+      emptyMultipleLabel: 'None selected',
+      visibleWhen: { anyOf: [{ key: 'destination_rule', notEquals: 'ANY' }] },
+      section: 'Destination',
+    },
+    {
+      key: 'restrict_to_destination',
+      label: 'Use Outside the Destination',
+      type: 'select',
+      defaultValue: 'NONE',
+      options: [
+        { value: 'NONE', label: 'Not restricted' },
+        { value: 'WARN', label: 'Warn' },
+        { value: 'BLOCK', label: 'Block' },
+      ],
+      visibleWhen: { anyOf: [{ key: 'destination_rule', notEquals: 'ANY' }] },
+      section: 'Destination',
+    },
+    { key: 'reference_required', label: 'An outside reference is required', type: 'boolean', section: 'Destination' },
+    {
+      key: 'reference_label',
+      label: 'Reference Label',
+      type: 'text',
+      maxLength: 50,
+      placeholder: 'Breeding Web reference',
+      visibleWhen: { anyOf: [{ key: 'reference_required', equals: true }] },
+      section: 'Destination',
+    },
+    {
+      key: 'min_rest_days',
+      label: 'Min Rest Days between Collections',
+      type: 'number',
+      min: 0,
+      max: 365,
+      step: '1',
+      helpText: 'Blank = no rest rule.',
+      section: 'Quality Rules',
+    },
+    {
+      key: 'min_motility_pct',
+      label: 'Min Motility (%)',
+      type: 'number',
+      min: 0,
+      max: 100,
+      step: '0.01',
+      helpText: 'Blank = no motility rule.',
+      section: 'Quality Rules',
+    },
+    {
+      key: 'grading_genetic_weight',
+      label: 'Weight of Genetic Rank',
+      type: 'number',
+      min: 0,
+      step: '0.01',
+      helpText:
+        "How much the boar's genetic rank counts in his overall grading on the Boar Selection table. The grading is a weighted average of the ranks; the lower the better. Blank or 0 = this rank is not used; all three blank = no overall grading for this line.",
+      section: 'Overall Grading',
+    },
+    {
+      key: 'grading_dose_weight',
+      label: 'Weight of Dose Rank',
+      type: 'number',
+      min: 0,
+      step: '0.01',
+      helpText: "How much the rank of the boar's last doses counts in his overall grading. Blank or 0 = not used.",
+      section: 'Overall Grading',
+    },
+    {
+      key: 'grading_morphology_weight',
+      label: 'Weight of Morphology Rank',
+      type: 'number',
+      min: 0,
+      step: '0.01',
+      helpText: "How much the rank of the boar's last morphology counts in his overall grading. Blank or 0 = not used.",
+      section: 'Overall Grading',
+    },
+    {
+      key: 'bcs_frequency_days',
+      label: 'Score a Boar Every (days)',
+      type: 'number',
+      min: 1,
+      step: '1',
+      helpText: "How often a boar's body condition is scored (SOP 21: monthly). Blank = no schedule, so no boar is ever due or overdue.",
+      section: 'Body Condition',
+    },
+    {
+      key: 'bcs_grace_days',
+      label: 'Days of Grace before Overdue',
+      type: 'number',
+      min: 0,
+      step: '1',
+      helpText: 'A boar is overdue only this many days after his assessment falls due.',
+      section: 'Body Condition',
+    },
+    {
+      key: 'bcs_reminder_days',
+      label: 'Days of Notice before Due',
+      type: 'number',
+      min: 0,
+      step: '1',
+      helpText: 'A boar shows as due soon this many days before his assessment falls due.',
+      section: 'Body Condition',
+    },
+    {
+      key: 'bcs_allow_feed_override',
+      label: "Feed level may differ from the scale's",
+      type: 'boolean',
+      helpText: 'Off: the feed level is always the scale\'s for the score. On: whoever assesses a boar may set another level.',
+      section: 'Body Condition',
+    },
+    {
+      key: 'bcs_override_reason_required',
+      label: 'A different feed level needs a reason',
+      type: 'boolean',
+      defaultValue: 'true',
+      visibleWhen: { anyOf: [{ key: 'bcs_allow_feed_override', equals: true }] },
+      section: 'Body Condition',
+    },
+    {
+      key: 'rule_enforcement',
+      label: 'When the rest or motility rule is broken',
+      type: 'select',
+      defaultValue: 'WARN',
+      options: [
+        { value: 'WARN', label: 'Warn, and let the collection go ahead' },
+        { value: 'BLOCK', label: 'Stop the collection' },
+      ],
+      section: 'Quality Rules',
+    },
+  ],
+};
+
+// The genetic levels of a breeding line, as bands of TSI (Average, Below average, Low, Very low on the client's sheets). The
+// thresholds are the client's to enter; nothing is seeded.
+const geneticLevelBand: MasterDataConfig = {
+  key: 'genetic-level-band',
+  label: 'Genetic Level Bands',
+  singular: 'Genetic Level Band',
+  apiBase: '/genetic-level-band',
+  idKey: 'band_id',
+  group: 'Piggery',
+  isPrimary: true,
+  description:
+    "The genetic levels of a breeding line, as bands of TSI. A boar's level is the band his TSI falls in (both ends inclusive; a blank end is open). A band with no Breeding Line is the default for any line without its own.",
+  columns: [
+    { key: 'line_label', label: 'Breeding Line' },
+    { key: 'level_name', label: 'Level' },
+    { key: 'tsi_from', label: 'TSI From' },
+    { key: 'tsi_to', label: 'TSI To' },
+    { key: 'sort_order', label: 'Order' },
+  ],
+  supportsNobLobFilter: true,
+  fields: [
+    {
+      key: 'nob_id',
+      label: 'Nature of Business',
+      type: 'select-entity',
+      entityEndpoint: '/setup/wizard/nobs',
+      entityValueKey: 'nob_id',
+      entityLabelKeys: ['nob_code', 'nob_name'],
+      helpText: 'Leave blank if this band is shared across all business verticals.',
+    },
+    {
+      key: 'lob_id',
+      label: 'Line of Business',
+      type: 'select-entity',
+      entityEndpoint: '/setup/wizard/lobs/{value}',
+      entityValueKey: 'lob_id',
+      entityLabelKeys: ['lob_code', 'lob_name'],
+      dependsOn: 'nob_id',
+      helpText: 'Leave blank if this band is shared across all LOBs under the selected NOB.',
+    },
+    { key: 'company_id', label: 'Company', type: 'text', hideInForm: true },
+    {
+      key: 'breed_id',
+      label: 'Breeding Line',
+      type: 'select-entity',
+      createOnly: true,
+      searchable: true,
+      entityEndpoint: '/breed',
+      entityValueKey: 'breed_id',
+      entityLabelKeys: ['breed_code', 'breed_name'],
+      helpText: 'The line this level is for. Fixed after create. Leave blank for the company default.',
+    },
+    { key: 'level_name', label: 'Level', type: 'text', required: true, maxLength: 50, placeholder: 'Average' },
+    { key: 'tsi_from', label: 'TSI From', type: 'number', step: '0.01', helpText: 'Inclusive. Blank = no lower end.' },
+    { key: 'tsi_to', label: 'TSI To', type: 'number', step: '0.01', helpText: 'Inclusive. Blank = no upper end.' },
+    { key: 'sort_order', label: 'Order', type: 'number', min: 0, step: '1', helpText: 'The order levels are listed in.' },
+  ],
+};
+
+// The body condition scale of a breeding line (SOP 21 Boar Body Condition Scoring): one row per score. The figures are the client's to
+// enter; nothing is seeded.
+const bcsScale: MasterDataConfig = {
+  key: 'bcs-scale',
+  label: 'Body Condition Scale',
+  singular: 'Body Condition Scale',
+  apiBase: '/bcs-scale',
+  idKey: 'scale_id',
+  group: 'Piggery',
+  isPrimary: true,
+  description:
+    "The body condition scale boars are scored on (SOP 21): for each score, what a boar looks like, the action it needs and the feed level it sets. A row with no Breeding Line belongs to the company's default scale, used by any line without its own.",
+  columns: [
+    { key: 'line_label', label: 'Breeding Line' },
+    { key: 'score', label: 'Score' },
+    { key: 'score_name', label: 'Name' },
+    { key: 'feed_kg_per_day', label: 'Feed (kg/day)' },
+    { key: 'health_assessment_required', label: 'Health Assessment' },
+    { key: 'medication_review', label: 'Medication Review' },
+  ],
+  supportsNobLobFilter: true,
+  fields: [
+    {
+      key: 'nob_id',
+      label: 'Nature of Business',
+      type: 'select-entity',
+      entityEndpoint: '/setup/wizard/nobs',
+      entityValueKey: 'nob_id',
+      entityLabelKeys: ['nob_code', 'nob_name'],
+      helpText: 'Leave blank if this scale is shared across all business verticals.',
+    },
+    {
+      key: 'lob_id',
+      label: 'Line of Business',
+      type: 'select-entity',
+      entityEndpoint: '/setup/wizard/lobs/{value}',
+      entityValueKey: 'lob_id',
+      entityLabelKeys: ['lob_code', 'lob_name'],
+      dependsOn: 'nob_id',
+      helpText: 'Leave blank if this scale is shared across all LOBs under the selected NOB.',
+    },
+    { key: 'company_id', label: 'Company', type: 'text', hideInForm: true },
+    {
+      key: 'breed_id',
+      label: 'Breeding Line',
+      type: 'select-entity',
+      createOnly: true,
+      searchable: true,
+      entityEndpoint: '/breed',
+      entityValueKey: 'breed_id',
+      entityLabelKeys: ['breed_code', 'breed_name'],
+      helpText: 'The line this scale row is for. Fixed after create. Leave blank for the company default scale.',
+    },
+    { key: 'score', label: 'Score', type: 'number', required: true, createOnly: true, min: 0, max: 100, step: '1', helpText: 'Fixed after create.' },
+    { key: 'score_name', label: 'Name', type: 'text', maxLength: 50, placeholder: 'Normal / ideal' },
+    { key: 'indicators', label: 'Condition Indicators', type: 'textarea', maxLength: 300, helpText: 'What a boar at this score looks like.' },
+    { key: 'required_action', label: 'Required Action', type: 'textarea', maxLength: 300, helpText: 'What is to be done for a boar at this score.' },
+    {
+      key: 'feed_kg_per_day',
+      label: 'Feed Level (kg per day)',
+      type: 'number',
+      min: 0,
+      step: '0.01',
+      helpText: 'The feed level this score sets. Blank = this score leaves the feed as it is.',
+    },
+    { key: 'health_assessment_required', label: 'Flag for a health assessment', type: 'boolean' },
+    { key: 'medication_review', label: 'Flag for a medication review', type: 'boolean' },
+  ],
+};
+
 export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   locationType,
   location,
@@ -5809,6 +6522,9 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   breedLifecycleStage,
   kpiMetric,
   reason,
+  breedingLineSetup,
+  geneticLevelBand,
+  bcsScale,
   alertRule,
   reportingPeriod,
   accountingPeriod,
@@ -5820,6 +6536,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   resource,
   glAccount,
   glMapping,
+  glPostingGroup,
   costCenter,
   country,
   currency,

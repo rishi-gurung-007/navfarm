@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -332,10 +333,10 @@ function LotSerialPanel({
               : v === String(value);
             const isExcluded = !isSelected && excludedSet.has(v);
             const exp = row.expiry_date
-              ? String(row.expiry_date).slice(0, 10)
+              ? formatDate(row.expiry_date)
               : NA;
             const postDate = row.posting_date
-              ? String(row.posting_date).slice(0, 10)
+              ? formatDate(row.posting_date)
               : NA;
 
             return (
@@ -461,7 +462,7 @@ function LotSerialPanel({
                       className="text-right font-mono text-[11px]"
                       style={{ color: 'var(--text-muted)' }}
                     >
-                      {postDate}
+                      {formatDate(postDate)}
                     </span>
                   </>
                 )}
@@ -689,7 +690,7 @@ export function LotSerialPicker({
     const hasSuggestion = (options as LotOption[]).some((o) => o.suggested);
     const expirySuffix =
       (selected?.expiry_date
-        ? ` (Exp: ${String(selected.expiry_date).slice(0, 10)})`
+        ? ` (Exp: ${formatDate(selected.expiry_date)})`
         : '') +
       (selected && hasSuggestion && !(selected as LotOption).suggested
         ? ' · not the suggested lot'

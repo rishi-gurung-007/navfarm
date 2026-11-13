@@ -7,6 +7,14 @@ export interface CodeSeriesFormat {
   current_seq: number;
   reset_frequency: string;
   updated_at: string | Date;
+  /** The reset period the counter last issued in ('2026', '2026-10'); null on a series that has not issued since this was recorded. */
+  last_reset_period?: string | null;
+  /** How much each number moves the counter; 1 when absent. */
+  increment_by?: number | null;
+  /** The last code issued. Its trailing digits can be ahead of `current_seq` (a series edited, or filled, before it ran). */
+  last_no_used?: string | null;
+  /** The number the first code carries (its trailing digits), when the series has never issued one. */
+  starting_no?: string | null;
   /**
    * The ordered parts of the code, before the sequence. Each entry is either a
    * field of the master being coded, or the literal token PREFIX standing for
@@ -116,12 +124,59 @@ function safeParse(value: string): unknown {
   try { return JSON.parse(value); } catch { return null; }
 }
 
-export function nextSequence(series: CodeSeriesFormat, now: Date): number {
+/** The trailing digits of a code: 12 for GRN-00012. 0 when there are none. */
+export function trailingNumber(code: string | null | undefined): number {
+  const match = code?.match(/(\d+)$/);
+  return match ? parseInt(match[1], 10) : 0;
+}
+
+export function incrementOf(series: Pick<CodeSeriesFormat, 'increment_by'>): number {
+  const step = Number(series.increment_by);
+  return Number.isFinite(step) && step >= 1 ? Math.floor(step) : 1;
+}
+
+/**
+ * Where the counter stands: the larger of `current_seq` and the digits of `last_no_used`. A series that was
+ * given a last number before it ran (or one whose last number was recorded by a path that did not move the
+ * counter) carries on from that number instead of reissuing the ones before it.
+ */
+export function seriesCounter(series: Pick<CodeSeriesFormat, 'current_seq' | 'last_no_used'>): number {
+  return Math.max(Number(series.current_seq) || 0, trailingNumber(series.last_no_used));
+}
+
+/**
+ * The reset period a date falls in for a series' reset frequency: '2026' for YEARLY, '2026-10' for MONTHLY, null for
+ * a series that never resets.
+ */
+export function resetPeriodOf(frequency: string | null | undefined, date: Date): string | null {
+  if (frequency === 'YEARLY') return String(date.getFullYear());
+  if (frequency === 'MONTHLY') return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  return null;
+}
+
+/**
+ * Has the reset period rolled over since the counter last issued? Compared against the period the series recorded
+ * when it last issued. updated_at only stands in for a series that has not recorded one yet: it moves on every edit
+ * (a description, a block), so on its own it let an edit in the new period swallow the reset.
+ */
+function periodRolledOver(series: CodeSeriesFormat, now: Date): boolean {
+  const current = resetPeriodOf(series.reset_frequency, now);
+  if (!current) return false;
+  if (series.last_reset_period) return series.last_reset_period !== current;
   const previous = new Date(series.updated_at);
-  const newYear = now.getFullYear() !== previous.getFullYear();
-  const reset = (series.reset_frequency === 'YEARLY' && newYear) ||
-    (series.reset_frequency === 'MONTHLY' && (newYear || now.getMonth() !== previous.getMonth()));
-  return (reset ? 0 : series.current_seq) + 1;
+  return resetPeriodOf(series.reset_frequency, previous) !== current;
+}
+
+/**
+ * The sequence number the next code carries. The one rule every path uses — the generator, every preview and
+ * the lot/serial allocator — so a preview can never disagree with the number the save issues: the counter
+ * (restarted when the reset period has rolled over) plus the series' increment, or the starting number for a
+ * series that has not issued anything yet.
+ */
+export function nextSequence(series: CodeSeriesFormat, now: Date): number {
+  const issued = periodRolledOver(series, now) ? 0 : seriesCounter(series);
+  const starting = issued === 0 ? trailingNumber(series.starting_no) : 0;
+  return starting > 0 ? starting : issued + incrementOf(series);
 }
 
 /**

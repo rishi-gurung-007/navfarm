@@ -25,7 +25,7 @@ describe('QrCodeService.createForSemenLot', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         QrCodeService,
-        { provide: ClsService, useValue: { get: () => db } },
+        { provide: ClsService, useValue: { get: (key?: string) => (key === 'tenantPostingTransaction' ? true : db) } },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         // Pack numbers come from the company's QR_PACK series (I3).
         { provide: NumberSeriesService, useValue: { generateNext: jest.fn().mockResolvedValue('PACK-000007') } },

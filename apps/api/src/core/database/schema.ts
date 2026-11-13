@@ -1443,6 +1443,9 @@ export const noSeries = mysqlTable(
     is_default: boolean('is_default').default(true).notNull(),
     manual_nos: boolean('manual_nos').default(false).notNull(),
     last_no_used: varchar('last_no_used', { length: 50 }),
+    // The reset period the counter last issued in (2026 for a YEARLY series, 2026-10 for a MONTHLY one). The reset
+    // compares against this, not updated_at, which any edit of the series bumps. Null until the series first issues.
+    last_reset_period: varchar('last_reset_period', { length: 10 }),
     blocked: boolean('blocked').default(false).notNull(),
     created_by: varchar('created_by', { length: 36 }),
     updated_by: varchar('updated_by', { length: 36 }),
@@ -1597,7 +1600,42 @@ export const itemMaster = mysqlTable(
     is_biological_costing_method: varchar('is_biological_costing_method', {
       length: 30,
     }),
+    // TDD Item Card "Bio Asset Costing" tab (0228). How this item's animals are costed; read only when is_biological_asset.
+    bio_costing_method: varchar('bio_costing_method', { length: 20 }), // AMORTIZATION, FAIR_VALUE
+    bio_gender: char('bio_gender', { length: 1 }), // F, M: drives where the residual applies
+    bio_start_age_weeks: int('bio_start_age_weeks'),
+    bio_start_age_days: int('bio_start_age_days'),
+    bio_useful_life_months: int('bio_useful_life_months'),
+    bio_residual_rule: varchar('bio_residual_rule', { length: 20 }), // NONE, FIXED, WEIGHT_X_PRICE
+    bio_residual_fixed_amount: decimal('bio_residual_fixed_amount', {
+      precision: 18,
+      scale: 4,
+    }),
+    bio_residual_weight_kg: decimal('bio_residual_weight_kg', {
+      precision: 10,
+      scale: 3,
+    }),
+    bio_residual_price_per_kg: decimal('bio_residual_price_per_kg', {
+      precision: 18,
+      scale: 6,
+    }),
+    bio_run_frequency: varchar('bio_run_frequency', { length: 10 }), // WEEKLY, MONTHLY, QUARTERLY, YEARLY
+    bio_day_basis: varchar('bio_day_basis', { length: 20 }), // FREQUENCY_DAYS, ACTUAL
+    bio_auto_post: boolean('bio_auto_post').default(false).notNull(),
+    bio_acquisition_gl_id: varchar('bio_acquisition_gl_id', { length: 36 }),
+    bio_accum_amort_gl_id: varchar('bio_accum_amort_gl_id', { length: 36 }),
+    bio_amort_expense_gl_id: varchar('bio_amort_expense_gl_id', { length: 36 }),
+    bio_fv_gain_loss_gl_id: varchar('bio_fv_gain_loss_gl_id', { length: 36 }),
+    // A fair value LOSS goes here when set (the COA splits "FV Gain - Weaners" from "FV Loss - Weaners"); unset, the loss goes to bio_fv_gain_loss_gl_id too.
+    bio_fv_loss_gl_id: varchar('bio_fv_loss_gl_id', { length: 36 }),
+    bio_writeoff_gl_id: varchar('bio_writeoff_gl_id', { length: 36 }),
+    // 0250: the Posting Group this item takes its accounts from (kind BIOLOGICAL for an animal item, INVENTORY for stock). The accounts above are kept in step with it.
+    posting_group_id: varchar('posting_group_id', { length: 36 }),
+    // The date costing should start for this item (0229): the scheduler never catches up before it, as a profile's effective_from did.
+    bio_effective_from: date('bio_effective_from', { mode: 'string' }),
     is_inventoriable: boolean('is_inventoriable').default(true).notNull(),
+    // Incoming QC (0239): a received quantity is not written to the Inventory Ledger until its QC inspection is completed and accepted.
+    is_qc_required: boolean('is_qc_required').default(false).notNull(),
     min_stock_level: decimal('min_stock_level', { precision: 18, scale: 4 }),
     max_stock_level: decimal('max_stock_level', { precision: 18, scale: 4 }),
     reorder_level: decimal('reorder_level', { precision: 18, scale: 4 }),
@@ -1642,6 +1680,46 @@ export const itemMaster = mysqlTable(
     ),
     index('idx_item_master_item_template_id').on(table.item_template_id),
   ],
+);
+
+// The dated fair-value inputs of a biological item (0228): expected weight (CDM) and price per kg, optionally from an age and for one farm.
+// The item-level home of what bio_costing_profile_rate holds for a profile.
+export const itemFairValueRate = mysqlTable(
+  'item_fair_value_rate',
+  {
+    rate_id: varchar('rate_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    item_id: varchar('item_id', { length: 36 })
+      .notNull()
+      .references(() => itemMaster.item_id, { onDelete: 'cascade' }),
+    farm_id: varchar('farm_id', { length: 36 }).references(
+      () => locationMaster.location_id,
+      { onDelete: 'restrict' },
+    ), // null = every farm
+    age_week_from: int('age_week_from').default(0).notNull(),
+    effective_from: date('effective_from', { mode: 'string' }).notNull(),
+    expected_weight_kg: decimal('expected_weight_kg', {
+      precision: 10,
+      scale: 3,
+    }).notNull(),
+    price_per_kg: decimal('price_per_kg', {
+      precision: 18,
+      scale: 6,
+    }).notNull(),
+    cdm_based: boolean('cdm_based').default(false).notNull(),
+    costs_to_sell_pct: decimal('costs_to_sell_pct', { precision: 5, scale: 2 }),
+    created_by: varchar('created_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    idxItem: index('idx_item_fair_value_rate_item').on(
+      table.item_id,
+      table.effective_from,
+    ),
+  }),
 );
 
 export const uomConversionMaster = mysqlTable(
@@ -3392,7 +3470,10 @@ export const glMappingMaster = mysqlTable(
     lob_id: varchar('lob_id', { length: 36 }),
     stage_id: varchar('stage_id', { length: 36 }), // 6th dimension: production stage (NULL = any stage)
     valuation_method: varchar('valuation_method', { length: 30 }),
-    transaction_type: varchar('transaction_type', { length: 50 }).notNull(), // PURCHASE, CONSUMPTION, OUTPUT, SALE, ADJUSTMENT, MORTALITY, etc.
+    // 0232: the Inventory Ledger entry type this mapping applies to (POSITIVE, NEGATIVE, TRANSFER, OVERHEAD, DESCRIPTIVE). NULL = any entry type, a
+    // wildcard like the dimensions above, so a mapping created before this column existed matches exactly what it matched before.
+    entry_type: varchar('entry_type', { length: 20 }),
+    transaction_type: varchar('transaction_type', { length: 50 }).notNull(), // a new mapping uses an Inventory Ledger transaction type (INVENTORY_TRANSACTION_TYPES); older rows hold PURCHASE ... and the MORTALITY, variance and BIO_* types the batch and animal postings look up by name
     debit_gl_account_id: varchar('debit_gl_account_id', { length: 36 }),
     credit_gl_account_id: varchar('credit_gl_account_id', { length: 36 }),
     is_active: boolean('is_active').default(true).notNull(),
@@ -3995,6 +4076,8 @@ export const batchHeader = mysqlTable(
     tracking_mode: varchar('tracking_mode', { length: 20 })
       .default('BATCH_WISE')
       .notNull(),
+    /** A piglet lot made at farrowing: holds the litter's head and cost until the weaning. Not a production batch, so lists and pickers leave it out. */
+    is_litter_lot: boolean('is_litter_lot').default(false).notNull(),
     batch_id: varchar('batch_id', { length: 36 })
       .primaryKey()
       .$defaultFn(() => randomUUID()),
@@ -5365,6 +5448,8 @@ export const batchMortalityAnimal = mysqlTable(
     }).notNull(),
     reason_id: varchar('reason_id', { length: 36 }),
     reason_text: varchar('reason_text', { length: 200 }),
+    // Where the body went (TDD row 10 "Disposal Destination"), kept with the draft until the death is posted.
+    disposal_destination: varchar('disposal_destination', { length: 100 }),
     posted: boolean('posted').default(false).notNull(),
     created_by: varchar('created_by', { length: 36 }),
     created_at: timestamp('created_at', { mode: 'string' })
@@ -5667,31 +5752,47 @@ export const notificationAlertLogRelations = relations(
 // (a QR can exist with or without a linked QC record).
 // ==========================================
 
-export const qcParameterMaster = mysqlTable('qc_parameter_master', {
-  param_id: varchar('param_id', { length: 36 })
-    .primaryKey()
-    .$defaultFn(() => randomUUID()),
-  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
-  company_id: varchar('company_id', { length: 36 }), // null = tenant-wide template
-  lob_id: varchar('lob_id', { length: 36 })
-    .notNull()
-    .references(() => lobMaster.lob_id, { onDelete: 'restrict' }),
-  param_code: varchar('param_code', { length: 50 }).notNull(),
-  param_name: varchar('param_name', { length: 100 }).notNull(),
-  param_type: varchar('param_type', { length: 20 }).notNull(), // NUMERIC, BOOLEAN, GRADE
-  uom: varchar('uom', { length: 20 }),
-  min_value: decimal('min_value', { precision: 18, scale: 4 }),
-  max_value: decimal('max_value', { precision: 18, scale: 4 }),
-  pass_criteria: text('pass_criteria'),
-  fail_criteria: text('fail_criteria'),
-  grade_scale: json('grade_scale'), // GRADE type: { "A": "2.0-2.5kg", "B": "1.8-2.0kg" }
-  is_mandatory: boolean('is_mandatory').default(true).notNull(),
-  is_active: boolean('is_active').default(true).notNull(),
-  created_by: varchar('created_by', { length: 36 }),
-  created_at: timestamp('created_at', { mode: 'string' })
-    .defaultNow()
-    .notNull(),
-});
+// The client's QC Parameter Master (0247): QC Code (param_code), Description (param_name), QC Type (param_type), Unit of Measurement (uom),
+// Min / Max / Target Value, Mandatory, Active. lob_id, pass_criteria, fail_criteria and grade_scale are not on that list: kept for rows
+// that carry them, no longer entered on the form.
+export const qcParameterMaster = mysqlTable(
+  'qc_parameter_master',
+  {
+    param_id: varchar('param_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }), // null = tenant-wide template
+    // null = applies to every line of business
+    lob_id: varchar('lob_id', { length: 36 }).references(
+      () => lobMaster.lob_id,
+      { onDelete: 'restrict' },
+    ),
+    param_code: varchar('param_code', { length: 50 }).notNull(),
+    param_name: varchar('param_name', { length: 100 }).notNull(),
+    param_type: varchar('param_type', { length: 20 }).notNull(), // NUMERIC, BOOLEAN (GRADE on older rows)
+    uom: varchar('uom', { length: 20 }),
+    min_value: decimal('min_value', { precision: 18, scale: 4 }),
+    max_value: decimal('max_value', { precision: 18, scale: 4 }),
+    target_value: decimal('target_value', { precision: 18, scale: 4 }),
+    pass_criteria: text('pass_criteria'),
+    fail_criteria: text('fail_criteria'),
+    grade_scale: json('grade_scale'), // GRADE type: { "A": "2.0-2.5kg", "B": "1.8-2.0kg" }
+    is_mandatory: boolean('is_mandatory').default(true).notNull(),
+    is_active: boolean('is_active').default(true).notNull(),
+    created_by: varchar('created_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_qc_parameter_company_code').on(
+      table.tenant_id,
+      table.company_id,
+      table.param_code,
+    ),
+  ],
+);
 
 export const qcBatchDetail = mysqlTable('qc_batch_detail', {
   qc_id: varchar('qc_id', { length: 36 })
@@ -6200,6 +6301,13 @@ export const inventoryLedger = mysqlTable(
     document_line_id: varchar('document_line_id', { length: 36 }),
     posting_date: date('posting_date', { mode: 'string' }).notNull(),
     external_reference_no: varchar('external_reference_no', { length: 50 }),
+    // 0216: set on the offsetting row a reversal writes — the ledger_id it reverses. A reversal keeps the transaction type of
+    // the entry it offsets (there is no REVERSAL transaction type); this column is what marks it.
+    reversal_of_ledger_id: varchar('reversal_of_ledger_id', { length: 36 }),
+    // 0217: the G/L Mapping transaction type this row posts under when it is not transaction_type — a bio-asset batch's feed is a
+    // CONSUMPTION here and posts as BIO_CONSUMPTION_PREMATURE (capitalised) or BIO_CONSUMPTION_MATURE (expensed); its output posts as
+    // BIO_OUTPUT and a harvest as BIO_HARVEST. Null for every other row.
+    gl_mapping_type: varchar('gl_mapping_type', { length: 30 }),
     entry_type: varchar('entry_type', { length: 20 }).notNull(), // POSITIVE, NEGATIVE, TRANSFER, OVERHEAD, DESCRIPTIVE
     transaction_type: varchar('transaction_type', { length: 30 }).notNull(), // PURCHASE, CONSUMPTION, OUTPUT, TRANSFER_SHIPMENT, TRANSFER_RECEIPT, SALES, VARIANCE_POSITIVE, VARIANCE_NEGATIVE
     quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(), // signed
@@ -6248,6 +6356,9 @@ export const inventoryLedger = mysqlTable(
       .notNull(),
   },
   (table) => ({
+    reversalOfIndex: index('idx_inventory_ledger_reversal_of').on(
+      table.reversal_of_ledger_id,
+    ),
     countCutoffIndex: index('idx_inventory_ledger_count_cutoff').on(
       table.tenant_id,
       table.company_id,
@@ -6368,7 +6479,11 @@ export const bioAssetLedger = mysqlTable('bio_asset_ledger', {
   bio_asset_item_id: varchar('bio_asset_item_id', { length: 36 })
     .notNull()
     .references(() => itemMaster.item_id, { onDelete: 'restrict' }),
-  entry_type: varchar('entry_type', { length: 30 }).notNull(), // ACQUISITION, CONSUMPTION, WRITEOFF, OVERHEAD, OVERHEAD_COST, GROWTH_ADJMT, MORTALITY, DEAD_PLANT, AMORTIZATION, FAIR_VALUE_ADJMT, TRANSFORMATION
+  // 0218: the same two lists as the Inventory Ledger. entry_type is POSITIVE, NEGATIVE, TRANSFER, OVERHEAD or DESCRIPTIVE; transaction_type is
+  // PURCHASE, CONSUMPTION, OUTPUT, TRANSFER_SHIPMENT, TRANSFER_RECEIPT, SALES, VARIANCE_POSITIVE, VARIANCE_NEGATIVE (or OVERHEAD / DESCRIPTIVE).
+  // Which event a row is — an amortisation, a death, a sale — is read from document_type (see bio-asset-ledger.types.ts); it is never empty.
+  entry_type: varchar('entry_type', { length: 30 }).notNull(),
+  transaction_type: varchar('transaction_type', { length: 30 }).notNull(),
   document_no: varchar('document_no', { length: 50 }),
   posting_date: date('posting_date', { mode: 'string' }).notNull(),
   asset_tracking_type: varchar('asset_tracking_type', { length: 10 }), // SERIAL, LOT
@@ -6403,6 +6518,8 @@ export const bioAssetLedger = mysqlTable('bio_asset_ledger', {
     () => customerMaster.customer_id,
     { onDelete: 'restrict' },
   ),
+  // 0210: the bio-asset costing run that wrote this row (an amortisation or fair-value charge), null for every other entry.
+  run_id: varchar('run_id', { length: 36 }),
   created_by: varchar('created_by', { length: 36 }),
   created_at: timestamp('created_at', { mode: 'string' })
     .defaultNow()
@@ -6447,6 +6564,278 @@ export const batchBioAssetStateRelations = relations(
       fields: [batchBioAssetState.batch_id],
       references: [batchHeader.batch_id],
     }),
+  }),
+);
+
+// TDD row 11 (Sale of Fixed Asset / Cull): a culled breeding animal becomes inventory only through a request that Finance approves (0231). One row per request;
+// active_key (the animal) is set while REQUESTED or APPROVED, so there is at most one open request per animal. BC entry numbers stay empty until a BC link exists.
+export const faInventoryConversion = mysqlTable(
+  'fa_inventory_conversion',
+  {
+    conversion_id: varchar('conversion_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+    conversion_no: varchar('conversion_no', { length: 40 }).notNull(),
+    animal_id: varchar('animal_id', { length: 36 }).notNull().references(() => animalRegister.animal_id, { onDelete: 'restrict' }),
+    item_id: varchar('item_id', { length: 36 }),
+    status: varchar('status', { length: 20 }).default('REQUESTED').notNull(), // REQUESTED, APPROVED, REJECTED, POSTED, CANCELLED
+    active_key: varchar('active_key', { length: 36 }),
+    out_of_production_date: date('out_of_production_date', { mode: 'string' }).notNull(),
+    exit_weight_kg: decimal('exit_weight_kg', { precision: 10, scale: 3 }),
+    remarks: varchar('remarks', { length: 300 }),
+    requested_by: varchar('requested_by', { length: 36 }),
+    requested_at: timestamp('requested_at', { mode: 'string' }).defaultNow().notNull(),
+    market_value: decimal('market_value', { precision: 18, scale: 4 }),
+    approved_by: varchar('approved_by', { length: 36 }),
+    approved_at: timestamp('approved_at', { mode: 'string' }),
+    rejected_by: varchar('rejected_by', { length: 36 }),
+    rejected_at: timestamp('rejected_at', { mode: 'string' }),
+    reject_reason: varchar('reject_reason', { length: 300 }),
+    conversion_date: date('conversion_date', { mode: 'string' }),
+    nbv_at_conversion: decimal('nbv_at_conversion', { precision: 18, scale: 4 }),
+    gain_loss: decimal('gain_loss', { precision: 18, scale: 4 }),
+    inventory_ledger_id: varchar('inventory_ledger_id', { length: 36 }),
+    lot_no: varchar('lot_no', { length: 60 }),
+    posted_by: varchar('posted_by', { length: 36 }),
+    posted_at: timestamp('posted_at', { mode: 'string' }),
+    bc_fa_ledger_entry_no: varchar('bc_fa_ledger_entry_no', { length: 40 }),
+    bc_item_ledger_entry_no: varchar('bc_item_ledger_entry_no', { length: 40 }),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().onUpdateNow().notNull(),
+  },
+  (table) => ({
+    uqNo: uniqueIndex('uq_fa_conversion_no').on(table.tenant_id, table.company_id, table.conversion_no),
+    uqActive: uniqueIndex('uq_fa_conversion_active').on(table.active_key),
+    idxAnimal: index('idx_fa_conversion_animal').on(table.animal_id, table.status),
+  }),
+);
+
+// A bio-asset costing run (0210, bio-asset costing Phase 4): one item, one period. CALCULATED lines are a preview that posts
+// nothing and may be recalculated; POSTED writes one ledger row per charged animal and a journal; REVERSED mirrors them.
+// active_key (item|period) is set while CALCULATED or POSTED, so the database refuses a second run for the same period.
+// A run made before items costed animals (a costing profile did, until 0230) has no item_id; it is read through its lines.
+export const bioCostingRun = mysqlTable(
+  'bio_costing_run',
+  {
+    run_id: varchar('run_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 })
+      .notNull()
+      .references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+    run_no: varchar('run_no', { length: 40 }).notNull(),
+    // The item the run is for (0229, the TDD Item Card way). Empty only on a run made when a costing profile costed animals.
+    item_id: varchar('item_id', { length: 36 }).references(
+      () => itemMaster.item_id,
+      { onDelete: 'restrict' },
+    ),
+    method: varchar('method', { length: 20 }).notNull(), // AMORTIZATION, FAIR_VALUE
+    frequency: varchar('frequency', { length: 10 }).notNull(),
+    period_key: varchar('period_key', { length: 12 }).notNull(), // 2026-10, 2026-W42, 2026-Q4, 2026
+    period_start: date('period_start', { mode: 'string' }).notNull(),
+    period_end: date('period_end', { mode: 'string' }).notNull(),
+    days_enforced: int('days_enforced'), // the run's own day count ("No. of Days Enforced"), else the profile's day basis rules
+    description: varchar('description', { length: 300 }),
+    trigger: varchar('trigger', { length: 10 }).default('MANUAL').notNull(), // MANUAL, SCHEDULED
+    status: varchar('status', { length: 12 }).default('CALCULATED').notNull(), // CALCULATED, POSTED, REVERSED, FAILED
+    animal_count: int('animal_count').default(0).notNull(),
+    charged_count: int('charged_count').default(0).notNull(),
+    skipped_count: int('skipped_count').default(0).notNull(),
+    total_charge: decimal('total_charge', { precision: 18, scale: 4 })
+      .default('0.0000')
+      .notNull(), // amortisation: sum of charges; fair value: net adjustment
+    journal_id: varchar('journal_id', { length: 36 }),
+    active_key: varchar('active_key', { length: 120 }), // 0213: profile|period|batch can be 86 characters
+    requested_by: varchar('requested_by', { length: 36 }),
+    posted_by: varchar('posted_by', { length: 36 }),
+    posted_at: timestamp('posted_at', { mode: 'string' }),
+    reversed_by: varchar('reversed_by', { length: 36 }),
+    reversed_at: timestamp('reversed_at', { mode: 'string' }),
+    reverse_reason: varchar('reverse_reason', { length: 300 }),
+    // 0211: why a scheduled run could not be made (status FAILED).
+    error_message: varchar('error_message', { length: 500 }),
+    // 0212: the batch this run was made for; NULL = every animal of the profile.
+    batch_id: varchar('batch_id', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    uqRunNo: uniqueIndex('uq_bio_costing_run_no').on(
+      table.tenant_id,
+      table.company_id,
+      table.run_no,
+    ),
+    uqActive: uniqueIndex('uq_bio_costing_run_active').on(table.active_key),
+    idxItemPeriod: index('idx_bio_costing_run_item').on(
+      table.item_id,
+      table.period_end,
+    ),
+    idxBatchPeriod: index('idx_bio_costing_run_batch').on(
+      table.batch_id,
+      table.period_end,
+    ),
+  }),
+);
+
+export const bioCostingRunLine = mysqlTable(
+  'bio_costing_run_line',
+  {
+    line_id: varchar('line_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    run_id: varchar('run_id', { length: 36 })
+      .notNull()
+      .references(() => bioCostingRun.run_id, { onDelete: 'cascade' }),
+    animal_id: varchar('animal_id', { length: 36 })
+      .notNull()
+      .references(() => animalRegister.animal_id, { onDelete: 'restrict' }),
+    batch_id: varchar('batch_id', { length: 36 }),
+    status: varchar('status', { length: 10 }).notNull(), // CHARGED, SKIPPED
+    skip_reason: varchar('skip_reason', { length: 40 }),
+    days: decimal('days', { precision: 10, scale: 4 }),
+    remaining_days: int('remaining_days'),
+    book_value_before: decimal('book_value_before', {
+      precision: 18,
+      scale: 4,
+    }).notNull(),
+    residual: decimal('residual', { precision: 18, scale: 4 })
+      .default('0.0000')
+      .notNull(),
+    charge: decimal('charge', { precision: 18, scale: 4 })
+      .default('0.0000')
+      .notNull(), // negative for a fair-value loss
+    book_value_after: decimal('book_value_after', {
+      precision: 18,
+      scale: 4,
+    }).notNull(),
+    costing_start_date: date('costing_start_date', { mode: 'string' }),
+    life_end_date: date('life_end_date', { mode: 'string' }),
+    ledger_entry_id: varchar('ledger_entry_id', { length: 36 }),
+    journal_id: varchar('journal_id', { length: 36 }),
+    integration_status: varchar('integration_status', { length: 16 })
+      .default('NOT_APPLICABLE')
+      .notNull(), // BC_PENDING once Business Central is connected
+    // animal|method|period while POSTED, so no animal is charged twice for a period even by two different runs.
+    active_key: varchar('active_key', { length: 120 }),
+  },
+  (table) => ({
+    uqActive: uniqueIndex('uq_bio_costing_run_line_active').on(
+      table.active_key,
+    ),
+    idxRun: index('idx_bio_costing_run_line_run').on(table.run_id),
+    idxAnimal: index('idx_bio_costing_run_line_animal').on(table.animal_id),
+  }),
+);
+
+/** Gilt selection (0215, TDD row 6 event 2): the header, a line per litter the gilts come from, and a row per gilt created when it is posted. */
+export const giltSelection = mysqlTable(
+  'gilt_selection',
+  {
+    selection_id: varchar('selection_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 })
+      .notNull()
+      .references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+    selection_no: varchar('selection_no', { length: 30 }).notNull(),
+    batch_id: varchar('batch_id', { length: 36 }).notNull(),
+    batch_no: varchar('batch_no', { length: 50 }).notNull(),
+    farm_id: varchar('farm_id', { length: 36 }),
+    location_id: varchar('location_id', { length: 36 }),
+    sub_location_id: varchar('sub_location_id', { length: 36 }),
+    selection_date: date('selection_date', { mode: 'string' }).notNull(),
+    production_week: int('production_week'),
+    gilt_item_id: varchar('gilt_item_id', { length: 36 }),
+    animal_batch_id: varchar('animal_batch_id', { length: 36 }),
+    status: varchar('status', { length: 12 }).default('DRAFT').notNull(), // DRAFT, POSTED, CANCELLED
+    head_released: decimal('head_released', { precision: 10, scale: 4 }),
+    value_released: decimal('value_released', { precision: 18, scale: 4 }),
+    remarks: varchar('remarks', { length: 300 }),
+    posted_at: timestamp('posted_at', { mode: 'string' }),
+    posted_by: varchar('posted_by', { length: 36 }),
+    created_by: varchar('created_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' })
+      .defaultNow()
+      .onUpdateNow()
+      .notNull(),
+  },
+  (table) => ({
+    uqNo: uniqueIndex('uq_gilt_selection_no').on(
+      table.company_id,
+      table.selection_no,
+    ),
+    idxTenant: index('idx_gilt_selection_tenant').on(
+      table.tenant_id,
+      table.company_id,
+      table.status,
+    ),
+    idxBatch: index('idx_gilt_selection_batch').on(table.batch_id),
+  }),
+);
+
+export const giltSelectionLine = mysqlTable(
+  'gilt_selection_line',
+  {
+    line_id: varchar('line_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    selection_id: varchar('selection_id', { length: 36 })
+      .notNull()
+      .references(() => giltSelection.selection_id, { onDelete: 'cascade' }),
+    line_no: int('line_no').notNull(),
+    farrow_id: varchar('farrow_id', { length: 36 }).notNull(),
+    piglet_item_id: varchar('piglet_item_id', { length: 36 }),
+    source_batch_id: varchar('source_batch_id', { length: 36 }),
+    lot_no: varchar('lot_no', { length: 50 }),
+    sow_animal_id: varchar('sow_animal_id', { length: 36 }).notNull(),
+    parity_number: int('parity_number'),
+    boar_animal_id: varchar('boar_animal_id', { length: 36 }),
+    colour_code: varchar('colour_code', { length: 30 }),
+    piglets_produced: int('piglets_produced'),
+    sow_tsi: decimal('sow_tsi', { precision: 10, scale: 2 }),
+    gilts_selected: int('gilts_selected').notNull(),
+  },
+  (table) => ({
+    uqLine: uniqueIndex('uq_gilt_selection_line').on(
+      table.selection_id,
+      table.line_no,
+    ),
+    idxFarrow: index('idx_gilt_selection_line_farrow').on(table.farrow_id),
+  }),
+);
+
+export const giltSelectionGilt = mysqlTable(
+  'gilt_selection_gilt',
+  {
+    gilt_id: varchar('gilt_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    selection_id: varchar('selection_id', { length: 36 })
+      .notNull()
+      .references(() => giltSelection.selection_id, { onDelete: 'cascade' }),
+    line_id: varchar('line_id', { length: 36 }).notNull(),
+    rfid_tag: varchar('rfid_tag', { length: 50 }).notNull(),
+    dob: date('dob', { mode: 'string' }),
+    batch_week: int('batch_week'),
+    no_of_teats: int('no_of_teats').notNull(),
+    animal_id: varchar('animal_id', { length: 36 }),
+    animal_code: varchar('animal_code', { length: 50 }),
+    acquisition_cost: decimal('acquisition_cost', { precision: 18, scale: 4 }),
+  },
+  (table) => ({
+    idxSelection: index('idx_gilt_selection_gilt_selection').on(
+      table.selection_id,
+    ),
+    idxAnimal: index('idx_gilt_selection_gilt_animal').on(table.animal_id),
   }),
 );
 
@@ -6503,6 +6892,143 @@ export const goodsReceiptLine = mysqlTable('goods_receipt_line', {
   expiry_date: date('expiry_date', { mode: 'string' }),
   remarks: varchar('remarks', { length: 500 }),
 });
+
+// ==========================================
+// Incoming QC (0239). The checks an item must pass when it arrives, and the inspection that
+// holds a received quantity back from the Inventory Ledger until it has passed.
+// ==========================================
+
+/** What to check on a QC-required item: a VALUE has a min/max range, a DESCRIPTIVE has a rule in words (Business Central's QC Specification Master List). */
+export const itemQcSpecLine = mysqlTable(
+  'item_qc_spec_line',
+  {
+    spec_line_id: varchar('spec_line_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }),
+    item_id: varchar('item_id', { length: 36 })
+      .notNull()
+      .references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+    line_no: int('line_no').notNull(),
+    stage: varchar('stage', { length: 50 }).default('INCOMING').notNull(),
+    // The QC parameter the check was taken from (0248); its code, description, type, range and Mandatory/Active are copied here and kept in step.
+    param_id: varchar('param_id', { length: 36 }).references(() => qcParameterMaster.param_id, { onDelete: 'restrict' }),
+    measurement_code: varchar('measurement_code', { length: 50 }).notNull(),
+    measurement_description: varchar('measurement_description', { length: 200 }),
+    sampling_type: varchar('sampling_type', { length: 15 }).notNull(), // VALUE, DESCRIPTIVE
+    uom: varchar('uom', { length: 20 }),
+    min_value: decimal('min_value', { precision: 18, scale: 4 }),
+    max_value: decimal('max_value', { precision: 18, scale: 4 }),
+    target_value: decimal('target_value', { precision: 18, scale: 4 }),
+    acceptance_text: varchar('acceptance_text', { length: 500 }),
+    is_mandatory: boolean('is_mandatory').default(true).notNull(),
+    is_active: boolean('is_active').default(true).notNull(),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  },
+  (table) => [index('idx_item_qc_spec_item').on(table.item_id)],
+);
+
+/**
+ * One received line of a QC-required item awaiting inspection. It carries everything the ledger entry needs, so the entry
+ * can be written at completion exactly as the receipt would have written it. `ledger_entry_id` is null until then
+ * (the "ILE No. 0" of the Business Central form).
+ */
+export const qcInspection = mysqlTable(
+  'qc_inspection',
+  {
+    inspection_id: varchar('inspection_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).notNull(),
+    inspection_no: varchar('inspection_no', { length: 50 }).notNull(),
+    inspection_date: date('inspection_date', { mode: 'string' }).notNull(),
+    status: varchar('status', { length: 20 }).default('OPEN').notNull(), // OPEN, PENDING_APPROVAL, CLOSED
+    result: varchar('result', { length: 15 }), // PASS, FAIL, DEVIATION
+    source_doc_type: varchar('source_doc_type', { length: 30 }).notNull(), // GOODS_RECEIPT
+    source_doc_no: varchar('source_doc_no', { length: 50 }).notNull(),
+    source_line_id: varchar('source_line_id', { length: 36 }).notNull(),
+    source_posting_date: date('source_posting_date', { mode: 'string' }).notNull(),
+    supplier_id: varchar('supplier_id', { length: 36 }),
+    po_no: varchar('po_no', { length: 50 }),
+    item_id: varchar('item_id', { length: 36 })
+      .notNull()
+      .references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+    lot_no: varchar('lot_no', { length: 50 }),
+    serial_no: text('serial_no'),
+    expiry_date: date('expiry_date', { mode: 'string' }),
+    quantity: decimal('quantity', { precision: 18, scale: 4 }).notNull(),
+    uom: varchar('uom', { length: 20 }).notNull(),
+    rate: decimal('rate', { precision: 18, scale: 6 }),
+    price_variance: decimal('price_variance', { precision: 18, scale: 4 }),
+    warehouse_id: varchar('warehouse_id', { length: 36 }).notNull(),
+    // What the ledger entry needs besides the above (0240): the G/L mapping and batch number the source would have posted under.
+    gl_mapping_type: varchar('gl_mapping_type', { length: 40 }),
+    batch_no: varchar('batch_no', { length: 50 }),
+    // A stock transfer receipt (0241): what it takes out of In Transit, how the entry is typed, the transfer it belongs to, and where a rejected quantity returns to.
+    amount: decimal('amount', { precision: 18, scale: 4 }),
+    entry_type: varchar('entry_type', { length: 20 }),
+    parent_doc_no: varchar('parent_doc_no', { length: 50 }),
+    return_warehouse_id: varchar('return_warehouse_id', { length: 36 }),
+    sample_qty: decimal('sample_qty', { precision: 18, scale: 4 }),
+    accepted_qty: decimal('accepted_qty', { precision: 18, scale: 4 }),
+    rejected_qty: decimal('rejected_qty', { precision: 18, scale: 4 }),
+    reason_id: varchar('reason_id', { length: 36 }),
+    // What becomes of the rejected quantity (0249), and the document that carries it out. Recorded only: nothing is posted for it.
+    rejection_disposition: varchar('rejection_disposition', { length: 25 }), // RETURN_TO_SUPPLIER, SCRAP, HOLD, RETURN_TO_SOURCE
+    rejection_ref: varchar('rejection_ref', { length: 100 }),
+    deviation: boolean('deviation').default(false).notNull(),
+    posting_date: date('posting_date', { mode: 'string' }),
+    remarks: varchar('remarks', { length: 500 }),
+    inspected_by: varchar('inspected_by', { length: 36 }),
+    inspected_at: timestamp('inspected_at', { mode: 'string' }),
+    approved_by: varchar('approved_by', { length: 36 }),
+    approved_at: timestamp('approved_at', { mode: 'string' }),
+    ledger_entry_id: varchar('ledger_entry_id', { length: 36 }),
+    created_by: varchar('created_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_qc_inspection_no').on(table.tenant_id, table.company_id, table.inspection_no),
+    index('idx_qc_inspection_source').on(table.source_doc_type, table.source_doc_no, table.source_line_id),
+    index('idx_qc_inspection_status').on(table.tenant_id, table.company_id, table.status),
+  ],
+);
+
+/** The specification as it stood when the inspection was raised, with what the inspector found against each check. */
+export const qcInspectionLine = mysqlTable(
+  'qc_inspection_line',
+  {
+    line_id: varchar('line_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    inspection_id: varchar('inspection_id', { length: 36 })
+      .notNull()
+      .references(() => qcInspection.inspection_id, { onDelete: 'cascade' }),
+    line_no: int('line_no').notNull(),
+    spec_line_id: varchar('spec_line_id', { length: 36 }),
+    stage: varchar('stage', { length: 50 }).notNull(),
+    measurement_code: varchar('measurement_code', { length: 50 }).notNull(),
+    measurement_description: varchar('measurement_description', { length: 200 }),
+    sampling_type: varchar('sampling_type', { length: 15 }).notNull(),
+    uom: varchar('uom', { length: 20 }),
+    min_value: decimal('min_value', { precision: 18, scale: 4 }),
+    max_value: decimal('max_value', { precision: 18, scale: 4 }),
+    target_value: decimal('target_value', { precision: 18, scale: 4 }),
+    acceptance_text: varchar('acceptance_text', { length: 500 }),
+    is_mandatory: boolean('is_mandatory').default(true).notNull(),
+    actual_value: decimal('actual_value', { precision: 18, scale: 4 }),
+    actual_text: varchar('actual_text', { length: 500 }),
+    result: varchar('result', { length: 10 }), // PASS, FAIL
+    remarks: varchar('remarks', { length: 500 }),
+  },
+  (table) => [index('idx_qc_inspection_line_insp').on(table.inspection_id)],
+);
 
 // Individual animal lifetime identity — permanent record from entry to disposal, never
 // physically deleted (is_active=false + disposal_* fields mark disposal instead). Distinct
@@ -6601,6 +7127,8 @@ export const animalRegister = mysqlTable(
     }),
     productive_life_start: date('productive_life_start', { mode: 'string' }),
     expected_cull_date: date('expected_cull_date', { mode: 'string' }),
+    // The date her costing begins: the later of her entry date and her birth date plus her item's start period (0209; the profile column was dropped in 0230).
+    costing_start_date: date('costing_start_date', { mode: 'string' }),
     // Master Template parity (P2) — BBP §6: no_of_teats < 15 is a hard block on gilt
     // selection regardless of TSI score, enforced in animal.service.ts.
     no_of_teats: int('no_of_teats'),
@@ -6623,6 +7151,8 @@ export const animalRegister = mysqlTable(
     cull_date: date('cull_date', { mode: 'string' }),
     exit_weight_kg: decimal('exit_weight_kg', { precision: 10, scale: 3 }),
     disposal_destination: varchar('disposal_destination', { length: 100 }),
+    // What her book value stood at when she died (TDD row 10: "Remaining Book Value at death recorded"); the write-off took exactly this out of her ledger.
+    book_value_at_death: decimal('book_value_at_death', { precision: 18, scale: 4 }),
     disposal_value: decimal('disposal_value', { precision: 18, scale: 4 }),
     gain_loss_on_disposal: decimal('gain_loss_on_disposal', {
       precision: 18,
@@ -7406,6 +7936,19 @@ export const semenBatch = mysqlTable('semen_batch', {
   expiry_date: date('expiry_date', { mode: 'string' }),
   warehouse_id: varchar('warehouse_id', { length: 36 }),
   qr_id: varchar('qr_id', { length: 36 }),
+  // The plan this collection carries out (migration 0236), null for one made without a plan.
+  plan_id: varchar('plan_id', { length: 36 }),
+  // What the line's setup put on the lot when it was posted (migration 0237, Phase 5): its line, the physical label (from the
+  // template) and the ISO week it carries, the colorant added (and what it cost, when issued from stock) and where it is for.
+  breed_id: varchar('breed_id', { length: 36 }),
+  label: varchar('label', { length: 100 }),
+  week_no: int('week_no'),
+  week_year: int('week_year'),
+  colorant_name: varchar('colorant_name', { length: 50 }),
+  colorant_item_id: varchar('colorant_item_id', { length: 36 }),
+  colorant_qty: decimal('colorant_qty', { precision: 10, scale: 3 }),
+  colorant_cost: decimal('colorant_cost', { precision: 18, scale: 4 }),
+  destination_farm_id: varchar('destination_farm_id', { length: 36 }),
   // Quality on the collection (migration 0150, audit G8): carried on the lot's QR.
   volume_ml: decimal('volume_ml', { precision: 10, scale: 2 }),
   motility_pct: decimal('motility_pct', { precision: 5, scale: 2 }),
@@ -7450,6 +7993,423 @@ export const semenBatchBoar = mysqlTable(
   (t) => [primaryKey({ columns: [t.semen_batch_id, t.boar_animal_id] })],
 );
 
+/**
+ * AI Station breeding-line rules (migration 0233; plan 2026-11-02-ai-station-semen-collection, Phase 1). One row per
+ * breeding line (the breed: Tempo, L-Line, Z-Line), holding every rule the collection workflow reads, so none of them
+ * is a constant in code. A row with no breed is the company default, read for a boar whose line has no row of its own.
+ * Every value is the client's to set; nothing is seeded.
+ */
+export const breedingLineSetup = mysqlTable(
+  'breeding_line_setup',
+  {
+    setup_id: varchar('setup_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(
+      () => companyMaster.company_id,
+      { onDelete: 'restrict' },
+    ),
+    nob_id: varchar('nob_id', { length: 36 }).references(
+      () => nobMaster.nob_id,
+      { onDelete: 'restrict' },
+    ),
+    lob_id: varchar('lob_id', { length: 36 }).references(
+      () => lobMaster.lob_id,
+      { onDelete: 'restrict' },
+    ),
+    // The line. Null is the company default row.
+    breed_id: varchar('breed_id', { length: 36 }).references(
+      () => breedMaster.breed_id,
+      { onDelete: 'restrict' },
+    ),
+    collection_mode: varchar('collection_mode', { length: 20 })
+      .default('SCHEDULED')
+      .notNull(), // SCHEDULED | ON_REQUEST
+    // Weekday codes (MON..SUN) a SCHEDULED line is tapped on.
+    collection_weekdays: json('collection_weekdays').$type<string[] | null>(),
+    boars_per_collection_day: int('boars_per_collection_day'),
+    pooling_allowed: boolean('pooling_allowed').default(true).notNull(),
+    min_boars_per_lot: int('min_boars_per_lot'),
+    max_boars_per_lot: int('max_boars_per_lot'),
+    // A colorant is recorded by name, and optionally issued from stock as an item.
+    colorant_name: varchar('colorant_name', { length: 50 }),
+    colorant_item_id: varchar('colorant_item_id', { length: 36 }).references(
+      () => itemMaster.item_id,
+      { onDelete: 'restrict' },
+    ),
+    colorant_qty_per_lot: decimal('colorant_qty_per_lot', {
+      precision: 10,
+      scale: 3,
+    }),
+    // Tokens such as {PREFIX} {LINE} {BOAR_TAG} {WEEK} {YEAR} {DATE}; read when the lot is labelled (Phase 5).
+    label_template: varchar('label_template', { length: 100 }),
+    week_basis: varchar('week_basis', { length: 10 }).default('ISO').notNull(),
+    include_year: boolean('include_year').default(false).notNull(),
+    destination_rule: varchar('destination_rule', { length: 10 })
+      .default('ANY')
+      .notNull(), // ANY | LIST | ONE
+    destination_farm_ids: json('destination_farm_ids').$type<string[] | null>(),
+    reference_required: boolean('reference_required').default(false).notNull(),
+    reference_label: varchar('reference_label', { length: 50 }),
+    restrict_to_destination: varchar('restrict_to_destination', { length: 10 })
+      .default('NONE')
+      .notNull(), // NONE | WARN | BLOCK
+    // Rest between two collections of one boar, and the motility a collection must reach. Null = no rule.
+    min_rest_days: int('min_rest_days'),
+    min_motility_pct: decimal('min_motility_pct', { precision: 5, scale: 2 }),
+    // Whether a broken rest or motility rule only warns or stops the collection.
+    rule_enforcement: varchar('rule_enforcement', { length: 10 })
+      .default('WARN')
+      .notNull(), // WARN | BLOCK
+    // The boar selection table (migration 0235, Phase 3): the relative weights of the genetic, dose and morphology ranks in a
+    // boar's overall grading (null or 0 = not used; all null = no grading), how tied boars are ranked, and which columns the
+    // table shows, in order, as [{ key, label, visible }] (null = every column in its default order).
+    grading_genetic_weight: decimal('grading_genetic_weight', { precision: 6, scale: 2 }),
+    grading_dose_weight: decimal('grading_dose_weight', { precision: 6, scale: 2 }),
+    grading_morphology_weight: decimal('grading_morphology_weight', { precision: 6, scale: 2 }),
+    rank_tie_break: varchar('rank_tie_break', { length: 15 })
+      .default('GENETIC_RANK')
+      .notNull(), // GENETIC_RANK | SHARED
+    selection_columns: json('selection_columns').$type<
+      { key: string; label: string; visible: boolean }[] | null
+    >(),
+    // Boar body condition (migration 0238, Phase 6): how often a boar is scored, how long past due before it is overdue, how many
+    // days ahead a boar shows as due soon, and whether the feed level the scale gives can be overridden (and then needs a reason).
+    // Blank frequency = no schedule.
+    bcs_frequency_days: int('bcs_frequency_days'),
+    bcs_grace_days: int('bcs_grace_days'),
+    bcs_reminder_days: int('bcs_reminder_days'),
+    bcs_allow_feed_override: boolean('bcs_allow_feed_override').default(false).notNull(),
+    bcs_override_reason_required: boolean('bcs_override_reason_required').default(true).notNull(),
+    is_active: boolean('is_active').default(true).notNull(),
+    status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  },
+  (table) => [
+    uniqueIndex('uq_breeding_line_setup_scope_line').on(
+      table.tenant_id,
+      sql`(coalesce(${table.company_id}, ''))`,
+      sql`(coalesce(${table.breed_id}, ''))`,
+    ),
+  ],
+);
+
+/**
+ * What each boar gave at a collection (migration 0234; plan 2026-11-02-ai-station-semen-collection, Phase 2). One row per
+ * boar per lot, single-boar lots included, because the boar sheets read each boar's last volume, doses and morphology and a
+ * pooled lot only carries totals. A rejected ejaculate is recorded here and is in none of the lot's doses, boars or costs.
+ * Lots recorded before this have no rows.
+ */
+export const semenBoarResult = mysqlTable(
+  'semen_boar_result',
+  {
+    semen_batch_id: varchar('semen_batch_id', { length: 36 })
+      .notNull()
+      .references(() => semenBatch.semen_batch_id, { onDelete: 'cascade' }),
+    boar_animal_id: varchar('boar_animal_id', { length: 36 })
+      .notNull()
+      .references(() => animalRegister.animal_id, { onDelete: 'restrict' }),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    collector_id: varchar('collector_id', { length: 36 }).references(
+      () => userMaster.user_id,
+      { onDelete: 'set null' },
+    ),
+    volume_ml: decimal('volume_ml', { precision: 10, scale: 2 }),
+    doses: int('doses'),
+    morphology_pct: decimal('morphology_pct', { precision: 5, scale: 2 }),
+    motility_pct: decimal('motility_pct', { precision: 5, scale: 2 }),
+    concentration_m_per_ml: decimal('concentration_m_per_ml', {
+      precision: 10,
+      scale: 2,
+    }),
+    accepted: boolean('accepted').default(true).notNull(),
+    reject_reason: varchar('reject_reason', { length: 200 }),
+    sort_order: int('sort_order').default(0).notNull(),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.semen_batch_id, t.boar_animal_id] })],
+);
+
+/**
+ * The genetic levels of a breeding line, as bands of TSI (migration 0235; Average, Below average, Low, Very low on the client's
+ * sheets). A band is inclusive at both ends and an open end is null. A band with no breed is the company default for any line
+ * with none of its own. The thresholds are the client's to set: nothing is seeded.
+ */
+export const geneticLevelBand = mysqlTable(
+  'genetic_level_band',
+  {
+    band_id: varchar('band_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(
+      () => companyMaster.company_id,
+      { onDelete: 'restrict' },
+    ),
+    nob_id: varchar('nob_id', { length: 36 }).references(
+      () => nobMaster.nob_id,
+      { onDelete: 'restrict' },
+    ),
+    lob_id: varchar('lob_id', { length: 36 }).references(
+      () => lobMaster.lob_id,
+      { onDelete: 'restrict' },
+    ),
+    breed_id: varchar('breed_id', { length: 36 }).references(
+      () => breedMaster.breed_id,
+      { onDelete: 'restrict' },
+    ),
+    level_name: varchar('level_name', { length: 50 }).notNull(),
+    tsi_from: decimal('tsi_from', { precision: 10, scale: 2 }),
+    tsi_to: decimal('tsi_to', { precision: 10, scale: 2 }),
+    sort_order: int('sort_order').default(0).notNull(),
+    is_active: boolean('is_active').default(true).notNull(),
+    status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  },
+  (table) => [
+    uniqueIndex('uq_genetic_level_band_scope_line_name').on(
+      table.tenant_id,
+      sql`(coalesce(${table.company_id}, ''))`,
+      sql`(coalesce(${table.breed_id}, ''))`,
+      table.level_name,
+    ),
+  ],
+);
+
+/**
+ * A boar's TSI over time (migration 0235), with the herd-wide genetic rank published beside it when one was given. The latest
+ * entry on or before a date is his TSI then; `animal_register.tsi` keeps the newest as before.
+ */
+export const boarTsiHistory = mysqlTable(
+  'boar_tsi_history',
+  {
+    history_id: varchar('history_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(
+      () => companyMaster.company_id,
+      { onDelete: 'restrict' },
+    ),
+    boar_animal_id: varchar('boar_animal_id', { length: 36 })
+      .notNull()
+      .references(() => animalRegister.animal_id, { onDelete: 'restrict' }),
+    tsi: decimal('tsi', { precision: 10, scale: 2 }).notNull(),
+    published_rank: int('published_rank'),
+    effective_date: date('effective_date', { mode: 'string' }).notNull(),
+    source: varchar('source', { length: 10 }).default('MANUAL').notNull(), // MANUAL | IMPORT
+    notes: varchar('notes', { length: 200 }),
+    created_by: varchar('created_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [index('idx_boar_tsi_history_boar_date').on(t.boar_animal_id, t.effective_date)],
+);
+
+/**
+ * A planned semen collection (migration 0236; plan 2026-11-02-ai-station-semen-collection, Phase 4): the boars of one breeding line
+ * chosen for one collection day, with the request that asked for it (Z-Line: the Multiplier Unit and the Breeding Web reference)
+ * and where the semen is for. It is checked against the line's setup (its weekdays, boars per day, reference, destination) when it
+ * is made, and becomes a collection when the boars are tapped (semen_batch.plan_id).
+ */
+export const semenCollectionPlan = mysqlTable(
+  'semen_collection_plan',
+  {
+    plan_id: varchar('plan_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(
+      () => companyMaster.company_id,
+      { onDelete: 'restrict' },
+    ),
+    plan_no: varchar('plan_no', { length: 30 }).notNull(),
+    // The breeding line: a breed.
+    breed_id: varchar('breed_id', { length: 36 })
+      .notNull()
+      .references(() => breedMaster.breed_id, { onDelete: 'restrict' }),
+    collection_date: date('collection_date', { mode: 'string' }).notNull(),
+    // MON..SUN and the ISO week of the date, kept so the lot label (Phase 5) and the lists need not work them out again.
+    weekday: varchar('weekday', { length: 3 }).notNull(),
+    week_no: int('week_no').notNull(),
+    week_year: int('week_year').notNull(),
+    status: varchar('status', { length: 12 }).default('PLANNED').notNull(), // PLANNED | COLLECTED | CANCELLED
+    requested_by: varchar('requested_by', { length: 100 }),
+    // The outside reference the line asks for (Breeding Web, for Z-Line).
+    reference: varchar('reference', { length: 100 }),
+    destination_farm_id: varchar('destination_farm_id', { length: 36 }),
+    notes: varchar('notes', { length: 500 }),
+    cancel_reason: varchar('cancel_reason', { length: 200 }),
+    created_by: varchar('created_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex('uq_semen_collection_plan_no').on(t.tenant_id, t.plan_no),
+    index('idx_semen_collection_plan_line_date').on(t.breed_id, t.collection_date),
+  ],
+);
+
+/** One boar of a plan, with the ranks he had when he was chosen. */
+export const semenCollectionPlanLine = mysqlTable(
+  'semen_collection_plan_line',
+  {
+    plan_id: varchar('plan_id', { length: 36 })
+      .notNull()
+      .references(() => semenCollectionPlan.plan_id, { onDelete: 'cascade' }),
+    boar_animal_id: varchar('boar_animal_id', { length: 36 })
+      .notNull()
+      .references(() => animalRegister.animal_id, { onDelete: 'restrict' }),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    collector_id: varchar('collector_id', { length: 36 }).references(
+      () => userMaster.user_id,
+      { onDelete: 'set null' },
+    ),
+    status: varchar('status', { length: 12 }).default('PLANNED').notNull(), // PLANNED | COLLECTED | SKIPPED
+    skip_reason: varchar('skip_reason', { length: 200 }),
+    // The collection this boar was tapped in.
+    semen_batch_id: varchar('semen_batch_id', { length: 36 }),
+    // His TSI, level and ranks when chosen (the table's own figures), so the plan reads as it was decided.
+    selection_snapshot: json('selection_snapshot').$type<Record<string, unknown> | null>(),
+    sort_order: int('sort_order').default(0).notNull(),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.plan_id, t.boar_animal_id] }),
+    index('idx_semen_collection_plan_line_boar').on(t.boar_animal_id),
+  ],
+);
+
+/**
+ * The body condition scale of a breeding line (migration 0238; SOP 21 Boar Body Condition Scoring): one row per score, with what it
+ * looks like, the action it needs and the feed it sets. A row with no breed is the company default scale. Edited in place: each
+ * assessment records what the scale said at the time, so history does not move. The client's figures are for them to enter.
+ */
+export const bcsScale = mysqlTable(
+  'bcs_scale',
+  {
+    scale_id: varchar('scale_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(
+      () => companyMaster.company_id,
+      { onDelete: 'restrict' },
+    ),
+    nob_id: varchar('nob_id', { length: 36 }).references(
+      () => nobMaster.nob_id,
+      { onDelete: 'restrict' },
+    ),
+    lob_id: varchar('lob_id', { length: 36 }).references(
+      () => lobMaster.lob_id,
+      { onDelete: 'restrict' },
+    ),
+    breed_id: varchar('breed_id', { length: 36 }).references(
+      () => breedMaster.breed_id,
+      { onDelete: 'restrict' },
+    ),
+    score: int('score').notNull(),
+    score_name: varchar('score_name', { length: 50 }),
+    // What the boar looks like at this score (the SOP's "Condition indicators").
+    indicators: varchar('indicators', { length: 300 }),
+    // What is to be done (the SOP's "Required action"), as text.
+    required_action: varchar('required_action', { length: 300 }),
+    // The feed level this score sets, in kg per day. Blank = this score does not change the feed.
+    feed_kg_per_day: decimal('feed_kg_per_day', { precision: 6, scale: 2 }),
+    // Whether a boar scored here is flagged for a health assessment, and for a medication review.
+    health_assessment_required: boolean('health_assessment_required').default(false).notNull(),
+    medication_review: boolean('medication_review').default(false).notNull(),
+    sop_reference: varchar('sop_reference', { length: 100 }),
+    is_active: boolean('is_active').default(true).notNull(),
+    status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  },
+  (table) => [
+    uniqueIndex('uq_bcs_scale_scope_line_score').on(
+      table.tenant_id,
+      sql`(coalesce(${table.company_id}, ''))`,
+      sql`(coalesce(${table.breed_id}, ''))`,
+      table.score,
+    ),
+  ],
+);
+
+/**
+ * One body condition assessment of a boar (migration 0238). It keeps what the scale said when it was made (the score's name, its
+ * action and its feed level), the feed level actually set (the scale's, or an override with its reason), the one before it, and
+ * when the next one is due. The newest record is the boar's current condition and feed level.
+ */
+export const boarConditionRecord = mysqlTable(
+  'boar_condition_record',
+  {
+    record_id: varchar('record_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(
+      () => companyMaster.company_id,
+      { onDelete: 'restrict' },
+    ),
+    boar_animal_id: varchar('boar_animal_id', { length: 36 })
+      .notNull()
+      .references(() => animalRegister.animal_id, { onDelete: 'restrict' }),
+    assessed_on: date('assessed_on', { mode: 'string' }).notNull(),
+    score: int('score').notNull(),
+    score_name: varchar('score_name', { length: 50 }),
+    required_action: varchar('required_action', { length: 300 }),
+    health_flag: boolean('health_flag').default(false).notNull(),
+    medication_review: boolean('medication_review').default(false).notNull(),
+    // What the scale said, what was set, and what it was before.
+    scale_feed_kg_per_day: decimal('scale_feed_kg_per_day', { precision: 6, scale: 2 }),
+    feed_kg_per_day: decimal('feed_kg_per_day', { precision: 6, scale: 2 }),
+    previous_feed_kg_per_day: decimal('previous_feed_kg_per_day', { precision: 6, scale: 2 }),
+    override_reason: varchar('override_reason', { length: 200 }),
+    next_due: date('next_due', { mode: 'string' }),
+    notes: varchar('notes', { length: 500 }),
+    created_by: varchar('created_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex('uq_boar_condition_boar_day').on(t.boar_animal_id, t.assessed_on),
+  ],
+);
+
 export const breedingRecordRelations = relations(
   breedingRecord,
   ({ one, many }) => ({
@@ -7474,6 +8434,31 @@ export const breedingRecordRelations = relations(
     farrowings: many(farrowingRecord),
   }),
 );
+
+/** Piglets fostered from one litter to another (migration 0214): the link between the donor's and the receiver's farrowing. */
+export const litterFoster = mysqlTable('litter_foster', {
+  foster_id: varchar('foster_id', { length: 36 })
+    .primaryKey()
+    .$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 })
+    .notNull()
+    .references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+  from_farrow_id: varchar('from_farrow_id', { length: 36 })
+    .notNull()
+    .references(() => farrowingRecord.farrow_id, { onDelete: 'restrict' }),
+  to_farrow_id: varchar('to_farrow_id', { length: 36 })
+    .notNull()
+    .references(() => farrowingRecord.farrow_id, { onDelete: 'restrict' }),
+  quantity: int('quantity').notNull(),
+  foster_date: date('foster_date', { mode: 'string' }).notNull(),
+  transfer_no: varchar('transfer_no', { length: 50 }),
+  notes: text('notes'),
+  created_by: varchar('created_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' })
+    .defaultNow()
+    .notNull(),
+});
 
 export const farrowingRecordRelations = relations(
   farrowingRecord,
@@ -8145,7 +9130,7 @@ export const requisitionLine = mysqlTable('requisition_line', {
   first_shortage_date: date('first_shortage_date', { mode: 'string' }),
   // Requisition §1 row 34, per line (0212): the urgency of this feed for this silo; escalate only.
   priority: varchar('priority', { length: 30 }),
-  // Rishi, 30 Oct (0214): the farm's own order for this line, 1 first, typed when drafting from a calculation; the mill ranks by it after shortage date and days left.
+  // Rishi, 30 Oct (0251): the farm's own order for this line, 1 first, typed when drafting from a calculation; the mill ranks by it after shortage date and days left.
   priority_no: int('priority_no'),
   unrounded_need_kg: decimal('unrounded_need_kg', { precision: 18, scale: 4 }),
   recommended_qty_kg: decimal('recommended_qty_kg', {
@@ -8394,5 +9379,45 @@ export const milkProductionLogRelations = relations(
       fields: [milkProductionLog.company_id],
       references: [companyMaster.company_id],
     }),
+  }),
+);
+
+/** 0250: the accounts of a class of items, set once and picked on the item. BIOLOGICAL holds the animal accounts; INVENTORY the stock and cost-of-sales accounts. */
+export const glPostingGroup = mysqlTable(
+  'gl_posting_group',
+  {
+    posting_group_id: varchar('posting_group_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).notNull(),
+    group_code: varchar('group_code', { length: 50 }).notNull(),
+    group_name: varchar('group_name', { length: 150 }).notNull(),
+    kind: varchar('kind', { length: 20 }).notNull(),
+    asset_gl_id: varchar('asset_gl_id', { length: 36 }),
+    accum_amort_gl_id: varchar('accum_amort_gl_id', { length: 36 }),
+    amort_expense_gl_id: varchar('amort_expense_gl_id', { length: 36 }),
+    fv_gain_gl_id: varchar('fv_gain_gl_id', { length: 36 }),
+    fv_loss_gl_id: varchar('fv_loss_gl_id', { length: 36 }),
+    writeoff_gl_id: varchar('writeoff_gl_id', { length: 36 }),
+    inventory_gl_id: varchar('inventory_gl_id', { length: 36 }),
+    cogs_gl_id: varchar('cogs_gl_id', { length: 36 }),
+    is_active: boolean('is_active').notNull().default(true),
+    status: varchar('status', { length: 20 }).notNull().default('ACTIVE'),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at').notNull().defaultNow(),
+    updated_at: timestamp('updated_at').notNull().defaultNow(),
+    deleted_at: timestamp('deleted_at'),
+  },
+  (table) => ({
+    codeUnique: uniqueIndex('uq_gl_posting_group_code').on(table.tenant_id, table.company_id, table.group_code),
+    companyFk: foreignKey({ columns: [table.company_id], foreignColumns: [companyMaster.company_id], name: 'gl_pg_company_id_fk' }).onDelete('restrict'),
+    assetFk: foreignKey({ columns: [table.asset_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_asset_gl_fk' }).onDelete('restrict'),
+    accumFk: foreignKey({ columns: [table.accum_amort_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_accum_gl_fk' }).onDelete('restrict'),
+    amortFk: foreignKey({ columns: [table.amort_expense_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_amort_gl_fk' }).onDelete('restrict'),
+    fvGainFk: foreignKey({ columns: [table.fv_gain_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_fv_gain_gl_fk' }).onDelete('restrict'),
+    fvLossFk: foreignKey({ columns: [table.fv_loss_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_fv_loss_gl_fk' }).onDelete('restrict'),
+    writeoffFk: foreignKey({ columns: [table.writeoff_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_writeoff_gl_fk' }).onDelete('restrict'),
+    inventoryFk: foreignKey({ columns: [table.inventory_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_inventory_gl_fk' }).onDelete('restrict'),
+    cogsFk: foreignKey({ columns: [table.cogs_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_cogs_gl_fk' }).onDelete('restrict'),
   }),
 );

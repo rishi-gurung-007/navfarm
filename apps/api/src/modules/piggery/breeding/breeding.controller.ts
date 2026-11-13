@@ -20,6 +20,7 @@ import {
   UpdatePregCheckDto,
   CreateFarrowingDto,
   UpdateWeaningDto,
+  CreateLitterFosterDto,
   CreateSemenCollectionDto,
   MatingDefaultsQueryDto,
 } from './dto/breeding.dto';
@@ -87,6 +88,18 @@ export class BreedingController {
     return await this.breedingService.recordFarrowing(dto, tenantId, req.user);
   }
 
+  @Post('farrowing/:id/foster')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'edit')
+  @ApiOperation({ summary: 'Foster piglets from this litter to another sow\'s litter: moves the head between the two piglet lots and links the farrowings' })
+  async fosterPiglets(
+    @Param('id') id: string,
+    @Body() dto: CreateLitterFosterDto,
+    @Req() req: any,
+  ) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    return await this.breedingService.fosterPiglets(id, dto, tenantId, req.user);
+  }
+
   @Patch('farrowing/:id/weaning')
   @RequirePermission('PIGGERY', 'ANIMAL', 'edit')
   @ApiOperation({ summary: 'Record litter weaning outcome, survival rate, and return sow to active' })
@@ -125,5 +138,22 @@ export class BreedingController {
   async getSemenBatches(@Req() req: any, @Query('company_id') companyId?: string) {
     const tenantId = req.user?.tenantId || req['tenantId'];
     return await this.breedingService.getSemenBatches(tenantId, companyId);
+  }
+
+  @Get('semen-collectors')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'view')
+  @ApiOperation({ summary: 'Users who hold the Semen Collector role, to name on a collection plan or a collection' })
+  async getSemenCollectors(@Req() req: any, @Query('company_id') companyId?: string) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const active = req?.headers?.['x-active-company-id'];
+    return { data: await this.breedingService.semenCollectors(tenantId, companyId || (typeof active === 'string' && active ? active : null)) };
+  }
+
+  @Get('semen-collection/:id')
+  @RequirePermission('PIGGERY', 'ANIMAL', 'view')
+  @ApiOperation({ summary: 'One collected semen lot with its boars, results, cost, QR and the services that used it' })
+  async getSemenLot(@Param('id') id: string, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    return await this.breedingService.getSemenLot(id, tenantId);
   }
 }

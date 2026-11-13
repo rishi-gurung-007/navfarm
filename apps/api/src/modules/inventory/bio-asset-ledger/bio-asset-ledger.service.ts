@@ -9,6 +9,7 @@ import {
   and,
   desc,
   isNotNull,
+  isNull,
   or,
   SQL,
   gte,
@@ -28,6 +29,11 @@ import {
   QueryBioAssetLedgerEntriesDto,
 } from './dto/bio-asset-ledger.dto';
 import { LEDGER_EXPORT_MAX_ROWS } from '../inventory-ledger/inventory-ledger-export';
+import {
+  assertBioMovement,
+  BIO_DOCUMENT_TYPES,
+  bioEventsCondition,
+} from './bio-asset-ledger.types';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import {
   animalOnFarm,
@@ -40,10 +46,10 @@ import {
 } from '../../../common/farm-scope';
 
 /**
- * Manual-entry API for the Bio-Asset Ledger (living/biological assets:
- * mortality, growth adjustment, fair-value changes, transformation). Nothing
- * auto-writes here yet — that requires Batch Management (Phase 5). This
- * exists so the table and API shape are ready for Phase 5 to build on.
+ * The Bio-Asset Ledger (living/biological assets: acquisition, mortality, transfer,
+ * growth adjustment, fair-value changes, transformation). Batch activation, batch
+ * mortality, batch transfers, goods receipts and animal registration write to it;
+ * this service reads it for the page and takes manual entries for the rest.
  */
 @Injectable()
 export class BioAssetLedgerService {
@@ -73,6 +79,7 @@ export class BioAssetLedgerService {
         'Farm-scoped biological-asset changes must be recorded through a batch or animal workflow.',
       );
     }
+    assertBioMovement(dto.transaction_type, dto.entry_type);
     const entryId = randomUUID();
 
     const costAmount = dto.cost_amount ?? null;
@@ -86,6 +93,9 @@ export class BioAssetLedgerService {
       company_id: dto.company_id,
       bio_asset_item_id: dto.bio_asset_item_id,
       entry_type: dto.entry_type,
+      transaction_type: dto.transaction_type,
+      // Not one of the events the app writes itself, so it is told apart from them by its document type.
+      document_type: BIO_DOCUMENT_TYPES.MANUAL_ENTRY,
       document_no: dto.document_no || null,
       posting_date: dto.posting_date,
       asset_tracking_type: dto.asset_tracking_type || null,
@@ -175,6 +185,10 @@ export class BioAssetLedgerService {
       );
     if (query.entryType)
       conditions.push(eq(schema.bioAssetLedger.entry_type, query.entryType));
+    if (query.transactionType)
+      conditions.push(
+        eq(schema.bioAssetLedger.transaction_type, query.transactionType),
+      );
 
     const limit = query.limit || 50;
     const offset = query.offset || 0;
@@ -194,7 +208,8 @@ export class BioAssetLedgerService {
   /**
    * The Bio Asset Ledger page (Rishi, 14 Oct): each GRN of animals (+N, with what remains to register), each animal's
    * registration (+1, taken from its GRN) and each death (-1), read like the Inventory Ledger — entry no., document,
-   * item, location, quantity, remaining, cost. Other bio-asset movements (a batch's feed, a transformation) stay off.
+   * item, location, quantity, remaining, cost. A batch's own bio-asset movements are on it too (19 Oct): the lot a
+   * farrowing or a batch input creates, and the transfers of head between batches. Feed and other costs stay off.
    */
   async entries(
     query: QueryBioAssetLedgerEntriesDto,
@@ -207,25 +222,24 @@ export class BioAssetLedgerService {
     const conditions: SQL[] = [
       eq(B.tenant_id, tenantId),
       ...this.scopeConditions(),
-      or(
-        eq(B.entry_type, 'PURCHASE'),
-        and(eq(B.entry_type, 'ACQUISITION'), isNotNull(B.animal_id)),
-        eq(B.entry_type, 'MORTALITY'),
-      )!,
+      // The events the page shows; feed, overhead, amortisation and the other costs stay off it.
+      bioEventsCondition(B, [
+        'PURCHASE',
+        'ACQUISITION',
+        'MORTALITY',
+        'TRANSFER_IN',
+        'TRANSFER_OUT',
+        'COST_ALLOCATION',
+      ]),
     ];
     if (entryId) conditions.push(eq(B.entry_id, entryId));
     if (query.companyId) conditions.push(eq(B.company_id, query.companyId));
     if (query.itemId) conditions.push(eq(B.bio_asset_item_id, query.itemId));
     if (query.warehouseId)
       conditions.push(eq(B.warehouse_id, query.warehouseId));
-    if (query.entryType === 'POSITIVE') conditions.push(gt(B.quantity, '0'));
-    if (query.entryType === 'NEGATIVE') conditions.push(lt(B.quantity, '0'));
-    if (query.transactionType === 'PURCHASE')
-      conditions.push(eq(B.entry_type, 'PURCHASE'));
-    if (query.transactionType === 'ANIMAL_REGISTRATION')
-      conditions.push(eq(B.entry_type, 'ACQUISITION'));
-    if (query.transactionType === 'MORTALITY')
-      conditions.push(eq(B.entry_type, 'MORTALITY'));
+    if (query.entryType) conditions.push(eq(B.entry_type, query.entryType));
+    if (query.transactionType)
+      conditions.push(eq(B.transaction_type, query.transactionType));
     if (query.dateFrom) conditions.push(gte(B.posting_date, query.dateFrom));
     if (query.dateTo) conditions.push(lte(B.posting_date, query.dateTo));
     if (query.documentNo?.trim()) {
@@ -251,6 +265,7 @@ export class BioAssetLedgerService {
         document_type: B.document_type,
         document_no: B.document_no,
         entry_type: B.entry_type,
+        transaction_type: B.transaction_type,
         item_id: B.bio_asset_item_id,
         item_code: schema.itemMaster.item_code,
         item_description: schema.itemMaster.item_name,
@@ -326,15 +341,6 @@ export class BioAssetLedgerService {
       source_grn_no: r.source_entry_id
         ? (sources.get(r.source_entry_id)?.document_no ?? null)
         : null,
-      transaction_type:
-        r.entry_type === 'MORTALITY'
-          ? 'MORTALITY'
-          : r.entry_type === 'PURCHASE'
-            ? 'PURCHASE'
-            : 'ANIMAL_REGISTRATION',
-      document_type:
-        r.document_type ??
-        (r.entry_type === 'MORTALITY' ? 'MORTALITY' : 'ANIMAL_REGISTRATION'),
     }));
   }
 
@@ -349,7 +355,7 @@ export class BioAssetLedgerService {
     const B = schema.bioAssetLedger;
     const loc = schema.locationMaster;
     const applications =
-      entry.entry_type === 'PURCHASE'
+      entry.document_type === BIO_DOCUMENT_TYPES.GOODS_RECEIPT
         ? await this.db
             .select({
               entry_id: B.entry_id,

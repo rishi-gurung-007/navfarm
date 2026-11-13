@@ -71,13 +71,15 @@ export interface MortalityEntry {
   dead_weight_kg: number;
   reason_id: string | null;
   reason_text: string | null;
+  /** Where the body went; null when not said. */
+  disposal_destination: string | null;
   /** The reason as shown in the movement log: the master's name, or the typed text. */
   reason_label: string;
   /** The animal's notes before death, so the typed cause can be appended rather than replace them. */
   notes: string | null;
 }
 
-const TERMINAL_ANIMAL_STATUSES = "('DEAD','SOLD','CULLED','SLAUGHTERED')";
+const TERMINAL_ANIMAL_STATUSES = "('DEAD','SOLD','CULLED','SLAUGHTERED','CONVERTED_INV')";
 
 /**
  * A consumption entry that has passed every check and is waiting to be issued. A day post collects them
@@ -139,6 +141,10 @@ export class BatchDailyDataService {
     return tenantDb;
   }
 
+  /**
+   * Posts one data-entry line for a day: checks it against the batch, stage and animal, then writes the batch transaction,
+   * stock movement and ledger rows it implies. `opts` lets a caller posting a whole day one line at a time defer the silo-level re-check to the end.
+   */
   async postEntry(
     batchId: string,
     dto: CreateBatchDailyDataDto,
@@ -520,7 +526,7 @@ export class BatchDailyDataService {
         // resolve, so it is left exactly as it was.
         let sourceWarehouseId: string | undefined;
         if (line.line_type === 'CONSUMPTION') {
-          // Serial numbers are issued from wherever they are: applyFifo finds the location that holds them
+          // Serial numbers are issued from wherever they are: allocateAndCostOutbound finds the location that holds them
           // and overrides this one, so the location resolved here is only the default.
           if (!sourceWarehouseId) {
             sourceWarehouseId = await this.resolveConsumptionWarehouse(
@@ -792,6 +798,7 @@ export class BatchDailyDataService {
                       dead_weight_kg: null as number | null,
                       reason_id: null,
                       reason_text: null,
+                      disposal_destination: null as string | null,
                       notes: null,
                     },
                   ];
@@ -809,12 +816,19 @@ export class BatchDailyDataService {
                     quantity: quantityEach,
                     uom: 'HEAD',
                     animal_id: e.animal_id ?? undefined,
-                    ...(e.reason_id || e.reason_text
+                    // The dead weight goes with the death: a costed breeding asset's write-off needs it (TDD row 10).
+                    ...(e.reason_id || e.reason_text || e.dead_weight_kg != null || e.disposal_destination
                       ? {
                           mortality_detail: {
                             ...(e.reason_id ? { reason_id: e.reason_id } : {}),
                             ...(e.reason_text
                               ? { cause_of_death: e.reason_text }
+                              : {}),
+                            ...(e.dead_weight_kg != null
+                              ? { weight_kg: e.dead_weight_kg }
+                              : {}),
+                            ...(e.disposal_destination
+                              ? { disposal_method: e.disposal_destination }
                               : {}),
                           },
                         }
@@ -919,7 +933,7 @@ export class BatchDailyDataService {
           if (!resourceId) {
             // Fallback 1: check if activity_master has default_resource_id
             try {
-              const [act] = await this.db
+              const [activityRow] = await this.db
                 .select({
                   default_resource_id:
                     schema.activityMaster.default_resource_id,
@@ -932,8 +946,8 @@ export class BatchDailyDataService {
                   ),
                 )
                 .limit(1);
-              if (act?.default_resource_id) {
-                resourceId = act.default_resource_id;
+              if (activityRow?.default_resource_id) {
+                resourceId = activityRow.default_resource_id;
               }
             } catch {
               // ignore
@@ -1160,7 +1174,7 @@ export class BatchDailyDataService {
   ) {
     const others = [...new Set(poolIds)].filter((id) => id !== primaryId);
     if (!others.length) return;
-    const own = await this.db
+    const animalsWithOwnCollection = await this.db
       .select({
         animal_id: schema.batchDailyData.animal_id,
         code: schema.animalRegister.animal_code,
@@ -1178,9 +1192,9 @@ export class BatchDailyDataService {
           isNotNull(schema.batchDailyData.entered_value),
         ),
       );
-    if (own.length) {
+    if (animalsWithOwnCollection.length) {
       throw new ConflictException(
-        `${own.map((o) => o.code).join(', ')} already ${own.length === 1 ? 'has' : 'have'} a collection of their own on this line for ${entryDate}. Clear it, or leave ${own.length === 1 ? 'him' : 'them'} out of the pool, so the doses are not counted twice.`,
+        `${animalsWithOwnCollection.map((animal) => animal.code).join(', ')} already ${animalsWithOwnCollection.length === 1 ? 'has' : 'have'} a collection of their own on this line for ${entryDate}. Clear it, or leave ${animalsWithOwnCollection.length === 1 ? 'him' : 'them'} out of the pool, so the doses are not counted twice.`,
       );
     }
   }
@@ -2004,7 +2018,7 @@ export class BatchDailyDataService {
             ? [eq(schema.animalRegister.current_stage_id, stageId)]
             : []),
           eq(schema.animalRegister.is_active, true),
-          sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED')`,
+          sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED','CONVERTED_INV')`,
         ),
       )
       .orderBy(schema.animalRegister.animal_code);
@@ -2089,6 +2103,7 @@ export class BatchDailyDataService {
           dead_weight_kg: number;
           reason_id?: string | null;
           reason_text?: string | null;
+          disposal_destination?: string | null;
         }>
       | undefined;
     const supplied = chosen !== undefined;
@@ -2100,6 +2115,7 @@ export class BatchDailyDataService {
           dead_weight_kg: Number(r.dead_weight_kg),
           reason_id: r.reason_id,
           reason_text: r.reason_text,
+          disposal_destination: r.disposal_destination,
         }));
       }
     }
@@ -2131,7 +2147,7 @@ export class BatchDailyDataService {
 
     const entries: MortalityEntry[] = [];
     for (const [i, c] of chosen.entries()) {
-      let who: string;
+      let deadAnimalLabel: string;
       let animal: (typeof alive)[number] | undefined;
       if (registered) {
         animal = c.animal_id ? aliveById.get(c.animal_id) : undefined;
@@ -2146,19 +2162,19 @@ export class BatchDailyDataService {
           );
         }
         seen.add(animal.animal_id);
-        who = `animal '${animal.animal_code}'`;
+        deadAnimalLabel = `animal '${animal.animal_code}'`;
       } else {
         if (c.animal_id) {
           throw new BadRequestException(
             'This batch has no registered animals alive at this stage, so no animal can be named.',
           );
         }
-        who = `dead animal ${i + 1}`;
+        deadAnimalLabel = `dead animal ${i + 1}`;
       }
       entries.push(
         this.mortalityEntry(
           c,
-          who,
+          deadAnimalLabel,
           reasonById,
           animal?.animal_id ?? null,
           animal?.notes ?? null,
@@ -2203,6 +2219,7 @@ export class BatchDailyDataService {
           dead_weight_kg: number;
           reason_id?: string | null;
           reason_text?: string | null;
+          disposal_destination?: string | null;
         }>
       | undefined;
     const supplied = chosen !== undefined;
@@ -2218,6 +2235,7 @@ export class BatchDailyDataService {
           dead_weight_kg: Number(r.dead_weight_kg),
           reason_id: r.reason_id,
           reason_text: r.reason_text,
+          disposal_destination: r.disposal_destination,
         }));
       }
     }
@@ -2271,6 +2289,9 @@ export class BatchDailyDataService {
       );
   }
 
+  /**
+   * The active Reason Master rows for the reasons chosen on a mortality entry, keyed by reason id.
+   */
   private async mortalityReasons(
     chosen: Array<{ reason_id?: string | null }>,
     tenantId: string,
@@ -2307,8 +2328,9 @@ export class BatchDailyDataService {
       dead_weight_kg: number;
       reason_id?: string | null;
       reason_text?: string | null;
+      disposal_destination?: string | null;
     },
-    who: string,
+    deadAnimalLabel: string,
     reasonById: Map<string, typeof schema.reasonMaster.$inferSelect>,
     animalId: string | null,
     notes: string | null,
@@ -2316,13 +2338,13 @@ export class BatchDailyDataService {
     const weight = Number(c.dead_weight_kg);
     if (!Number.isFinite(weight) || weight <= 0) {
       throw new BadRequestException(
-        `Enter the dead weight (kg, more than 0) for ${who}.`,
+        `Enter the dead weight (kg, more than 0) for ${deadAnimalLabel}.`,
       );
     }
     const text = c.reason_text?.trim() || null;
     if ((c.reason_id ? 1 : 0) + (text ? 1 : 0) !== 1) {
       throw new BadRequestException(
-        `Give ${who} a reason from the Reason Master, or type one - not both, not neither.`,
+        `Give ${deadAnimalLabel} a reason from the Reason Master, or type one - not both, not neither.`,
       );
     }
     let label: string;
@@ -2347,6 +2369,7 @@ export class BatchDailyDataService {
       dead_weight_kg: Math.round(weight * 1000) / 1000,
       reason_id: c.reason_id ?? null,
       reason_text: text,
+      disposal_destination: c.disposal_destination?.trim() || null,
       reason_label: label,
       notes,
     };
@@ -2391,6 +2414,7 @@ export class BatchDailyDataService {
         dead_weight_kg: e.dead_weight_kg.toString(),
         reason_id: e.reason_id,
         reason_text: e.reason_text,
+        disposal_destination: e.disposal_destination,
         posted,
         created_by: userId || null,
       })),
@@ -2478,6 +2502,7 @@ export class BatchDailyDataService {
         dead_weight_kg: Number(d.dead_weight_kg),
         reason_id: d.reason_id,
         reason_text: d.reason_text,
+        disposal_destination: d.disposal_destination,
       })),
       already_posted:
         posted?.entered_value != null ? Number(posted.entered_value) : 0,
@@ -2495,6 +2520,9 @@ export class BatchDailyDataService {
     };
   }
 
+  /**
+   * The data-entry rows a batch has for one date (404/403 through the batch scope check).
+   */
   async findForDate(batchId: string, entryDate: string, tenantId: string) {
     await this.batchService.findOne(batchId);
     return this.db

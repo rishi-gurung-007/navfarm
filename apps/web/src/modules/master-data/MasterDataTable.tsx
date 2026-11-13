@@ -1,5 +1,6 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
 import { NA } from '@/utils/na';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import { entityDisplayText } from '@/utils/code-name';
@@ -81,6 +82,8 @@ import { EntityLookupDialog, EntityLookupField } from './EntityLookupField';
 import { SearchableEntitySelect } from './SearchableEntitySelect';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ItemTemplateSelectModal } from './ItemTemplateSelectModal';
+import FairValueRatesDialog from './FairValueRatesDialog';
+import QcSpecDialog, { toApiLines, type QcSpecRow } from './QcSpecDialog';
 import { exportMasterRowsToCsv } from './utils/master-csv';
 import MasterDataImportModal from './MasterDataImportModal';
 
@@ -326,7 +329,7 @@ function displayValue(
     }
     return NA;
   }
-  const formatted = formatColumnValue(v, col);
+  const formatted = formatColumnValue(v, col, key);
   if (formatted !== undefined) return formatted;
   if (typeof v === 'boolean') return v ? yesLabel : noLabel;
   // A list column is a list of values, not the JSON that carried them. The euro
@@ -703,6 +706,10 @@ export function MasterDataTable({
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
+  const [ratesOpen, setRatesOpen] = useState(false);
+  const [qcSpecOpen, setQcSpecOpen] = useState(false);
+  // The QC checks typed on a new item, saved with it (a saved item's checks are read and saved through the API).
+  const [pendingQcSpec, setPendingQcSpec] = useState<QcSpecRow[]>([]);
   // A row command that asks for a reason is answered in a dialog (never a browser prompt).
   const [reasonCommand, setReasonCommand] = useState<{
     row: Row;
@@ -960,6 +967,13 @@ export function MasterDataTable({
               ),
           )
           .filter((f) => {
+            if (
+              config.key === 'item' &&
+              Boolean(form.is_biological_asset) &&
+              f.section?.toLowerCase() === 'inventory'
+            ) {
+              return false;
+            }
             if (config.key === 'stage') return true;
             if (isFieldVisible(f, form)) return true;
             if (f.filterOnly || f.booleanColumns || f.hideStoredWhenHidden)
@@ -974,7 +988,16 @@ export function MasterDataTable({
           })
       : formFields
           .filter((f) => !f.editOnly)
-          .filter((f) => config.key === 'stage' || isFieldVisible(f, form))
+          .filter((f) => {
+            if (
+              config.key === 'item' &&
+              Boolean(form.is_biological_asset) &&
+              f.section?.toLowerCase() === 'inventory'
+            ) {
+              return false;
+            }
+            return config.key === 'stage' || isFieldVisible(f, form);
+          })
   )
     .filter((f) => !entityRestrictionState(f, form, entityOptions)?.hidden)
     // Only the "no parent chosen yet" half hides the field; an empty filtered
@@ -1970,6 +1993,8 @@ export function MasterDataTable({
   const openCreate = () => {
     if (readOnly) return;
     setEditing(null);
+    setPendingQcSpec([]);
+    setQcSpecOpen(false);
     setIsManualNoAllowed(false);
     setTemplateLockedFields(new Set());
     const initial: Row = {};
@@ -2004,6 +2029,31 @@ export function MasterDataTable({
     }
     if (initialValues) {
       Object.assign(initial, initialValues);
+    }
+    if (config.key === 'item') {
+      if (initial.item_type) {
+        const valStr = String(initial.item_type).toUpperCase();
+        const types = (entityOptions['/item-type'] as Row[]) || [];
+        const matched = types.find(
+          (t: Row) =>
+            t.type_code === initial.item_type || t.id === initial.item_type,
+        );
+        const nameStr = String(matched?.type_name || '').toUpperCase();
+        if (
+          valStr === 'LIVING_ASSET' ||
+          valStr === 'LIVESTOCK' ||
+          valStr.startsWith('LA-') ||
+          valStr.startsWith('LA_') ||
+          nameStr.includes('LIVING') ||
+          nameStr.includes('LIVESTOCK')
+        ) {
+          initial.is_biological_asset = true;
+          initial.is_inventoriable = false;
+        }
+      }
+      if (initial.is_biological_asset) {
+        initial.is_inventoriable = false;
+      }
     }
     setForm(initial);
     setActiveFormTab('');
@@ -2091,6 +2141,32 @@ export function MasterDataTable({
     initial.item_name = '';
     initial.uom_primary = '';
     initial.withdrawal_days = '';
+
+    if (config.key === 'item') {
+      const typeCode = String(
+        initial.item_type || generatedItem.item_type || '',
+      ).toUpperCase();
+      const types = (entityOptions['/item-type'] as Row[]) || [];
+      const matched = types.find(
+        (t: Row) =>
+          t.type_code === initial.item_type || t.id === initial.item_type,
+      );
+      const nameStr = String(matched?.type_name || '').toUpperCase();
+      if (
+        typeCode === 'LIVING_ASSET' ||
+        typeCode === 'LIVESTOCK' ||
+        typeCode.startsWith('LA-') ||
+        typeCode.startsWith('LA_') ||
+        nameStr.includes('LIVING') ||
+        nameStr.includes('LIVESTOCK')
+      ) {
+        initial.is_biological_asset = true;
+        initial.is_inventoriable = false;
+      }
+      if (initial.is_biological_asset) {
+        initial.is_inventoriable = false;
+      }
+    }
 
     // Build the locked-field set: any key that received a non-empty, non-false
     // value from the template is locked so the user cannot override it.
@@ -2329,6 +2405,29 @@ export function MasterDataTable({
           !allowed.includes(next.resource_sub_type)
         ) {
           next.resource_sub_type = '';
+        }
+      }
+      if (config.key === 'item') {
+        if (key === 'item_type') {
+          const valStr = String(value || '').toUpperCase();
+          const types = (entityOptions['/item-type'] as Row[]) || [];
+          const matched = types.find(
+            (t: Row) => t.type_code === value || t.id === value,
+          );
+          const nameStr = String(matched?.type_name || '').toUpperCase();
+          if (
+            valStr === 'LIVING_ASSET' ||
+            valStr === 'LIVESTOCK' ||
+            valStr.startsWith('LA-') ||
+            valStr.startsWith('LA_') ||
+            nameStr.includes('LIVING') ||
+            nameStr.includes('LIVESTOCK')
+          ) {
+            next.is_biological_asset = true;
+            next.is_inventoriable = false;
+          }
+        } else if (key === 'is_biological_asset' && value === true) {
+          next.is_inventoriable = false;
         }
       }
       config.fields.forEach((f) => {
@@ -2695,6 +2794,16 @@ export function MasterDataTable({
             .filter((id) => form.attached_shed_dates[id])
             .map((id) => [id, form.attached_shed_dates[id]]),
         );
+      }
+
+      // A new QC-required item is saved with its checks; without them a receipt of it could never be posted.
+      if (config.key === 'item' && !editing && form.is_qc_required) {
+        if (pendingQcSpec.length === 0) {
+          throw new Error(
+            tLabel('QC Required needs at least one check. Add it under QC Specification.'),
+          );
+        }
+        payload.qc_specs = toApiLines(pendingQcSpec);
       }
 
       if (editing) {
@@ -3920,6 +4029,7 @@ export function MasterDataTable({
     // native control produced, so nothing downstream of this field changes.
     if (f.type === 'select') {
       let options = f.options || [];
+      if (f.filterOptions) options = f.filterOptions(options, form);
       if (
         (config.key === 'number-series' || config.key === 'no-series') &&
         f.key === 'document_type' &&
@@ -4123,9 +4233,8 @@ export function MasterDataTable({
                     label={t('mdShedEffectiveFrom')}
                     htmlFor={`attached-shed-from-${shedId}`}
                   >
-                    <input
+                    <DateInput
                       id={`attached-shed-from-${shedId}`}
-                      type="date"
                       className="nf-input-sm"
                       value={dates[shedId]?.effective_from ?? ''}
                       onChange={(e) =>
@@ -4137,9 +4246,8 @@ export function MasterDataTable({
                     label={t('mdShedEffectiveTo')}
                     htmlFor={`attached-shed-to-${shedId}`}
                   >
-                    <input
+                    <DateInput
                       id={`attached-shed-to-${shedId}`}
-                      type="date"
                       className="nf-input-sm"
                       value={dates[shedId]?.effective_to ?? ''}
                       onChange={(e) =>
@@ -4260,6 +4368,27 @@ export function MasterDataTable({
           )
         : undefined;
 
+    // A date is the app's own field: DD/MM/YY on screen, "YYYY-MM-DD" in the form.
+    if (f.type === 'date') {
+      return (
+        <DateInput
+          {...accessibility}
+          min={typeof f.min === 'string' ? f.min : undefined}
+          max={typeof f.max === 'string' ? f.max : undefined}
+          value={value ?? ''}
+          onChange={(e) => setField(f.key, e.target.value)}
+          placeholder={f.placeholder}
+          disabled={isDisabled}
+          className={`${inputCls} disabled:cursor-not-allowed disabled:opacity-70`}
+          style={
+            isDisabled
+              ? { ...S.input, backgroundColor: 'var(--surface-raised)' }
+              : S.input
+          }
+        />
+      );
+    }
+
     return (
       <input
         {...accessibility}
@@ -4270,11 +4399,9 @@ export function MasterDataTable({
               : 'text'
             : f.type === 'email'
               ? 'email'
-              : f.type === 'date'
-                ? 'date'
-                : f.type === 'time'
-                  ? 'time'
-                  : 'text'
+              : f.type === 'time'
+                ? 'time'
+                : 'text'
         }
         inputMode={
           f.type === 'number' && !useNativeNumber
@@ -4895,7 +5022,7 @@ export function MasterDataTable({
           <div
             className={
               selectedRow
-                ? 'grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]'
+                ? 'grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_480px]'
                 : undefined
             }
           >
@@ -5345,7 +5472,7 @@ export function MasterDataTable({
               )}
             </div>
             {selectedRow && detailFor === 'animal' && (
-              <div className="min-w-0 xl:sticky xl:top-4 xl:max-h-[calc(100dvh-8rem)]">
+              <div className="flex min-h-0 min-w-0 max-h-[calc(100dvh-8rem)] flex-col lg:sticky lg:top-4">
                 <AnimalDetailPanel
                   row={selectedRow}
                   onClose={() => setSelectedId(null)}
@@ -5416,6 +5543,36 @@ export function MasterDataTable({
         }
       >
         <div className="flex flex-col gap-4">
+          {config.key === 'item' &&
+            editing &&
+            editing.bio_costing_method === 'FAIR_VALUE' && (
+              <DialogHeaderActions>
+                <button
+                  type="button"
+                  onClick={() => setRatesOpen(true)}
+                  className="rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer"
+                  style={S.surface}
+                >
+                  {t('fvrButton')}
+                </button>
+              </DialogHeaderActions>
+            )}
+          {config.key === 'item' &&
+            (form.is_qc_required ?? editing?.is_qc_required) && (
+            <DialogHeaderActions>
+              <button
+                type="button"
+                onClick={() => setQcSpecOpen(true)}
+                className="rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer"
+                style={S.surface}
+              >
+                {tLabel('QC Specification')}
+                {!editing && pendingQcSpec.length > 0
+                  ? ` (${pendingQcSpec.length})`
+                  : ''}
+              </button>
+            </DialogHeaderActions>
+          )}
           {subDialogNames.length > 0 && (
             <DialogHeaderActions>
               {subDialogNames.map((name) => (
@@ -5439,6 +5596,13 @@ export function MasterDataTable({
             for (const f of visibleFields) {
               if (f.subDialog) continue;
               const s = f.section || DEFAULT;
+              if (
+                config.key === 'item' &&
+                Boolean(form.is_biological_asset) &&
+                s.toLowerCase() === 'inventory'
+              ) {
+                continue;
+              }
               if (!bySection.has(s)) {
                 bySection.set(s, []);
                 order.push(s);
@@ -5465,9 +5629,9 @@ export function MasterDataTable({
                         hint={
                           templateLockedFields.has(f.key)
                             ? '🔒 Set by template'
-                            : lockHint(f)
+                            : lockHint(f) ?? f.hintFor?.(form)
                         }
-                        tooltip={f.helpText}
+                        tooltip={f.helpTextFor?.(form) ?? f.helpText}
                         className={
                           f.type === 'textarea' ||
                           f.type === 'json' ||
@@ -5579,9 +5743,9 @@ export function MasterDataTable({
                       hint={
                         templateLockedFields.has(f.key)
                           ? '🔒 Set by template'
-                          : lockHint(f)
+                          : lockHint(f) ?? f.hintFor?.(form)
                       }
-                      tooltip={f.helpText}
+                      tooltip={f.helpTextFor?.(form) ?? f.helpText}
                       className={
                         f.type === 'textarea' ||
                         f.type === 'json' ||
@@ -5599,6 +5763,26 @@ export function MasterDataTable({
           })()}
         </div>
       </Dialog>
+
+      {config.key === 'item' && editing && (
+        <FairValueRatesDialog
+          itemId={String(editing[config.idKey])}
+          itemCode={editing.item_code}
+          open={modalOpen && ratesOpen}
+          onClose={() => setRatesOpen(false)}
+        />
+      )}
+
+      {config.key === 'item' && (
+        <QcSpecDialog
+          itemId={editing ? String(editing[config.idKey]) : null}
+          itemCode={editing?.item_code}
+          open={modalOpen && qcSpecOpen}
+          onClose={() => setQcSpecOpen(false)}
+          draft={pendingQcSpec}
+          onDraftChange={setPendingQcSpec}
+        />
+      )}
 
       {subDialogNames.map((name) => (
         <Dialog
@@ -5630,7 +5814,7 @@ export function MasterDataTable({
                   key={f.key}
                   label={tLabel(currentLabel(f, form))}
                   htmlFor={`master-${config.key}-${f.key}`}
-                  tooltip={f.helpText}
+                  tooltip={f.helpTextFor?.(form) ?? f.helpText}
                 >
                   {renderField(f)}
                 </Field>

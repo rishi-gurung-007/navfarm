@@ -15,6 +15,7 @@
  * Requisitions (Task 13) — rendering the identical document from the
  * identical API (Rishi 4 Oct; spec §6a).
  */
+import { DateInput } from '@/components/ui/date-input';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { api } from '@/services/api-client';
@@ -566,9 +567,8 @@ export function FeedRequisitionDetail({
       label={t('crqPostingDate')}
       htmlFor={`feed-${panel}-posting-date`}
     >
-      <input
+      <DateInput
         id={`feed-${panel}-posting-date`}
-        type="date"
         className="nf-input-sm"
         value={postingDate}
         onChange={(event) => setPostingDate(event.target.value)}

@@ -165,7 +165,7 @@ const placeholderCompany = (): Row => ({
 
 const auditLog = () => ({ log: jest.fn().mockResolvedValue({}) });
 
-const clsFor = (db: unknown) => ({ get: (key: string) => (key === 'tenantDb' ? db : undefined) }) as unknown as ClsService;
+const clsFor = (db: unknown) => ({ get: (key: string) => (key === 'tenantPostingTransaction' ? true : key === 'tenantDb' ? db : undefined) }) as unknown as ClsService;
 
 describe('new tenant -> wizard claims placeholder -> Stage preview/create', () => {
   const profile = {

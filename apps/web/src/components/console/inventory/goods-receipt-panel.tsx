@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -249,9 +251,8 @@ function TrackingLinesDialog({
                 >
                   {t('grpColExpiry')}
                 </label>
-                <input
+                <DateInput
                   id="grn-trk-expiry"
-                  type="date"
                   value={expiry}
                   onChange={(e) => setExpiry(e.target.value)}
                   className={inputCls}
@@ -370,9 +371,8 @@ function TrackingLinesDialog({
                 >
                   {t('grpColExpiry')}
                 </label>
-                <input
+                <DateInput
                   id="grn-trk-expiry-s"
-                  type="date"
                   value={expiry}
                   onChange={(e) => setExpiry(e.target.value)}
                   className={inputCls}
@@ -423,7 +423,7 @@ function SortButton({
 }
 
 export default function GoodsReceiptPanel() {
-  const { t } = useLanguage();
+  const { t, tLabel } = useLanguage();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -444,6 +444,9 @@ export default function GoodsReceiptPanel() {
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  // The number the next receipt will get from the Goods Receipt number series. A preview: nothing is drawn
+  // until the receipt is saved, so another user saving first takes it.
+  const [previewReceiptNo, setPreviewReceiptNo] = useState('');
   const [header, setHeader] = useState<Row>({
     warehouse_id: '',
     posting_date: '',
@@ -463,6 +466,8 @@ export default function GoodsReceiptPanel() {
   const { formatMoney } = useCompanyCurrency();
 
   const [viewing, setViewing] = useState<Row | null>(null);
+  // A receipt that bought animals says, per line, how many are registered; the column shows only then.
+  const hasAnimalLines = (viewing?.lines || []).some((l: Row) => l.animals_received != null);
   const [posting, setPosting] = useState(false);
   const requestedRecordId =
     typeof window === 'undefined'
@@ -568,7 +573,16 @@ export default function GoodsReceiptPanel() {
     });
     setLines([emptyLine()]);
     setFormError('');
+    setPreviewReceiptNo('');
     setModalOpen(true);
+    if (companyId) {
+      api
+        .get(
+          `/goods-receipt/next-number?company_id=${encodeURIComponent(companyId)}`,
+        )
+        .then((r) => setPreviewReceiptNo(unwrap<Row>(r)?.receipt_no || ''))
+        .catch(() => setPreviewReceiptNo(''));
+    }
   };
 
   // DRAFT-only: fetches the full receipt (list rows carry no lines) and
@@ -697,6 +711,7 @@ export default function GoodsReceiptPanel() {
       // an existing receipt's company cannot change) and the global pipe
       // rejects any undeclared property, so the PUT payload must omit it.
       let receiptId = editingId;
+      let qcHeld = '';
       let receiptNo: string =
         rows.find((r) => r.receipt_id === editingId)?.receipt_no || '';
       if (editingId) {
@@ -726,7 +741,10 @@ export default function GoodsReceiptPanel() {
       if (postNow) {
         if (!receiptId) throw new Error(t('grpFailedToPostReceipt'));
         try {
-          await api.post(`/goods-receipt/${receiptId}/post`, {});
+          const postedRes: any = await api.post(`/goods-receipt/${receiptId}/post`, {});
+          // A QC-required line has no inventory entry yet: it waits on its QC inspection.
+          const held = ((postedRes?.data ?? postedRes)?.lines ?? []).filter((l: any) => l.qc_inspection_no).map((l: any) => l.qc_inspection_no);
+          if (held.length) qcHeld = held.join(', ');
         } catch (postErr: any) {
           // The draft is saved; only the posting failed. Close the form so a
           // retry does not create a duplicate, and say where the receipt is.
@@ -740,6 +758,11 @@ export default function GoodsReceiptPanel() {
         }
       }
       // Say which receipt it was, and show it: the list goes back to page one, newest first.
+      if (qcHeld) {
+        showToast.info(
+          `${receiptNo ? `${receiptNo}: ` : ''}${tLabel('QC required. Stock will be posted to inventory when the QC inspection is completed:')} ${qcHeld}`,
+        );
+      }
       showToast.success(
         t(
           postNow
@@ -914,6 +937,9 @@ export default function GoodsReceiptPanel() {
                     />
                   </TableHead>
                 ))}
+                <TableHead className="whitespace-nowrap">
+                  {tLabel('QC Inspection')}
+                </TableHead>
                 <TableHead
                   className="text-right"
                   aria-sort={
@@ -941,7 +967,7 @@ export default function GoodsReceiptPanel() {
               {loading ? (
                 <tr>
                   <TableCell
-                    colSpan={6}
+                    colSpan={7}
                     className="py-10 text-center"
                     style={S.sub}
                   >
@@ -955,7 +981,7 @@ export default function GoodsReceiptPanel() {
               ) : rows.length === 0 ? (
                 <tr>
                   <TableCell
-                    colSpan={6}
+                    colSpan={7}
                     className="py-10 text-center"
                     style={S.sub}
                   >
@@ -973,7 +999,7 @@ export default function GoodsReceiptPanel() {
                       {row.receipt_no}
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>
-                      {row.posting_date}
+                      {formatDate(row.posting_date)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>
                       {warehouseLabel(row.warehouse_id)}
@@ -981,8 +1007,35 @@ export default function GoodsReceiptPanel() {
                     <TableCell className="whitespace-nowrap" style={S.sub}>
                       {row.external_reference_no || NA}
                     </TableCell>
+                    {/* The QC inspection holding a QC-required item's stock, opened straight from the row. */}
+                    <TableCell className="whitespace-nowrap text-xs" style={S.sub}>
+                      {(row.qc_inspections ?? []).length
+                        ? (row.qc_inspections as Row[]).map((qc, at) => (
+                            <span key={qc.inspection_id}>
+                              {at > 0 && ', '}
+                              <a
+                                href={`/inventory/qc-inspection?recordId=${encodeURIComponent(qc.inspection_id)}`}
+                                className="font-semibold underline"
+                                style={{ color: 'var(--accent)' }}
+                              >
+                                {qc.inspection_no}
+                              </a>
+                            </span>
+                          ))
+                        : NA}
+                    </TableCell>
                     <TableCell className="text-right">
-                      <StatusBadge status={row.status} />
+                      <div className="flex items-center justify-end gap-1.5">
+                        {(() => {
+                          const qcs: Row[] = row.qc_inspections ?? [];
+                          if (qcs.some((q) => q.status === 'OPEN'))
+                            return <StatusBadge status="PENDING" label={tLabel('Awaiting QC')} />;
+                          if (qcs.some((q) => q.status === 'PENDING_APPROVAL'))
+                            return <StatusBadge status="PENDING" label={tLabel('QC deviation awaiting approval')} />;
+                          return null;
+                        })()}
+                        <StatusBadge status={row.status} />
+                      </div>
                     </TableCell>
                     <TableCell className="text-right">
                       <button
@@ -1077,6 +1130,34 @@ export default function GoodsReceiptPanel() {
           />
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5 sm:col-span-2">
+              <label className="nf-text-label" style={S.sub}>
+                {t('grpColReceiptNo')}
+              </label>
+              {(() => {
+                const shownNo = editingId
+                  ? rows.find((r) => r.receipt_id === editingId)?.receipt_no ||
+                    ''
+                  : previewReceiptNo;
+                return (
+                  <input
+                    type="text"
+                    disabled
+                    value={
+                      shownNo || (editingId ? '—' : 'Auto-generated on Save')
+                    }
+                    className={`${inputCls} nf-input-sm text-xs h-9 font-mono font-semibold tracking-wide cursor-not-allowed opacity-70`}
+                    style={{
+                      ...S.input,
+                      backgroundColor: 'var(--surface-raised)',
+                      color: shownNo
+                        ? 'var(--text-primary)'
+                        : 'var(--text-muted)',
+                    }}
+                  />
+                );
+              })()}
+            </div>
             <div className="flex flex-col gap-1.5">
               <label className="nf-text-label" style={S.sub}>
                 {t('grpWarehouse')} <span className="text-(--danger)">*</span>
@@ -1105,8 +1186,7 @@ export default function GoodsReceiptPanel() {
               <label className="nf-text-label" style={S.sub}>
                 {t('grpPostingDate')} <span className="text-(--danger)">*</span>
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={header.posting_date}
                 onChange={(e) =>
                   setHeader((h) => ({ ...h, posting_date: e.target.value }))
@@ -1363,6 +1443,7 @@ export default function GoodsReceiptPanel() {
                         )}
                       </TableCell>
                       <TableCell className="px-2 py-1.5 min-w-[220px]">
+                        <div className="flex flex-wrap items-center gap-2">
                         {isLot || isSerial ? (
                           (() => {
                             const serialCount = String(line.serial_no || '')
@@ -1415,10 +1496,22 @@ export default function GoodsReceiptPanel() {
                             {t('grpTrkNo')}
                           </span>
                         )}
+                        {it?.is_qc_required && (
+                          <span
+                            className="shrink-0 rounded-[var(--radius-sm)] border px-1.5 py-0.5 text-[10px] font-bold uppercase"
+                            style={{
+                              color: 'var(--warning)',
+                              borderColor: 'var(--warning)',
+                            }}
+                            title={tLabel('QC required: stock is posted only when the QC inspection is accepted.')}
+                          >
+                            {tLabel('QC required')}
+                          </span>
+                        )}
+                        </div>
                       </TableCell>
                       <TableCell className="px-2 py-1.5 w-36">
-                        <input
-                          type="date"
+                        <DateInput
                           value={line.expiry_date}
                           onChange={(e) =>
                             setLineField(idx, 'expiry_date', e.target.value)
@@ -1444,6 +1537,24 @@ export default function GoodsReceiptPanel() {
               </TableBody>
             </table>
           </div>
+          {(() => {
+            const qcLines = lines
+              .map((l) => items.find((i) => i.item_id === l.item_id))
+              .filter((i) => i?.is_qc_required);
+            if (qcLines.length === 0) return null;
+            return (
+              <div
+                className="rounded-[var(--radius-sm)] border px-3 py-2 text-xs"
+                style={{ borderColor: 'var(--warning)', color: 'var(--text-secondary)' }}
+              >
+                <span className="font-semibold" style={{ color: 'var(--warning)' }}>
+                  {tLabel('QC required')}:
+                </span>{' '}
+                {[...new Set(qcLines.map((i) => i!.item_code))].join(', ')}.{' '}
+                {tLabel('Posting this receipt does not put these items into stock yet. It raises a QC inspection for each; the stock is posted when the inspection is completed and accepted. You will find it under Inventory > QC Inspections.')}
+              </div>
+            );
+          })()}
           <div className="flex items-center justify-end gap-3 px-1 text-xs">
             <span style={S.sub}>{t('grpReceiptTotal')}</span>
             <span className="font-mono text-sm font-semibold" style={S.primary}>
@@ -1517,7 +1628,7 @@ export default function GoodsReceiptPanel() {
                 >
                   {t('grpPostingDate')}
                 </p>
-                <p style={S.primary}>{viewing.posting_date}</p>
+                <p style={S.primary}>{formatDate(viewing.posting_date)}</p>
               </div>
               <div>
                 <p
@@ -1545,7 +1656,7 @@ export default function GoodsReceiptPanel() {
                   >
                     {t('grpPostedAt')}
                   </p>
-                  <p style={S.primary}>{viewing.posted_at}</p>
+                  <p style={S.primary}>{formatDate(viewing.posted_at)}</p>
                 </div>
               )}
             </div>
@@ -1578,6 +1689,16 @@ export default function GoodsReceiptPanel() {
                     <TableHead className="h-auto px-3 py-2 min-w-[220px]">
                       {t('grpColTracking')}
                     </TableHead>
+                    {(viewing.lines || []).some((l: Row) => l.qc_inspection_no) && (
+                      <TableHead className="h-auto px-3 py-2 min-w-[180px]">
+                        {tLabel('QC Inspection')}
+                      </TableHead>
+                    )}
+                    {hasAnimalLines && (
+                      <TableHead className="h-auto px-3 py-2 w-40 min-w-[140px]">
+                        {t('grpColRegistered')}
+                      </TableHead>
+                    )}
                   </tr>
                 </TableHeader>
                 <TableBody>
@@ -1641,6 +1762,50 @@ export default function GoodsReceiptPanel() {
                           <span style={S.muted}>{NA}</span>
                         )}
                       </TableCell>
+                      {(viewing.lines || []).some((x: Row) => x.qc_inspection_no) && (
+                        <TableCell className="px-3 py-2 text-xs" style={S.primary}>
+                          {l.qc_inspection_no ? (
+                            <a
+                              href={`/inventory/qc-inspection?recordId=${encodeURIComponent(l.qc_inspection_id)}`}
+                              className="underline"
+                              style={{ color: 'var(--accent)' }}
+                            >
+                              {l.qc_inspection_no}
+                            </a>
+                          ) : (
+                            <span style={S.muted}>{NA}</span>
+                          )}
+                          {l.qc_inspection_no && (
+                            <span className="ml-2" style={S.sub}>
+                              {l.qc_status === 'OPEN'
+                                ? tLabel('Awaiting QC')
+                                : l.qc_status === 'PENDING_APPROVAL'
+                                  ? tLabel('Deviation awaiting approval')
+                                  : l.qc_result === 'PASS'
+                                    ? tLabel('QC passed')
+                                    : tLabel('QC failed')}
+                            </span>
+                          )}
+                        </TableCell>
+                      )}
+                      {hasAnimalLines && (
+                        <TableCell className="px-3 py-2 text-xs" style={S.primary}>
+                          {l.animals_received == null ? (
+                            <span style={S.muted}>{NA}</span>
+                          ) : l.animals_awaiting_registration > 0 ? (
+                            <span style={{ color: 'var(--warning)' }}>
+                              {t('grpAwaitingRegistration', {
+                                done: l.animals_received - l.animals_awaiting_registration,
+                                total: l.animals_received,
+                              })}
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--success)' }}>
+                              {t('grpAllRegistered', { total: l.animals_received })}
+                            </span>
+                          )}
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>

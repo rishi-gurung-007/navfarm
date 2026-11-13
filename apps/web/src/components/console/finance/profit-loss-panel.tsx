@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from '@/components/ui/date-input';
 import { useEffect, useState } from "react";
 import { Loader2, Inbox } from "lucide-react";
 import { Toast } from "@/components/ui/toast";
@@ -98,11 +99,11 @@ export default function ProfitLossPanel() {
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5">
             <span className="text-[11px] font-medium" style={S.muted}>{t("plFromLabel")}</span>
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} style={S.input} />
+            <DateInput value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={inputCls} style={S.input} />
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-[11px] font-medium" style={S.muted}>{t("plToLabel")}</span>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} style={S.input} />
+            <DateInput value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={inputCls} style={S.input} />
           </div>
         </div>
       </div>

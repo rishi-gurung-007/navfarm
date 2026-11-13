@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { itemKindCondition } from './item-kind-filter';
 import {
@@ -6,6 +7,9 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
+import {
+  ACCOUNT_LABELS, accountsContradictingGroup, fieldsOfKind, groupFitsItem, itemColumnsFromGroup,
+} from '../../finance/gl-posting-group/gl-posting-group.rules';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import {
   eq,
@@ -17,8 +21,11 @@ import {
   getTableColumns,
   count,
   sql,
+  inArray,
 } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
+import { specProblems, specRowsToStore } from '../../inventory/qc-inspection/qc-inspection.rules';
+import { linesFromQcParameters } from '../item-qc-spec/qc-parameter-lines';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import {
@@ -37,6 +44,18 @@ import {
 import { assertCodeUnchanged } from '../../../common/master-code';
 import { isFeedTypeCode } from '../../../common/feed-form';
 import { lotBalances } from '../../inventory/inventory-ledger/lot-balance';
+import { recomputeStartsForItem } from '../../finance/bio-costing/bio-costing-start';
+import {
+  BIO_COSTING_COLUMNS,
+  BIO_GL_COLUMNS,
+  changedLockedBioColumns,
+  storedBioCosting,
+  validateItemBioCosting,
+  type BioCostingTerms,
+} from './item-bio-costing.rules';
+
+/** The tab's decimal columns: drizzle writes a decimal as a string. */
+const BIO_DECIMAL_COLUMNS = new Set<string>(['bio_residual_fixed_amount', 'bio_residual_weight_kg', 'bio_residual_price_per_kg']);
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -348,6 +367,12 @@ export class ItemService {
   }
 
   async create(dto: CreateItemDto, tenantId: string, userPayload?: any) {
+    // The number is drawn from the series inside this transaction, so a save that fails after it (a duplicate,
+    // a bad reference) rolls the counter back instead of burning the number.
+    return withTenantTransaction(this.cls, () => this.createRecord(dto, tenantId, userPayload));
+  }
+
+  private async createRecord(dto: CreateItemDto, tenantId: string, userPayload?: any) {
     const companyId = dto.company_id || null;
 
     // 1. Verify company exists (if provided)
@@ -447,9 +472,22 @@ export class ItemService {
           dto as unknown as Record<string, unknown>,
         );
 
+    const postingGroupId = await this.applyPostingGroup(dto as Record<string, any>, null, tenantId, companyId);
+    const bioTerms: BioCostingTerms = { ...this.bioTermsOf(dto), is_biological_asset: dto.is_biological_asset || false };
+    this.assertBioCosting(bioTerms);
+    await this.assertBioGlAccounts(bioTerms, tenantId, companyId);
+    if (dto.is_qc_required && dto.is_biological_asset) {
+      throw new BadRequestException('A biological asset cannot be QC required: animals are registered, not received into stock.');
+    }
+    // The checks of a QC-required item travel with it; they are dropped for an item that is not QC required.
+    const qcSpecs = await linesFromQcParameters(this.db, dto.is_qc_required ? (dto.qc_specs ?? []) : [], { tenantId, companyId });
+    const qcProblems = specProblems(qcSpecs);
+    if (qcProblems.length) throw new BadRequestException(qcProblems.join(' '));
+
     const itemId = randomUUID();
     const newItem = {
       item_id: itemId,
+      posting_group_id: postingGroupId ?? null,
       tenant_id: tenantId,
       company_id: companyId,
       category_id: dto.category_id || null,
@@ -470,7 +508,9 @@ export class ItemService {
       tracking_series_id: dto.tracking_series_id || null,
       is_biological_asset: dto.is_biological_asset || false,
       is_biological_costing_method: dto.is_biological_costing_method || null,
+      ...this.bioColumnsToWrite(bioTerms),
       is_inventoriable: dto.is_inventoriable ?? true,
+      is_qc_required: dto.is_qc_required ?? false,
       min_stock_level: dto.min_stock_level?.toString() || null,
       max_stock_level: dto.max_stock_level?.toString() || null,
       reorder_level: dto.reorder_level?.toString() || null,
@@ -499,6 +539,11 @@ export class ItemService {
     // Transactional save for item + attribute values mapping
     await this.db.transaction(async (tx) => {
       await tx.insert(schema.itemMaster).values(newItem);
+      if (qcSpecs.length) {
+        await tx.insert(schema.itemQcSpecLine).values(
+          specRowsToStore(qcSpecs, { tenantId, companyId, itemId, userId: userPayload?.userId, newId: randomUUID }),
+        );
+      }
 
       await this.recordUomConversion(tx, {
         tenantId,
@@ -882,10 +927,17 @@ export class ItemService {
       )
       .where(and(...conditions));
 
+    // The edit form reads the list row: it shows the accounts the item's posting group gives it, and locks the group once a run has charged its animals.
+    const groupTexts = await this.postingGroupAccountTexts(data.map((r) => r.posting_group_id as string));
+    const costed = await this.costedItemIds(data.filter((r) => r.is_biological_asset).map((r) => r.item_id as string));
     // The form locks Tracking while stock is on hand or an open document names the item.
     const rows = data.map((row) => ({
       ...row,
+      posting_group_accounts: row.posting_group_id ? groupTexts.get(row.posting_group_id as string) ?? '' : '',
+      bio_costing_locked: costed.has(row.item_id as string),
       tracking_locked: row.on_hand_qty > 0.0001 || row.open_documents > 0,
+      // The form locks Valuation Method for a biological asset (TDD: un-editable) and once the item has inventory entries.
+      valuation_locked: !!row.is_biological_asset || !!row.has_inventory,
     }));
     return { data: rows, total: Number(counted?.total ?? 0), limit, offset };
   }
@@ -1040,6 +1092,12 @@ export class ItemService {
       (dto.valuation_method || null) !== (item.valuation_method || null);
     if (!trackingChanged && !valuationChanged) return;
 
+    // TDD Item Card: "For Bio Asset = Normal Costing Method should be un-editable". The value it has when the item is (or becomes) a biological asset stays.
+    if (valuationChanged && item.is_biological_asset) {
+      throw new BadRequestException(
+        `Valuation Method cannot be changed because ${item.item_code} is a biological asset: its normal costing method is fixed. Its costing is the Bio Asset Costing tab's.`,
+      );
+    }
     if (valuationChanged && (await this.hasInventory(item.item_id))) {
       throw new BadRequestException(
         'Valuation Method cannot be changed because this item already has inventory entries. Create a new item if you need a different one.',
@@ -1070,6 +1128,127 @@ export class ItemService {
     }
   }
 
+  /** The tab's terms present in a DTO or a row (a key that was not sent is left out, so "not sent" differs from "cleared"). */
+  private bioTermsOf(src: object): BioCostingTerms {
+    const from = src as Record<string, unknown>;
+    const terms: Record<string, unknown> = {};
+    for (const c of BIO_COSTING_COLUMNS) if (from[c] !== undefined) terms[c] = from[c];
+    return terms as BioCostingTerms;
+  }
+
+  private assertBioCosting(terms: BioCostingTerms): void {
+    const problems = validateItemBioCosting(terms);
+    if (problems.length) throw new BadRequestException(problems.join(' '));
+  }
+
+  /** The tab's columns as they are stored: dropped for a non-biological item, defaulted for a costed one, decimals as strings. */
+  private bioColumnsToWrite(terms: BioCostingTerms): Record<string, unknown> {
+    const stored = storedBioCosting(terms);
+    const out: Record<string, unknown> = {};
+    for (const c of BIO_COSTING_COLUMNS) {
+      const v = stored[c];
+      out[c] = BIO_DECIMAL_COLUMNS.has(c) && v !== null ? String(v) : v;
+    }
+    return out;
+  }
+
+  /**
+   * The Posting Group of an item (plan 2026-11-13-posting-group-setup). Naming a group copies its accounts into the dto's account fields, so
+   * the checks and the copy that follow are the ones an account has always had. An item that has a group takes its accounts from it: accounts
+   * sent that differ are refused, and so is a costing method or kind the group cannot serve. Returns the value to store, or undefined to leave it.
+   */
+  private async applyPostingGroup(
+    dto: Record<string, any>,
+    current: { posting_group_id?: string | null; is_biological_asset?: boolean | null; bio_costing_method?: string | null; item_code?: string } | null,
+    tenantId: string,
+    companyId: string | null | undefined,
+  ): Promise<string | null | undefined> {
+    const sent: string | null | undefined = dto.posting_group_id === '' ? null : dto.posting_group_id;
+    if (sent === null) return null; // unlinked; the accounts stay as they are
+    const facts = {
+      is_biological_asset: dto.is_biological_asset !== undefined ? dto.is_biological_asset : current?.is_biological_asset,
+      bio_costing_method: dto.bio_costing_method !== undefined ? dto.bio_costing_method : current?.bio_costing_method,
+    };
+    const groupId = sent ?? current?.posting_group_id;
+    if (!groupId) return undefined;
+    const [group] = await this.db.select().from(schema.glPostingGroup).where(eq(schema.glPostingGroup.posting_group_id, groupId)).limit(1);
+    if (!group) throw new BadRequestException('The selected posting group does not exist.');
+    if (sent) {
+      if (group.tenant_id !== tenantId || (companyId && group.company_id !== companyId)) throw new BadRequestException("Select a posting group of the item's company.");
+      if (group.deleted_at || !group.is_active) throw new BadRequestException(`${group.group_code} is inactive.`);
+    }
+    const why = groupFitsItem(group as any, facts);
+    if (why) throw new BadRequestException(why);
+    const contradicting = sent ? [] : accountsContradictingGroup(group as any, dto);
+    if (contradicting.length) {
+      throw new BadRequestException(`The accounts of this item come from posting group ${group.group_code}; change the group to change them (${contradicting.join(', ')}).`);
+    }
+    if (sent) Object.assign(dto, itemColumnsFromGroup(group as any));
+    return sent ?? undefined;
+  }
+
+  /** The accounts of posting groups, one text per group (`label: code - name` per line), for the Item Card and the item list. */
+  private async postingGroupAccountTexts(groupIds: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const ids = [...new Set(groupIds.filter(Boolean))];
+    if (!ids.length) return out;
+    const groups = await this.db.select().from(schema.glPostingGroup).where(inArray(schema.glPostingGroup.posting_group_id, ids));
+    const accountIds = [...new Set(groups.flatMap((g) => fieldsOfKind(g.kind).map((f) => g[f]).filter((v): v is string => !!v)))];
+    const accounts = accountIds.length ? await this.db.select().from(schema.glAccountMaster).where(inArray(schema.glAccountMaster.gl_account_id, accountIds)) : [];
+    const byId = new Map(accounts.map((a) => [a.gl_account_id, `${a.account_code} - ${a.account_name}`]));
+    for (const g of groups) {
+      out.set(g.posting_group_id, fieldsOfKind(g.kind).filter((f) => g[f]).map((f) => `${ACCOUNT_LABELS[f]}: ${byId.get(g[f] as string) ?? '?'}`).join('\n'));
+    }
+    return out;
+  }
+
+  async postingGroupAccountsText(item: { posting_group_id?: string | null }): Promise<string> {
+    if (!item.posting_group_id) return '';
+    return (await this.postingGroupAccountTexts([item.posting_group_id])).get(item.posting_group_id) ?? '';
+  }
+
+  /** Of these items, the ones an animal of which a costing run has charged (their costing terms and group are then fixed). */
+  private async costedItemIds(itemIds: string[]): Promise<Set<string>> {
+    if (!itemIds.length) return new Set();
+    const rows = await this.db
+      .selectDistinct({ id: schema.animalRegister.item_id })
+      .from(schema.bioCostingRunLine)
+      .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.bioCostingRunLine.animal_id))
+      .where(and(inArray(schema.animalRegister.item_id, itemIds), eq(schema.bioCostingRunLine.status, 'CHARGED')));
+    return new Set(rows.map((r) => r.id as string));
+  }
+
+  private async assertBioGlAccounts(terms: BioCostingTerms, tenantId: string, companyId: string | null | undefined): Promise<void> {
+    const ids = BIO_GL_COLUMNS.map((c) => terms[c]).filter((v): v is string => typeof v === 'string' && v !== '');
+    if (!ids.length) return;
+    const found = await this.db
+      .select({ id: schema.glAccountMaster.gl_account_id })
+      .from(schema.glAccountMaster)
+      .where(
+        and(
+          inArray(schema.glAccountMaster.gl_account_id, ids),
+          eq(schema.glAccountMaster.tenant_id, tenantId),
+          eq(schema.glAccountMaster.is_active, true),
+          companyId
+            ? or(eq(schema.glAccountMaster.company_id, companyId), isNull(schema.glAccountMaster.company_id))
+            : isNull(schema.glAccountMaster.company_id),
+        ),
+      );
+    const ok = new Set(found.map((f) => f.id));
+    const missing = ids.find((i) => !ok.has(i));
+    if (missing) throw new BadRequestException(`GL account ${missing} is not an active account of this company.`);
+  }
+
+  /** How many charges animals of this item have had from a costing run. Once any has, the item's costing terms are locked. */
+  async costedAnimalCount(itemId: string): Promise<number> {
+    const [r] = await this.db
+      .select({ n: sql<string>`COUNT(*)` })
+      .from(schema.bioCostingRunLine)
+      .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.bioCostingRunLine.animal_id))
+      .where(and(eq(schema.animalRegister.item_id, itemId), eq(schema.bioCostingRunLine.status, 'CHARGED')));
+    return Number(r?.n ?? 0);
+  }
+
   async update(
     id: string,
     dto: UpdateItemDto,
@@ -1078,6 +1257,7 @@ export class ItemService {
   ) {
     const item = await this.findOne(id);
     await this.assertCostingAndTrackingUnlocked(item, dto);
+    const postingGroupId = await this.applyPostingGroup(dto as Record<string, any>, item as any, tenantId, item.company_id);
 
     if (dto.category_id) {
       const [category] = await this.db
@@ -1106,6 +1286,7 @@ export class ItemService {
       updated_by: userPayload?.userId || null,
       updated_at: toMysqlTimestamp(),
     };
+    if (postingGroupId !== undefined) updates.posting_group_id = postingGroupId;
 
     assertCodeUnchanged('Item', item.item_code, dto.item_code);
     if (dto.item_code && dto.item_code.trim() !== item.item_code) {
@@ -1264,6 +1445,15 @@ export class ItemService {
       updates.is_biological_costing_method = dto.is_biological_costing_method;
     if (dto.is_inventoriable !== undefined)
       updates.is_inventoriable = dto.is_inventoriable;
+    if (
+      (dto.is_qc_required ?? item.is_qc_required) &&
+      (dto.is_biological_asset ?? item.is_biological_asset)
+    )
+      throw new BadRequestException(
+        'A biological asset cannot be QC required: animals are registered, not received into stock.',
+      );
+    if (dto.is_qc_required !== undefined)
+      updates.is_qc_required = dto.is_qc_required;
     if (dto.min_stock_level !== undefined)
       updates.min_stock_level = dto.min_stock_level?.toString() || null;
     if (dto.max_stock_level !== undefined)
@@ -1307,6 +1497,49 @@ export class ItemService {
     if (dto.extension_config !== undefined)
       updates.extension_config = JSON.stringify(dto.extension_config);
 
+    // The animals' costing start dates to move when the item's start period is set or changes (an animal with feed or a run booked on the old date keeps hers).
+    let restart: { bio_start_age_weeks: number | null; bio_start_age_days: number | null } | null = null;
+    // TDD Item Card, Bio Asset Costing tab: what is stored overlaid by what was sent, checked as a whole. Once an animal of the item has been
+    // charged by a costing run the terms are locked (as a profile's were), and the item stays a biological asset.
+    if (
+      dto.is_biological_asset !== undefined ||
+      BIO_COSTING_COLUMNS.some((c) => (dto as Record<string, unknown>)[c] !== undefined)
+    ) {
+      const effective: BioCostingTerms = {
+        ...this.bioTermsOf(item),
+        ...this.bioTermsOf(dto),
+        is_biological_asset: dto.is_biological_asset ?? item.is_biological_asset,
+      };
+      this.assertBioCosting(effective);
+      const next = this.bioColumnsToWrite(effective);
+      const locked = changedLockedBioColumns(item as unknown as BioCostingTerms, next as BioCostingTerms);
+      const turnsOff = item.is_biological_asset && effective.is_biological_asset === false;
+      // Terms not yet set on the item (an item whose animals are still costed by a profile) can be set for the first time; only set terms lock.
+      if ((item.bio_costing_method && locked.length) || turnsOff) {
+        const costed = await this.costedAnimalCount(id);
+        if (costed > 0) {
+          throw new BadRequestException(
+            turnsOff
+              ? `${item.item_code} cannot stop being a biological asset: its animals have been charged by a costing run.`
+              : `The costing terms of ${item.item_code} cannot be changed (${locked.join(', ')}): its animals have been charged by a costing run.`,
+          );
+        }
+      }
+      await this.assertBioGlAccounts(effective, tenantId, item.company_id);
+      Object.assign(updates, next);
+      if (
+        next.bio_costing_method &&
+        (!item.bio_costing_method ||
+          item.bio_start_age_weeks !== next.bio_start_age_weeks ||
+          (item.bio_start_age_days ?? 0) !== (next.bio_start_age_days ?? 0))
+      ) {
+        restart = {
+          bio_start_age_weeks: next.bio_start_age_weeks as number | null,
+          bio_start_age_days: next.bio_start_age_days as number | null,
+        };
+      }
+    }
+
     const willBeActive =
       updates.status === 'ACTIVE' ||
       (item.status === 'DRAFT' && dto.status === 'ACTIVE');
@@ -1332,6 +1565,14 @@ export class ItemService {
         .update(schema.itemMaster)
         .set(updates)
         .where(eq(schema.itemMaster.item_id, id));
+
+      if (restart) {
+        await recomputeStartsForItem(tx as unknown as MySql2Database<typeof schema>, {
+          item_id: id,
+          tenant_id: item.tenant_id,
+          ...restart,
+        });
+      }
 
       await this.recordUomConversion(tx, {
         tenantId,

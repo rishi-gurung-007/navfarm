@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, like, or, isNull, count, sql, inArray, desc } from 'drizzle-orm';
+import { eq, and, like, or, isNull, count, sql, inArray, desc, asc } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -14,7 +14,12 @@ import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
+import { QcInspectionService } from '../qc-inspection/qc-inspection.service';
 import { itemKindOf } from '../../../common/item-kinds';
+import { bioCodes, bioEventCondition } from '../bio-asset-ledger/bio-asset-ledger.types';
+
+/** The Number Series master's "Applies To" key for GRNs, and the code of the series made when a company has none. */
+const GOODS_RECEIPT_SERIES = 'GOODS_RECEIPT';
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -32,6 +37,8 @@ export class GoodsReceiptService {
     // SiloFeedService is the one home for them.
     private readonly siloFeedService: SiloFeedService,
     private readonly numberSeriesService: NumberSeriesService,
+    // An item marked QC required is not written to the ledger here: an inspection is raised and the entry is written when it is accepted.
+    private readonly qcInspections: QcInspectionService,
     @Optional() private readonly feedAlerts?: FeedAlertService,
   ) { }
 
@@ -130,18 +137,45 @@ export class GoodsReceiptService {
     });
   }
 
-  private async generateReceiptNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
-    const [row] = await executor
-      .select({
-        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.goodsReceipt.receipt_no}, 4) AS UNSIGNED)), 0)`,
-      })
-      .from(schema.goodsReceipt)
-      .where(and(eq(schema.goodsReceipt.tenant_id, tenantId), eq(schema.goodsReceipt.company_id, companyId)))
-      .for('update');
-    const seq = Number(row?.maxSeq || 0) + 1;
-    return `GR-${String(seq).padStart(6, '0')}`;
+  /**
+   * The readable GRN number (GR-000001), from the company's Goods Receipt number series. The series is the
+   * one configured on the Number Series master with "Applies To" = Goods Receipt, whatever code it was given.
+   * A company that has none yet gets a GOODS_RECEIPT series made the first time a GRN is saved, carrying on
+   * after any receipt number it already holds, so a company that never opens the screen is still numbered and
+   * existing GR-nnnnnn numbers are neither reused nor renumbered. Call this before opening the transaction
+   * (it reads and may insert on the connection, not the transaction); generateNext then locks the series row
+   * inside the transaction until the receipt is inserted. Returns the series code to draw from.
+   */
+  private resolveReceiptSeries(tenantId: string, companyId: string): Promise<string> {
+    return this.numberSeriesService.seriesCodeForDocument(
+      tenantId,
+      companyId,
+      { seriesCode: GOODS_RECEIPT_SERIES, seriesName: 'Goods Receipt Number', documentType: GOODS_RECEIPT_SERIES, prefix: 'GR', separator: '-', seqLength: 6 },
+      async () => (await this.db.select({ no: schema.goodsReceipt.receipt_no }).from(schema.goodsReceipt)
+        .where(and(eq(schema.goodsReceipt.tenant_id, tenantId), eq(schema.goodsReceipt.company_id, companyId)))).map((r) => r.no),
+    );
   }
 
+  /**
+   * The number the next GRN will carry, for the New GRN form to show. A preview only: nothing is drawn, so the
+   * series does not move, and another user saving first takes the number (the form says so). With no series yet
+   * it is the number the first save would make — the one after the highest receipt the company holds.
+   */
+  async previewReceiptNo(companyId: string, tenantId: string): Promise<{ receipt_no: string }> {
+    assertCompanyInScope(farmScope(this.cls), companyId);
+    const preview: any = await this.numberSeriesService.previewCode({ master: GOODS_RECEIPT_SERIES } as any, tenantId, companyId);
+    if (preview?.generated && preview.preview) return { receipt_no: preview.preview };
+    const [row] = await this.db
+      .select({ maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.goodsReceipt.receipt_no}, 4) AS UNSIGNED)), 0)` })
+      .from(schema.goodsReceipt)
+      .where(and(eq(schema.goodsReceipt.tenant_id, tenantId), eq(schema.goodsReceipt.company_id, companyId), like(schema.goodsReceipt.receipt_no, 'GR-%')));
+    return { receipt_no: `GR-${String(Number(row?.maxSeq || 0) + 1).padStart(6, '0')}` };
+  }
+
+  /**
+   * Creates a DRAFT Goods Receipt Note with a number from the receipt series. The warehouse must be active and on the user's farm.
+   * Stock and the journal are written only when the receipt is posted.
+   */
   async create(dto: CreateGoodsReceiptDto, tenantId: string, userPayload?: any) {
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
     await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Location');
@@ -149,8 +183,9 @@ export class GoodsReceiptService {
     return withTenantTransaction(this.cls, async () => {
       const receiptId = randomUUID();
       let receiptNo = '';
+      const seriesCode = await this.resolveReceiptSeries(tenantId, dto.company_id);
       await this.db.transaction(async (tx) => {
-        receiptNo = await this.generateReceiptNo(tenantId, dto.company_id, tx);
+        receiptNo = await this.numberSeriesService.generateNext(seriesCode, tenantId, dto.company_id, tx);
         await tx.insert(schema.goodsReceipt).values({
           receipt_id: receiptId,
           tenant_id: tenantId,
@@ -182,6 +217,45 @@ export class GoodsReceiptService {
     });
   }
 
+  /**
+   * Refuses a serial number the item has already received. Run when a draft is saved with serials typed in, and
+   * again when the receipt posts: two drafts can carry the same serial, and the second to post must find the
+   * first one's stock in the ledger.
+   */
+  private async assertSerialsNotReceived(
+    executor: MySql2Database<typeof schema>,
+    tenantId: string,
+    itemId: string,
+    itemCode: string,
+    serials: string[],
+  ): Promise<void> {
+    if (serials.length === 0) return;
+    // The text search only narrows the rows; whole serials are compared below, so SN1 is not
+    // refused because SN10 was received.
+    const narrowed = await executor
+      .select({ serial_no: schema.inventoryLedger.serial_no })
+      .from(schema.inventoryLedger)
+      .where(
+        and(
+          eq(schema.inventoryLedger.tenant_id, tenantId),
+          eq(schema.inventoryLedger.item_id, itemId),
+          eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
+          or(...serials.map((s) => like(schema.inventoryLedger.serial_no, `%${s}%`)))!,
+        ),
+      )
+      .limit(1000);
+    const existingLedger = narrowed.filter((row) => serials.some((s) => hasSerial(row.serial_no, s))).slice(0, 1);
+    if (existingLedger.length > 0) {
+      throw new BadRequestException(
+        `Serial number from '${existingLedger[0].serial_no}' has already been received for item '${itemCode}'.`,
+      );
+    }
+  }
+
+  /**
+   * Inserts a draft's lines. A serial-tracked item needs a whole quantity and exactly that many serial numbers,
+   * which are taken from the item's number series when the line gives none.
+   */
   private async insertLines(
     receiptId: string,
     lines: CreateGoodsReceiptDto['lines'],
@@ -220,9 +294,14 @@ export class GoodsReceiptService {
               `Item '${item.item_code}' is lot-tracked — a Lot No. is required or a Tracking No. Series must be assigned.`,
             );
           }
-          const generated = await this.numberSeriesService.previewNextNumbersById(
+          // Taken, not previewed: two receipts saved at the same moment must not both be handed LOT-00007.
+          // The draw is inside this save's transaction, so a save that fails gives the number back.
+          const generated = await this.numberSeriesService.generateNextNumbersById(
             item.tracking_series_id,
             1,
+            tenantId,
+            companyId,
+            executor,
           );
           lotNo = generated.next_number;
         }
@@ -247,7 +326,7 @@ export class GoodsReceiptService {
             `Item '${item.item_code}' is serial-tracked — quantity must be a whole positive integer.`,
           );
         }
-        const qty = Math.round(quantityNum);
+        const serialCount = Math.round(quantityNum);
 
         let serials: string[] = [];
         if (line.serials && Array.isArray(line.serials) && line.serials.length > 0) {
@@ -260,9 +339,9 @@ export class GoodsReceiptService {
         }
 
         if (serials.length > 0) {
-          if (serials.length !== qty) {
+          if (serials.length !== serialCount) {
             throw new BadRequestException(
-              `Item '${item.item_code}' is serial-tracked: quantity is ${qty}, but ${serials.length} serial number(s) were provided.`,
+              `Item '${item.item_code}' is serial-tracked: quantity is ${serialCount}, but ${serials.length} serial number(s) were provided.`,
             );
           }
           const seen = new Set<string>();
@@ -273,38 +352,21 @@ export class GoodsReceiptService {
             seen.add(s);
           }
 
-          // The text search only narrows the rows; whole serials are compared below, so SN1 is not
-          // refused because SN10 was received.
-          const narrowed = await executor
-            .select({ serial_no: schema.inventoryLedger.serial_no })
-            .from(schema.inventoryLedger)
-            .where(
-              and(
-                eq(schema.inventoryLedger.tenant_id, tenantId),
-                eq(schema.inventoryLedger.item_id, item.item_id),
-                eq(schema.inventoryLedger.entry_type, 'POSITIVE'),
-                or(...serials.map((s) => like(schema.inventoryLedger.serial_no, `%${s}%`)))!,
-              ),
-            )
-            .limit(1000);
-          const existingLedger = narrowed.filter((row) => serials.some((s) => hasSerial(row.serial_no, s))).slice(0, 1);
-
-          if (existingLedger.length > 0) {
-            throw new BadRequestException(
-              `Serial number from '${existingLedger[0].serial_no}' has already been received for item '${item.item_code}'.`,
-            );
-          }
+          await this.assertSerialsNotReceived(executor, tenantId, item.item_id, item.item_code, serials);
         } else {
           if (!item.tracking_series_id) {
             throw new BadRequestException(
               `Item '${item.item_code}' is serial-tracked — Serial No.(s) are required or a Tracking No. Series must be assigned.`,
             );
           }
-          const gen = await this.numberSeriesService.previewNextNumbersById(
+          const generatedSerials = await this.numberSeriesService.generateNextNumbersById(
             item.tracking_series_id,
-            qty,
+            serialCount,
+            tenantId,
+            companyId,
+            executor,
           );
-          serials = gen.numbers;
+          serials = generatedSerials.numbers;
         }
 
         rowsToInsert.push({
@@ -312,10 +374,10 @@ export class GoodsReceiptService {
           receipt_id: receiptId,
           line_no: currentLineNo++,
           item_id: line.item_id,
-          quantity: qty.toString(),
+          quantity: serialCount.toString(),
           uom: line.uom,
           rate: line.rate?.toString() || null,
-          amount: line.rate ? (qty * line.rate).toString() : null,
+          amount: line.rate ? (serialCount * line.rate).toString() : null,
           lot_no: line.lot_no || null,
           serial_no: serials.join(', '),
           expiry_date: line.expiry_date || null,
@@ -344,6 +406,9 @@ export class GoodsReceiptService {
     }
   }
 
+  /**
+   * One receipt with its lines, if its warehouse and company are inside the user's scope; NotFound otherwise.
+   */
   async findOne(id: string) {
     const scope = farmScope(this.cls);
     const conditions = [eq(schema.goodsReceipt.receipt_id, id), isNull(schema.goodsReceipt.deleted_at)];
@@ -365,9 +430,48 @@ export class GoodsReceiptService {
       .from(schema.goodsReceiptLine)
       .where(eq(schema.goodsReceiptLine.receipt_id, id));
 
-    return { ...receipt, lines };
+    // TDD row 5: animals bought on a receipt must all be registered. The receipt is posted first and the animals registered from it after (each takes one from
+    // the receipt's Bio Asset Ledger entry), so what the receipt still owes is the entry's remaining count. Said per line for a biological asset.
+    const owed = new Map<string, { received: number; awaiting: number }>();
+    if (receipt.status === 'POSTED' && lines.length) {
+      const B = schema.bioAssetLedger;
+      const entries = await this.db
+        .select({ line: B.document_line_id, quantity: B.quantity, remaining: B.remaining_quantity })
+        .from(B)
+        .where(and(bioEventCondition(B, 'PURCHASE'), inArray(B.document_line_id, lines.map((l) => l.line_id))));
+      for (const e of entries) {
+        if (!e.line) continue;
+        const t = owed.get(e.line) ?? { received: 0, awaiting: 0 };
+        t.received += Math.floor(Number(e.quantity ?? 0));
+        t.awaiting += Math.floor(Number(e.remaining ?? 0));
+        owed.set(e.line, t);
+      }
+    }
+    // A line of a QC-required item has no ledger entry until its inspection is accepted: say where it stands.
+    const inspections = lines.length
+      ? await this.db
+          .select({ line: schema.qcInspection.source_line_id, id: schema.qcInspection.inspection_id, no: schema.qcInspection.inspection_no, status: schema.qcInspection.status, result: schema.qcInspection.result })
+          .from(schema.qcInspection)
+          .where(and(eq(schema.qcInspection.source_doc_type, 'GOODS_RECEIPT'), inArray(schema.qcInspection.source_line_id, lines.map((l) => l.line_id))))
+      : [];
+    const inspectionOf = new Map(inspections.map((i) => [i.line, i]));
+    return {
+      ...receipt,
+      lines: lines.map((l) => ({
+        ...l,
+        animals_received: owed.get(l.line_id)?.received ?? null,
+        animals_awaiting_registration: owed.get(l.line_id)?.awaiting ?? null,
+        qc_inspection_id: inspectionOf.get(l.line_id)?.id ?? null,
+        qc_inspection_no: inspectionOf.get(l.line_id)?.no ?? null,
+        qc_status: inspectionOf.get(l.line_id)?.status ?? null,
+        qc_result: inspectionOf.get(l.line_id)?.result ?? null,
+      })),
+    };
   }
 
+  /**
+   * A page of receipts in the user's scope. With `animalItemId` it instead lists posted receipts that still have animals left to register.
+   */
   async findAll(query: QueryGoodsReceiptDto, tenantId: string) {
     const conditions: any[] = [eq(schema.goodsReceipt.tenant_id, tenantId), isNull(schema.goodsReceipt.deleted_at)];
 
@@ -394,38 +498,38 @@ export class GoodsReceiptService {
       // The Source GRN picker of animal registration (Rishi, 14 Oct): a posted GRN whose Bio Asset Ledger entries for
       // this item still have an animal remaining — each registration takes one — with the unit cost of the entry the
       // next animal is taken from (the GRN's first line of the item that still has one).
-      const B = schema.bioAssetLedger;
+      const bioLedger = schema.bioAssetLedger;
       const entries = await this.db
-        .select({ receipt: schema.goodsReceipt, remaining: B.remaining_quantity, quantity: B.quantity, rate: B.cost_amount_each_unit })
+        .select({ receipt: schema.goodsReceipt, remaining: bioLedger.remaining_quantity, quantity: bioLedger.quantity, rate: bioLedger.cost_amount_each_unit })
         .from(schema.goodsReceipt)
         .innerJoin(schema.goodsReceiptLine, and(
           eq(schema.goodsReceiptLine.receipt_id, schema.goodsReceipt.receipt_id),
           eq(schema.goodsReceiptLine.item_id, query.animalItemId),
         ))
-        .innerJoin(B, and(eq(B.document_line_id, schema.goodsReceiptLine.line_id), eq(B.entry_type, 'PURCHASE')))
+        .innerJoin(bioLedger, and(eq(bioLedger.document_line_id, schema.goodsReceiptLine.line_id), bioEventCondition(bioLedger, 'PURCHASE')))
         .where(and(...conditions, eq(schema.goodsReceipt.status, 'POSTED')))
         .orderBy(desc(schema.goodsReceipt.created_at), desc(schema.goodsReceipt.receipt_no), schema.goodsReceiptLine.line_no);
       const byReceipt = new Map<string, { receipt: typeof entries[number]['receipt']; left: number; received: number; unitCost: number | null }>();
-      for (const e of entries) {
-        const r = byReceipt.get(e.receipt.receipt_id) ?? { receipt: e.receipt, left: 0, received: 0, unitCost: null };
-        const left = Math.floor(Number(e.remaining ?? 0));
-        r.left += left;
-        r.received += Math.floor(Number(e.quantity ?? 0));
-        if (r.unitCost === null && left >= 1 && e.rate != null) r.unitCost = Number(e.rate);
-        byReceipt.set(e.receipt.receipt_id, r);
+      for (const ledgerEntry of entries) {
+        const receiptTotals = byReceipt.get(ledgerEntry.receipt.receipt_id) ?? { receipt: ledgerEntry.receipt, left: 0, received: 0, unitCost: null };
+        const left = Math.floor(Number(ledgerEntry.remaining ?? 0));
+        receiptTotals.left += left;
+        receiptTotals.received += Math.floor(Number(ledgerEntry.quantity ?? 0));
+        if (receiptTotals.unitCost === null && left >= 1 && ledgerEntry.rate != null) receiptTotals.unitCost = Number(ledgerEntry.rate);
+        byReceipt.set(ledgerEntry.receipt.receipt_id, receiptTotals);
       }
       return [...byReceipt.values()]
-        .filter((r) => r.left >= 1)
+        .filter((receiptTotals) => receiptTotals.left >= 1)
         .slice(offset, offset + limit)
-        .map((r) => ({
-          ...r.receipt,
-          animals_left: r.left,
-          animals_left_label: `${r.left} of ${r.received} left`,
-          unit_cost: r.unitCost,
+        .map((receiptTotals) => ({
+          ...receiptTotals.receipt,
+          animals_left: receiptTotals.left,
+          animals_left_label: `${receiptTotals.left} of ${receiptTotals.received} left`,
+          unit_cost: receiptTotals.unitCost,
         }));
     }
 
-    return this.db
+    const receipts = await this.db
       .select()
       .from(schema.goodsReceipt)
       .where(and(...conditions))
@@ -434,14 +538,44 @@ export class GoodsReceiptService {
       .orderBy(desc(schema.goodsReceipt.created_at), desc(schema.goodsReceipt.receipt_no))
       .limit(limit)
       .offset(offset);
+
+    // A posted receipt of a QC-required item has its stock held on a QC inspection: the list names each one, so the receipt can be
+    // seen to be awaiting QC and its inspection opened from the row (client, 9 Nov).
+    const posted = receipts.filter((r) => r.status === 'POSTED').map((r) => r.receipt_id);
+    const inspections = posted.length
+      ? await this.db
+          .select({
+            receipt_id: schema.goodsReceiptLine.receipt_id,
+            inspection_id: schema.qcInspection.inspection_id,
+            inspection_no: schema.qcInspection.inspection_no,
+            status: schema.qcInspection.status,
+            result: schema.qcInspection.result,
+          })
+          .from(schema.qcInspection)
+          .innerJoin(schema.goodsReceiptLine, eq(schema.goodsReceiptLine.line_id, schema.qcInspection.source_line_id))
+          .where(and(eq(schema.qcInspection.source_doc_type, 'GOODS_RECEIPT'), inArray(schema.goodsReceiptLine.receipt_id, posted)))
+          .orderBy(asc(schema.qcInspection.inspection_no))
+      : [];
+    return receipts.map((r) => ({
+      ...r,
+      qc_inspections: inspections
+        .filter((i) => i.receipt_id === r.receipt_id)
+        .map(({ receipt_id: _receipt, ...i }) => i),
+    }));
   }
 
+  /**
+   * Refuses a change to a receipt that is no longer DRAFT.
+   */
   private assertDraft(receipt: { status: string }) {
     if (receipt.status !== 'DRAFT') {
       throw new BadRequestException(`GRN cannot be modified — it is already ${receipt.status}.`);
     }
   }
 
+  /**
+   * Edits a DRAFT receipt's header, and replaces its lines with the full set the Edit panel sends.
+   */
   async update(id: string, dto: UpdateGoodsReceiptDto, tenantId: string, userPayload?: any) {
     const receipt = await this.findOne(id);
     this.assertDraft(receipt);
@@ -490,6 +624,9 @@ export class GoodsReceiptService {
     });
   }
 
+  /**
+   * Cancels (soft-deletes) a DRAFT receipt and records it in the audit log.
+   */
   async remove(id: string, tenantId: string, userPayload?: any) {
     const receipt = await this.findOne(id);
     this.assertDraft(receipt);
@@ -571,6 +708,9 @@ export class GoodsReceiptService {
       // positive entry in the Bio Asset Ledger instead — the animals it brought in — which each animal registered
       // from this GRN is taken from (its remaining counts down).
       const lineItemIds = [...new Set(receipt.lines.map((l: { item_id: string }) => l.item_id))] as string[];
+      // Items marked QC required are not written to the ledger here: each line raises an inspection instead (see below).
+      const qcItemIds = await this.qcInspections.qcRequiredItemIds(lineItemIds);
+      let qcSeries: string | null = null;
       const bioItems = new Map((await this.db
         .select({ item_id: schema.itemMaster.item_id, nob_id: schema.itemMaster.nob_id, lob_id: schema.itemMaster.lob_id })
         .from(schema.itemMaster)
@@ -578,6 +718,19 @@ export class GoodsReceiptService {
 
       for (const line of receipt.lines) {
         const bioItem = bioItems.get(line.item_id);
+        const [trackedItem] = line.serial_no || line.lot_no
+          ? await this.db
+              .select({ item_code: schema.itemMaster.item_code, tracking_series_id: schema.itemMaster.tracking_series_id })
+              .from(schema.itemMaster)
+              .where(eq(schema.itemMaster.item_id, line.item_id))
+              .limit(1)
+          : [];
+        // A serial typed or generated on a draft can have been received by another receipt since: the draft check
+        // only saw what was in the ledger then. Checked again here, inside the posting transaction.
+        if (line.serial_no && !bioItem) {
+          const serialList = line.serial_no.split(/[\n,]+/).map((x: string) => x.trim()).filter(Boolean);
+          await this.assertSerialsNotReceived(this.db, tenantId, line.item_id, trackedItem?.item_code ?? line.item_id, serialList);
+        }
         if (bioItem) {
           const quantity = Number(line.quantity);
           const rate = line.rate == null ? null : Number(line.rate);
@@ -586,8 +739,7 @@ export class GoodsReceiptService {
             tenant_id: tenantId,
             company_id: receipt.company_id,
             bio_asset_item_id: line.item_id,
-            entry_type: 'PURCHASE',
-            document_type: 'GOODS_RECEIPT',
+            ...bioCodes.purchase(),
             document_no: receipt.receipt_no,
             document_line_id: line.line_id,
             posting_date: receipt.posting_date,
@@ -603,7 +755,44 @@ export class GoodsReceiptService {
             lob_id: bioItem.lob_id ?? null,
             created_by: userPayload?.userId || null,
           });
+          // The animals are an asset and are owed for: Dr Biological Assets / Cr Trade Payables for what the receipt says they cost. The animals registered from this
+          // receipt post nothing more (it is the receipt's). Where no BIO_ACQUISITION mapping is set up it posts no journal, as before.
+          const acquisitionCost = quantity * (rate ?? 0);
+          if (acquisitionCost >= 0.005 && (await this.glPostingService.hasMapping(tenantId, receipt.company_id, 'BIO_ACQUISITION', { nobId: bioItem.nob_id, lobId: bioItem.lob_id }))) {
+            await this.glPostingService.postBatchCostEntry({
+              tenantId, companyId: receipt.company_id, transactionType: 'BIO_ACQUISITION', amount: acquisitionCost, documentNo: receipt.receipt_no,
+              documentLineId: line.line_id, postingDate: receipt.posting_date, description: `Animals received — ${receipt.receipt_no}, ${quantity} head`,
+              nobId: bioItem.nob_id ?? undefined, lobId: bioItem.lob_id ?? undefined, sourceDocumentType: 'GOODS_RECEIPT', userId: userPayload?.userId,
+              // The class account the animals will be carried in, where the profiles that cover this item agree on one.
+              debitAccountId: await this.glPostingService.assetAccountForItem(tenantId, receipt.company_id, line.item_id),
+            });
+          }
         } else {
+          // A STANDARD-costed item goes into stock at its standard cost, and what was paid above or below it is the purchase price variance: it is
+          // posted beside the receipt's own journal (Dr Price Variance / Cr Payables when above). That needs the PRICE_VARIANCE and PURCHASE mappings;
+          // without them the item goes in at the price paid, as before.
+          let stockRate = line.rate ? Number(line.rate) : undefined;
+          let priceVariance = 0;
+          const [costing] = await this.db
+            .select({ valuation_method: schema.itemMaster.valuation_method, standard_cost: schema.itemMaster.standard_cost })
+            .from(schema.itemMaster)
+            .where(eq(schema.itemMaster.item_id, line.item_id))
+            .limit(1);
+          const standard = costing?.standard_cost != null ? Number(costing.standard_cost) : null;
+          if (costing?.valuation_method?.toUpperCase() === 'STANDARD' && standard != null && standard > 0 && stockRate !== undefined && Math.abs(stockRate - standard) > 1e-6
+            && (await this.glPostingService.hasMapping(tenantId, receipt.company_id, 'PRICE_VARIANCE'))
+            && (await this.glPostingService.hasMapping(tenantId, receipt.company_id, 'PURCHASE'))) {
+            priceVariance = (stockRate - standard) * Number(line.quantity);
+            stockRate = standard;
+          }
+          if (qcItemIds.has(line.item_id)) {
+            // QC required: no ledger entry and no journal yet. The inspection carries the rate and variance worked out above, and the
+            // entry is written when it is completed and the quantity accepted. Inside this transaction the series is read on it too.
+            qcSeries ??= await this.qcInspections.resolveSeries(tenantId, receipt.company_id);
+            await this.qcInspections.raiseForReceiptLine({
+              tenantId, seriesCode: qcSeries, userId: userPayload?.userId, receipt, line, rate: stockRate, priceVariance,
+            });
+          } else {
           const ledgerEntry = await this.ledgerService.writePositiveEntry({
             tenantId,
             companyId: receipt.company_id,
@@ -616,7 +805,7 @@ export class GoodsReceiptService {
             transactionType: 'PURCHASE',
             quantity: Number(line.quantity),
             uom: line.uom,
-            rate: line.rate ? Number(line.rate) : undefined,
+            rate: stockRate,
             lotNo: line.lot_no || undefined,
             serialNo: line.serial_no || undefined,
             expiryDate: line.expiry_date || undefined,
@@ -625,27 +814,19 @@ export class GoodsReceiptService {
           });
 
           await this.glPostingService.postInventoryLedgerEntry(ledgerEntry, userPayload?.userId);
+          if (priceVariance !== 0) await this.glPostingService.postPurchasePriceVariance(ledgerEntry, priceVariance, userPayload?.userId);
+          }
         }
 
-        if (line.serial_no || line.lot_no) {
-          try {
-            const [item] = await this.db
-              .select({ tracking_series_id: schema.itemMaster.tracking_series_id })
-              .from(schema.itemMaster)
-              .where(eq(schema.itemMaster.item_id, line.item_id))
-              .limit(1);
-
-            if (item?.tracking_series_id) {
-              if (line.serial_no) {
-                const serialList = line.serial_no.split(/[\n,]+/).map((s: string) => s.trim()).filter(Boolean);
-                const lastSerial = serialList[serialList.length - 1] || line.serial_no;
-                await this.numberSeriesService.recordLastNoUsed(item.tracking_series_id, lastSerial);
-              } else if (line.lot_no) {
-                await this.numberSeriesService.recordLastNoUsed(item.tracking_series_id, line.lot_no);
-              }
-            }
-          } catch {
-            // Non-fatal if recording tracking series fails or in unit test mocks
+        if (trackedItem?.tracking_series_id) {
+          // The numbers on a draft were taken when it was saved, so this only moves the series forward for a
+          // number typed in above the counter. A failure to record is logged by the series service.
+          if (line.serial_no) {
+            const serialList = line.serial_no.split(/[\n,]+/).map((x: string) => x.trim()).filter(Boolean);
+            const lastSerial = serialList[serialList.length - 1] || line.serial_no;
+            await this.numberSeriesService.recordLastNoUsed(trackedItem.tracking_series_id, lastSerial, this.db);
+          } else if (line.lot_no) {
+            await this.numberSeriesService.recordLastNoUsed(trackedItem.tracking_series_id, line.lot_no, this.db);
           }
         }
       }

@@ -10,6 +10,7 @@
  * answer (A11) but only sent once the user changes them — the farm's own
  * today is the API's to decide (D16).
  */
+import { DateInput } from '@/components/ui/date-input';
 import { useEffect, useRef, useState } from 'react';
 import { Trash2 } from 'lucide-react';
 import { api } from '@/services/api-client';

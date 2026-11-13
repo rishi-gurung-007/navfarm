@@ -54,7 +54,7 @@ describe('StageService', () => {
         StageService,
         {
           provide: ClsService,
-          useValue: { get: jest.fn().mockReturnValue(mockDb) },
+          useValue: { get: jest.fn((key: string) => (key === 'tenantPostingTransaction' ? true : mockDb)) },
         },
         {
           provide: AuditLogService,

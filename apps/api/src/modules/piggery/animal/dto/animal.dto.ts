@@ -54,6 +54,7 @@ const STATUSES = [
   'DEAD',
   'SOLD',
   'SLAUGHTERED',
+  'CONVERTED_INV',
 ] as const;
 export const DISPOSAL_TYPES = [
   'SOLD',
@@ -418,39 +419,9 @@ export class UpdateAnimalDto {
   @IsOptional()
   total_piglets_weaned?: number;
 
-  @ApiProperty({
-    description:
-      'Not ledger-derived yet — settable directly until per-animal bio-asset ledger integration exists',
-    required: false,
-  })
-  @IsNumber()
-  @IsOptional()
-  @Min(0)
-  current_bio_asset_value?: number;
-
-  @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
-  @Min(0)
-  total_amortised?: number;
-
-  @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
-  @Min(0)
-  book_value?: number;
-
-  @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
-  @Min(0)
-  residual_value?: number;
-
-  @ApiProperty({ required: false })
-  @IsNumber()
-  @IsOptional()
-  @Min(0)
-  amortisation_monthly?: number;
+  // current_bio_asset_value, total_amortised and book_value are not accepted here: they are derived from the
+  // animal's bio-asset ledger (AnimalBookValueService), and a typed value would part them from it.
+  // Neither is residual_value (an old column: her residual is her item's) or amortisation_monthly (her latest charge).
 
   @ApiProperty({ required: false })
   @IsDateString()
@@ -716,6 +687,39 @@ export class TransitionAnimalStageDto {
   @ApiProperty({ description: 'Additional notes', required: false })
   @IsString()
   @IsOptional()
+  remarks?: string;
+}
+
+/**
+ * Moves animals from one location (pen, crate, shed) to another without changing batch or stage. It never changes the
+ * farm: that is a batch transfer, which moves the animals' value with them (animal-placement.rules.ts).
+ */
+export class MoveAnimalLocationDto {
+  @ApiProperty({ description: 'Animals to move (one or more)', type: [String] })
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsUUID('4', { each: true })
+  animal_ids: string[];
+
+  @ApiProperty({ description: 'The pen, crate or shed they move to, on the farm of their batch' })
+  @IsUUID()
+  to_location_id: string;
+
+  @ApiProperty({ description: 'Date of the move; default today, never in the future', required: false, example: '2026-11-10' })
+  @IsOptional()
+  @IsDateString()
+  move_date?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reason?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
   remarks?: string;
 }
 

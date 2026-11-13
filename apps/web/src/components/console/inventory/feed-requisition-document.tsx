@@ -13,6 +13,7 @@
  * false nothing here is an input. "Current Silo Feed Item No." is not shown —
  * the workbook removed it (rows 12, 44).
  */
+import { DateInput } from '@/components/ui/date-input';
 import { consolidationHref } from './feed-consolidations-panel';
 import {
   FeedRequisitionHeaderFields,
@@ -1043,8 +1044,7 @@ export function FeedRequisitionDocument({
                     </td>
                     <td className={TD}>
                       {canEdit ? (
-                        <input
-                          type="date"
+                        <DateInput
                           className="nf-input-sm w-36 px-2"
                           style={inputStyle}
                           aria-label={t('rqdDeliveryFor', { line: seq })}

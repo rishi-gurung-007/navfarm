@@ -1,10 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, desc, getTableColumns } from 'drizzle-orm';
+import { eq, and, desc, getTableColumns, isNull, or, type SQL } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { QueryAlertDto } from './dto/alert.dto';
 import { batchOnFarm, batchReferenceScopeConditions, farmScope } from '../../../common/farm-scope';
+import { BIO_COSTING_ALERT_TYPE } from '../../finance/bio-costing/bio-costing.notice';
 
 const toMysqlTimestamp = (date: Date = new Date()) => date.toISOString().slice(0, 19).replace('T', ' ');
 
@@ -20,9 +21,27 @@ export class AlertService {
     return tenantDb;
   }
 
+  /**
+   * Who sees which alert. A batch alert is seen through its batch: the farm and business line of the user's scope. A costing notice (BIO_COSTING_DUE) belongs to a
+   * company, not a batch, so it is seen by anyone whose scope is that company, but not by a user held to one farm.
+   */
+  private scopeCondition(): SQL | undefined {
+    const col = schema.notificationAlertLog.batch_id;
+    const scope = farmScope(this.cls);
+    const viaBatch = batchReferenceScopeConditions(scope, col);
+    if (!viaBatch.length) return undefined;
+    if (scope.farmId) return and(...viaBatch);
+    const companyWide = and(
+      isNull(col), eq(schema.notificationAlertLog.alert_type, BIO_COSTING_ALERT_TYPE),
+      ...(scope.companyId ? [eq(schema.notificationAlertLog.company_id, scope.companyId)] : []),
+    );
+    return or(and(...viaBatch), companyWide);
+  }
+
   async findAll(query: QueryAlertDto, tenantId: string) {
     const conditions: any[] = [eq(schema.notificationAlertLog.tenant_id, tenantId)];
-    conditions.push(...batchReferenceScopeConditions(farmScope(this.cls), schema.notificationAlertLog.batch_id));
+    const visible = this.scopeCondition();
+    if (visible) conditions.push(visible);
 
     if (query.companyId) conditions.push(eq(schema.notificationAlertLog.company_id, query.companyId));
     if (query.batchId) conditions.push(eq(schema.notificationAlertLog.batch_id, query.batchId));
@@ -53,10 +72,11 @@ export class AlertService {
   // alerts span every company the tenant has — without this check a user
   // could mark another company's alert read just by guessing/enumerating IDs.
   async markRead(id: string, companyId: string, userPayload?: any) {
-    const conditions = [
+    const visible = this.scopeCondition();
+    const conditions: SQL[] = [
       eq(schema.notificationAlertLog.alert_id, id),
       eq(schema.notificationAlertLog.company_id, companyId),
-      ...batchReferenceScopeConditions(farmScope(this.cls), schema.notificationAlertLog.batch_id),
+      ...(visible ? [visible] : []),
     ];
     const [alert] = await this.db
       .select()
