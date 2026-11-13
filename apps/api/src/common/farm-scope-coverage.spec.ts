@@ -19,6 +19,7 @@ import { BoarConditionController } from '../modules/piggery/boar-condition/boar-
 import { GiltSelectionController } from '../modules/piggery/gilt-selection/gilt-selection.controller';
 import { PiggeryAnalyticsController } from '../modules/piggery/analytics/piggery-analytics.controller';
 import { FarrowingReportController } from '../modules/piggery/reports/farrowing-report.controller';
+import { MonthlyOpsController } from '../modules/piggery/reports/monthly-ops.controller';
 import { GoodsReceiptController } from '../modules/inventory/goods-receipt/goods-receipt.controller';
 import { QcInspectionController } from '../modules/inventory/qc-inspection/qc-inspection.controller';
 import { StockAdjustmentController } from '../modules/inventory/stock-adjustment/stock-adjustment.controller';
@@ -83,6 +84,7 @@ const SCOPED = {
   GiltSelectionController,
   PiggeryAnalyticsController,
   FarrowingReportController,
+  MonthlyOpsController,
   GoodsReceiptController,
   QcInspectionController,
   StockAdjustmentController,
@@ -149,6 +151,8 @@ const EXEMPT: Record<string, string> = {
     'Master data, not farm-specific.',
   'master-data/location-type/location-type.controller.ts':
     'Master data, not farm-specific.',
+  'master-data/accounting-period/accounting-period.controller.ts':
+    "Company master (Accounting Period Master); periods are company-wide, not a farm's.",
   'master-data/no-series/no-series.controller.ts':
     'Master data, not farm-specific.',
   'master-data/reason/reason.controller.ts': 'Master data, not farm-specific.',

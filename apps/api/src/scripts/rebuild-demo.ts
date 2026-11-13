@@ -78,6 +78,8 @@ export const MASTER_STEPS: Step[] = [
   // reason_master is empty on a fresh tenant: nothing else in the chain seeds it, and mortality, disposal,
   // transfer and adjustment entries all pick a reason from it. The 57 documented rows go in per company.
   { label: 'Documented reasons (mortality, disposal, transfer, adjustment ...)', script: 'seed-documented-reasons.ts', args: ['--apply'] },
+  // Accounting periods (12 months from April) and posting groups built from the starter chart: both masters are new with migrations 0250 and 0252, so they come after migrate-all-tenants and the starter chart.
+  { label: 'Accounting periods (Apr 2026 - Mar 2027) and posting groups', script: 'seed-accounting-periods-posting-groups.ts', args: ['--apply'] },
   { label: "Triple C's real farms and locations", script: 'seed-farm-locations.ts', args: ['--apply'] },
   { label: "Triple C's real resource and breed masters", script: 'seed-farm-masters.ts', args: ['--apply'] },
   // The demo item catalog (feed/vaccine/medicine/bio items) must exist before

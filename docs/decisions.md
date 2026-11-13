@@ -4466,7 +4466,7 @@ Built in Phases 1–6 of `docs/superpowers/plans/2026-10-20-central-bio-asset-co
 3. **A period is claimed once** (unique `active_key`); a period cannot be run behind a later posted one; Post recalculates, so a
    posted figure can differ from its preview. Reversal frees the period.
 4. **Life is counted from birth in 365-day years** (36 months = 1095 days), as the client's worked example does. Frequencies are
-   7 / 30 / 90 / 360 days; the 30-day basis drifts slightly and the last period takes the remainder. *Ours until D11.*
+   7 / 30 / 90 / 360 days; the 30-day basis drifts slightly and the last period takes the remainder. _Ours until D11._
 5. **A death clears accumulated amortisation** (Dr accumulated amortisation / Cr asset), `BIO_ASSET_EXIT`. The loss and gross
    legs of the BBP entry wait for D8 (the animal's acquisition cost never entered the GL).
 6. **The scheduler is off by default, calculates and waits unless the profile says `auto_post`**, retries a failed period
@@ -4485,12 +4485,12 @@ batch-tracked weaner / grower profiles.
 
 Two changes to the bio-asset costing built in Phases 4–6, both asked for by Arun after testing the Finance screen.
 
-1. **The run is made for a batch, not a profile.** *Finance > Bio-Asset Costing Runs* picks a batch (or "all batches") instead of a costing
+1. **The run is made for a batch, not a profile.** _Finance > Bio-Asset Costing Runs_ picks a batch (or "all batches") instead of a costing
    profile. A batch holds animals of several profiles, and a profile fixes the method, life, residual and GL accounts, so one run is made for
    **each profile the batch's animals carry**, each restricted to that batch (`POST /bio-costing/runs/calculate-batch`; migration 0212 puts
    `batch_id` on the run). A run that cannot be made is reported with its reason and does not stop the others; "Post all" posts the set.
    The controls are unchanged: an animal is charged once per method and period (unique key in the database), and a period cannot be run behind
-   a later posted one *for the same animals* (a run for the whole herd overlaps every batch; two different batches do not). The scheduler still
+   a later posted one _for the same animals_ (a run for the whole herd overlaps every batch; two different batches do not). The scheduler still
    makes whole-herd runs, and a run for one batch does not count as the profile's period being done.
 2. **A local animal may be amortised.** The system's refusal "a local breeding asset cannot be costed by amortisation" is removed; "an imported
    asset cannot be costed by fair value" stays. The seeded LOC-F and LOC-M profiles are now AMORTIZATION with the same start age and life as
@@ -4591,14 +4591,14 @@ Source: TDD row 6 event 2 (GILT SELECTION), BBP S.NO.5. API only; the screen is 
 1. **When.** BBP-1, gilt lifecycle: "Week 4: Gilt Selection Screen opens (auto alert). Each candidate gilt: Tag, DOB, ARR, Origin, Dam Tattoo, Teat Count (min 15 - hard block), Colour Tag, Birth
    Weight, Wean Weight, NOP"; alert "Gilt Week 4 Selection Due - open Gilt Selection screen required". Lactation is 28 days, so week 4 is weaning. The Finance BBP: "as piglets mature, a certain
    number shall be selected as Gilts"; their value moves from Current to Non-Current Biological Assets; class by mating line (Z+Z local GGP, Z+L local GP, Z+Tempo local Parent).
-2. **Built:** after a weaning is recorded on *Livestock > Breeding*, a banner offers "Select gilts" for that litter, and every weaned litter has a *Select gilts* action; both open the Gilt Selection screen
+2. **Built:** after a weaning is recorded on _Livestock > Breeding_, a banner offers "Select gilts" for that litter, and every weaned litter has a _Select gilts_ action; both open the Gilt Selection screen
    on the batch that now holds the piglets (the litter's lot, or the batch they were weaned into) with the litters listed, birth and weaning weights shown. API: `GET /piggery/gilt-selection/litter/:farrowId`.
 3. **Not built, from the same documents:** the automatic "Gilt Week 4 Selection Due" alert; the Z+Z / Z+L / Z+Tempo classing; ranking (top 2 GGP, next 18 GP, 50 PS); the tag format G[YY][WW][Seq]
    (the operator types the RFID, as the TDD says); the cost per piglet at birth (BBP: accumulated sow WIP cost / live born, Dr Piglets Inventory / Cr WIP) and the Dr Local Acquisition / Cr Piglets journal (D8, Phase 4).
 
 ## 22 Oct 2026 — Weaning and gilt selection in one form; the gilts shown as cards with their parents (Arun's instruction)
 
-1. **One place, one save.** The Wean form on *Livestock > Breeding* has a "Gilts from this litter (optional)" step: how many of the weaned piglets are kept as gilts, and for each her RFID, teat
+1. **One place, one save.** The Wean form on _Livestock > Breeding_ has a "Gilts from this litter (optional)" step: how many of the weaned piglets are kept as gilts, and for each her RFID, teat
    count (15 or more, blocked live) and birth date. `PATCH /piggery/breeding/farrowing/:id/weaning` takes `gilts` (+ `gilt_colour_code`, `gilt_item_id`, `gilt_animal_batch_id`). In one transaction:
    losses, the sow's lactation cost into the lot, then the gilts leave the lot at its value per head and are registered (`GiltSelectionService.selectAtWeaning`, a posted GS- selection), then
    only the rest are moved to the batch or stage (a move of nothing is skipped when every piglet became a gilt). Checks before anything is written: under 15 teats, more gilts than weaned.
@@ -4611,7 +4611,7 @@ Source: TDD row 6 event 2 (GILT SELECTION), BBP S.NO.5. API only; the screen is 
 
 1. **Fixed:** joining an animal-wise batch refused with "Batch BATCH-000002 has no stage to register the gilts in": such a batch has no stage of its own (each animal has hers). Gilts now take the
    **Gilt Rearing** stage (BBP: Wk 4-34) of the batch's company/NOB/LOB, else the batch's own stage, else the refusal says no Gilt Rearing stage is set up.
-2. **One by one.** *Create gilts* saves the selection as a draft at once and lists one card per gilt; each card has **Open full animal card**, which opens the whole *Add Animal Register* form (the Master Data
+2. **One by one.** _Create gilts_ saves the selection as a draft at once and lists one card per gilt; each card has **Open full animal card**, which opens the whole _Add Animal Register_ form (the Master Data
    form, all tabs) pre-filled from the selection: type GILT, female, breed, birth date, BORN ON FARM, entry date, item, source batch, acquisition cost (the lot's value per head), sire and dam, stage, placement,
    notes, plus what was typed on the card. Everything else (RFID, teats, TSI, grading, pen, productive life, notes ...) is filled in the form. Saving posts to
    `POST /piggery/gilt-selection/:id/lines/:lineId/gilt`, which keeps all the form's fields but fixes what the selection decides (lineage, entry type, cost per head), refuses under 15 teats, takes one head
@@ -4625,15 +4625,16 @@ Source: TDD row 6 event 2 (GILT SELECTION), BBP S.NO.5. API only; the screen is 
 ## 22 Oct 2026 — Gilts can be selected before the weaning, at week 4 and after; each carries her own litter's cost per pig (Arun's instruction)
 
 BBP-1: the gilt selection screen opens at week 4 (the weaning); BBP Finance: the acquisition value of a selected gilt is the piglet cost from the sow ("Cost per Piglet = accumulated WIP cost per sow / piglets"), per sow, not a batch average.
-1. **When.** *Select gilts* is on every litter of the Farrowing & Litters list, weaned or not, and on the screen the litter shows its age in weeks and when it reaches week 4 ("week 4 on ..."). Nothing stops a
+
+1. **When.** _Select gilts_ is on every litter of the Farrowing & Litters list, weaned or not, and on the screen the litter shows its age in weeks and when it reaches week 4 ("week 4 on ..."). Nothing stops a
    selection before or after; the head must still be in the batch.
-2. **Cost per pig, per sow** (`LitterCostService`, shared with the weaning). *Before the weaning* the sow's capitalised lactation cost to the selection date is moved into the litter's lot first (her card falls, the lot
+2. **Cost per pig, per sow** (`LitterCostService`, shared with the weaning). _Before the weaning_ the sow's capitalised lactation cost to the selection date is moved into the litter's lot first (her card falls, the lot
    rises), and each gilt leaves at the lot's average, which is that litter's alone, so each carries (the sow's cost to that day) / (head in the lot). The weaning then moves only what had not been moved
-   (already-moved aware) and records the litter's cost per piglet = all moved / piglets weaned (gilts picked earlier included). *After the weaning*, a litter still alone in its lot carries the lot's average; a litter that
+   (already-moved aware) and records the litter's cost per piglet = all moved / piglets weaned (gilts picked earlier included). _After the weaning_, a litter still alone in its lot carries the lot's average; a litter that
    was moved into a batch with others carries ITS recorded cost per piglet (0 if none was recorded: the batch's average was never hers), and the batch loses exactly that
    (`releaseHeadToAnimals` with `value_per_head`). One release per litter, so gilts of two litters in one batch each carry their own.
 3. **Weaning after early gilts:** the weaned head the form asks for is what the lot holds now; the litter's weaned total adds the gilts picked before (message: "9 piglets weaned (2 already selected as gilts)").
-4. **Where it shows.** *Livestock > Gilt Selection* has two tabs, *Select gilts* and *Selection history*; *Livestock > Breeding* has a *Gilt Selections* tab with the same list; each selection opens to its gilts as cards with
+4. **Where it shows.** _Livestock > Gilt Selection_ has two tabs, _Select gilts_ and _Selection history_; _Livestock > Breeding_ has a _Gilt Selections_ tab with the same list; each selection opens to its gilts as cards with
    dam, sire, litter and the cost per pig carried; a draft can be continued from either.
 5. **Proof (nf_devco, restored afterwards):** litter of 10 born 5 Oct, sow cost 16.50 capitalised. 15 Oct (before weaning): 2 gilts from the screen, 1.6501 each (16.5006 / 10). 19 Oct weaning of 7 more with 1 gilt and the
    rest moved to BATCH-000003 (104 head, 6 204): 5.5002 more moved, litter cost per piglet 2.4445 (22.0008 / 9), the weaning gilt 2.4358 (the lot's average after a loss). 22 Oct, after weaning, from the mixed batch: a gilt of this litter
@@ -4644,6 +4645,7 @@ BBP-1: the gilt selection screen opens at week 4 (the weaning); BBP Finance: the
 ## 22 Oct 2026 — The litter's cost at birth, and its journal (Arun: "yes, build it"; the window is an assumption awaiting Finance)
 
 BBP Finance, "Production Cost Allocation to Piglets": "Cost per Piglet = Total Accumulated WIP Cost (per sow) / Total Live Piglets Born. Dr Piglets Inventory (Current Biological Asset) / Cr Biological Asset WIP".
+
 1. **Built** (`LitterCostService.allocateAtBirth`, called by the farrowing): when a farrowing makes the piglet lot, the sow's capitalised feed, drug and overhead on her bio-asset ledger **from her mating date to the day before the
    farrowing** (her WIP; ASSUMPTION, Finance to confirm the window and what counts) move into the lot, her own part against her card, her share of the batch's overhead against the batch. The litter opens at that cost: cost per piglet =
    cost / piglets born alive, written to the farrowing record. A sow past her costing start has her feed expensed, so her WIP is nil and the litter opens at nil as before.
@@ -4660,10 +4662,10 @@ BBP Finance, "Production Cost Allocation to Piglets": "Cost per Piglet = Total A
 
 ## 22 Oct 2026 — Gilts are selected from the litter on the Breeding page; the Gilt Selection screen is gone; the week-4 alert (Arun's instruction)
 
-1. **One place.** The *Livestock > Gilt Selection* sidebar entry and screen are removed (the old address redirects to Breeding). Gilts are selected from the litter itself on *Livestock > Breeding > Farrowing & Litters*: a **Select gilts**
+1. **One place.** The _Livestock > Gilt Selection_ sidebar entry and screen are removed (the old address redirects to Breeding). Gilts are selected from the litter itself on _Livestock > Breeding > Farrowing & Litters_: a **Select gilts**
    button on every litter, weaned or not, opens a dialog that needs no batch (the piglets are found from the litter). Step 1 shows the litter (dam, sire, lot, age and week 4, born alive, piglets in the lot, left to select, the cost per pig
    a gilt will carry) and asks how many gilts, the date, an optional colour and an optional animal-wise batch to join; step 2 is one card per gilt, each through the full animal register form or all together; then the gilts created. The history is the
-   *Gilt Selections* tab of the same page, whose drafts continue in the same dialog. The weaning form still offers gilts at the weaning.
+   _Gilt Selections_ tab of the same page, whose drafts continue in the same dialog. The weaning form still offers gilts at the weaning.
 2. **Week-4 alert (BBP: "Gilt Week 4 Selection Due", CRITICAL, to the farm manager, "open the Gilt Selection screen"):** a litter still on its sow 28 days after the farrowing shows a banner on the Farrowing & Litters tab ("select the gilts you want to keep, or wean all
    the piglets") with **Select gilts** and **Wean all piglets** (the weaning form opens with the head the lot holds filled in), a chip on its row, and one alert in the alert log (`GILT_WEEK4`, raised the first time the list is read after
    week 4, never repeated). The farmer may select gilts or just wean everything: nothing forces the selection.
@@ -4693,7 +4695,7 @@ BBP Finance, "Production Cost Allocation to Piglets": "Cost per Piglet = Total A
 1. **The seed.** `pnpm seed:costing-test` (preset `costing-test`: masters, the costing profiles, then chapter `16-costing-test` only, then `verify-costing-test.ts`) drops and rebuilds the databases and lives 4 sows and 4 boars (batch A imported, batch B local) from purchase to
    gilts, with every costing case in it (capitalise before the start / expense after it, part-months, an animal on arrival, an old boar to the end of his life, a death, a changed company residual and an animal's own, semen with amortisation, drugs costed,
    a litter at the sow's cost, one gilt selection, a reversal). 109 checks read back from MySQL against their own arithmetic pass; the guards each refuse. Report: `docs/COSTING-TEST-REPORT-2026-10-22.md`.
-2. **Defects fixed.** (a) the "due for costing" notice counted a batch whose animals could not be costed yet (the gilts) as owed a run, and *Run due now* would have failed behind posted months; (b) the IAS 41 roll-forward counted a purchased animal twice
+2. **Defects fixed.** (a) the "due for costing" notice counted a batch whose animals could not be costed yet (the gilts) as owed a run, and _Run due now_ would have failed behind posted months; (b) the IAS 41 roll-forward counted a purchased animal twice
    (the receipt's PURCHASE row and her own ACQUISITION row): closing 10 607 against a true 3 307; (c) an animal's birth date could be edited after costing began without moving her start: now refused once anything is booked on her, and moves her start before that.
 3. **Still open, unchanged:** D8 (the purchase posts no journal, so the GL differs from the ledger by the animals' cost, 1060 goes negative after a death clearing, 1055 keeps the litter's birth cost after the gilts leave), sale/cull/transfer-out of an amortised animal, a sow past her start giving her litter almost nothing.
 
@@ -4745,8 +4747,8 @@ Script `pnpm nx run api:db-move-profiles-to-items` (read-only by default; `-- --
 3. **Residual is what the profile way would have charged today:** the company residual setting in force today for the item's sex, else the profile's own rule. If the setting changed over time the item takes today's and the note says earlier months keep what their runs recorded. An item of both sexes with different company residuals is a conflict.
 4. **Nothing in history is touched.** No run is edited and no animal's profile is cleared (an item with terms wins over a profile anyway; the profile goes in Phase 4/5). Instead the item reads the profile runs that charged its animals as its own history (`bio-costing-history.ts`), so the scheduler does not ask for periods already run and a period cannot be run behind a later posted one.
 5. **Animals with no start date are only listed.** Dating an animal starts her being costed, which is a decision: `--date-animals` (or `POST /bio-costing/assign-animals`) does it. The scheduler also now starts an item no earlier than the first of its animals begins to be costed (no empty runs for gilts that start in 2027), and an animal with no start date at all no longer makes her batch "owed" a run.
-7. **Applied to `nf_devco` on 28 Oct (Arun: "apply the move"):** after a backup, `--apply` moved the three items; read back from MySQL, runs, ledger and journals unchanged.
-6. **Result on `nf_devco` (applied on a backup, checked, restored):** 3 items moved (ICAT-007-ITM-0002 from IMP-F + LOC-F, ICAT-007-ITM-0003 from IMP-M + LOC-M, ICAT-008-ITM-0001 from LOC-F), 3 left alone (no animal carries a profile). Residual today 160 kg x 2.05 for females. After dating the six sows bought on 19 Sep, an item run charged them at residual 328.00, the same residual the profile way had recorded on posted September lines.
+6. **Applied to `nf_devco` on 28 Oct (Arun: "apply the move"):** after a backup, `--apply` moved the three items; read back from MySQL, runs, ledger and journals unchanged.
+7. **Result on `nf_devco` (applied on a backup, checked, restored):** 3 items moved (ICAT-007-ITM-0002 from IMP-F + LOC-F, ICAT-007-ITM-0003 from IMP-M + LOC-M, ICAT-008-ITM-0001 from LOC-F), 3 left alone (no animal carries a profile). Residual today 160 kg x 2.05 for females. After dating the six sows bought on 19 Sep, an item run charged them at residual 328.00, the same residual the profile way had recorded on posted September lines.
 
 ## 28 Oct 2026 — Phase 4: the costing profile is removed from the code (Arun's instruction, awaiting Rishi)
 
@@ -4767,7 +4769,6 @@ Migration `0230_drop_costing_profile`. **It drops data** (back up first): `bio_c
 1. **Guard.** The migration's first statements stop it, before anything is dropped, if a live animal is costed only by a profile (its item has no costing terms) or an old profile run is still CALCULATED. The error reads "Column 'run_db_move_profiles_to_items_first' cannot be null". A database must therefore run `db-move-profiles-to-items` first; that script is kept for this and is to be deleted once every database has applied 0230.
 2. **Old runs keep everything but their profile.** Ledger rows, journals and lines stay. A run that names no item is named by the items of the animals on its lines, and its history (for the later-posted check and the scheduler) is read through those lines.
 3. **Proof.** On a scratch copy of the pre-move database the guard refused (nothing dropped, 15 animals still costed by a profile); after the move it applied, leaving 38 runs, 74 lines, 495 ledger rows and 829 journals; a full rebuild of the costing test through all migrations passed 113 of 113. On `nf_devco` (backed up) it applied with runs, lines, ledger and journals unchanged and no profile table, column or foreign key left.
-
 
 ## 28 Oct 2026 — Phase 6: the Fixed Asset sheet figures, ready to go on the twelve items (Arun's instruction, awaiting Rishi)
 
@@ -4814,6 +4815,7 @@ Chosen by the owner after an audit found eight styles side by side (raw ISO on m
 ## 3 Nov 2026 — four setup fields taken out, the grading weights renamed
 
 Asked by the owner (the setup form was more than the client's documents need).
+
 1. **Removed from Breeding Line Setup** (form, API, validation, tests): **Table Columns** (the Boar Selection table now always shows every column, in its default order and with its standard headings), **Boars with the Same Figure** (tied boars are always ranked apart, the better genetic rank first, as on the client's Tempo and L-Line sheets), **Week Number** (only ISO ever existed) and **Add the year to the label** (put `{YEAR}` in the template). The database columns remain (no migration); the API now refuses them if sent.
 2. **Renamed:** Genetic / Dose / Morphology Rank Weight → **Weight of Genetic Rank / Dose Rank / Morphology Rank**, in a section called **Overall Grading**.
 3. Two dev rows (L-Line, Z-Line) still hold a Table Columns layout saved on 3 Nov; it is no longer read.
@@ -4827,10 +4829,11 @@ Asked by the owner (the setup form was more than the client's documents need).
 ## 3 Nov 2026 — the AI Station fixture now also seeds a default grading and default genetic levels
 
 Asked by the owner so every line is graded and shows a level. **Both are placeholders of ours**, to confirm with the client (the sheets show a level per boar but not the TSI ranges):
+
 1. **Company default setup gets the sheets' grading** (genetic 1, dose 0, morphology 1), so a line with no setup of its own (the dev boars' "Z-Line-Sow", "Teaser-Boar") has an overall grading. Existing defaults are only filled where the weights are blank.
 2. **Company-default genetic levels** (no breed): Excellent 120+, Good 110–119.99, Average 100–109.99, Below average to 99.99. A line with bands of its own ignores them.
 3. **Dev data only, not in the fixture:** Z-Line-Sow carries a band "Average 1–22" made by hand on 3 Nov, which overrides the default for that line; Excellent (120+) and Good (100–119.99) were added to it so its boars (TSI 110–131) have a level. Remove or rename that band to use the default levels.
-`
+   `
 
 ## 3 Nov 2026 — the AI Station is its own page
 
@@ -4855,10 +4858,12 @@ The Semen Collector master is removed. A collector is a user (User Management) w
 Now the feed and overhead go into the lot's own account: animals' class account first, else the piglet lot's account, else the mapping's (`BatchService.herdAssetAccount`). That covers a posted day's feed (`postConsumptionGroupAs`), a feed entry recorded on its own, and overhead. Proved on the running API, then undone: the same two days now post Dr 170400 for the feed, and LIT-000022's net in 170400 equals its carrying value (10.58). A batch no farrowing made, and feed that is expensed, are unchanged. With no BIO_LITTER_BIRTH mapping (it is opt-in), nothing changes.
 
 **Sales and transfers, same day, same decision.** The rule for where a herd's value sits is now one function, `herdCarryingAccount` in `production/batch/herd-account.ts`. A piglet lot is carried in its BIO_LITTER_BIRTH debit; any other pre-mature herd in the pre-mature account (the BIO_MORTALITY_PREMATURE credit); a mature herd has no one account and each posting keeps its own mapping.
+
 - **A sale, harvest or output** out of a pre-mature herd credits that account (`prematureAssetAccount` now asks it). Before, a piglet lot's sale was credited to 152100.
 - **A head-count transfer** between herds carried in different accounts posts Dr the destination's account / Cr the source's for the value moved (`BatchTransferService.postHeadcount`, `GlPostingService.postAccountTransfer`, source document BATCH_TRANSFER). Between herds in one account, or where either is mature, nothing is posted, as before. A reversal posts the opposite journal. Animal-wise transfers are unchanged: each animal stays in her own account.
 
 Proved on the running API, then undone (binlog inverse, tables checked against the dump). After two days of feed and a death on LIT-000022:
+
 - **Transfer BTR-0002**, 2 head to a test weaner batch: Dr 152100 / Cr 170400, 1.9236.
 - **Sale of 1 head for 5.00:** Dr Receivables / Cr 170400 5.00, then Dr 170400 / Cr Gain 4.0382, so 0.9618 left 170400.
 - **Reversal of the transfer:** Dr 170400 / Cr 152100, 1.9236.
@@ -4876,6 +4881,7 @@ On BATCH-000001, PIG-2024-0001 was moved from Insemination to Gestation from the
 - **Not changed:** an animal transferred into another batch keeps her stage (9 Oct), and that batch still gets no scheduler for it unless the transfer line's `auto_triggers_stage` asks for one.
 
 Proved on the running API, then undone (rows restored, the SCHEDULER series set back to SCH-000060). BATCH-000001 had schedulers for Quarantine, Insemination and Gestation:
+
 - **PIG-2024-0002 to Farrowing:** SCH-000061 was created: Active, 6 lifecycle lines, head count 1, starting 12 Nov.
 - **PIG-2024-0003 to Farrowing:** no second scheduler; the Farrowing head count went to 2.
 - **PIG-2024-0004 to Gestation:** SCH-000060 was kept; the Gestation head count went to 2.
@@ -4886,9 +4892,9 @@ Proved on the running API, then undone (rows restored, the SCHEDULER series set 
 
 **Decided by Arun on 12 Nov 2026; Rishi has not confirmed it.** Ours, not a client document: the plan's open question (`2026-11-03-incoming-qc`, "Rejected stock: back to the supplier, or held in a rejected location as BC did?") is still the client's to answer. Until then a rejection is recorded, never posted, because how it is accounted for is Finance's decision.
 
-- **What can be chosen** (`qc-inspection.rules.ts`, `dispositionsFor`): a goods receipt's rejected quantity is *Return to supplier*, *Scrap* or *Hold for a decision*; a semen collection's is *Scrap* or *Hold* (there is no supplier). A transfer receipt's rejection already goes back to the sending location (the inspection writes that return), so it is recorded as *Returned to the sending location* and nobody chooses it. A reference (return note, debit note, write-off no.) is optional.
+- **What can be chosen** (`qc-inspection.rules.ts`, `dispositionsFor`): a goods receipt's rejected quantity is _Return to supplier_, _Scrap_ or _Hold for a decision_; a semen collection's is _Scrap_ or _Hold_ (there is no supplier). A transfer receipt's rejection already goes back to the sending location (the inspection writes that return), so it is recorded as _Returned to the sending location_ and nobody chooses it. A reference (return note, debit note, write-off no.) is optional.
 - **When it is required:** on completing an inspection with anything rejected, and on refusing a deviation (the whole lot is then rejected; what the inspector recorded for the rejected part carries over).
-- **A held rejection is settled later** (`POST /qc-inspection/:id/settle-rejection`): only on a closed inspection, only from *Hold* (or from nothing, for one closed before this existed), and only to a final disposition. Holding it again is refused.
+- **A held rejection is settled later** (`POST /qc-inspection/:id/settle-rejection`): only on a closed inspection, only from _Hold_ (or from nothing, for one closed before this existed), and only to a final disposition. Holding it again is refused.
 - **Schema:** `qc_inspection.rejection_disposition` and `rejection_ref`. The SQL was written on 4 Nov as `0242_qc_inspection_disposition.sql` but never journalled, so it never ran (audit 10 Nov, C3). It is renumbered `0249` and journalled, and `qc-inspection-disposition-migration.spec.ts` now fails on any tenant `.sql` file the journal does not name.
 
 Proved on the running API and in the browser on nf_devco, then undone: GR-000014 and GR-000015 (a QC feed item) raised QC-000002 to QC-000004. A failed lot with no disposition was refused (400). Hold was recorded, then settled to Return to supplier with a reference, and settling it again was refused. A deviation accepting 15 of 20 with 5 scrapped, refused by a second user, closed as FAIL with 20 rejected and Scrap kept. In the browser, a lot was completed as Hold and then settled to Scrap, and the settle offered only Return to supplier and Scrap. `inventory_ledger` and `journal_*` did not change at any step. The GRNs, inspections and lines were deleted and both number series reset; the audit-log rows of the test remain.
@@ -4897,10 +4903,52 @@ Proved on the running API and in the browser on nf_devco, then undone: GR-000014
 
 **Asked by Arun on 12 Nov 2026; Rishi has not confirmed it. Nothing is built.** Plan: `docs/superpowers/plans/2026-11-12-central-gl-posting-groups.md`.
 
-1. **Reverses part of 28 Oct** ("Costing terms move from the costing profile onto the biological Item", its default 2: "the five GL accounts sit on the item"). The costing *terms* stay on the item; only the *accounts* move. The TDD Item Card (row 8) lists the accounts on the item, so Rishi or Finance has to say yes before Phase 1 is merged.
+1. **Reverses part of 28 Oct** ("Costing terms move from the costing profile onto the biological Item", its default 2: "the five GL accounts sit on the item"). The costing _terms_ stay on the item; only the _accounts_ move. The TDD Item Card (row 8) lists the accounts on the item, so Rishi or Finance has to say yes before Phase 1 is merged.
 2. **The intent:** every account comes from one screen, the GL Mapping. Each item names a GL Posting Group, the mapping gains a posting-group dimension, every posting passes its group, and no item-level override is left. A posting with no row is refused instead of falling back to the generic pre-mature / mature account.
 3. **Found while planning, not changed:** `item_master.inventory_gl_account` and `cogs_gl_account` are stored but read by no posting. `bio_writeoff_gl_id` is required before a run can post (`REQUIRED_GL`), but no posting reads it, because a death posts through the BIO_MORTALITY_* mapping.
 4. **Open, for Rishi / Finance:** whether the Item Card may show the accounts read-only; one asset account held on the group, or enforced across its rows; whether a fair value loss needs its own account; which posting groups normal stock gets.
 
 ## 2026-11-13 — Posting Groups: accounts set once, item picks one (awaiting Rishi on stock items)
+
 Accounts live in `gl_posting_group` (BIOLOGICAL: asset, accumulated, amortization expense, fair value gain/loss, mortality loss; INVENTORY: inventory, COGS). An item names one group; the item's own account columns are kept in step by the API so no posting path changed. Mortality belongs on the group; stock items move to groups too (user's decision). Items are BC-owned (BBP-1 §1.5): whether NAVFarm may set a stock item's inventory/COGS accounts through a group is for Rishi. See VERIFICATION-2026-11-13-posting-group.md.
+
+## 30 Oct 2026 — Feed requisition quantities are refused, not warned (Rishi)
+
+Overrides checkpoint 16 ("any exception requires approved reason") and Requisition r52 / Forecast Engine r62
+(silo capacity as a warning), by Rishi's ruling on 30 Oct.
+
+- A **bulk** line's Requested Qty must be a whole multiple of the farm's Bulk Order Multiple; a **bagged** line's
+  a whole number of bags (bag size). Remarks no longer answer it: `approvalProblems` dropped the remark route and
+  `quantityProblems` (feed-requisition.rules.ts) refuses it.
+- A silo's projected stock on the Proposed Delivery Date, plus everything the requisition delivers to that silo
+  by then, may not be more than the silo's `silo_capacity_kg`. A store, or a silo with no capacity set, is not
+  checked. The projection is the live forecast's (`projectedSiloStockKg`): every item the silo holds that
+  morning; after the forecast's last day its last closing; before it, or with no forecast, the stock on hand.
+- Applies to every feed requisition: manual create, create from a saved calculation, line edit, submit and
+  approve. The From-calculation form checks both before Create and fills a quantity that fits; the New form
+  checks the multiple (capacity needs the forecast, so the API answers it and says how much fits).
+- The forecast's own automatic drafts still recommend the full need and flag `exceeds_silo_capacity`; such a
+  line must be cut before it can be submitted or approved (decisions above: free capacity limits one delivery,
+  the rest goes on a later one).
+- A requisition from a saved calculation stores that run's System Balance, Daily Requirement, Days Remaining,
+  first shortage, next-diet figures and Breed Lifecycle Row (`runLineEvidence`; the row is the `lifecycleId` in
+  the first day's run-line provenance). Its form also shows each silo's capacity.
+
+## 2 Nov 2026 — A feed requisition line carries Priority No. only, no priority level (Rishi)
+
+Overrides Requisition and Loading Sheet r34 ("Priority — Dropdown, Auto … Yes - can escalate") and the
+A1 (10 Oct) escalation control, by Rishi's ruling on 2 Nov: the priority on a feed line is the farm's own
+order, for the mill manager to see on the Mill Consolidation sheet.
+
+- **Priority No.** (`requisition_line.priority_no`, 0214): 1 first, blank for none. The New feed requisition
+  dialog numbers each line 1…N as it is added and the farm may change or clear it, as the From-calculation form
+  does (that form numbers by delivery date). Stored on create; shown on the requisition and the sheet.
+- **No priority level** on a feed line: nothing sets `requisition_line.priority` any more, the escalate control
+  is gone, and the list, the requisition, the sheet and their APIs no longer show or return it. The column is
+  kept (not dropped) with what earlier lines and migration 0216 stored; nothing reads it.
+- **Sheet order:** earliest shortage, then fewest days left, then Priority No., then the delivery date asked for.
+- **Approval urgency** is worked out when the requisition is submitted (`approvalUrgency`): HIGH when a line's
+  silo is at or below its Below Feed Level KG (its stored System Balance) or its first shortage is under 3 days
+  from the submit date; otherwise MEDIUM. It is never shown or stored as a line field.
+- Feed alerts keep their own priority levels (Alerts and Notifications Master r49); this ruling is about the
+  requisition line only. Common (Item, Fixed Asset, Service) requisitions never used the line priority.

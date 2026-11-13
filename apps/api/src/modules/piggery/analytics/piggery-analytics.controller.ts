@@ -17,12 +17,19 @@ export class PiggeryAnalyticsController {
 
   @Get('gm-dashboard')
   @RequirePermission('PIGGERY', 'ANIMAL', 'view')
-  @ApiOperation({ summary: 'Get Piggery GM Executive Dashboard telemetry, reproductive metrics, and farm scorecard' })
+  @ApiOperation({
+    summary:
+      'GM Dashboard — Kg Meat Sold / Sow / Year, Breeding & Farrowing and Weaner-Grower matrices against lifecycle targets, and alerts, for a Reporting Period',
+  })
   async getGmDashboard(
     @Req() req: any,
     @Query() query: QueryPiggeryGmDashboardDto,
   ) {
     const tenantId = req.user?.tenantId || req['tenantId'];
-    return await this.analyticsService.getGmDashboard(tenantId, query);
+    return await this.analyticsService.getGmDashboard(
+      tenantId,
+      query,
+      req.user?.userType,
+    );
   }
 }

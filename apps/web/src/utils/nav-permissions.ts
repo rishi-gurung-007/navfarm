@@ -48,6 +48,7 @@ const ROUTE_GRANTS: Array<[path: string, anyOf: Grant[]]> = [
   ['/finance/journal', [['FINANCE', 'JOURNAL']]],
   ['/expenses', [['FINANCE', 'EXPENSE']]],
   ['/reports/farrowing', [['REPORTS', 'FARROWING']]],
+  ['/reports/monthly-ops', [['REPORTS', 'MONTHLY_OPS']]],
   [
     '/alerts',
     [

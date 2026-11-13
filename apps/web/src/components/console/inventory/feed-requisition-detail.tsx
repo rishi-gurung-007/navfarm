@@ -128,7 +128,6 @@ export function FeedRequisitionDetail({
   const lineEdits = () =>
     Object.entries(edits).map(([line_id, edit]) => ({
       line_id,
-      ...(edit.priority !== undefined ? { priority: edit.priority } : {}),
       ...(edit.quantity !== undefined
         ? { quantity_kg: Number(edit.quantity) }
         : {}),

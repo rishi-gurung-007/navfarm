@@ -1737,6 +1737,27 @@
       "when": 1792000000118,
       "tag": "0250_gl_posting_group",
       "breakpoints": true
+    },
+    {
+      "idx": 248,
+      "version": "5",
+      "when": 1792000000119,
+      "tag": "0251_requisition_line_priority_no",
+      "breakpoints": true
+    },
+    {
+      "idx": 249,
+      "version": "5",
+      "when": 1792000000120,
+      "tag": "0252_accounting_period",
+      "breakpoints": true
+    },
+    {
+      "idx": 250,
+      "version": "5",
+      "when": 1792000000121,
+      "tag": "0253_requisition_line_priority_backfill",
+      "breakpoints": true
     }
   ]
 }

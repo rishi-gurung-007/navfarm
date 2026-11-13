@@ -66,6 +66,8 @@ import {
 } from './requisition-labels';
 import type { RequisitionView } from './requisitions-panel';
 import { RequisitionDocumentShell } from '../requisitions/requisition-document-shell';
+import { InlineAlert } from '@/components/ui/alert';
+import { quantityProblems } from './requisition-quantity-rules';
 
 interface Destination {
   location_id: string;
@@ -92,6 +94,8 @@ interface Draft {
   date: string;
   reasonId: string;
   reasonLabel: string;
+  /** Rishi, 2 Nov: the farm's order for the mill, 1 first; blank for none. */
+  priorityNo: string;
 }
 
 const EMPTY: Draft = {
@@ -101,7 +105,15 @@ const EMPTY: Draft = {
   date: '',
   reasonId: '',
   reasonLabel: '',
+  priorityNo: '',
 };
+/** A new line takes the next Priority No., as the from-calculation form numbers its lines 1…N. */
+const nextLine = (count: number): Draft => ({
+  ...EMPTY,
+  priorityNo: String(count + 1),
+});
+const validPriorityNo = (value: string) =>
+  value === '' || (Number.isInteger(Number(value)) && Number(value) >= 1);
 const inputStyle = {
   backgroundColor: 'var(--input-bg)',
   color: 'var(--input-text)',
@@ -133,6 +145,7 @@ const COLUMNS = [
   'rqdColRequested',
   'rqdColBags',
   'rqdColDelivery',
+  'rqdColPriorityNo',
   'rqnColException',
   '',
 ] as const;
@@ -271,7 +284,7 @@ export function RequisitionNewDialog({
   const effectiveFarmId = pickedFarmId ?? farm.farmId ?? '';
   const [destinations, setDestinations] = useState<Destination[]>([]);
   const [items, setItems] = useState<FeedItem[]>([]);
-  const [lines, setLines] = useState<Draft[]>([{ ...EMPTY }]);
+  const [lines, setLines] = useState<Draft[]>([nextLine(0)]);
   const [remarks, setRemarks] = useState('');
   const [busy, setBusy] = useState(false);
   const [settings, setSettings] = useState<HeaderSettings | null>(null);
@@ -281,7 +294,7 @@ export function RequisitionNewDialog({
   useEffect(() => {
     if (!open || step !== 'FEED' || !effectiveFarmId) return;
     let alive = true;
-    setLines([{ ...EMPTY }]);
+    setLines([nextLine(0)]);
     setRemarks('');
     setRequisitionDate(todayIso());
     api
@@ -391,9 +404,30 @@ export function RequisitionNewDialog({
       .map((l) => l.date)
       .filter(Boolean)
       .sort()[0] ?? null;
+  // Rishi, 30 Oct: whole compartments or bags, checked here; the silo's capacity on the delivery
+  // date needs the forecast, so the API checks that on Create and says what fits.
+  const multipleProblems = settings
+    ? quantityProblems(
+        lines.map((l) => ({
+          quantityKg: Number(l.kg) || 0,
+          feedType: feedTypeOfDraft(l, destinations, items),
+          destinationId: l.dest,
+          deliveryDate: l.date,
+        })),
+        settings,
+      )
+    : [];
   const complete =
     Boolean(requisitionDate) &&
-    lines.every((l) => l.dest && l.item && Number(l.kg) > 0 && l.date);
+    multipleProblems.length === 0 &&
+    lines.every(
+      (l) =>
+        l.dest &&
+        l.item &&
+        Number(l.kg) > 0 &&
+        l.date &&
+        validPriorityNo(l.priorityNo),
+    );
 
   const create = async () => {
     setBusy(true);
@@ -408,6 +442,7 @@ export function RequisitionNewDialog({
           quantity_kg: Number(l.kg),
           proposed_delivery_date: l.date,
           ...(l.reasonId ? { reason_id: l.reasonId } : {}),
+          ...(l.priorityNo ? { priority_no: Number(l.priorityNo) } : {}),
         })),
       };
       const created = unwrap<RequisitionView>(
@@ -590,13 +625,45 @@ export function RequisitionNewDialog({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setLines((cur) => [...cur, { ...EMPTY }])}
+                onClick={() =>
+                  setLines((cur) => [...cur, nextLine(cur.length)])
+                }
               >
                 <Plus className="h-3.5 w-3.5" /> {t('rqNewAddLine')}
               </Button>
             }
           >
             <div className="flex flex-col gap-2 sm:col-span-12">
+              {multipleProblems.length > 0 && (
+                <InlineAlert variant="danger">
+                  <ul className="list-disc space-y-1 pl-4">
+                    {multipleProblems.map((p, i) => {
+                      const line = lines[p.line];
+                      const item = items.find(
+                        (it) => it.item_id === line?.item,
+                      );
+                      return (
+                        <li key={i}>
+                          {p.kind === 'MULTIPLE' &&
+                            t(
+                              p.bagged
+                                ? 'rqQtyNotWholeBags'
+                                : 'rqQtyNotBulkMultiple',
+                              {
+                                line: (p.line + 1) * LINE_STEP,
+                                item: item?.item_name ?? '',
+                                kg: Number(line?.kg || 0).toLocaleString(
+                                  'en-US',
+                                ),
+                                multiple: p.multipleKg.toLocaleString('en-US'),
+                              },
+                            )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </InlineAlert>
+              )}
               <ScrollTable label={t('rqLinesLabel')}>
                 <thead>
                   <tr>
@@ -606,8 +673,15 @@ export function RequisitionNewDialog({
                         scope="col"
                         className={cn(
                           TH,
-                          c === 'rqdColRequested' && 'text-right',
+                          (c === 'rqdColRequested' ||
+                            c === 'rqdColPriorityNo') &&
+                            'text-right',
                         )}
+                        title={
+                          c === 'rqdColPriorityNo'
+                            ? t('rqPriorityNoHint')
+                            : undefined
+                        }
                       >
                         {c ? t(c) : ''}
                       </th>
@@ -729,6 +803,25 @@ export function RequisitionNewDialog({
                             value={line.date}
                             onChange={(e) =>
                               setLine(i, { date: e.target.value })
+                            }
+                          />
+                        </td>
+                        <td className={cn(TD, 'text-right')}>
+                          <input
+                            aria-label={t('rqNewPriorityNo', { line: i + 1 })}
+                            title={t('rqPriorityNoHint')}
+                            type="number"
+                            min={1}
+                            step={1}
+                            inputMode="numeric"
+                            className="nf-input-sm w-20 text-right"
+                            style={inputStyle}
+                            aria-invalid={
+                              !validPriorityNo(line.priorityNo) || undefined
+                            }
+                            value={line.priorityNo}
+                            onChange={(e) =>
+                              setLine(i, { priorityNo: e.target.value })
                             }
                           />
                         </td>

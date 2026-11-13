@@ -1,93 +1,50 @@
+import type {
+  Alert,
+  FarmAlert,
+  FarmRow,
+  MetricRow,
+} from './gm-dashboard.metrics';
+
 export interface QueryPiggeryGmDashboardDto {
   companyId?: string;
+  /** A Reporting Period; the one holding today when left out. */
   periodId?: string;
-  dateFrom?: string;
-  dateTo?: string;
-  businessYear?: string;
+  /** One farm; every farm the user may see when left out. */
+  farmId?: string;
+}
+
+export interface GmDashboardPeriod {
+  period_id: string;
+  period_code: string;
+  business_year: string;
+  start_date: string;
+  end_date: string;
 }
 
 export interface PiggeryGmDashboardData {
-  metadata: {
-    tenantName: string;
-    companyName: string;
-    nobCode: string;
-    periodCode: string;
-    businessYear: string;
-    periodStartDate: string;
-    periodEndDate: string;
-    isPeriodActive: boolean;
-    availablePeriods: Array<{
-      periodId: string;
-      periodCode: string;
-      businessYear: string;
-      startDate: string;
-      endDate: string;
-      isActive: boolean;
-    }>;
+  /** The chosen period, the first day of its business year (YTD), and the last day counted (its end, or today). */
+  period: (GmDashboardPeriod & { ytd_from: string; to: string }) | null;
+  periods: GmDashboardPeriod[];
+  farms: Array<{ farm_id: string; farm_code: string; farm_name: string }>;
+  /** Per farm and for all farms together; null where there are no sows. */
+  kg_sold_per_sow_year: {
+    month: Record<string, number | null>;
+    ytd: Record<string, number | null>;
   };
-  activeHerdSummary: {
-    totalHeadcount: number;
-    sowsCount: number;
-    giltsCount: number;
-    boarsCount: number;
-    parityDistribution: {
-      p0Gilts: { count: number; pct: number };
-      p1: { count: number; pct: number };
-      p2: { count: number; pct: number };
-      p3: { count: number; pct: number };
-      p4Plus: { count: number; pct: number };
-    };
-    stagesDistribution: Array<{
-      stageName: string;
-      count: number;
-    }>;
-  };
-  reproductiveIntelligence: {
-    totalLittersRecorded: number;
-    totalPigletsBornLive: number;
-    avgBornAlivePerLitter: number;
-    totalPigletsWeaned: number;
-    weaningSurvivalRatePct: number;
-    preWeanMortalityPct: number;
-    conceptionPipeline: {
-      totalMatings: number;
-      confirmedPregnant: number;
-      repeatFailed: number;
-      completedWeaned: number;
-      aiInseminationCount: number;
-      naturalMatingCount: number;
-    };
-    recentLitters: Array<{
-      farrowId: string;
-      sowCode: string;
-      farrowingDate: string;
-      pigletsBornLive: number;
-      pigletsStillborn: number;
-      pigletsWeaned: number;
-      weaningDate: string | null;
-      avgBirthWeightKg: number | null;
-      avgWeaningWeightKg: number | null;
-    }>;
-  };
-  productionBatchesSummary: {
-    activeBatchesCount: number;
-    totalBatchHeadcount: number;
-    totalBatchWipValuation: number;
-    batchesByStage: Array<{
-      stageName: string;
-      count: number;
-      totalHeads: number;
-    }>;
-  };
-  facilityLocations: Array<{
-    locationId: string;
-    locationCode: string;
-    locationName: string;
-    headcount: number;
-    sowsCount: number;
-    giltsCount: number;
-    batchesCount: number;
-    wipValuation: number;
-    status: 'Active Operations' | 'Standby';
-  }>;
+  breeding: MetricRow[];
+  weaner_grower: MetricRow[];
+  alerts: Alert[];
+  /** With one farm chosen: its figures over This Week, the 4-week average, This Month, Prev. Month and 3 Months. */
+  farm_view: GmFarmView | null;
+}
+
+export interface GmFarmView {
+  farm: { farm_id: string; farm_code: string; farm_name: string };
+  /** Sows on the farm on the period's last day (or today). */
+  sows: number;
+  windows: Array<{ key: string; start_date: string; end_date: string }>;
+  kg_sold_per_sow_year_ytd: number | null;
+  breeding: FarmRow[];
+  weaner_grower: FarmRow[];
+  alerts: FarmAlert[];
 }

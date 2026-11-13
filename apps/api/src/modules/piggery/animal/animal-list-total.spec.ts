@@ -11,13 +11,26 @@ import { AnimalController } from './animal.controller';
  */
 describe('GET /animal reports the register total, not just the page', () => {
   const controllerWith = (result: unknown) =>
-    new AnimalController({ findAll: jest.fn().mockResolvedValue(result) } as never);
+    new AnimalController(
+      { findAll: jest.fn().mockResolvedValue(result) } as never,
+      {} as never,
+    );
 
   it('passes total, limit and offset through to the list screen', async () => {
-    const page = Array.from({ length: 25 }, (_, i) => ({ animal_id: `a-${i}`, animal_code: `PIG-${i}` }));
-    const controller = controllerWith({ data: page, total: 65, limit: 25, offset: 0 });
+    const page = Array.from({ length: 25 }, (_, i) => ({
+      animal_id: `a-${i}`,
+      animal_code: `PIG-${i}`,
+    }));
+    const controller = controllerWith({
+      data: page,
+      total: 65,
+      limit: 25,
+      offset: 0,
+    });
 
-    const response: any = await controller.findAll({} as never, { user: { tenantId: 't-1' } });
+    const response: any = await controller.findAll({} as never, {
+      user: { tenantId: 't-1' },
+    });
 
     expect(response.data).toHaveLength(25);
     expect(response.total).toBe(65);
@@ -26,9 +39,16 @@ describe('GET /animal reports the register total, not just the page', () => {
   });
 
   it('keeps data an array, so every existing caller of the endpoint is unaffected', async () => {
-    const controller = controllerWith({ data: [{ animal_id: 'a-1', animal_code: 'PIG-1' }], total: 1, limit: 50, offset: 0 });
+    const controller = controllerWith({
+      data: [{ animal_id: 'a-1', animal_code: 'PIG-1' }],
+      total: 1,
+      limit: 50,
+      offset: 0,
+    });
 
-    const response: any = await controller.findAll({} as never, { user: { tenantId: 't-1' } });
+    const response: any = await controller.findAll({} as never, {
+      user: { tenantId: 't-1' },
+    });
 
     expect(Array.isArray(response.data)).toBe(true);
   });

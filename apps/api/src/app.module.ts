@@ -44,6 +44,7 @@ import { BreedingLineModule } from './modules/master-data/breeding-line/breeding
 import { BoarConditionModule } from './modules/piggery/boar-condition/boar-condition.module';
 import { AlertRuleModule } from './modules/system/alert-rule/alert-rule.module';
 import { ReportingPeriodModule } from './modules/master-data/reporting-period/reporting-period.module';
+import { AccountingPeriodModule } from './modules/master-data/accounting-period/accounting-period.module';
 import { KpiMetricModule } from './modules/master-data/kpi-metric/kpi-metric.module';
 import { ActivityModule } from './modules/master-data/activity/activity.module';
 import { FeedFormulaModule } from './modules/master-data/feed-formula/feed-formula.module';
@@ -155,6 +156,7 @@ import { SystemController } from './system/system.controller';
     BoarConditionModule,
     AlertRuleModule,
     ReportingPeriodModule,
+    AccountingPeriodModule,
     KpiMetricModule,
     ActivityModule,
     FeedFormulaModule,

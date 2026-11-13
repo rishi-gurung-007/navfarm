@@ -68,6 +68,7 @@ async function run() {
   for (const a of plan) {
     const label = `${a.kind} ${a.key}`;
     if (a.do === 'skip' || a.do === 'exists') { console.log(`${label}: ${a.do === 'skip' ? 'SKIPPED' : 'exists'} — ${a.why}`); continue; }
+    if (a.do !== 'create' && a.do !== 'update') continue; // narrows to the write actions
     const verb = a.do === 'update' ? ['updating', 'would be updated'] : ['creating', 'would be created'];
     console.log(`${label}: ${APPLY ? verb[0] : verb[1]}`);
     for (const n of a.notes ?? []) console.log(`    [${n.source}] ${n.field}: ${n.text}`);

@@ -1,14 +1,202 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, desc, asc, gte, lte, inArray, isNull, sql } from 'drizzle-orm';
+import { eq, and, asc, inArray, isNull, or, sql, SQL } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { farmScope, FarmScope, animalScopeConditions, batchScopeConditions, animalOnFarm } from '../../../common/farm-scope';
-import { PiggeryGmDashboardData, QueryPiggeryGmDashboardDto } from './piggery-analytics.dto';
+import {
+  farmScope,
+  FarmScope,
+  batchScopeConditions,
+} from '../../../common/farm-scope';
+import { loadBatchDeaths, loadHeadMoves } from '../../production/batch-heads';
+import { kpiLimits } from '../../production/lifecycle/kpi-limits';
+import { MonthlyOpsService } from '../reports/monthly-ops.service';
+import {
+  targetsFromLifecycle,
+  Target,
+  Targets,
+  TargetKey,
+} from '../reports/farrowing-report.metrics';
+import type { OpsMetrics } from '../reports/monthly-ops.metrics';
+import {
+  GmDashboardPeriod,
+  GmFarmView,
+  PiggeryGmDashboardData,
+  QueryPiggeryGmDashboardDto,
+} from './piggery-analytics.dto';
+import {
+  alertsFrom,
+  BreedingFigures,
+  breedingFigures,
+  cell,
+  DatedQty,
+  farmAlerts,
+  farmRow,
+  farmWindows,
+  HeadMoveRow,
+  kgSoldPerSowYear,
+  meanTarget,
+  MetricRow,
+  StageBatch,
+  stageExit,
+  StageExit,
+  StageFigures,
+  stageFigures,
+  stageSegments,
+} from './gm-dashboard.metrics';
 
+type Farm = { farm_id: string; farm_code: string; farm_name: string };
+
+/** The Breeding & Farrowing rows: the figure, its lifecycle target and whether lower is better. */
+const BREEDING_ROWS: Array<{
+  key: keyof BreedingFigures;
+  label: string;
+  unit: string;
+  target: TargetKey;
+  lower: boolean;
+}> = [
+  {
+    key: 'farrowing_rate_pct',
+    label: 'Farrowing Rate',
+    unit: '%',
+    target: 'farrowing_rate',
+    lower: false,
+  },
+  {
+    key: 'total_born_per_litter',
+    label: 'Total Born / Litter',
+    unit: '',
+    target: 'total_born',
+    lower: false,
+  },
+  {
+    key: 'born_alive_per_litter',
+    label: 'Born Alive / Litter',
+    unit: '',
+    target: 'born_alive',
+    lower: false,
+  },
+  {
+    key: 'pre_wean_mortality_pct',
+    label: 'Pre-wean Mortality',
+    unit: '%',
+    target: 'pre_wean_mortality',
+    lower: true,
+  },
+  {
+    key: 'weaned_per_sow',
+    label: 'Avg Weaned / Sow',
+    unit: '',
+    target: 'wean_per_sow',
+    lower: false,
+  },
+  {
+    key: 'avg_wean_weight_kg',
+    label: 'Avg Wean Weight',
+    unit: 'kg',
+    target: 'weaning_weight',
+    lower: false,
+  },
+  {
+    key: 'litter_mass_kg',
+    label: 'Total Litter Mass',
+    unit: 'kg',
+    target: 'total_litter_mass',
+    lower: false,
+  },
+];
+
+type StagePair = { weaner: StageFigures; grower: StageFigures };
+type ExitPair = { weaner: StageExit[]; grower: StageExit[] };
+const target = (exits: StageExit[], pick: (e: StageExit) => Target | null) =>
+  meanTarget(exits.map(pick));
+
+/** The Weaner-Grower rows: the figure from the stage spells, and its target from those spells' breeds. */
+const STAGE_ROWS: Array<{
+  key: string;
+  label: string;
+  unit: string;
+  lower: boolean;
+  pick: (s: StagePair) => number | null;
+  target: ((e: ExitPair) => Target | null) | null;
+}> = [
+  {
+    key: 'weight_70_day',
+    label: 'Avg 70 Day Weight',
+    unit: 'kg',
+    lower: false,
+    pick: (s) => s.weaner.exit_weight_kg,
+    target: (e) => target(e.weaner, (x) => x.target_weight),
+  },
+  {
+    key: 'gain_70_day',
+    label: '70 Day Gain',
+    unit: 'kg',
+    lower: false,
+    pick: (s) => s.weaner.gain_kg,
+    target: null,
+  },
+  {
+    key: 'fce_weaner',
+    label: 'FCE Weaner',
+    unit: '',
+    lower: true,
+    pick: (s) => s.weaner.fce,
+    target: (e) => target(e.weaner, (x) => x.target_fcr),
+  },
+  {
+    key: 'weaner_mortality',
+    label: 'Weaner Mortality',
+    unit: '%',
+    lower: true,
+    pick: (s) => s.weaner.mortality_pct,
+    target: (e) => target(e.weaner, (x) => x.target_mortality),
+  },
+  {
+    key: 'fce_grower',
+    label: 'FCE Grower',
+    unit: '',
+    lower: true,
+    pick: (s) => s.grower.fce,
+    target: (e) => target(e.grower, (x) => x.target_fcr),
+  },
+  {
+    key: 'grower_mortality',
+    label: 'Grower Mortality',
+    unit: '%',
+    lower: true,
+    pick: (s) => s.grower.mortality_pct,
+    target: (e) => target(e.grower, (x) => x.target_mortality),
+  },
+];
+
+const WEANER = 'WEANER';
+const GROWER = 'GROWER';
+const STAGE_METRICS = {
+  weight: 'BODY_WEIGHT',
+  fcr: 'FCR',
+  mortality: 'MORTALITY_PCT',
+} as const;
+
+const day = (v: unknown) => String(v).slice(0, 10);
+const daysIn = (from: string, to: string) =>
+  Math.round(
+    (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) /
+      86_400_000,
+  ) + 1;
+
+/**
+ * GM Dashboard (Rishi, 2 Nov; docs/superpowers/specs/2026-11-02-gm-dashboard-phase-1-design.md): for a Reporting
+ * Period and the farms the user may see, Kg Meat Sold / Sow / Year (month and year to date), the Breeding &
+ * Farrowing and Weaner-Grower matrices against the breed lifecycle targets, and the alerts their red and amber
+ * cells raise.
+ */
 @Injectable()
 export class PiggeryAnalyticsService {
-  constructor(private readonly cls: ClsService) {}
+  constructor(
+    private readonly cls: ClsService,
+    private readonly ops: MonthlyOpsService,
+  ) {}
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -21,403 +209,699 @@ export class PiggeryAnalyticsService {
   private resolveCompanyId(scope: FarmScope, queryCompanyId?: string): string {
     if (scope.companyId) {
       if (queryCompanyId && queryCompanyId !== scope.companyId) {
-        throw new ForbiddenException('Report company must match the workspace.');
+        throw new ForbiddenException(
+          'Report company must match the workspace.',
+        );
       }
       return scope.companyId;
     }
     return queryCompanyId || '';
   }
 
-  async getGmDashboard(tenantId: string, query: QueryPiggeryGmDashboardDto): Promise<PiggeryGmDashboardData> {
+  private today(): string {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  async getGmDashboard(
+    tenantId: string,
+    query: QueryPiggeryGmDashboardDto,
+    userType?: string,
+  ): Promise<PiggeryGmDashboardData> {
     const scope = farmScope(this.cls);
     const companyId = this.resolveCompanyId(scope, query.companyId);
-
-    // 1. Resolve Company Details
-    const [company] = companyId
-      ? await this.db.select().from(schema.companyMaster).where(eq(schema.companyMaster.company_id, companyId)).limit(1)
-      : await this.db.select().from(schema.companyMaster).where(eq(schema.companyMaster.tenant_id, tenantId)).limit(1);
-
-    const activeCompanyId = company?.company_id || companyId;
-    // A litter and a mating belong to the sow's line of business. A restricted user may hold a LOB and no farm
-    // (OPERATIONAL_ADMIN is restricted but not farm-bound), and animalOnFarm below only covers the farm half —
-    // without this the dashboard's litters and matings would be the whole company's. The herd and batch sections
-    // get both halves from animalScopeConditions / batchScopeConditions.
-    // Written as a subquery in SQL, the way animalOnFarm and batchOnFarm in common/farm-scope.ts are.
-    const sowOfLob = (column: typeof schema.breedingRecord.sow_animal_id | typeof schema.farrowingRecord.sow_animal_id) =>
-      scope.restricted && scope.lobId
-        ? sql`${column} IN (SELECT al.animal_id FROM animal_register al WHERE al.tenant_id = ${tenantId} AND al.lob_id = ${scope.lobId})`
-        : undefined;
-    const companyName = company?.company_name || 'Triple C Piggery Division';
-
-    // 2. Resolve Reporting Periods
-    const periods = await this.db
+    const P = schema.reportingPeriod;
+    const periods: GmDashboardPeriod[] = await this.db
       .select({
-        period_id: schema.reportingPeriod.period_id,
-        period_code: schema.reportingPeriod.period_code,
-        business_year: schema.reportingPeriod.business_year,
-        start_date: schema.reportingPeriod.start_date,
-        end_date: schema.reportingPeriod.end_date,
-        is_active: schema.reportingPeriod.is_active,
+        period_id: P.period_id,
+        period_code: P.period_code,
+        business_year: P.business_year,
+        start_date: P.start_date,
+        end_date: P.end_date,
       })
-      .from(schema.reportingPeriod)
+      .from(P)
       .where(
         and(
-          eq(schema.reportingPeriod.tenant_id, tenantId),
-          activeCompanyId ? eq(schema.reportingPeriod.company_id, activeCompanyId) : undefined,
-        )
+          eq(P.tenant_id, tenantId),
+          companyId ? eq(P.company_id, companyId) : undefined,
+        ),
       )
-      .orderBy(asc(schema.reportingPeriod.start_date));
-    const today = new Date().toISOString().slice(0, 10);
-    const currentPeriod = periods.find((p) => p.start_date <= today && today <= p.end_date);
-    const activeCurrentYearPeriod = periods.find(
-      (p) => p.is_active && p.start_date.startsWith(today.slice(0, 4))
-    );
-
-    const selectedPeriod = query.periodId
+      .orderBy(asc(P.start_date));
+    const today = this.today();
+    const chosen = query.periodId
       ? periods.find((p) => p.period_id === query.periodId)
-      : currentPeriod || activeCurrentYearPeriod || periods[0];
+      : (periods.find((p) => p.start_date <= today && today <= p.end_date) ??
+        periods[periods.length - 1]);
 
-    const currentYear = new Date().getFullYear().toString();
-    const periodCode = selectedPeriod?.period_code || 'P1';
-    const businessYear = query.businessYear || selectedPeriod?.business_year || currentYear;
-    const periodStartDate = query.dateFrom || selectedPeriod?.start_date || `${businessYear}-01-01`;
-    const periodEndDate = query.dateTo || selectedPeriod?.end_date || `${businessYear}-12-31`;
-    const isPeriodActive = selectedPeriod?.is_active ?? true;
-
-    // 3. Query Real Registered Animals (100% Live)
-    const animalConditions = [
-      eq(schema.animalRegister.tenant_id, tenantId),
-      activeCompanyId ? eq(schema.animalRegister.company_id, activeCompanyId) : undefined,
-      ...animalScopeConditions(scope),
-    ].filter(Boolean) as any[];
-
-    const animals = await this.db
-      .select({
-        animal_id: schema.animalRegister.animal_id,
-        animal_code: schema.animalRegister.animal_code,
-        animal_type: schema.animalRegister.animal_type,
-        gender: schema.animalRegister.gender,
-        is_active: schema.animalRegister.is_active,
-        status: schema.animalRegister.status,
-        parity_count: schema.animalRegister.parity_count,
-        current_location_id: schema.animalRegister.current_location_id,
-        current_stage_id: schema.animalRegister.current_stage_id,
-        total_piglets_born_live: schema.animalRegister.total_piglets_born_live,
-        total_piglets_weaned: schema.animalRegister.total_piglets_weaned,
-      })
-      .from(schema.animalRegister)
-      .where(and(...animalConditions));
-
-    // Active breeding stock
-    const activeAnimals = animals.filter((a) => a.is_active);
-    const sows = activeAnimals.filter((a) => a.animal_type === 'SOW');
-    const gilts = activeAnimals.filter((a) => a.animal_type === 'GILT');
-    const boars = activeAnimals.filter((a) => a.animal_type === 'BOAR');
-
-    // Real Parity distribution from actual animal rows
-    const parityBuckets = { p0: gilts.length, p1: 0, p2: 0, p3: 0, p4Plus: 0 };
-    for (const s of sows) {
-      const p = s.parity_count || 1;
-      if (p === 1) parityBuckets.p1++;
-      else if (p === 2) parityBuckets.p2++;
-      else if (p === 3) parityBuckets.p3++;
-      else parityBuckets.p4Plus++;
-    }
-
-    const totalFemales = Math.max(sows.length + gilts.length, 1);
-    const p0Pct = Math.round((parityBuckets.p0 / totalFemales) * 100);
-    const p1Pct = Math.round((parityBuckets.p1 / totalFemales) * 100);
-    const p2Pct = Math.round((parityBuckets.p2 / totalFemales) * 100);
-    const p3Pct = Math.round((parityBuckets.p3 / totalFemales) * 100);
-    const p4PlusPct = Math.round((parityBuckets.p4Plus / totalFemales) * 100);
-
-    // Stages lookup
-    const stages = await this.db.select().from(schema.stageMaster).where(eq(schema.stageMaster.tenant_id, tenantId));
-    const stageMap = new Map(stages.map((st) => [st.stage_id, st.stage_name]));
-
-    const stageCountMap = new Map<string, number>();
-    for (const a of activeAnimals) {
-      const stageName = (a.current_stage_id && stageMap.get(a.current_stage_id)) || a.status || 'Active Herd';
-      stageCountMap.set(stageName, (stageCountMap.get(stageName) || 0) + 1);
-    }
-    const stagesDistribution = Array.from(stageCountMap.entries()).map(([stageName, count]) => ({
-      stageName,
-      count,
-    }));
-
-    // 4. Query Real Farrowing Records
-    const farrowConditions = [
-      eq(schema.farrowingRecord.tenant_id, tenantId),
-      activeCompanyId ? eq(schema.farrowingRecord.company_id, activeCompanyId) : undefined,
-      scope.farmId ? animalOnFarm(schema.farrowingRecord.sow_animal_id, scope.farmId) : undefined,
-      sowOfLob(schema.farrowingRecord.sow_animal_id),
-    ].filter(Boolean) as any[];
-
-    if (query.dateFrom && query.dateTo) {
-      farrowConditions.push(gte(schema.farrowingRecord.farrowing_date, query.dateFrom));
-      farrowConditions.push(lte(schema.farrowingRecord.farrowing_date, query.dateTo));
-    }
-
-    const farrowings = await this.db
-      .select({
-        farrow_id: schema.farrowingRecord.farrow_id,
-        sow_animal_id: schema.farrowingRecord.sow_animal_id,
-        farrowing_date: schema.farrowingRecord.farrowing_date,
-        piglets_born_live: schema.farrowingRecord.piglets_born_live,
-        piglets_stillborn: schema.farrowingRecord.piglets_stillborn,
-        piglets_weaned: schema.farrowingRecord.piglets_weaned,
-        weaning_date: schema.farrowingRecord.weaning_date,
-        avg_birth_weight_kg: schema.farrowingRecord.avg_birth_weight_kg,
-        avg_weaning_weight_kg: schema.farrowingRecord.avg_weaning_weight_kg,
-      })
-      .from(schema.farrowingRecord)
-      .where(and(...farrowConditions))
-      .orderBy(desc(schema.farrowingRecord.farrowing_date));
-
-    const totalLitters = farrowings.length;
-    const totalPigletsBornLive = farrowings.reduce((sum, f) => sum + (f.piglets_born_live || 0), 0);
-    const totalPigletsWeaned = farrowings.reduce((sum, f) => sum + (f.piglets_weaned || 0), 0);
-    const avgBornAlive = totalLitters > 0 ? Number((totalPigletsBornLive / totalLitters).toFixed(1)) : 0;
-    const weaningSurvivalRatePct = totalPigletsBornLive > 0 ? Number(((totalPigletsWeaned / totalPigletsBornLive) * 100).toFixed(1)) : 0;
-    const preWeanMortalityPct = totalPigletsBornLive > 0 ? Number((100 - weaningSurvivalRatePct).toFixed(1)) : 0;
-
-    const animalCodeMap = new Map(animals.map((a) => [a.animal_id, a.animal_code]));
-    const recentLitters = farrowings.slice(0, 5).map((f) => ({
-      farrowId: f.farrow_id,
-      sowCode: animalCodeMap.get(f.sow_animal_id) || 'SOW',
-      farrowingDate: f.farrowing_date,
-      pigletsBornLive: f.piglets_born_live || 0,
-      pigletsStillborn: f.piglets_stillborn || 0,
-      pigletsWeaned: f.piglets_weaned || 0,
-      weaningDate: f.weaning_date || null,
-      avgBirthWeightKg: f.avg_birth_weight_kg ? Number(f.avg_birth_weight_kg) : null,
-      avgWeaningWeightKg: f.avg_weaning_weight_kg ? Number(f.avg_weaning_weight_kg) : null,
-    }));
-
-    // 5. Query Real Breeding / Mating Pipeline
-    const breedingConditions = [
-      eq(schema.breedingRecord.tenant_id, tenantId),
-      activeCompanyId ? eq(schema.breedingRecord.company_id, activeCompanyId) : undefined,
-      scope.farmId ? animalOnFarm(schema.breedingRecord.sow_animal_id, scope.farmId) : undefined,
-      sowOfLob(schema.breedingRecord.sow_animal_id),
-    ].filter(Boolean) as any[];
-
-    if (query.dateFrom && query.dateTo) {
-      breedingConditions.push(gte(schema.breedingRecord.mating_date, query.dateFrom));
-      breedingConditions.push(lte(schema.breedingRecord.mating_date, query.dateTo));
-    }
-
-    const matings = await this.db
-      .select({
-        breeding_id: schema.breedingRecord.breeding_id,
-        mating_type: schema.breedingRecord.mating_type,
-        conception_result: schema.breedingRecord.conception_result,
-        pregnancy_confirmed: schema.breedingRecord.pregnancy_confirmed,
-      })
-      .from(schema.breedingRecord)
-      .where(and(...breedingConditions));
-
-    const totalMatings = matings.length;
-    let confirmedPregnant = 0;
-    let repeatFailed = 0;
-    let aiInseminationCount = 0;
-    let naturalMatingCount = 0;
-
-    for (const m of matings) {
-      if (m.mating_type === 'AI') aiInseminationCount++;
-      else naturalMatingCount++;
-
-      if (m.pregnancy_confirmed || m.conception_result === 'CONFIRMED') confirmedPregnant++;
-      else if (m.conception_result === 'FAILED' || m.conception_result === 'REPEAT') repeatFailed++;
-    }
-
-    // 6. Query Real Production Batches
-    const batchConditions = [
-      eq(schema.batchHeader.tenant_id, tenantId),
-      activeCompanyId ? eq(schema.batchHeader.company_id, activeCompanyId) : undefined,
-      eq(schema.batchHeader.status, 'ACTIVE'),
-      ...batchScopeConditions(scope),
-    ].filter(Boolean) as any[];
-
-    const batches = await this.db
-      .select({
-        batch_id: schema.batchHeader.batch_id,
-        batch_no: schema.batchHeader.batch_no,
-        current_stage_code: schema.batchHeader.current_stage_code,
-        closing_quantity: schema.batchHeader.closing_quantity,
-        opening_quantity: schema.batchHeader.opening_quantity,
-        total_cost: schema.batchHeader.total_cost,
-        farm_id: schema.batchHeader.farm_id,
-        is_litter_lot: schema.batchHeader.is_litter_lot,
-      })
-      .from(schema.batchHeader)
-      .where(and(...batchConditions));
-
-    // A litter on its sow holds head but is not a batch: its piglets count in the headcount, not in the number of batches.
-    const activeBatchesCount = batches.filter((b) => !b.is_litter_lot).length;
-    const totalBatchHeadcount = batches.reduce((sum, b) => sum + (Number(b.closing_quantity) || Number(b.opening_quantity) || 0), 0);
-
-    // Compute live WIP valuation from batch_transaction (accumulated consumption & overhead)
-    const batchIds = batches.map((b) => b.batch_id);
-    const batchWipMap = new Map<string, number>();
-    if (batchIds.length > 0) {
-      const costTx = await this.db
-        .select({
-          batch_id: schema.batchTransaction.batch_id,
-          amount: schema.batchTransaction.amount,
-        })
-        .from(schema.batchTransaction)
-        .where(
-          and(
-            inArray(schema.batchTransaction.batch_id, batchIds),
-            inArray(schema.batchTransaction.transaction_type, ['CONSUMPTION', 'OVERHEAD']),
-            isNull(schema.batchTransaction.reversed_at),
-          )
-        );
-
-      for (const tx of costTx) {
-        batchWipMap.set(
-          tx.batch_id,
-          (batchWipMap.get(tx.batch_id) || 0) + Math.abs(Number(tx.amount || 0)),
-        );
-      }
-    }
-
-    const totalBatchWipValuation = batches.reduce(
-      (sum, b) => sum + (batchWipMap.get(b.batch_id) || Number(b.total_cost) || 0),
-      0,
+    const allFarms = (await this.ops.listFarms(tenantId, userType)).filter(
+      (f) => !companyId || !f.company_id || f.company_id === companyId,
     );
-
-    const batchStageMap = new Map<string, { count: number; totalHeads: number }>();
-    for (const b of batches) {
-      const stageCode = b.current_stage_code || 'UNSTAGED';
-      const heads = Number(b.closing_quantity) || Number(b.opening_quantity) || 0;
-      const prev = batchStageMap.get(stageCode) || { count: 0, totalHeads: 0 };
-      batchStageMap.set(stageCode, { count: prev.count + 1, totalHeads: prev.totalHeads + heads });
+    if (query.farmId && !allFarms.some((f) => f.farm_id === query.farmId)) {
+      throw new ForbiddenException('This farm is outside your workspace.');
     }
-    const batchesByStage = Array.from(batchStageMap.entries()).map(([stageName, val]) => ({
-      stageName,
-      count: val.count,
-      totalHeads: val.totalHeads,
+    const farms: Farm[] = allFarms
+      .filter((f) => !query.farmId || f.farm_id === query.farmId)
+      .map(({ farm_id, farm_code, farm_name }) => ({
+        farm_id,
+        farm_code,
+        farm_name,
+      }));
+
+    const empty: PiggeryGmDashboardData = {
+      period: null,
+      periods,
+      farms,
+      kg_sold_per_sow_year: { month: {}, ytd: {} },
+      breeding: [],
+      weaner_grower: [],
+      alerts: [],
+      farm_view: null,
+    };
+    if (!chosen) return empty;
+    const ytdFrom =
+      periods.find((p) => p.business_year === chosen.business_year)
+        ?.start_date ?? chosen.start_date;
+    const to = chosen.end_date > today ? today : chosen.end_date;
+    const period = { ...chosen, ytd_from: ytdFrom, to };
+    // A period still to come has no day to count yet.
+    if (chosen.start_date > today) return { ...empty, period };
+
+    const month = { name: 'month', startDate: chosen.start_date, endDate: to };
+    const ytd = { name: 'ytd', startDate: ytdFrom, endDate: to };
+    const stageIds = await this.stageIds(tenantId, companyId);
+
+    const breedingByFarm = new Map<
+      string,
+      { figures: BreedingFigures; targets: Targets }
+    >();
+    const kgMonth: Record<string, number | null> = {};
+    const kgYtd: Record<string, number | null> = {};
+    const allMonth: OpsMetrics[] = [];
+    const allYtd: OpsMetrics[] = [];
+    const stageByFarm = new Map<
+      string,
+      { weaner: StageExit[]; grower: StageExit[] }
+    >();
+
+    for (const farm of farms) {
+      const rows = await this.ops.farmMetrics(tenantId, farm.farm_id, [
+        month,
+        ytd,
+      ]);
+      const inMonth = rows
+        .filter((r) => r.month === 'month')
+        .map((r) => r.metrics);
+      const inYtd = rows.filter((r) => r.month === 'ytd').map((r) => r.metrics);
+      allMonth.push(...inMonth);
+      allYtd.push(...inYtd);
+      kgMonth[farm.farm_id] = kgSoldPerSowYear(
+        inMonth,
+        daysIn(month.startDate, month.endDate),
+      );
+      kgYtd[farm.farm_id] = kgSoldPerSowYear(
+        inYtd,
+        daysIn(ytd.startDate, ytd.endDate),
+      );
+
+      const breedIds = [...new Set(rows.map((r) => r.breed_id))];
+      const lifecycle = await this.lifecycleRows(
+        tenantId,
+        companyId,
+        farm.farm_id,
+        month.startDate,
+        month.endDate,
+        breedIds,
+      );
+      const perBreed = breedIds.map((id) =>
+        targetsFromLifecycle(
+          lifecycle.filter((r) => r.breed_id === id),
+          farm.farm_id,
+        ),
+      );
+      const targets = {} as Targets;
+      for (const row of BREEDING_ROWS)
+        targets[row.target] = meanTarget(perBreed.map((t) => t[row.target]));
+      breedingByFarm.set(farm.farm_id, {
+        figures: breedingFigures(inMonth),
+        targets,
+      });
+
+      stageByFarm.set(
+        farm.farm_id,
+        await this.stageExits(
+          tenantId,
+          companyId,
+          farm.farm_id,
+          month.startDate,
+          month.endDate,
+          stageIds,
+          scope,
+        ),
+      );
+    }
+    kgMonth.all = kgSoldPerSowYear(
+      allMonth,
+      daysIn(month.startDate, month.endDate),
+    );
+    kgYtd.all = kgSoldPerSowYear(allYtd, daysIn(ytd.startDate, ytd.endDate));
+
+    const breeding: MetricRow[] = BREEDING_ROWS.map((row) => ({
+      key: row.key,
+      label: row.label,
+      unit: row.unit,
+      lower_is_better: row.lower,
+      cells: Object.fromEntries(
+        farms.map((f) => {
+          const b = breedingByFarm.get(f.farm_id)!;
+          return [
+            f.farm_id,
+            cell(b.figures[row.key], b.targets[row.target], row.lower),
+          ];
+        }),
+      ),
     }));
 
-    // 7. Query Real Farm Locations
-    const farmLocations = await this.db
-      .select({
-        location_id: schema.locationMaster.location_id,
-        location_code: schema.locationMaster.location_code,
-        location_name: schema.locationMaster.location_name,
-      })
-      .from(schema.locationMaster)
-      .where(
-        and(
-          eq(schema.locationMaster.tenant_id, tenantId),
-          eq(schema.locationMaster.location_type, 'FARM'),
-          activeCompanyId ? eq(schema.locationMaster.company_id, activeCompanyId) : undefined,
-          scope.farmId ? eq(schema.locationMaster.location_id, scope.farmId) : undefined,
-          scope.restricted && scope.lobId ? eq(schema.locationMaster.lob_id, scope.lobId) : undefined,
-        )
-      );
-
-    // Map pens/sheds to their parent farm
-    const allLocations = await this.db
-      .select({
-        location_id: schema.locationMaster.location_id,
-        farm_id: schema.locationMaster.farm_id,
-      })
-      .from(schema.locationMaster)
-      .where(eq(schema.locationMaster.tenant_id, tenantId));
-
-    const locToFarmMap = new Map<string, string>();
-    for (const loc of allLocations) {
-      if (loc.farm_id) locToFarmMap.set(loc.location_id, loc.farm_id);
-    }
-
-    const facilityLocations = farmLocations.map((fl) => {
-      const farmAnimals = activeAnimals.filter((a) => {
-        const resolvedFarm = locToFarmMap.get(a.current_location_id || '') || a.current_location_id;
-        return resolvedFarm === fl.location_id;
-      });
-      const farmSows = farmAnimals.filter((a) => a.animal_type === 'SOW').length;
-      const farmGilts = farmAnimals.filter((a) => a.animal_type === 'GILT').length;
-      const farmBatches = batches.filter((b) => b.farm_id === fl.location_id);
-      const farmWip = farmBatches.reduce(
-        (sum, b) => sum + (batchWipMap.get(b.batch_id) || Number(b.total_cost) || 0),
-        0,
-      );
-
-      const isActive = farmAnimals.length > 0 || farmBatches.length > 0;
-
-      return {
-        locationId: fl.location_id,
-        locationCode: fl.location_code,
-        locationName: fl.location_name,
-        headcount: farmAnimals.length,
-        sowsCount: farmSows,
-        giltsCount: farmGilts,
-        batchesCount: farmBatches.length,
-        wipValuation: farmWip,
-        status: isActive ? ('Active Operations' as const) : ('Standby' as const),
-      };
-    });
+    const figures = new Map(
+      farms.map((f) => {
+        const s = stageByFarm.get(f.farm_id)!;
+        return [
+          f.farm_id,
+          {
+            weaner: stageFigures(s.weaner),
+            grower: stageFigures(s.grower),
+            exits: s,
+          },
+        ];
+      }),
+    );
+    const weanerGrower: MetricRow[] = STAGE_ROWS.map((row) => ({
+      key: row.key,
+      label: row.label,
+      unit: row.unit,
+      lower_is_better: row.lower,
+      cells: Object.fromEntries(
+        farms.map((f) => {
+          const s = figures.get(f.farm_id)!;
+          return [
+            f.farm_id,
+            cell(
+              row.pick(s),
+              row.target ? row.target(s.exits) : null,
+              row.lower,
+            ),
+          ];
+        }),
+      ),
+    }));
 
     return {
-      metadata: {
-        tenantName: 'NAVFarm Enterprise',
-        companyName,
-        nobCode: 'LVS_PIGGERY',
-        periodCode,
-        businessYear,
-        periodStartDate,
-        periodEndDate,
-        isPeriodActive,
-        availablePeriods: (periods || []).map((p) => ({
-          periodId: p.period_id,
-          periodCode: p.period_code,
-          businessYear: p.business_year,
-          startDate: p.start_date,
-          endDate: p.end_date,
-          isActive: p.is_active,
+      period,
+      periods,
+      farms,
+      kg_sold_per_sow_year: { month: kgMonth, ytd: kgYtd },
+      breeding,
+      weaner_grower: weanerGrower,
+      alerts: alertsFrom([...breeding, ...weanerGrower], farms),
+      farm_view:
+        query.farmId && farms.length === 1
+          ? await this.farmView(
+              tenantId,
+              companyId,
+              farms[0],
+              period,
+              periods,
+              stageIds,
+              scope,
+              kgYtd[farms[0].farm_id] ?? null,
+            )
+          : null,
+    };
+  }
+
+  /**
+   * One farm, as the mockup's Farm view (Rishi, 2 Nov): each matrix row's figure for This Week, the 4-week average,
+   * This Month, Prev. Month and 3 Months (farmWindows), its six-week trend, and This Week against the target; the
+   * farm's sows on the period's last day; and This Week's red, amber and on-target rows as alerts.
+   */
+  private async farmView(
+    tenantId: string,
+    companyId: string,
+    farm: Farm,
+    period: GmDashboardPeriod & { to: string },
+    periods: GmDashboardPeriod[],
+    stageIds: Record<string, string[]>,
+    scope: FarmScope,
+    kgYtd: number | null,
+  ): Promise<GmFarmView> {
+    const at = periods.findIndex((p) => p.period_id === period.period_id);
+    const previous = [periods[at - 1], periods[at - 2]].filter(
+      (p): p is GmDashboardPeriod => !!p,
+    );
+    const windows = farmWindows(period.to, period, previous);
+    const has = (key: string) => windows.some((w) => w.key === key);
+    const from = windows.map((w) => w.startDate).sort()[0];
+
+    const rows = await this.ops.farmMetrics(
+      tenantId,
+      farm.farm_id,
+      windows.map((w) => ({ name: w.key, ...w })),
+    );
+    const opsOf = (key: string) =>
+      rows.filter((r) => r.month === key).map((r) => r.metrics);
+    const breedIds = [...new Set(rows.map((r) => r.breed_id))];
+    const lifecycle = await this.lifecycleRows(
+      tenantId,
+      companyId,
+      farm.farm_id,
+      period.start_date,
+      period.to,
+      breedIds,
+    );
+    const perBreed = breedIds.map((id) =>
+      targetsFromLifecycle(
+        lifecycle.filter((r) => r.breed_id === id),
+        farm.farm_id,
+      ),
+    );
+    const figures = new Map(
+      windows.map((w) => [w.key, breedingFigures(opsOf(w.key))]),
+    );
+    const breeding = BREEDING_ROWS.map((row) =>
+      farmRow(
+        { key: row.key, label: row.label, unit: row.unit, lower: row.lower },
+        (k) => figures.get(k)?.[row.key] ?? null,
+        meanTarget(perBreed.map((t) => t[row.target])),
+        has,
+      ),
+    );
+
+    const exits = await this.stageExits(
+      tenantId,
+      companyId,
+      farm.farm_id,
+      from,
+      period.to,
+      stageIds,
+      scope,
+    );
+    const inWindow = (list: StageExit[], key: string) => {
+      const w = windows.find((x) => x.key === key);
+      return w
+        ? list.filter(
+            (e) => e.exit_date >= w.startDate && e.exit_date <= w.endDate,
+          )
+        : [];
+    };
+    const stage = new Map(
+      windows.map((w) => [
+        w.key,
+        {
+          weaner: stageFigures(inWindow(exits.weaner, w.key)),
+          grower: stageFigures(inWindow(exits.grower, w.key)),
+        },
+      ]),
+    );
+    const weanerGrower = STAGE_ROWS.map((row) =>
+      farmRow(
+        { key: row.key, label: row.label, unit: row.unit, lower: row.lower },
+        (k) => (stage.get(k) ? row.pick(stage.get(k)!) : null),
+        row.target ? row.target(exits) : null,
+        has,
+      ),
+    );
+
+    const sows = opsOf('this_month').reduce(
+      (a, m) => a + m.sows_on_last_day,
+      0,
+    );
+    return {
+      farm,
+      sows,
+      windows: windows
+        .filter((w) => !w.key.startsWith('week_'))
+        .map((w) => ({
+          key: w.key,
+          start_date: w.startDate,
+          end_date: w.endDate,
         })),
-      },
-      activeHerdSummary: {
-        totalHeadcount: activeAnimals.length,
-        sowsCount: sows.length,
-        giltsCount: gilts.length,
-        boarsCount: boars.length,
-        parityDistribution: {
-          p0Gilts: { count: parityBuckets.p0, pct: p0Pct },
-          p1: { count: parityBuckets.p1, pct: p1Pct },
-          p2: { count: parityBuckets.p2, pct: p2Pct },
-          p3: { count: parityBuckets.p3, pct: p3Pct },
-          p4Plus: { count: parityBuckets.p4Plus, pct: p4PlusPct },
+      kg_sold_per_sow_year_ytd: kgYtd,
+      breeding,
+      weaner_grower: weanerGrower,
+      alerts: farmAlerts([...breeding, ...weanerGrower]),
+    };
+  }
+
+  /** The stage ids of WEANER and GROWER, the company's own row first, as stage masters are overridden. */
+  private async stageIds(
+    tenantId: string,
+    companyId: string,
+  ): Promise<Record<string, string[]>> {
+    const S = schema.stageMaster;
+    const rows = await this.db
+      .select({ stage_id: S.stage_id, stage_code: S.stage_code })
+      .from(S)
+      .where(
+        and(
+          eq(S.tenant_id, tenantId),
+          inArray(S.stage_code, [WEANER, GROWER]),
+          companyId
+            ? or(isNull(S.company_id), eq(S.company_id, companyId))
+            : isNull(S.company_id),
+        ),
+      );
+    const out: Record<string, string[]> = { [WEANER]: [], [GROWER]: [] };
+    for (const r of rows) out[r.stage_code]?.push(r.stage_id);
+    return out;
+  }
+
+  /** The breeds' active lifecycle rows in force during the dates, for the farm or company-wide (as R07 reads them). */
+  private async lifecycleRows(
+    tenantId: string,
+    companyId: string,
+    farmId: string,
+    from: string,
+    to: string,
+    breedIds: string[],
+    stageIds?: string[],
+  ) {
+    if (!breedIds.length) return [];
+    const l = schema.breedLifecycleStages;
+    const conditions: SQL[] = [
+      eq(l.tenant_id, tenantId),
+      inArray(l.breed_id, breedIds),
+      eq(l.is_active, true),
+      isNull(l.retired_at),
+      or(isNull(l.farm_id), eq(l.farm_id, farmId)) as SQL,
+      or(isNull(l.effective_from), sql`${l.effective_from} <= ${to}`) as SQL,
+      or(isNull(l.effective_to), sql`${l.effective_to} >= ${from}`) as SQL,
+      companyId ? eq(l.company_id, companyId) : isNull(l.company_id),
+    ];
+    if (stageIds)
+      conditions.push(
+        stageIds.length ? inArray(l.stage_id, stageIds) : sql`FALSE`,
+      );
+    return this.db
+      .select({
+        breed_id: l.breed_id,
+        farm_id: l.farm_id,
+        kpi_thresholds: l.kpi_thresholds,
+      })
+      .from(l)
+      .where(and(...conditions));
+  }
+
+  /** One KPI's target from lifecycle rows, the farm's own row first. */
+  private metricTarget(
+    rows: Array<{ farm_id: string | null; kpi_thresholds: unknown }>,
+    farmId: string,
+    metric: string,
+  ): Target | null {
+    const ordered = [...rows].sort(
+      (a, b) => Number(b.farm_id === farmId) - Number(a.farm_id === farmId),
+    );
+    for (const row of ordered) {
+      let list = row.kpi_thresholds;
+      if (typeof list === 'string') {
+        try {
+          list = JSON.parse(list);
+        } catch {
+          list = null;
+        }
+      }
+      if (!Array.isArray(list)) continue;
+      const found = list.find((t: any) => t?.metric === metric);
+      if (!found) continue;
+      const limits = kpiLimits(found);
+      if (
+        limits.average !== null ||
+        limits.lower !== null ||
+        limits.upper !== null
+      )
+        return limits;
+    }
+    return null;
+  }
+
+  /**
+   * The weaner and grower spells of the farm's batches that ended in the period (the batch moved on, or closed), with
+   * the records stageExit needs. Weight is the batch's posted BODY_WEIGHT (per-animal rows averaged per day); feed is
+   * its unreversed CONSUMPTION kg; a weaner spell's entry weight is the weaning weight of the batch's litters, a
+   * grower spell's the last weighing on or before it entered.
+   */
+  private async stageExits(
+    tenantId: string,
+    companyId: string,
+    farmId: string,
+    from: string,
+    to: string,
+    stageIds: Record<string, string[]>,
+    scope: FarmScope,
+  ): Promise<{ weaner: StageExit[]; grower: StageExit[] }> {
+    const B = schema.batchHeader;
+    const batches = await this.db
+      .select({
+        batch_id: B.batch_id,
+        breed_id: B.breed_id,
+        start_date: B.start_date,
+        actual_end_date: B.actual_end_date,
+        closed_at: B.closed_at,
+        status: B.status,
+        current_stage_code: B.current_stage_code,
+        opening: B.opening_quantity,
+      })
+      .from(B)
+      .where(
+        and(
+          eq(B.tenant_id, tenantId),
+          eq(B.farm_id, farmId),
+          isNull(B.deleted_at),
+          ...batchScopeConditions(scope),
+        ),
+      );
+    if (!batches.length) return { weaner: [], grower: [] };
+    const ids = batches.map((b) => b.batch_id);
+
+    const L = schema.batchStageLog;
+    const logs = await this.db
+      .select({
+        batch_id: L.batch_id,
+        from: L.from_stage_code,
+        to: L.to_stage_code,
+        at: L.transferred_at,
+      })
+      .from(L)
+      .where(inArray(L.batch_id, ids));
+    const stageBatches = new Map<string, StageBatch>(
+      batches.map((b) => [
+        b.batch_id,
+        {
+          batch_id: b.batch_id,
+          start_date: day(b.start_date),
+          end_date:
+            b.status === 'CLOSED'
+              ? day(b.actual_end_date ?? b.closed_at ?? to)
+              : null,
+          current_stage_code: b.current_stage_code,
+          moves: logs
+            .filter((l) => l.batch_id === b.batch_id)
+            .map((l) => ({ from: l.from, to: l.to, date: day(l.at) })),
         },
-        stagesDistribution,
+      ]),
+    );
+    const ending = (stage: string) =>
+      batches.flatMap((b) =>
+        stageSegments(stageBatches.get(b.batch_id)!, stage)
+          .filter(
+            (s): s is { start: string; exit: string } =>
+              !!s.exit && s.exit >= from && s.exit <= to,
+          )
+          .map((segment) => ({ batch: b, segment })),
+      );
+    const weanerSpells = ending(WEANER);
+    const growerSpells = ending(GROWER);
+    const used = [
+      ...new Set(
+        [...weanerSpells, ...growerSpells].map((s) => s.batch.batch_id),
+      ),
+    ];
+    if (!used.length) return { weaner: [], grower: [] };
+
+    const deaths = await loadBatchDeaths(this.db, used, to);
+    const moves = new Map<string, HeadMoveRow[]>();
+    for (const m of await loadHeadMoves(this.db, used, to)) {
+      if (m.toBatchId && used.includes(m.toBatchId))
+        moves.set(m.toBatchId, [
+          ...(moves.get(m.toBatchId) ?? []),
+          { date: m.date, heads: m.heads },
+        ]);
+      if (m.fromBatchId && used.includes(m.fromBatchId))
+        moves.set(m.fromBatchId, [
+          ...(moves.get(m.fromBatchId) ?? []),
+          { date: m.date, heads: -m.heads },
+        ]);
+    }
+
+    const T = schema.batchTransaction;
+    const feedRows = await this.db
+      .select({
+        batch_id: T.batch_id,
+        date: T.transaction_date,
+        quantity: T.quantity,
+      })
+      .from(T)
+      .where(
+        and(
+          inArray(T.batch_id, used),
+          eq(T.transaction_type, 'CONSUMPTION'),
+          isNull(T.reversed_at),
+          sql`UPPER(${T.uom}) = 'KG'`,
+          sql`${T.transaction_date} <= ${to}`,
+        ),
+      );
+    const feed = new Map<string, DatedQty[]>();
+    for (const r of feedRows)
+      feed.set(r.batch_id, [
+        ...(feed.get(r.batch_id) ?? []),
+        { date: day(r.date), quantity: Number(r.quantity) || 0 },
+      ]);
+
+    const D = schema.batchDailyData;
+    const SL = schema.schedulerLine;
+    const weightRows = await this.db
+      .select({
+        batch_id: D.batch_id,
+        date: D.entry_date,
+        value: sql<string>`AVG(${D.entered_value})`,
+      })
+      .from(D)
+      .innerJoin(SL, eq(SL.line_id, D.line_id))
+      .where(
+        and(
+          inArray(D.batch_id, used),
+          eq(D.posted, true),
+          eq(SL.kpi_metric, 'BODY_WEIGHT'),
+          sql`${D.entered_value} > 0`,
+          sql`${D.entry_date} <= ${to}`,
+        ),
+      )
+      .groupBy(D.batch_id, D.entry_date);
+    const weights = new Map<string, DatedQty[]>();
+    for (const r of weightRows)
+      weights.set(r.batch_id, [
+        ...(weights.get(r.batch_id) ?? []),
+        { date: day(r.date), quantity: Number(r.value) },
+      ]);
+
+    const F = schema.farrowingRecord;
+    const weanRows = await this.db
+      .select({
+        batch_id: F.piglet_batch_id,
+        weight: sql<
+          string | null
+        >`SUM(${F.piglets_weaned} * ${F.avg_weaning_weight_kg}) / NULLIF(SUM(${F.piglets_weaned}), 0)`,
+      })
+      .from(F)
+      .where(
+        and(
+          inArray(F.piglet_batch_id, used),
+          sql`${F.avg_weaning_weight_kg} IS NOT NULL`,
+          sql`${F.piglets_weaned} > 0`,
+        ),
+      )
+      .groupBy(F.piglet_batch_id);
+    const weanWeight = new Map(
+      weanRows.map((r) => [
+        r.batch_id as string,
+        r.weight == null ? null : Number(r.weight),
+      ]),
+    );
+
+    const breedIds = [
+      ...new Set(
+        batches.map((b) => b.breed_id).filter((id): id is string => !!id),
+      ),
+    ];
+    const targetsFor = async (stage: string) => {
+      const rows = await this.lifecycleRows(
+        tenantId,
+        companyId,
+        farmId,
+        from,
+        to,
+        breedIds,
+        stageIds[stage],
+      );
+      return new Map(
+        breedIds.map((id) => {
+          const own = rows.filter((r) => r.breed_id === id);
+          return [
+            id,
+            {
+              weight: this.metricTarget(own, farmId, STAGE_METRICS.weight),
+              fcr: this.metricTarget(own, farmId, STAGE_METRICS.fcr),
+              mortality: this.metricTarget(
+                own,
+                farmId,
+                STAGE_METRICS.mortality,
+              ),
+            },
+          ];
+        }),
+      );
+    };
+    const weanerTargets = await targetsFor(WEANER);
+    const growerTargets = await targetsFor(GROWER);
+    const none = { weight: null, fcr: null, mortality: null };
+
+    const exitOf = (
+      spell: {
+        batch: (typeof batches)[number];
+        segment: { start: string; exit: string };
       },
-      reproductiveIntelligence: {
-        totalLittersRecorded: totalLitters,
-        totalPigletsBornLive,
-        avgBornAlivePerLitter: avgBornAlive,
-        totalPigletsWeaned,
-        weaningSurvivalRatePct,
-        preWeanMortalityPct,
-        conceptionPipeline: {
-          totalMatings,
-          confirmedPregnant,
-          repeatFailed,
-          completedWeaned: totalLitters,
-          aiInseminationCount,
-          naturalMatingCount,
-        },
-        recentLitters,
-      },
-      productionBatchesSummary: {
-        activeBatchesCount,
-        totalBatchHeadcount,
-        totalBatchWipValuation,
-        batchesByStage,
-      },
-      facilityLocations,
+      targets: Map<
+        string,
+        { weight: Target | null; fcr: Target | null; mortality: Target | null }
+      >,
+      entryWeight: number | null,
+    ) =>
+      stageExit({
+        segment: spell.segment,
+        opening: Number(spell.batch.opening) || 0,
+        deaths: (deaths.get(spell.batch.batch_id) ?? []).map((d) => ({
+          date: d.date,
+          quantity: d.quantity,
+        })),
+        moves: moves.get(spell.batch.batch_id) ?? [],
+        feed: feed.get(spell.batch.batch_id) ?? [],
+        weights: weights.get(spell.batch.batch_id) ?? [],
+        entryWeight,
+        targets: targets.get(spell.batch.breed_id ?? '') ?? none,
+      });
+    const firstIn = (batchId: string, start: string, exit: string) =>
+      (weights.get(batchId) ?? [])
+        .filter((w) => w.date >= start && w.date <= exit)
+        .sort((a, b) => a.date.localeCompare(b.date))[0]?.quantity ?? null;
+    const lastBy = (batchId: string, upTo: string) =>
+      (weights.get(batchId) ?? [])
+        .filter((w) => w.date <= upTo)
+        .sort((a, b) => b.date.localeCompare(a.date))[0]?.quantity ?? null;
+
+    return {
+      weaner: weanerSpells.map((s) =>
+        exitOf(
+          s,
+          weanerTargets,
+          weanWeight.get(s.batch.batch_id) ??
+            firstIn(s.batch.batch_id, s.segment.start, s.segment.exit),
+        ),
+      ),
+      grower: growerSpells.map((s) =>
+        exitOf(
+          s,
+          growerTargets,
+          lastBy(s.batch.batch_id, s.segment.start) ??
+            firstIn(s.batch.batch_id, s.segment.start, s.segment.exit),
+        ),
+      ),
     };
   }
 }
