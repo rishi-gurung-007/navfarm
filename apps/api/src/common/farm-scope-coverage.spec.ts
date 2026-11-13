@@ -195,6 +195,8 @@ const EXEMPT: Record<string, string> = {
     "Company-level finance setup (an animal's residual, and dating animals' costing start), like the GL mappings it sits beside; not a farm's.",
   'finance/bio-costing/bio-costing-item.controller.ts':
     "Company-level finance setup (a biological item's fair-value rates, the item-level home of a costing profile's), like the GL mappings; not a farm's.",
+  'finance/gl-posting-group/gl-posting-group.controller.ts':
+    'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
   'finance/gl-mapping/gl-mapping.controller.ts':
     'Company-level finance master; finance is not farm-scoped (decided 2026-09-14).',
   'finance/journal/journal.controller.ts':

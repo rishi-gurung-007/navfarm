@@ -4508,7 +4508,14 @@ export class BatchService {
     targetStageId?: string,
   ) {
     let effectiveStageId = targetStageId || batch.stage_id;
-    if (!effectiveStageId && batch.lob_id) {
+    // An animal-wise batch given no stage keeps each animal's own stage; its schedulers are opened per occupied
+    // stage. Defaulting it to the LOB's first stage would stamp the batch Quarantine and create a scheduler for a
+    // stage no animal is in.
+    if (
+      !effectiveStageId &&
+      batch.lob_id &&
+      batch.tracking_mode !== 'ANIMAL_WISE'
+    ) {
       try {
         const selectObj = this.db.select?.();
         if (selectObj?.from) {

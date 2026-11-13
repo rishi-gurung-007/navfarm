@@ -57,6 +57,7 @@ export const MASTER_TABLES: Record<string, AnyMySqlTable> = {
   resource: schema.resourceMaster,
   'gl-account': schema.glAccountMaster,
   'gl-mapping': schema.glMappingMaster,
+  'gl-posting-group': schema.glPostingGroup,
   'cost-center': schema.costCenterMaster,
   'item-application': schema.inventoryApplication,
   'inventory-application': schema.inventoryApplication,

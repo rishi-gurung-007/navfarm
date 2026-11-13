@@ -354,7 +354,7 @@ describe('ItemService', () => {
         });
 
       await expect(service.findAll({}, 'tenant-123')).resolves.toEqual({
-        data: [{ ...legacyItem, tracking_locked: false, valuation_locked: false }], total: 1, limit: 50, offset: 0,
+        data: [{ ...legacyItem, tracking_locked: false, valuation_locked: false, posting_group_accounts: '', bio_costing_locked: false }], total: 1, limit: 50, offset: 0,
       });
     });
   });

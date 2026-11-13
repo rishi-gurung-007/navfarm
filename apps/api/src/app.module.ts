@@ -50,6 +50,7 @@ import { FeedFormulaModule } from './modules/master-data/feed-formula/feed-formu
 import { GlAccountModule } from './modules/finance/gl-account/gl-account.module';
 import { GlMappingModule } from './modules/finance/gl-mapping/gl-mapping.module';
 import { CostCenterModule } from './modules/finance/cost-center/cost-center.module';
+import { GlPostingGroupModule } from './modules/finance/gl-posting-group/gl-posting-group.module';
 import { InventoryLedgerModule } from './modules/inventory/inventory-ledger/inventory-ledger.module';
 import { FeedForecastModule } from './modules/inventory/feed-forecast/feed-forecast.module';
 import { FeedSettingsModule } from './modules/inventory/feed-settings/feed-settings.module';
@@ -160,6 +161,7 @@ import { SystemController } from './system/system.controller';
     GlAccountModule,
     GlMappingModule,
     CostCenterModule,
+    GlPostingGroupModule,
     InventoryLedgerModule,
     FeedForecastModule,
     FeedSettingsModule,

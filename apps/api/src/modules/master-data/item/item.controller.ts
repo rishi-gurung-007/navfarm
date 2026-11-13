@@ -132,6 +132,7 @@ export class ItemController {
         // The Bio Asset Costing tab: locked once an animal of the item has been charged; the accounts a run would still need.
         bio_costing_locked: result.is_biological_asset ? (await this.itemService.costedAnimalCount(id)) > 0 : false,
         bio_costing_missing_gl: result.is_biological_asset ? missingBioGl(result as never) : [],
+        posting_group_accounts: await this.itemService.postingGroupAccountsText(result as never),
       },
     };
   }

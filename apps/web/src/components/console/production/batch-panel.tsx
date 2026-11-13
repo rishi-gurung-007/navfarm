@@ -548,7 +548,10 @@ export default function BatchPanel() {
     setNobId(batch.nob_id || activeArea?.nob_id || '');
     setHeader({
       lob_id: batch.lob_id || '',
-      costing_method: batch.costing_method || 'STANDARD',
+      costing_method:
+        batch.tracking_mode === 'ANIMAL_WISE'
+          ? 'BIO_ASSET'
+          : batch.costing_method || 'STANDARD',
       breed_id: batch.breed_id || '',
       stage_id: batch.stage_id || '',
       shed_id: batch.shed_id || '',
@@ -2065,11 +2068,19 @@ export default function BatchPanel() {
                   const mode = val as 'BATCH_WISE' | 'ANIMAL_WISE';
                   setTrackingMode(mode);
                   if (mode === 'ANIMAL_WISE') {
-                    setHeader((h) => ({ ...h, uom: 'HEAD' }));
+                    setHeader((h) => ({
+                      ...h,
+                      uom: 'HEAD',
+                      costing_method: 'BIO_ASSET',
+                    }));
                   } else {
                     setHeader((h) => ({
                       ...h,
                       uom: h.uom === 'HEAD' ? '' : h.uom,
+                      costing_method:
+                        h.costing_method === 'BIO_ASSET'
+                          ? 'STANDARD'
+                          : h.costing_method,
                     }));
                   }
                 }}
@@ -2088,6 +2099,7 @@ export default function BatchPanel() {
                 ariaLabel={t('blLabelCostingMethod')}
                 ariaRequired
                 value={header.costing_method}
+                disabled={trackingMode === 'ANIMAL_WISE'}
                 onChange={(val) =>
                   setHeader((h) => ({ ...h, costing_method: val }))
                 }

@@ -101,6 +101,10 @@ export class ItemBioCostingDto {
   @ApiPropertyOptional({ description: 'GL account: mortality / impairment loss', nullable: true })
   @IsOptional() @IsUUID()
   bio_writeoff_gl_id?: string | null;
+
+  @ApiPropertyOptional({ description: 'Posting group the item takes its accounts from (biological group for an animal item, inventory group for stock); blank to unlink', nullable: true })
+  @IsOptional() @Transform(({ value }) => (value === '' ? null : value)) @IsUUID()
+  posting_group_id?: string | null;
 }
 
 export class CreateItemDto extends ItemBioCostingDto {

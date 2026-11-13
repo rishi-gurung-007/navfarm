@@ -1629,6 +1629,8 @@ export const itemMaster = mysqlTable(
     // A fair value LOSS goes here when set (the COA splits "FV Gain - Weaners" from "FV Loss - Weaners"); unset, the loss goes to bio_fv_gain_loss_gl_id too.
     bio_fv_loss_gl_id: varchar('bio_fv_loss_gl_id', { length: 36 }),
     bio_writeoff_gl_id: varchar('bio_writeoff_gl_id', { length: 36 }),
+    // 0250: the Posting Group this item takes its accounts from (kind BIOLOGICAL for an animal item, INVENTORY for stock). The accounts above are kept in step with it.
+    posting_group_id: varchar('posting_group_id', { length: 36 }),
     // The date costing should start for this item (0229): the scheduler never catches up before it, as a profile's effective_from did.
     bio_effective_from: date('bio_effective_from', { mode: 'string' }),
     is_inventoriable: boolean('is_inventoriable').default(true).notNull(),
@@ -9331,5 +9333,45 @@ export const milkProductionLogRelations = relations(
       fields: [milkProductionLog.company_id],
       references: [companyMaster.company_id],
     }),
+  }),
+);
+
+/** 0250: the accounts of a class of items, set once and picked on the item. BIOLOGICAL holds the animal accounts; INVENTORY the stock and cost-of-sales accounts. */
+export const glPostingGroup = mysqlTable(
+  'gl_posting_group',
+  {
+    posting_group_id: varchar('posting_group_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).notNull(),
+    group_code: varchar('group_code', { length: 50 }).notNull(),
+    group_name: varchar('group_name', { length: 150 }).notNull(),
+    kind: varchar('kind', { length: 20 }).notNull(),
+    asset_gl_id: varchar('asset_gl_id', { length: 36 }),
+    accum_amort_gl_id: varchar('accum_amort_gl_id', { length: 36 }),
+    amort_expense_gl_id: varchar('amort_expense_gl_id', { length: 36 }),
+    fv_gain_gl_id: varchar('fv_gain_gl_id', { length: 36 }),
+    fv_loss_gl_id: varchar('fv_loss_gl_id', { length: 36 }),
+    writeoff_gl_id: varchar('writeoff_gl_id', { length: 36 }),
+    inventory_gl_id: varchar('inventory_gl_id', { length: 36 }),
+    cogs_gl_id: varchar('cogs_gl_id', { length: 36 }),
+    is_active: boolean('is_active').notNull().default(true),
+    status: varchar('status', { length: 20 }).notNull().default('ACTIVE'),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at').notNull().defaultNow(),
+    updated_at: timestamp('updated_at').notNull().defaultNow(),
+    deleted_at: timestamp('deleted_at'),
+  },
+  (table) => ({
+    codeUnique: uniqueIndex('uq_gl_posting_group_code').on(table.tenant_id, table.company_id, table.group_code),
+    companyFk: foreignKey({ columns: [table.company_id], foreignColumns: [companyMaster.company_id], name: 'gl_pg_company_id_fk' }).onDelete('restrict'),
+    assetFk: foreignKey({ columns: [table.asset_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_asset_gl_fk' }).onDelete('restrict'),
+    accumFk: foreignKey({ columns: [table.accum_amort_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_accum_gl_fk' }).onDelete('restrict'),
+    amortFk: foreignKey({ columns: [table.amort_expense_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_amort_gl_fk' }).onDelete('restrict'),
+    fvGainFk: foreignKey({ columns: [table.fv_gain_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_fv_gain_gl_fk' }).onDelete('restrict'),
+    fvLossFk: foreignKey({ columns: [table.fv_loss_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_fv_loss_gl_fk' }).onDelete('restrict'),
+    writeoffFk: foreignKey({ columns: [table.writeoff_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_writeoff_gl_fk' }).onDelete('restrict'),
+    inventoryFk: foreignKey({ columns: [table.inventory_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_inventory_gl_fk' }).onDelete('restrict'),
+    cogsFk: foreignKey({ columns: [table.cogs_gl_id], foreignColumns: [glAccountMaster.gl_account_id], name: 'gl_pg_cogs_gl_fk' }).onDelete('restrict'),
   }),
 );

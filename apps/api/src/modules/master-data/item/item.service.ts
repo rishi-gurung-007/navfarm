@@ -7,6 +7,9 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
+import {
+  ACCOUNT_LABELS, accountsContradictingGroup, fieldsOfKind, groupFitsItem, itemColumnsFromGroup,
+} from '../../finance/gl-posting-group/gl-posting-group.rules';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import {
   eq,
@@ -469,6 +472,7 @@ export class ItemService {
           dto as unknown as Record<string, unknown>,
         );
 
+    const postingGroupId = await this.applyPostingGroup(dto as Record<string, any>, null, tenantId, companyId);
     const bioTerms: BioCostingTerms = { ...this.bioTermsOf(dto), is_biological_asset: dto.is_biological_asset || false };
     this.assertBioCosting(bioTerms);
     await this.assertBioGlAccounts(bioTerms, tenantId, companyId);
@@ -483,6 +487,7 @@ export class ItemService {
     const itemId = randomUUID();
     const newItem = {
       item_id: itemId,
+      posting_group_id: postingGroupId ?? null,
       tenant_id: tenantId,
       company_id: companyId,
       category_id: dto.category_id || null,
@@ -922,9 +927,14 @@ export class ItemService {
       )
       .where(and(...conditions));
 
+    // The edit form reads the list row: it shows the accounts the item's posting group gives it, and locks the group once a run has charged its animals.
+    const groupTexts = await this.postingGroupAccountTexts(data.map((r) => r.posting_group_id as string));
+    const costed = await this.costedItemIds(data.filter((r) => r.is_biological_asset).map((r) => r.item_id as string));
     // The form locks Tracking while stock is on hand or an open document names the item.
     const rows = data.map((row) => ({
       ...row,
+      posting_group_accounts: row.posting_group_id ? groupTexts.get(row.posting_group_id as string) ?? '' : '',
+      bio_costing_locked: costed.has(row.item_id as string),
       tracking_locked: row.on_hand_qty > 0.0001 || row.open_documents > 0,
       // The form locks Valuation Method for a biological asset (TDD: un-editable) and once the item has inventory entries.
       valuation_locked: !!row.is_biological_asset || !!row.has_inventory,
@@ -1142,6 +1152,72 @@ export class ItemService {
     return out;
   }
 
+  /**
+   * The Posting Group of an item (plan 2026-11-13-posting-group-setup). Naming a group copies its accounts into the dto's account fields, so
+   * the checks and the copy that follow are the ones an account has always had. An item that has a group takes its accounts from it: accounts
+   * sent that differ are refused, and so is a costing method or kind the group cannot serve. Returns the value to store, or undefined to leave it.
+   */
+  private async applyPostingGroup(
+    dto: Record<string, any>,
+    current: { posting_group_id?: string | null; is_biological_asset?: boolean | null; bio_costing_method?: string | null; item_code?: string } | null,
+    tenantId: string,
+    companyId: string | null | undefined,
+  ): Promise<string | null | undefined> {
+    const sent: string | null | undefined = dto.posting_group_id === '' ? null : dto.posting_group_id;
+    if (sent === null) return null; // unlinked; the accounts stay as they are
+    const facts = {
+      is_biological_asset: dto.is_biological_asset !== undefined ? dto.is_biological_asset : current?.is_biological_asset,
+      bio_costing_method: dto.bio_costing_method !== undefined ? dto.bio_costing_method : current?.bio_costing_method,
+    };
+    const groupId = sent ?? current?.posting_group_id;
+    if (!groupId) return undefined;
+    const [group] = await this.db.select().from(schema.glPostingGroup).where(eq(schema.glPostingGroup.posting_group_id, groupId)).limit(1);
+    if (!group) throw new BadRequestException('The selected posting group does not exist.');
+    if (sent) {
+      if (group.tenant_id !== tenantId || (companyId && group.company_id !== companyId)) throw new BadRequestException("Select a posting group of the item's company.");
+      if (group.deleted_at || !group.is_active) throw new BadRequestException(`${group.group_code} is inactive.`);
+    }
+    const why = groupFitsItem(group as any, facts);
+    if (why) throw new BadRequestException(why);
+    const contradicting = sent ? [] : accountsContradictingGroup(group as any, dto);
+    if (contradicting.length) {
+      throw new BadRequestException(`The accounts of this item come from posting group ${group.group_code}; change the group to change them (${contradicting.join(', ')}).`);
+    }
+    if (sent) Object.assign(dto, itemColumnsFromGroup(group as any));
+    return sent ?? undefined;
+  }
+
+  /** The accounts of posting groups, one text per group (`label: code - name` per line), for the Item Card and the item list. */
+  private async postingGroupAccountTexts(groupIds: string[]): Promise<Map<string, string>> {
+    const out = new Map<string, string>();
+    const ids = [...new Set(groupIds.filter(Boolean))];
+    if (!ids.length) return out;
+    const groups = await this.db.select().from(schema.glPostingGroup).where(inArray(schema.glPostingGroup.posting_group_id, ids));
+    const accountIds = [...new Set(groups.flatMap((g) => fieldsOfKind(g.kind).map((f) => g[f]).filter((v): v is string => !!v)))];
+    const accounts = accountIds.length ? await this.db.select().from(schema.glAccountMaster).where(inArray(schema.glAccountMaster.gl_account_id, accountIds)) : [];
+    const byId = new Map(accounts.map((a) => [a.gl_account_id, `${a.account_code} - ${a.account_name}`]));
+    for (const g of groups) {
+      out.set(g.posting_group_id, fieldsOfKind(g.kind).filter((f) => g[f]).map((f) => `${ACCOUNT_LABELS[f]}: ${byId.get(g[f] as string) ?? '?'}`).join('\n'));
+    }
+    return out;
+  }
+
+  async postingGroupAccountsText(item: { posting_group_id?: string | null }): Promise<string> {
+    if (!item.posting_group_id) return '';
+    return (await this.postingGroupAccountTexts([item.posting_group_id])).get(item.posting_group_id) ?? '';
+  }
+
+  /** Of these items, the ones an animal of which a costing run has charged (their costing terms and group are then fixed). */
+  private async costedItemIds(itemIds: string[]): Promise<Set<string>> {
+    if (!itemIds.length) return new Set();
+    const rows = await this.db
+      .selectDistinct({ id: schema.animalRegister.item_id })
+      .from(schema.bioCostingRunLine)
+      .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, schema.bioCostingRunLine.animal_id))
+      .where(and(inArray(schema.animalRegister.item_id, itemIds), eq(schema.bioCostingRunLine.status, 'CHARGED')));
+    return new Set(rows.map((r) => r.id as string));
+  }
+
   private async assertBioGlAccounts(terms: BioCostingTerms, tenantId: string, companyId: string | null | undefined): Promise<void> {
     const ids = BIO_GL_COLUMNS.map((c) => terms[c]).filter((v): v is string => typeof v === 'string' && v !== '');
     if (!ids.length) return;
@@ -1181,6 +1257,7 @@ export class ItemService {
   ) {
     const item = await this.findOne(id);
     await this.assertCostingAndTrackingUnlocked(item, dto);
+    const postingGroupId = await this.applyPostingGroup(dto as Record<string, any>, item as any, tenantId, item.company_id);
 
     if (dto.category_id) {
       const [category] = await this.db
@@ -1209,6 +1286,7 @@ export class ItemService {
       updated_by: userPayload?.userId || null,
       updated_at: toMysqlTimestamp(),
     };
+    if (postingGroupId !== undefined) updates.posting_group_id = postingGroupId;
 
     assertCodeUnchanged('Item', item.item_code, dto.item_code);
     if (dto.item_code && dto.item_code.trim() !== item.item_code) {

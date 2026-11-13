@@ -1730,6 +1730,13 @@
       "when": 1792000000117,
       "tag": "0249_qc_inspection_disposition",
       "breakpoints": true
+    },
+    {
+      "idx": 247,
+      "version": "5",
+      "when": 1792000000118,
+      "tag": "0250_gl_posting_group",
+      "breakpoints": true
     }
   ]
 }
