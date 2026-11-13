@@ -909,6 +909,14 @@
           "cwd": "apps/api"
         }
       },
+      "verify-sow-feed-to-litter": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "DEMO_FARMS=${DEMO_FARMS:-MUL100,POR100} ../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/verify-sow-feed-to-litter.ts",
+          "cwd": "apps/api"
+        }
+      },
       "verify-system-schedulers": {
         "executor": "nx:run-commands",
         "cache": false,

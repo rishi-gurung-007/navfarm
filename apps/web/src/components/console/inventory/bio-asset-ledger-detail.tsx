@@ -80,6 +80,10 @@ export const BIO_DOCUMENT_LABEL: Record<string, string> = {
   ANIMAL_DISPOSAL: 'Animal Disposal',
   LITTER_BIRTH_COST: 'Litter Birth Cost',
   LITTER_COST: 'Litter Lactation Cost',
+  LITTER_BIRTH_EXP_FEED: "Sow's Feed to Litter (Birth)",
+  LITTER_BIRTH_EXP_OH: "Sow's Overhead to Litter (Birth)",
+  LITTER_COST_EXP_FEED: "Sow's Feed to Litter (Lactation)",
+  LITTER_COST_EXP_OH: "Sow's Overhead to Litter (Lactation)",
   GILT_SELECTION: 'Gilt Selection',
   MORTALITY: 'Mortality',
   BIO_COSTING_RUN: 'Costing Run',
@@ -389,7 +393,11 @@ export default function BioAssetLedgerDetail({
                 </p>
               </>
             ) : entry.document_type === 'LITTER_BIRTH_COST' ||
-              entry.document_type === 'LITTER_COST' ? (
+              entry.document_type === 'LITTER_COST' ||
+              entry.document_type === 'LITTER_BIRTH_EXP_FEED' ||
+              entry.document_type === 'LITTER_BIRTH_EXP_OH' ||
+              entry.document_type === 'LITTER_COST_EXP_FEED' ||
+              entry.document_type === 'LITTER_COST_EXP_OH' ? (
               <>
                 <p className="text-sm font-semibold" style={S.primary}>
                   {isPositive

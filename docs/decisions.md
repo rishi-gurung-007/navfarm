@@ -4983,3 +4983,20 @@ Source: BBP-2 "Selection of Gilts for Breeding": the classification "shall be de
 
 **Proved** on nf_devco after backups of nf_devco and nf_system, with the migration applied to both through `db-migrate-all-tenants`: a rule for Z-Line-Sow (dam) with Z-Line (sire) giving GP-LOC-F was created (a male item and a duplicate pair were refused), the litter of PIG-2024-0001 and PIG-2024-0019 then showed GP-LOC-F as its class, and after the rule was switched off it showed none. The test rule was then deleted.
 
+## 13 Nov 2026 — a mature sow's feed goes to her litter; the weaner fair value calendar is a central setup (Finance questions 1 and 3; project owner's answers, awaiting Finance and Rishi)
+
+1. **Sow feed (question 1): yes, it goes to the litter** (mating to the day before farrowing at birth, lactation at weaning; her amortisation stays out, as BBP-2 S.NO.3 and S.NO.6 say). This reverses the 21 Oct default (a sow past her costing start has her feed expensed and the litter opens at nil). Not built yet. Design: a reclass journal from the feed expense to the piglet account, leaving her own book value and amortisation untouched; see Phase F of `docs/superpowers/plans/2026-11-13-bbp-costing-alignment.md`.
+2. **Fair value calendar (question 3): a central setup the user customises, not code.** It already exists as the biological item's Fair Value Rates (`item_fair_value_rate`: farm or every farm, from which week, expected weight, price per kg, effective date, costs to sell). Nothing is seeded; the client enters the figures. What is missing is the monthly run for weaner and grower lots (Phase C of the plan).
+
+## 13 Nov 2026 — Phase F built: a mature sow's expensed feed and overhead are handed to her litter by a reclass (Finance question 1; awaiting Finance's confirmation)
+
+Built to the 13 Nov answer (mating to farrowing, and lactation; her amortisation stays out). `LitterCostService.moveExpensed`, called from the farrowing's birth move and the weaning's (and the gilt selection's) lactation move.
+
+1. **What is moved.** The sow's batch transactions of kind CONSUMPTION (feed) and OVERHEAD, dated on or after her costing start (before it they were capitalised and the ordinary move carries them), not reversed, inside the window: mating to the day before the farrowing at birth; farrowing to the weaning date at weaning. Less what the lot already holds for that window and kind.
+2. **How.** A positive allocation row on the piglet lot, one per window and kind (new document types `LITTER_BIRTH_EXP_FEED`, `LITTER_BIRTH_EXP_OH`, `LITTER_COST_EXP_FEED`, `LITTER_COST_EXP_OH`, counted as COST_ALLOCATION), and a journal through the BIO_LITTER_BIRTH mapping: Dr the lot's account (170400) / Cr the expense account the cost was charged to (BIO_CONSUMPTION_MATURE debit, 610200, for feed; BIO_OVERHEAD_MATURE debit, 610300, for overhead). The sow's book value, her ledger and so her amortisation are untouched.
+3. **Opt-in as the birth journal is:** without a BIO_LITTER_BIRTH mapping nothing is moved (the value would otherwise rise with no journal), and without a mapping for a kind's expense account that kind is not moved.
+4. **The litter's cost per piglet** is the whole of what its lot was given (capitalised and expensed, birth and lactation) over the piglets; the gilt selection preview (`pending`) includes it.
+5. **Not back-filled.** Litters already born and weaned (all 29 on nf_devco) are unchanged; the move happens at a new farrowing and weaning. Finance has still to confirm the window.
+
+**Proved** by `pnpm nx run api:verify-sow-feed-to-litter` (rolls back, nothing kept) on nf_devco's newest litter, LOT-00055 of PIG-2024-0001 (costing start 2025-04-07; mating 3 Jun, farrowing 27 Sep, weaning 13 Nov 2026): the birth window held 135.28 of feed and 48.00 of overhead, the lactation window 8.17 of feed; the lot rose by exactly 191.45, each journal was Dr 170400 / Cr the matching expense account and balanced, the sow's ledger rows and book value did not move, asking again moved nothing, and cost per piglet came to 19.145 over 10 born alive. 14 of 14 checks passed; no journal or ledger row remained afterwards.
+

@@ -1,15 +1,27 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
-import { bioCodes, bioEventCondition, bioEventsCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
+import { BIO_DOCUMENT_TYPES as D, bioCodes, bioEventCondition, bioEventsCondition } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 const LACTATION_DOC = 'LITTER_COST';
 const BIRTH_DOC = 'LITTER_BIRTH_COST';
+
+/**
+ * Finance, 13 Nov 2026: a mature sow's feed and overhead go to her litter (mating to the day before the farrowing, at birth; farrowing to weaning, at weaning).
+ * Once she is past her costing start her feed is expensed, so none of it sits in her WIP. It is handed over by a reclass, not by changing her book value: Dr the
+ * piglet lot / Cr the expense account it was charged to. Her amortisation is never part of it (BBP-2 S.NO.3, S.NO.6). One document type per window and kind of cost,
+ * so each is moved once however often the move is asked for.
+ */
+const EXPENSED_KINDS = [
+  { cost: 'FEED' as const, txType: 'CONSUMPTION', expenseMapping: 'BIO_CONSUMPTION_MATURE', birth: D.LITTER_BIRTH_EXP_FEED, lactation: D.LITTER_COST_EXP_FEED, label: 'feed' },
+  { cost: 'OVERHEAD' as const, txType: 'OVERHEAD', expenseMapping: 'BIO_OVERHEAD_MATURE', birth: D.LITTER_BIRTH_EXP_OH, lactation: D.LITTER_COST_EXP_OH, label: 'overhead' },
+];
+const ALL_ALLOCATION_DOCS = [D.LITTER_BIRTH_COST, D.LITTER_COST, D.LITTER_BIRTH_EXP_FEED, D.LITTER_BIRTH_EXP_OH, D.LITTER_COST_EXP_FEED, D.LITTER_COST_EXP_OH];
 
 /**
  * What a sow has cost her litter, worked out per sow and moved into the litter's piglet lot (BBP: the piglets' cost comes from the sow's accumulated WIP
@@ -78,6 +90,114 @@ export class LitterCostService {
     return Number(row?.total ?? 0) || 0;
   }
 
+  /** Everything moved into a litter's lot from its sow: the capitalised cost and the expensed cost handed over, birth and lactation. */
+  async totalAllocated(lotBatchId: string, tenantId: string): Promise<number> {
+    const L = schema.bioAssetLedger;
+    const [row] = await this.db
+      .select({ total: sql<string>`COALESCE(SUM(${L.cost_amount}), 0)` })
+      .from(L)
+      .where(and(eq(L.tenant_id, tenantId), eq(L.batch_id, lotBatchId), bioEventCondition(L, 'COST_ALLOCATION'), inArray(L.document_type, ALL_ALLOCATION_DOCS), sql`${L.cost_amount} > 0`));
+    return Number(row?.total ?? 0) || 0;
+  }
+
+  /**
+   * What a sow's expensed feed and overhead in a window still owe her litter: her batch transactions of the kind, dated on or after her costing start (before it
+   * they were capitalised and the ordinary move carries them), not reversed, less what is already on the lot for this window. Nothing for a sow with no costing
+   * start (all her cost is capitalised) or a lot with no GL mapping to journal the reclass (the value would otherwise move with no journal).
+   */
+  private async expensedPlan(
+    kind: 'LACTATION' | 'BIRTH',
+    farrow: typeof schema.farrowingRecord.$inferSelect,
+    sow: typeof schema.animalRegister.$inferSelect,
+    win: { from: string; to: string },
+    tenantId: string,
+  ) {
+    const empty = { lot: null as typeof schema.batchHeader.$inferSelect | null, items: [] as Array<{ kind: (typeof EXPENSED_KINDS)[number]; total: number; already: number; toMove: number; expenseAccount: string | undefined }> , mapped: false };
+    const start = sow.costing_start_date ? String(sow.costing_start_date).slice(0, 10) : null;
+    if (!start || !farrow.piglet_batch_id) return empty;
+    const from = start > win.from ? start : win.from;
+    if (from > win.to) return empty;
+    const [lot] = await this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, farrow.piglet_batch_id)).limit(1);
+    if (!lot) return empty;
+    const ctx = { nobId: lot.nob_id, lobId: lot.lob_id };
+    if (!(await this.glPosting.hasMapping(tenantId, lot.company_id, 'BIO_LITTER_BIRTH', ctx))) return { ...empty, lot };
+    const T = schema.batchTransaction;
+    const L = schema.bioAssetLedger;
+    const items: typeof empty.items = [];
+    for (const k of EXPENSED_KINDS) {
+      const [t] = await this.db
+        .select({ total: sql<string>`COALESCE(SUM(ABS(${T.amount})), 0)` })
+        .from(T)
+        .where(and(eq(T.animal_id, sow.animal_id), eq(T.transaction_type, k.txType), isNull(T.reversed_at), sql`${T.transaction_date} BETWEEN ${from} AND ${win.to}`));
+      const [a] = await this.db
+        .select({ total: sql<string>`COALESCE(SUM(${L.cost_amount}), 0)` })
+        .from(L)
+        .where(and(eq(L.tenant_id, tenantId), eq(L.batch_id, lot.batch_id), eq(L.document_type, kind === 'BIRTH' ? k.birth : k.lactation), sql`${L.cost_amount} > 0`));
+      const total = Math.round((Number(t?.total ?? 0) || 0) * 1e4) / 1e4;
+      const already = Number(a?.total ?? 0) || 0;
+      const expenseAccount = await this.glPosting.mappedAccount(tenantId, lot.company_id, k.expenseMapping, 'debit', ctx);
+      const toMove = expenseAccount ? Math.max(0, Math.round((total - already) * 1e4) / 1e4) : 0;
+      items.push({ kind: k, total, already, toMove, expenseAccount });
+    }
+    return { lot, items, mapped: true };
+  }
+
+  /**
+   * Hands the sow's expensed feed and overhead for the window to her litter: a positive allocation row on the lot (the lot's value rises) and a journal, Dr the lot's
+   * account (the BIO_LITTER_BIRTH debit) / Cr the expense account the cost was charged to. The sow's own book value, ledger and amortisation are untouched.
+   */
+  private async moveExpensed(
+    kind: 'LACTATION' | 'BIRTH',
+    farrow: typeof schema.farrowingRecord.$inferSelect,
+    sow: typeof schema.animalRegister.$inferSelect,
+    win: { from: string; to: string; asOf: string },
+    tenantId: string,
+    userPayload?: { userId?: string },
+  ): Promise<{ moved: number; note: string; journal: string | null }> {
+    const plan = await this.expensedPlan(kind, farrow, sow, win, tenantId);
+    const lot = plan.lot;
+    const todo = plan.items.filter((i) => i.toMove >= 0.005);
+    if (!lot || !todo.length) return { moved: 0, note: '', journal: null };
+    const [lotState] = await this.db.select().from(schema.batchBioAssetState).where(eq(schema.batchBioAssetState.batch_id, lot.batch_id)).limit(1);
+    const [lotEntry] = await this.db
+      .select({ item_id: schema.bioAssetLedger.bio_asset_item_id })
+      .from(schema.bioAssetLedger)
+      .where(and(eq(schema.bioAssetLedger.batch_id, lot.batch_id), bioEventCondition(schema.bioAssetLedger, 'ACQUISITION')))
+      .limit(1);
+    if (!lotState || !lotEntry) return { moved: 0, note: '', journal: null };
+
+    let moved = 0;
+    let journal: string | null = null;
+    const parts: string[] = [];
+    for (const it of todo) {
+      const posted: any = await this.glPosting.postBatchCostEntry({
+        tenantId, companyId: lot.company_id, transactionType: 'BIO_LITTER_BIRTH', amount: it.toMove, documentNo: lot.batch_no, documentLineId: farrow.farrow_id,
+        postingDate: win.asOf, nobId: lot.nob_id ?? undefined, lobId: lot.lob_id ?? undefined, userId: userPayload?.userId,
+        description: `${sow.animal_code}'s ${it.kind.label} to her litter ${farrow.piglet_lot_no ?? ''} (${kind === 'BIRTH' ? 'mating to farrowing' : 'farrowing to weaning'})`.trim(),
+        // Out of the expense account the cost was charged to when it was posted.
+        creditAccountId: it.expenseAccount,
+      });
+      journal = journal ?? posted?.journal_no ?? posted?.journal_id ?? 'posted';
+      await this.db.insert(schema.bioAssetLedger).values({
+        entry_id: randomUUID(), tenant_id: tenantId, company_id: lot.company_id, bio_asset_item_id: lotEntry.item_id, animal_id: null,
+        entry_type: 'TRANSFER', transaction_type: 'TRANSFER_RECEIPT', document_type: kind === 'BIRTH' ? it.kind.birth : it.kind.lactation,
+        document_no: lot.batch_no, batch_id: lot.batch_id, batch_no: lot.batch_no, lot_no: farrow.piglet_lot_no, posting_date: win.asOf, stage: lotState.stage,
+        quantity: '0', cost_amount: it.toMove.toFixed(4), costing_method: 'COST_ACCUMULATION', nob_id: lot.nob_id, lob_id: lot.lob_id, created_by: userPayload?.userId || null,
+      });
+      moved += it.toMove;
+      parts.push(`${it.toMove.toFixed(2)} ${it.kind.label}`);
+    }
+    await this.db
+      .update(schema.batchBioAssetState)
+      .set({ nca_book_value: String((Number(lotState.nca_book_value) + moved).toFixed(4)) })
+      .where(eq(schema.batchBioAssetState.batch_id, lot.batch_id));
+    return {
+      moved: Math.round(moved * 1e4) / 1e4,
+      journal,
+      note: ` ${sow.animal_code}'s expensed ${parts.join(' and ')} (${kind === 'BIRTH' ? 'mating to farrowing' : 'farrowing to weaning'}) handed to the litter by a reclass from the expense account; her amortisation is not included.`,
+    };
+  }
+
   /** How much more the sow could hand to her litter on `asOf` than she has (not moved: a preview). */
   async pending(
     farrow: typeof schema.farrowingRecord.$inferSelect,
@@ -90,7 +210,10 @@ export class LitterCostService {
     const held = await this.capitalisedLactationCost(sow, sowBatchId, String(farrow.farrowing_date).slice(0, 10), asOf, tenantId);
     const [sowState] = await this.db.select().from(schema.batchBioAssetState).where(eq(schema.batchBioAssetState.batch_id, sowBatchId)).limit(1);
     const already = await this.alreadyAllocated(farrow.piglet_batch_id, tenantId);
-    return Number(Math.max(0, Math.min(held.own + held.shared - already, Number(sowState?.nca_book_value) || 0)).toFixed(4));
+    const capitalised = Math.max(0, Math.min(held.own + held.shared - already, Number(sowState?.nca_book_value) || 0));
+    // Plus the expensed feed and overhead a mature sow still owes her litter (Finance, 13 Nov).
+    const expensed = (await this.expensedPlan('LACTATION', farrow, sow, { from: String(farrow.farrowing_date).slice(0, 10), to: asOf }, tenantId)).items.reduce((n, i) => n + i.toMove, 0);
+    return Number((capitalised + expensed).toFixed(4));
   }
 
   /**
@@ -105,7 +228,13 @@ export class LitterCostService {
     tenantId: string,
     userPayload?: { userId?: string },
   ): Promise<{ note: string; perPiglet: string | null; moved: number }> {
-    return this.move('LACTATION', farrow, sow, { from: String(farrow.farrowing_date).slice(0, 10), to: opts.asOf, asOf: opts.asOf, divisor: opts.divisor }, tenantId, userPayload);
+    const from = String(farrow.farrowing_date).slice(0, 10);
+    const capitalised = await this.move('LACTATION', farrow, sow, { from, to: opts.asOf, asOf: opts.asOf, divisor: opts.divisor }, tenantId, userPayload);
+    const expensed = await this.moveExpensed('LACTATION', farrow, sow, { from, to: opts.asOf, asOf: opts.asOf }, tenantId, userPayload);
+    if (!(expensed.moved >= 0.005) || !farrow.piglet_batch_id) return capitalised;
+    // The litter's cost per piglet is everything the lot has been given, capitalised and expensed, over the piglets it is spread over.
+    const per = opts.divisor > 0 ? ((await this.totalAllocated(farrow.piglet_batch_id, tenantId)) / opts.divisor).toFixed(6) : capitalised.perPiglet;
+    return { note: capitalised.note + expensed.note, perPiglet: per, moved: Math.round((capitalised.moved + expensed.moved) * 1e4) / 1e4 };
   }
 
   /**
@@ -144,12 +273,22 @@ export class LitterCostService {
         if (!(error instanceof BadRequestException) || !/No GL mapping/.test(error.message)) throw error;
       }
     }
+    // Finance, 13 Nov: a mature sow's expensed feed and overhead from her mating go to the litter too, by a reclass journal.
+    const capitalisedMoved = moved.moved;
+    const expensed = await this.moveExpensed('BIRTH', farrow, sow, { from, to: addDays(farrowingDate, -1), asOf: farrowingDate }, tenantId, userPayload);
+    if (expensed.moved >= 0.005 && farrow.piglet_batch_id) {
+      moved.moved = Math.round((moved.moved + expensed.moved) * 1e4) / 1e4;
+      if (liveBorn > 0) moved.perPiglet = ((await this.totalAllocated(farrow.piglet_batch_id, tenantId)) / liveBorn).toFixed(6);
+      journal = journal ?? expensed.journal;
+    }
     // Nothing to hand on is a fact worth stating: the litter, and the gilts taken from it, carry no cost until the lactation cost moves at the weaning.
     const zeroCost = !(moved.moved >= 0.005);
-    const note = zeroCost
+    const note = expensed.moved >= 0.005 && !(capitalisedMoved >= 0.005)
+      ? ''
+      : zeroCost
       ? ` The litter opens at 0.00: ${sow.animal_code} had no feed, drug or overhead capitalised between ${from} and ${addDays(farrowingDate, -1)} (feed from her costing start is expensed, and a sow with no feed entered before the farrowing has none), so piglets and gilts carry no cost until the lactation cost moves at the weaning.`
       : `${moved.note} Basis: the sow's capitalised feed, drug, overhead and semen from ${from} to ${addDays(farrowingDate, -1)} (the window awaits Finance's confirmation).`;
-    return { ...moved, note, journal, zeroCost };
+    return { ...moved, note: note + expensed.note, journal, zeroCost };
   }
 
   private async move(

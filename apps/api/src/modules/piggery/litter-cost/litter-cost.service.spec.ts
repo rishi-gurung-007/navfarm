@@ -22,12 +22,12 @@ describe('LitterCostService', () => {
     update: jest.fn(() => ({ set: jest.fn((v: any) => { sets.push(v); return { where: jest.fn().mockResolvedValue({}) }; }) })),
   };
   const refresh = jest.fn();
-  const gl = { postBatchCostEntry: jest.fn(), animalAssetAccountId: jest.fn().mockResolvedValue(undefined) };
+  const gl = { postBatchCostEntry: jest.fn(), animalAssetAccountId: jest.fn().mockResolvedValue(undefined), hasMapping: jest.fn().mockResolvedValue(false), mappedAccount: jest.fn().mockResolvedValue(undefined) };
   const farrow: any = { farrow_id: 'f1', batch_id: 'b-sows', piglet_batch_id: 'b-lot', farrowing_date: '2026-10-05', piglet_lot_no: 'LOT-1' };
   const sow: any = { animal_id: 'sow-1', animal_code: 'SOW-1', item_id: 'item-sow' };
 
   beforeEach(async () => {
-    rows.clear(); inserted.length = 0; sets.length = 0; refresh.mockClear(); gl.postBatchCostEntry.mockReset();
+    rows.clear(); inserted.length = 0; sets.length = 0; refresh.mockClear(); gl.postBatchCostEntry.mockReset(); gl.hasMapping.mockReset().mockResolvedValue(false); gl.mappedAccount.mockReset().mockResolvedValue(undefined);
     const moduleRef = await Test.createTestingModule({
       providers: [LitterCostService, { provide: ClsService, useValue: transactionCls(db) }, { provide: AnimalBookValueService, useValue: { refreshCache: refresh } }, { provide: GlPostingService, useValue: gl }],
     }).compile();
@@ -140,6 +140,110 @@ describe('LitterCostService', () => {
       const r = await service.allocate(born, sow, { asOf: '2026-10-26', divisor: 12 }, 't');
       expect(r.moved).toBe(30);
       expect(Number(r.perPiglet)).toBeCloseTo(10, 6); // (90 at birth + 30 since) / 12
+    });
+  });
+
+  describe("a mature sow's expensed feed and overhead go to her litter (Finance, 13 Nov)", () => {
+    const plan = (feed: number, oh: number) => ({
+      lot: { batch_id: 'b-lot', batch_no: 'LIT-1', company_id: 'co', nob_id: 'n', lob_id: 'l' },
+      mapped: true,
+      items: [
+        { kind: { cost: 'FEED', label: 'feed', birth: 'LITTER_BIRTH_EXP_FEED', lactation: 'LITTER_COST_EXP_FEED' }, total: feed, already: 0, toMove: feed, expenseAccount: 'acc-feed' },
+        { kind: { cost: 'OVERHEAD', label: 'overhead', birth: 'LITTER_BIRTH_EXP_OH', lactation: 'LITTER_COST_EXP_OH' }, total: oh, already: 0, toMove: oh, expenseAccount: 'acc-oh' },
+      ],
+    });
+    const lotRows = () => { rows.set(schema.batchBioAssetState, [{ nca_book_value: '100', stage: 'PREMATURE' }]); rows.set(schema.bioAssetLedger, [{ item_id: 'item-piglet' }]); };
+
+    it('at the weaning: a reclass journal per kind of cost out of the expense it was charged to, and the lot rises by the sum, with no row against the sow', async () => {
+      lotRows();
+      jest.spyOn(service, 'capitalisedLactationCost').mockResolvedValue({ own: 0, shared: 0 });
+      jest.spyOn(service as any, 'expensedPlan').mockResolvedValue(plan(30, 12));
+      jest.spyOn(service, 'totalAllocated').mockResolvedValue(42);
+      gl.postBatchCostEntry.mockResolvedValue({ journal_no: 'JE-9' });
+      const r = await service.allocate(farrow, sow, { asOf: '2026-11-02', divisor: 12 }, 't');
+      expect(r.moved).toBe(42);
+      expect(Number(r.perPiglet)).toBeCloseTo(3.5, 6); // 42 over 12 piglets
+      expect(gl.postBatchCostEntry.mock.calls.map((c) => [c[0].transactionType, c[0].amount, c[0].creditAccountId])).toEqual([['BIO_LITTER_BIRTH', 30, 'acc-feed'], ['BIO_LITTER_BIRTH', 12, 'acc-oh']]);
+      const written = inserted.flat();
+      expect(written.map((e: any) => [e.document_type, e.animal_id, Number(e.cost_amount)])).toEqual([['LITTER_COST_EXP_FEED', null, 30], ['LITTER_COST_EXP_OH', null, 12]]);
+      expect(sets.some((x) => x.nca_book_value === '142.0000')).toBe(true);
+      expect(refresh).not.toHaveBeenCalled(); // her own book value and ledger are untouched
+      expect(r.note).toMatch(/amortisation is not included/);
+    });
+
+    it('adds to what was capitalised: the cost per piglet is everything the lot was given', async () => {
+      lotRows(); already(0);
+      jest.spyOn(service as any, 'expensedPlan').mockResolvedValue(plan(30, 0));
+      jest.spyOn(service, 'totalAllocated').mockResolvedValue(90); // 60 capitalised + 30 expensed
+      gl.postBatchCostEntry.mockResolvedValue({ journal_no: 'JE-9' });
+      const r = await service.allocate(farrow, sow, { asOf: '2026-11-02', divisor: 10 }, 't');
+      expect(r.moved).toBe(90);
+      expect(Number(r.perPiglet)).toBeCloseTo(9, 6);
+    });
+
+    it('at birth: the pregnancy feed moves too, the litter no longer opens at nil, and the first journal is reported', async () => {
+      lotRows();
+      jest.spyOn(service, 'capitalisedLactationCost').mockResolvedValue({ own: 0, shared: 0 });
+      jest.spyOn(service as any, 'expensedPlan').mockResolvedValue(plan(50, 0));
+      jest.spyOn(service, 'totalAllocated').mockResolvedValue(50);
+      gl.postBatchCostEntry.mockResolvedValue({ journal_no: 'JE-7' });
+      const r = await service.allocateAtBirth(farrow, sow, 10, 't');
+      expect(r.zeroCost).toBe(false);
+      expect(r.moved).toBe(50);
+      expect(Number(r.perPiglet)).toBeCloseTo(5, 6);
+      expect(r.journal).toBe('JE-7');
+      expect(r.note).not.toMatch(/opens at 0.00/);
+      expect(inserted.flat().map((e: any) => e.document_type)).toEqual(['LITTER_BIRTH_EXP_FEED']);
+    });
+
+    it('moves nothing and posts nothing when nothing is owed (all moved already, or no GL mapping, or she is not past her start)', async () => {
+      lotRows(); already(0);
+      jest.spyOn(service, 'capitalisedLactationCost').mockResolvedValue({ own: 0, shared: 0 });
+      const spy = jest.spyOn(service as any, 'expensedPlan').mockResolvedValue({ lot: null, items: [], mapped: false });
+      const r = await service.allocate(farrow, sow, { asOf: '2026-11-02', divisor: 12 }, 't');
+      expect(r.moved).toBe(0);
+      spy.mockResolvedValue(plan(0, 0));
+      expect((await service.allocate(farrow, sow, { asOf: '2026-11-02', divisor: 12 }, 't')).moved).toBe(0);
+      expect(gl.postBatchCostEntry).not.toHaveBeenCalled();
+      expect(inserted).toEqual([]);
+    });
+
+    describe('what is owed (the plan)', () => {
+      const started: any = { ...sow, costing_start_date: '2026-03-01' };
+      const win = { from: '2026-09-01', to: '2026-10-04' };
+      const call = (s: any, kind: 'BIRTH' | 'LACTATION' = 'BIRTH') => (service as any).expensedPlan(kind, farrow, s, win, 't');
+
+      it('is empty for a sow with no costing start (all her cost is capitalised and the ordinary move carries it)', async () => {
+        expect((await call(sow)).items).toEqual([]);
+      });
+
+      it('owes nothing without the BIO_LITTER_BIRTH mapping, rather than moving value with no journal', async () => {
+        gl.hasMapping.mockResolvedValue(false);
+        const r = await call(started);
+        expect(r.mapped).toBe(false);
+        expect(r.items).toEqual([]);
+      });
+
+      it('owes the sow\'s expensed feed and overhead for the window less what the lot already has, per kind', async () => {
+        gl.hasMapping.mockResolvedValue(true);
+        gl.mappedAccount.mockResolvedValue('acc-expense');
+        rows.set(schema.batchTransaction, [{ total: '30' }]); // expensed in the window, each kind
+        rows.set(schema.bioAssetLedger, [{ total: '10' }]); // already on the lot, each kind
+        const r = await call(started);
+        expect(r.items.map((i: any) => [i.kind.cost, i.total, i.already, i.toMove, i.expenseAccount])).toEqual([['FEED', 30, 10, 20, 'acc-expense'], ['OVERHEAD', 30, 10, 20, 'acc-expense']]);
+      });
+
+      it('owes nothing for a kind whose expense account is not mapped', async () => {
+        gl.hasMapping.mockResolvedValue(true);
+        gl.mappedAccount.mockResolvedValue(undefined);
+        rows.set(schema.batchTransaction, [{ total: '30' }]);
+        rows.set(schema.bioAssetLedger, [{ total: '0' }]);
+        expect((await call(started)).items.map((i: any) => i.toMove)).toEqual([0, 0]);
+      });
+
+      it('is empty when her costing start is after the window ends (it was all capitalised)', async () => {
+        expect((await (service as any).expensedPlan('BIRTH', farrow, { ...sow, costing_start_date: '2026-12-01' }, win, 't')).items).toEqual([]);
+      });
     });
   });
 });
