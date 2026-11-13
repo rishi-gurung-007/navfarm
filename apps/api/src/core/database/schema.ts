@@ -8196,6 +8196,60 @@ export const geneticLevelBand = mysqlTable(
 );
 
 /**
+ * The class a selected gilt takes, by her parentage (migration 0254; BBP-2 "Selection of Gilts for Breeding": Z + Z Local GGP, Z + L Local GP, Z + Tempo Local
+ * Parent). A line is a breed: a rule names the dam's breed, the sire's breed and the item the gilt is registered as. No rule for a pair = the user names the item.
+ */
+export const giltClassRule = mysqlTable(
+  'gilt_class_rule',
+  {
+    rule_id: varchar('rule_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(
+      () => companyMaster.company_id,
+      { onDelete: 'restrict' },
+    ),
+    nob_id: varchar('nob_id', { length: 36 }).references(
+      () => nobMaster.nob_id,
+      { onDelete: 'restrict' },
+    ),
+    lob_id: varchar('lob_id', { length: 36 }).references(
+      () => lobMaster.lob_id,
+      { onDelete: 'restrict' },
+    ),
+    dam_breed_id: varchar('dam_breed_id', { length: 36 })
+      .notNull()
+      .references(() => breedMaster.breed_id, { onDelete: 'restrict' }),
+    sire_breed_id: varchar('sire_breed_id', { length: 36 })
+      .notNull()
+      .references(() => breedMaster.breed_id, { onDelete: 'restrict' }),
+    gilt_item_id: varchar('gilt_item_id', { length: 36 })
+      .notNull()
+      .references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+    is_active: boolean('is_active').default(true).notNull(),
+    status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  },
+  (table) => [
+    uniqueIndex('uq_gilt_class_rule_pair').on(
+      table.tenant_id,
+      sql`(coalesce(${table.company_id}, ''))`,
+      table.dam_breed_id,
+      table.sire_breed_id,
+    ),
+  ],
+);
+
+/**
  * A boar's TSI over time (migration 0235), with the herd-wide genetic rank published beside it when one was given. The latest
  * entry on or before a date is his TSI then; `animal_register.tsi` keeps the newest as before.
  */

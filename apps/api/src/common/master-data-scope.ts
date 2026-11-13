@@ -42,6 +42,7 @@ export const MASTER_TABLES: Record<string, AnyMySqlTable> = {
   reason: schema.reasonMaster,
   'breeding-line-setup': schema.breedingLineSetup,
   'genetic-level-band': schema.geneticLevelBand,
+  'gilt-class-rule': schema.giltClassRule,
   'bcs-scale': schema.bcsScale,
   'alert-rule': schema.alertRule,
   'reporting-period': schema.reportingPeriod,

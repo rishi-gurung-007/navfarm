@@ -1758,6 +1758,13 @@
       "when": 1792000000121,
       "tag": "0253_requisition_line_priority_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 251,
+      "version": "5",
+      "when": 1792000000122,
+      "tag": "0254_gilt_class_rule",
+      "breakpoints": true
     }
   ]
 }

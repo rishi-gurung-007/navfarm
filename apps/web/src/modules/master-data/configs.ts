@@ -6433,6 +6433,83 @@ const geneticLevelBand: MasterDataConfig = {
   ],
 };
 
+// The class a selected gilt takes from her parentage (BBP-2 "Selection of Gilts for Breeding": Z + Z Local GGP, Z + L Local GP, Z + Tempo Local Parent). A line is a
+// breed; the client says the class depends on the dam and the sire. The pairs and the items are the client's to enter; nothing is seeded.
+const giltClassRule: MasterDataConfig = {
+  key: 'gilt-class-rule',
+  label: 'Gilt Class Rules',
+  singular: 'Gilt Class Rule',
+  apiBase: '/gilt-class-rule',
+  idKey: 'rule_id',
+  group: 'Piggery',
+  isPrimary: true,
+  description:
+    "The class a gilt takes when she is selected from a litter, by her parents' lines: the dam's breeding line and the sire's breeding line give the item she is registered as, and the item carries the class's accounts and costing terms. With no rule for a pair, whoever selects the gilts names the item.",
+  columns: [
+    { key: 'dam_line_label', label: "Dam's Line" },
+    { key: 'sire_line_label', label: "Sire's Line" },
+    { key: 'gilt_item_label', label: 'Gilt Item' },
+  ],
+  supportsNobLobFilter: true,
+  fields: [
+    {
+      key: 'nob_id',
+      label: 'Nature of Business',
+      type: 'select-entity',
+      entityEndpoint: '/setup/wizard/nobs',
+      entityValueKey: 'nob_id',
+      entityLabelKeys: ['nob_code', 'nob_name'],
+      helpText: 'Leave blank if this rule is shared across all business verticals.',
+    },
+    {
+      key: 'lob_id',
+      label: 'Line of Business',
+      type: 'select-entity',
+      entityEndpoint: '/setup/wizard/lobs/{value}',
+      entityValueKey: 'lob_id',
+      entityLabelKeys: ['lob_code', 'lob_name'],
+      dependsOn: 'nob_id',
+      helpText: 'Leave blank if this rule is shared across all LOBs under the selected NOB.',
+    },
+    { key: 'company_id', label: 'Company', type: 'text', hideInForm: true },
+    {
+      key: 'dam_breed_id',
+      label: "Dam's Line",
+      type: 'select-entity',
+      required: true,
+      createOnly: true,
+      searchable: true,
+      entityEndpoint: '/breed',
+      entityValueKey: 'breed_id',
+      entityLabelKeys: ['breed_code', 'breed_name'],
+      helpText: "The breeding line of the gilt's dam (the sow). Fixed after create.",
+    },
+    {
+      key: 'sire_breed_id',
+      label: "Sire's Line",
+      type: 'select-entity',
+      required: true,
+      createOnly: true,
+      searchable: true,
+      entityEndpoint: '/breed',
+      entityValueKey: 'breed_id',
+      entityLabelKeys: ['breed_code', 'breed_name'],
+      helpText: "The breeding line of the gilt's sire (the boar). Fixed after create.",
+    },
+    {
+      key: 'gilt_item_id',
+      label: 'Gilt Item',
+      type: 'select-entity',
+      required: true,
+      searchable: true,
+      entityEndpoint: '/item?itemType=LIVING_ASSET',
+      entityValueKey: 'item_id',
+      entityLabelKeys: ['item_code', 'item_name'],
+      helpText: 'The female breeding item a gilt of these parents is registered as, for example the Local GP or Local Parent female item.',
+    },
+  ],
+};
+
 // The body condition scale of a breeding line (SOP 21 Boar Body Condition Scoring): one row per score. The figures are the client's to
 // enter; nothing is seeded.
 const bcsScale: MasterDataConfig = {
@@ -6524,6 +6601,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   reason,
   breedingLineSetup,
   geneticLevelBand,
+  giltClassRule,
   bcsScale,
   alertRule,
   reportingPeriod,

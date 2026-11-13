@@ -46,6 +46,10 @@ const EXPECTED: Record<string, string> = {
   currency: 'Currency',
   'exchange-rate': 'Exchange Rate',
   'kpi-metric': 'KPI Metric',
+  'breeding-line-setup': 'Breeding Line Setup',
+  'genetic-level-band': 'Genetic Level Band',
+  'gilt-class-rule': 'Gilt Class Rule',
+  'bcs-scale': 'Body Condition Scale',
 };
 
 describe('singularLabel', () => {

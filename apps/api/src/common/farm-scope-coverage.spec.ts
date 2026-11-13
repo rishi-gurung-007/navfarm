@@ -162,6 +162,8 @@ const EXEMPT: Record<string, string> = {
     "Company-level AI Station master (the body condition scale of a breeding line, SOP 21); not a farm's.",
   'master-data/breeding-line/genetic-level-band.controller.ts':
     "Company-level AI Station master (the genetic levels of a breeding line, as bands of TSI); not a farm's.",
+  'master-data/breeding-line/gilt-class-rule.controller.ts':
+    "Company-level master (the class a gilt takes from her dam's and sire's lines, BBP-2); not a farm's.",
   'master-data/reporting-period/reporting-period.controller.ts':
     "Company master (Reporting Period Master, D20); periods are company-wide, not a farm's.",
   'master-data/resource/resource.controller.ts':

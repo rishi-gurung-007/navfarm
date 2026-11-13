@@ -257,6 +257,11 @@ const DEFAULT_RESOURCES = [
   },
   {
     module_code: 'MASTER_DATA',
+    resource: 'GILT_CLASS_RULE',
+    name: 'Gilt Class Rules',
+  },
+  {
+    module_code: 'MASTER_DATA',
     resource: 'FEED_FORMULA',
     name: 'Feed Formulas',
     nameKey: 'rolFeedFormulas',

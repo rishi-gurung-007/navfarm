@@ -4971,3 +4971,15 @@ Nothing stored or posted changes: the NCA figure, the ledger and the GL are as t
 
 **Proved** on the running API against MySQL: BATCH-000001 12 head 5,499.7947; BATCH-000002 4 head 1,410.00; BATCH-000003 5 head 1,057.50; each equal to `SUM(animal_register.book_value)` for the batch. Not looked at in the browser yet.
 
+## 13 Nov 2026 — the class a selected gilt takes comes from her dam's and sire's lines (Phase B; Arun: "it depends on the dam and sire"; Rishi has not confirmed it)
+
+Source: BBP-2 "Selection of Gilts for Breeding": the classification "shall be determined based on the mating line" (Z + Z Local GGP, Z + L Local GP, Z + Tempo Local Parent). Arun, 13 Nov: it depends on the dam and the sire.
+
+1. **A line is a breed.** A new master, **Gilt Class Rules** (Master Data > Piggery; table `gilt_class_rule`, migration 0254, permission `MASTER_DATA / GILT_CLASS_RULE`), holds one row per pair: the dam's breeding line, the sire's breeding line and the item a gilt of those parents is registered as. The pair is read in order (Z dam with L sire is not L dam with Z sire). A company's own rule beats a tenant-wide one.
+2. **Nothing is seeded.** The pairs and their items are the client's to enter. With no rule for a pair, selecting gilts behaves exactly as before.
+3. **Which item a gilt gets** (`GiltSelectionService`): the item the user named on the selection; else the class her parents' lines give; else the litter's piglet item, as before. The litter list (`GET /piggery/gilt-selection/piglets`) now carries `gilt_class_item_id`. The item must be active, biological, female (or no gender) and have a costing method, or the rule is refused.
+4. **The journal needed no change.** Registering a gilt already posts Dr her item's acquisition account / Cr 170400 (BIO_GILT_ACQUISITION), so choosing the item chooses the class's account.
+5. **Open for the client, found while building:** the BBP gives Z + Z as **Local GGP**, but nf_devco has no Local GGP item (GP-Loc-F/M and P-Loc-F/M only), and BBP-1's list of ten animal categories has no GGP Local either. Z + Z cannot be mapped until the client confirms the item.
+
+**Proved** on nf_devco after backups of nf_devco and nf_system, with the migration applied to both through `db-migrate-all-tenants`: a rule for Z-Line-Sow (dam) with Z-Line (sire) giving GP-LOC-F was created (a male item and a duplicate pair were refused), the litter of PIG-2024-0001 and PIG-2024-0019 then showed GP-LOC-F as its class, and after the rule was switched off it showed none. The test rule was then deleted.
+

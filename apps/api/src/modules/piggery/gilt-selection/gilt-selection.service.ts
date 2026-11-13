@@ -9,6 +9,7 @@ import { farmScope, batchScopeConditions } from '../../../common/farm-scope';
 import { BatchService } from '../../production/batch/batch.service';
 import { AnimalService } from '../animal/animal.service';
 import { LitterCostService } from '../litter-cost/litter-cost.service';
+import { GiltClassRuleService } from '../../master-data/breeding-line/gilt-class-rule.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { CreateGiltSelectionDto, CreateGiltsDto } from './dto/gilt-selection.dto';
 import { bufferProblem, nextSelectionNo, weekOfYear, MIN_GILT_TEATS } from './gilt-selection.rules';
@@ -17,6 +18,8 @@ import { bioEventCondition } from '../../inventory/bio-asset-ledger/bio-asset-le
 export interface Litter {
   farrow_id: string;
   piglet_item_id: string | null;
+  /** The item her parentage gives a gilt of this litter (the gilt class rule for the dam's and sire's lines), or null when no rule covers the pair. */
+  gilt_class_item_id: string | null;
   source_batch_id: string | null;
   lot_no: string | null;
   sow_animal_id: string;
@@ -57,6 +60,7 @@ export class GiltSelectionService {
     private readonly animals: AnimalService,
     private readonly auditService: AuditLogService,
     private readonly litterCost: LitterCostService,
+    private readonly giltClass: GiltClassRuleService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -203,7 +207,8 @@ export class GiltSelectionService {
       const weaned = Number(f.piglets_weaned) || 0;
       const already = Number(taken?.n ?? 0);
       litters.push({
-        farrow_id: f.farrow_id, piglet_item_id: lotItem?.item_id ?? null, source_batch_id: f.piglet_batch_id, lot_no: f.piglet_lot_no,
+        farrow_id: f.farrow_id, piglet_item_id: lotItem?.item_id ?? null,
+        gilt_class_item_id: await this.classItemOf(batch.company_id ?? null, sow?.breed_id, mating?.boar ?? null, tenantId), source_batch_id: f.piglet_batch_id, lot_no: f.piglet_lot_no,
         sow_animal_id: f.sow_animal_id, sow_code: sow?.animal_code ?? '', sow_tsi: sow?.tsi ?? null, parity_number: f.parity_number,
         boar_animal_id: mating?.boar ?? null, boar_code: boar?.code ?? null, farrowing_date: String(f.farrowing_date).slice(0, 10),
         avg_birth_weight_kg: f.avg_birth_weight_kg ?? null, avg_weaning_weight_kg: f.avg_weaning_weight_kg ?? null,
@@ -417,6 +422,26 @@ export class GiltSelectionService {
   }
 
   /** What the full animal register form opens with for one gilt of a line: everything the selection already knows, her cost per head included. */
+  /**
+   * The item a gilt of this litter is registered as: the one the user named on the selection, else the class her parentage gives (BBP-2: the dam's
+   * and the sire's lines, the gilt class rule), else the litter's piglet item as before.
+   */
+  private async classItemOf(companyId: string | null, damBreedId: string | null | undefined, sireId: string | null | undefined, tenantId: string): Promise<string | null> {
+    if (!damBreedId || !sireId) return null;
+    const [sire] = await this.db.select({ breed_id: schema.animalRegister.breed_id }).from(schema.animalRegister).where(eq(schema.animalRegister.animal_id, sireId)).limit(1);
+    const rule = await this.giltClass.resolve(damBreedId, sire?.breed_id ?? null, tenantId, companyId);
+    return rule?.gilt_item_id ?? null;
+  }
+
+  private async giltItemFor(
+    selection: { gilt_item_id: string | null; company_id: string | null },
+    line: { boar_animal_id: string | null; piglet_item_id: string | null },
+    damBreedId: string | null | undefined,
+    tenantId: string,
+  ): Promise<string | null> {
+    return selection.gilt_item_id ?? (await this.classItemOf(selection.company_id, damBreedId, line.boar_animal_id, tenantId)) ?? line.piglet_item_id ?? null;
+  }
+
   async prefillGilt(selectionId: string, lineId: string, tenantId: string) {
     const selection = await this.findOne(selectionId, tenantId);
     const line = selection.lines.find((l) => l.line_id === lineId);
@@ -433,7 +458,7 @@ export class GiltSelectionService {
       remaining: line.gilts_selected - registered,
       values: {
         nob_id: source.nob_id, lob_id: source.lob_id, animal_type: 'GILT', gender: 'F', breed_id: sow?.breed_id ?? '', dob: farrow ? String(farrow.farrowing_date).slice(0, 10) : '',
-        entry_type: 'BORN_ON_FARM', entry_date: String(selection.selection_date).slice(0, 10), item_id: selection.gilt_item_id ?? line.piglet_item_id ?? '',
+        entry_type: 'BORN_ON_FARM', entry_date: String(selection.selection_date).slice(0, 10), item_id: (await this.giltItemFor(selection, line, sow?.breed_id, tenantId)) ?? '',
         source_batch_id: line.source_batch_id ?? selection.batch_id, acquisition_cost: cost.per_pig, sire_animal_id: line.boar_animal_id ?? '', dam_animal_id: line.sow_animal_id,
         current_stage_id: stageId ?? '', ...(placement.current_batch_id ? { current_batch_id: placement.current_batch_id } : {}), ...(placement.current_location_id ? { current_location_id: placement.current_location_id } : {}),
         notes: `Selected ${selection.selection_no} from ${sow?.animal_code ?? ''}'s litter ${line.lot_no ?? ''}`.trim(),
@@ -500,7 +525,7 @@ export class GiltSelectionService {
           entry_type: 'BORN_ON_FARM',
           entry_date: dto.entry_date ?? String(selection.selection_date).slice(0, 10),
           dob: dto.dob ?? (farrow ? String(farrow.d).slice(0, 10) : undefined),
-          item_id: dto.item_id ?? selection.gilt_item_id ?? line.piglet_item_id,
+          item_id: dto.item_id ?? selection.gilt_item_id ?? litter.gilt_class_item_id ?? line.piglet_item_id,
           source_batch_id: line.source_batch_id ?? selection.batch_id,
           dam_animal_id: line.sow_animal_id,
           sire_animal_id: line.boar_animal_id ?? dto.sire_animal_id,
@@ -589,7 +614,7 @@ export class GiltSelectionService {
             entry_type: 'BORN_ON_FARM',
             entry_date: String(selection.selection_date).slice(0, 10),
             source_batch_id: line.source_batch_id ?? selection.batch_id,
-            item_id: selection.gilt_item_id ?? line.piglet_item_id,
+            item_id: selection.gilt_item_id ?? piglets.litters.find((x) => x.farrow_id === line.farrow_id)?.gilt_class_item_id ?? line.piglet_item_id,
             rfid_tag: g.rfid_tag.trim(),
             sire_animal_id: line.boar_animal_id ?? undefined,
             dam_animal_id: line.sow_animal_id,
