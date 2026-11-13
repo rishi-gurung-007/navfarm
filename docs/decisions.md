@@ -4961,3 +4961,13 @@ Source: BBP-2 S.NO.6 ("Imported breeding asset amortization shall remain a perio
 2. **Now:** a litter's piglet lot (`is_litter_lot`) and any head-count batch in the Weaner, Grower or Finisher stage is a current biological asset. `matureBioAsset` and `amortizeBioAsset` refuse it with the BBP's reason, and its OUTPUT line is accepted while it is pre-mature (credited to the pre-mature account as before). Other head-count herds keep the Mature step.
 3. **Still open (the plan):** week-18 monthly fair value for these lots, separate WIP and inventory accounts, the gilt journal and the Transfer Order exit.
 
+## 13 Nov 2026 — a registered batch shows what its animals are worth beside its own carrying value (Phase A2; Arun: "yes"; Rishi has not confirmed it)
+
+**Why.** Costing runs and registrations are written with no batch (D8), so a registered batch's carrying value (`batch_bio_asset_state.nca_book_value`) counts capitalised feed and overhead only. On nf_devco BATCH-000001 showed 870.27 against 5,499.79 of animal book value, and BATCH-000003 showed 1,057.50 against a ledger-expected 0.
+The reconciliation report calls those two batches "differing"; the animals' own books agreed with their ledgers (no cache drift).
+
+**What.** `GET /batch/:id` returns `animals_book` ({ head, book_value }) for a batch of registered animals: the sum of its active animals' book values (the register cache, which the reconciliation shows equals the ledger). The batch screen shows it as "Animals' Book Value" above a note that the NCA figure beside it is capitalised cost only.
+Nothing stored or posted changes: the NCA figure, the ledger and the GL are as they were.
+
+**Proved** on the running API against MySQL: BATCH-000001 12 head 5,499.7947; BATCH-000002 4 head 1,410.00; BATCH-000003 5 head 1,057.50; each equal to `SUM(animal_register.book_value)` for the batch. Not looked at in the browser yet.
+

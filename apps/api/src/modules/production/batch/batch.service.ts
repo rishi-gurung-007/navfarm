@@ -1659,6 +1659,29 @@ export class BatchService {
       .from(schema.batchStageLog)
       .where(eq(schema.batchStageLog.batch_id, id));
 
+    // A batch of registered animals is worth what its animals are worth: each one's book value, which her ledger derives and the register caches.
+    // The batch's own carrying value (batch_bio_asset_state) counts capitalised cost only, because costing runs and registrations carry no batch
+    // (D8), so it is shown beside this and never in its place.
+    let animalsBook: { head: number; book_value: number } | null = null;
+    if (batch.tracking_mode === 'ANIMAL_WISE') {
+      const [row] = await this.db
+        .select({
+          head: sql<string>`COUNT(*)`,
+          value: sql<string>`COALESCE(SUM(${schema.animalRegister.book_value}), 0)`,
+        })
+        .from(schema.animalRegister)
+        .where(
+          and(
+            eq(schema.animalRegister.current_batch_id, id),
+            eq(schema.animalRegister.is_active, true),
+          ),
+        );
+      animalsBook = {
+        head: Number(row?.head ?? 0),
+        book_value: Math.round(Number(row?.value ?? 0) * 1e4) / 1e4,
+      };
+    }
+
     return {
       ...batch,
       input_lines: inputLines,
@@ -1670,6 +1693,7 @@ export class BatchService {
         : null,
       variances,
       bio_asset_state: bioAssetState || null,
+      animals_book: animalsBook,
       bio_asset_entries: bioAssetEntries,
       scheduler: schedulerHeader
         ? { ...schedulerHeader, lines: schedulerLines }
