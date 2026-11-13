@@ -4300,7 +4300,8 @@ describe('BatchService', () => {
       return { gl, inserted };
     };
 
-    it("posts a pre-mature herd's revaluation to the pre-mature account type, not the mature one", async () => {
+    it("posts a pre-mature herd's revaluation to the pre-mature account type, not the mature one, moving the herd's own account (a piglet lot's, since 11 Nov)", async () => {
+      jest.spyOn(service as any, 'prematureAssetAccount').mockResolvedValue('acc-lot');
       const { gl } = prime({
         state_id: 's',
         batch_id: 'batch-1',
@@ -4317,6 +4318,7 @@ describe('BatchService', () => {
         expect.objectContaining({
           transactionType: 'BIO_FAIR_VALUE_PREMATURE',
           amount: 500,
+          debitAccountId: 'acc-lot',
         }),
       );
     });

@@ -12,6 +12,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   Min,
   ValidateNested,
@@ -938,6 +939,18 @@ export class AmortizeBioAssetDto {
   @IsDateString()
   @IsNotEmpty()
   posting_date: string;
+}
+
+export class LotFairValueRunDto {
+  @ApiProperty({ description: 'The month to value the lots for', example: '2026-10' })
+  @IsString()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'period_key must be a month, YYYY-MM' })
+  period_key: string;
+
+  @ApiProperty({ description: 'Only this batch; left out, every eligible lot', required: false })
+  @IsOptional()
+  @IsUUID()
+  batch_id?: string;
 }
 
 export class RecordFairValueDto {

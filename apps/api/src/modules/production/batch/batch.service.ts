@@ -7728,6 +7728,11 @@ export class BatchService {
       lobId: batch.lob_id,
       stageId: batch.stage_id || undefined,
       userId: userPayload?.userId,
+      // A premature herd is carried in its own account (a piglet lot in the one its birth cost went to), so its revaluation moves that account, as its sale does
+      // (11 Nov: a lot is carried in one account). The mapping names the other side.
+      ...(bioState.stage === 'PREMATURE'
+        ? { debitAccountId: await this.prematureAssetAccount(batch, tenantId) }
+        : {}),
       reverseDirection: gainLoss < 0,
     });
 
