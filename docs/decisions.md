@@ -4952,3 +4952,12 @@ order, for the mill manager to see on the Mill Consolidation sheet.
   from the submit date; otherwise MEDIUM. It is never shown or stored as a line field.
 - Feed alerts keep their own priority levels (Alerts and Notifications Master r49); this ruling is about the
   requisition line only. Common (Item, Fixed Asset, Service) requisitions never used the line priority.
+
+## 13 Nov 2026 — piglet, weaner and grower lots are never matured or amortised (BBP S.NO.6; Arun's instruction, awaiting Rishi)
+
+Source: BBP-2 S.NO.6 ("Imported breeding asset amortization shall remain a period expense and shall not be included in Weaner, Grower, WIP or finished goods cost"; weaners and growers are current biological assets, cost to week 17, fair value from week 18). Plan: `docs/superpowers/plans/2026-11-13-bbp-costing-alignment.md`.
+
+1. **Before:** a head-count lot could be made Mature, which fixed a monthly amortisation over a productive life and then allowed the batch Amortize run. The data-entry OUTPUT line was refused until the batch was Mature, so a pig could leave through the Dispose screen but not through output without being amortised first.
+2. **Now:** a litter's piglet lot (`is_litter_lot`) and any head-count batch in the Weaner, Grower or Finisher stage is a current biological asset. `matureBioAsset` and `amortizeBioAsset` refuse it with the BBP's reason, and its OUTPUT line is accepted while it is pre-mature (credited to the pre-mature account as before). Other head-count herds keep the Mature step.
+3. **Still open (the plan):** week-18 monthly fair value for these lots, separate WIP and inventory accounts, the gilt journal and the Transfer Order exit.
+

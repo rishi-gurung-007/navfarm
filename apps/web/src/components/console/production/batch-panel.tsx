@@ -3501,7 +3501,7 @@ export default function BatchPanel() {
                         )}
                         {viewing.status === 'ACTIVE' && (
                           <div className="mt-3 flex flex-wrap gap-2">
-                            {viewing.bio_asset_state.stage === 'PREMATURE' && viewing.tracking_mode !== 'ANIMAL_WISE' && (
+                            {viewing.bio_asset_state.stage === 'PREMATURE' && viewing.tracking_mode !== 'ANIMAL_WISE' && !(viewing.is_litter_lot || ['WEANER', 'GROWER', 'FINISHER'].includes(String(viewing.current_stage_code ?? '').toUpperCase())) && (
                               <Button
                                 size="sm"
                                 onClick={() => openBioAction('mature')}
@@ -3510,7 +3510,7 @@ export default function BatchPanel() {
                                 {t('blMatureHerd')}
                               </Button>
                             )}
-                            {viewing.bio_asset_state.stage === 'MATURE' && viewing.tracking_mode !== 'ANIMAL_WISE' && (
+                            {viewing.bio_asset_state.stage === 'MATURE' && viewing.tracking_mode !== 'ANIMAL_WISE' && !(viewing.is_litter_lot || ['WEANER', 'GROWER', 'FINISHER'].includes(String(viewing.current_stage_code ?? '').toUpperCase())) && (
                               <>
                                 <Button
                                   size="sm"

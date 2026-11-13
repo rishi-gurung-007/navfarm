@@ -3789,6 +3789,44 @@ describe('BatchService', () => {
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['a litter lot', { is_litter_lot: true }],
+      ['a head-count batch in the Weaner stage', { current_stage_code: 'WEANER' }],
+      ['a head-count batch in the Grower stage', { current_stage_code: 'GROWER' }],
+      ['a head-count batch in the Finisher stage', { current_stage_code: 'FINISHER' }],
+    ])('refuses to mature %s: a current biological asset is never amortised (BBP-2 S.NO.6)', async (_label, extra) => {
+      jest.spyOn(service, 'findOne').mockResolvedValue({
+        ...bioBatch,
+        tracking_mode: 'BATCH_WISE',
+        ...extra,
+      } as any);
+      await expect(
+        service.matureBioAsset(
+          'batch-1',
+          { residual_value_per_unit: 500, productive_life_months: 24 },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/never matured or amortised/);
+      expect(mockDbSelect).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses to amortise a litter lot even if it was matured before this rule', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue({
+        ...bioBatch,
+        tracking_mode: 'BATCH_WISE',
+        is_litter_lot: true,
+      } as any);
+      await expect(
+        service.amortizeBioAsset(
+          'batch-1',
+          { posting_date: '2026-02-28' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/never amortised/);
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
     it('rejects maturing a batch that is already MATURE', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValue(bioBatch as any);
 

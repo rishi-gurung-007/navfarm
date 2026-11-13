@@ -40,6 +40,7 @@ import { entryBlockedReason } from '../batch-daily-data/entry-blocked';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { assertStageFitsAnimal, stageFitsGender } from '../stage/stage-gender';
 import { farmStoreOf } from '../../../common/farm-store';
+import { isCurrentBioLot } from './current-bio-lot';
 import { herdCarryingAccount, pigletLotAccount } from './herd-account';
 import { BatchDayReversalService } from './batch-day-reversal.service';
 import {
@@ -3945,7 +3946,11 @@ export class BatchService {
           'An output entry needs an item, a quantity and a unit of measure.',
         );
       }
-      if (isBioAsset && bio?.stage !== 'MATURE') {
+      if (
+        isBioAsset &&
+        bio?.stage !== 'MATURE' &&
+        !this.isCurrentBioLot(batch)
+      ) {
         throw new BadRequestException(
           'OUTPUT can only be recorded once the bio-asset batch has matured.',
         );
@@ -7310,6 +7315,18 @@ export class BatchService {
   }
 
   /**
+   * A litter's piglet lot, or a head-count batch in the Weaner / Grower / Finisher stage, is a current biological asset (BBP-2 S.NO.6): it
+   * accumulates cost and leaves by sale, harvest or output at its carrying value, and is never matured or amortised.
+   */
+  private isCurrentBioLot(batch: {
+    is_litter_lot?: boolean | null;
+    tracking_mode?: string | null;
+    current_stage_code?: string | null;
+  }): boolean {
+    return isCurrentBioLot(batch);
+  }
+
+  /**
    * Refuses an action that only applies to BIO_ASSET batches.
    */
   private assertBioAsset(batch: { costing_method: string }, action: string) {
@@ -7385,6 +7402,11 @@ export class BatchService {
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'ACTIVE');
     this.assertBioAsset(batch, 'Maturity transition');
+    if (this.isCurrentBioLot(batch)) {
+      throw new BadRequestException(
+        `Batch ${batch.batch_no} is a piglet, weaner or grower lot: a current biological asset that accumulates cost and is never matured or amortised (BBP-2 S.NO.6).`,
+      );
+    }
     // A batch of registered animals is never made mature as a herd: one switch for animals of different ages is wrong for each of them. Each animal
     // is costed from her own start age (her costing start date), by the central costing run (Finance > Bio-Asset Costing Runs).
     if (
@@ -7504,6 +7526,11 @@ export class BatchService {
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'ACTIVE');
     this.assertBioAsset(batch, 'Amortization');
+    if (this.isCurrentBioLot(batch)) {
+      throw new BadRequestException(
+        `Batch ${batch.batch_no} is a piglet, weaner or grower lot: it is never amortised (BBP-2 S.NO.6).`,
+      );
+    }
     await this.assertNotCostedPerAnimal(batch, id, 'Amortization');
     const bioState = await this.getBioAssetState(id);
     if (bioState.stage !== 'MATURE') {
