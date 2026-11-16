@@ -89,6 +89,7 @@ import { AnimalModule } from './modules/piggery/animal/animal.module';
 import { BreedingModule } from './modules/piggery/breeding/breeding.module';
 import { GiltSelectionModule } from './modules/piggery/gilt-selection/gilt-selection.module';
 import { PiggeryAnalyticsModule } from './modules/piggery/analytics/piggery-analytics.module';
+import { BudgetModule } from './modules/piggery/budget/budget.module';
 import { ReportsModule } from './modules/piggery/reports/reports.module';
 import { TenantMiddleware } from './common/middlewares/tenant.middleware';
 import appConfig from './config/app.config';
@@ -210,6 +211,7 @@ import { SystemController } from './system/system.controller';
     BreedingModule,
     GiltSelectionModule,
     PiggeryAnalyticsModule,
+    BudgetModule,
     ReportsModule,
   ],
   controllers: [SystemController],
