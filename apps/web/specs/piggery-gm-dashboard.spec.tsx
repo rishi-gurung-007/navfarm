@@ -590,4 +590,49 @@ describe('GM Dashboard — budgets', () => {
       [null, 25],
     ]);
   });
+
+  describe('one farm', () => {
+    const open = async (extra: Record<string, unknown>) => {
+      get.mockImplementation(async (url: string) => {
+        const q = new URLSearchParams(url.split('?')[1]);
+        const r = response('p10', q.get('farmId') ?? undefined).data;
+        return { data: q.get('farmId') ? { ...r, ...extra } : r };
+      });
+      render(<PiggeryGmDashboard />);
+      await screen.findByRole('region', { name: 'gmdBreedingMatrix' });
+      fireEvent.click(screen.getByRole('button', { name: 'rptFarm' }));
+      fireEvent.click(await screen.findByRole('option', { name: 'GRASMERE' }));
+      await screen.findByRole('heading', { name: 'GRASMERE' });
+      const table = screen.getByRole('region', { name: 'gmdFinancialMatrix' });
+      return within(table)
+        .getAllByRole('row')
+        .find((row) => row.textContent?.includes('Pigs to Slaughter'))!;
+    };
+
+    it('the financial table takes its budget and dot from financial_rows', async () => {
+      const row = await open({
+        financial_rows: [
+          {
+            key: 'pigs_to_slaughter',
+            label: 'Pigs to Slaughter',
+            unit: '',
+            lower_is_better: false,
+            cells: { g: { value: 100, target: 120, status: 'RED' } },
+          },
+        ],
+      });
+      expect(
+        row.querySelector('[data-status]')?.getAttribute('data-status'),
+      ).toBe('RED');
+      expect(row.innerHTML).toContain('gmdTarget 120');
+    });
+
+    it('without financial_rows the financial table has no target and no dot colour', async () => {
+      const row = await open({});
+      expect(
+        row.querySelector('[data-status]')?.getAttribute('data-status'),
+      ).toBe('NONE');
+      expect(row.innerHTML).toContain('gmdNoTarget');
+    });
+  });
 });

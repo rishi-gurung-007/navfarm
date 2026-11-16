@@ -728,6 +728,8 @@ export interface FarmRow {
   lower_is_better: boolean;
   target: number | null;
   status: Status;
+  /** The dot's colour when it is not the This Week status (a Month budget colour); defaults to `status`. */
+  dotStatus?: Status;
   values: Record<FarmColumn, number | null>;
   trend: Array<number | null>;
 }
@@ -849,7 +851,14 @@ export function FarmMatrix({
                       className="flex items-center justify-center gap-1.5"
                       title={tip}
                     >
-                      <StatusDot status={row.status} size="sm" />
+                      <StatusDot
+                        status={
+                          row.dotStatus !== undefined
+                            ? row.dotStatus
+                            : row.status
+                        }
+                        size="sm"
+                      />
                       <TrendBars
                         values={row.trend}
                         label={`${row.label}: ${row.trend.map((v) => fmt(v)).join(', ')}`}

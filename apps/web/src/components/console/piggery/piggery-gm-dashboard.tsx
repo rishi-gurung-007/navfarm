@@ -352,10 +352,16 @@ export default function PiggeryGmDashboard() {
   }));
   const financial = data?.financial_rows ?? webFinancial;
   const farmView = farmId ? (data?.farm_view ?? null) : null;
+  // The budget is Month-based, so its colour is the dot's alone and never paints the This Week figure.
   const farmFinancial: FarmRow[] = FINANCIAL_ROWS.map((r) => ({
     ...r,
-    target: null,
+    target:
+      data?.financial_rows?.find((x) => x.key === r.key)?.cells[farmId]
+        ?.target ?? null,
     status: null,
+    dotStatus:
+      data?.financial_rows?.find((x) => x.key === r.key)?.cells[farmId]
+        ?.status ?? null,
     trend: Array(6).fill(null),
     values: {
       this_week: null,
