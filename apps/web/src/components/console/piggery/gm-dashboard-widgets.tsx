@@ -51,6 +51,15 @@ export type Farm = { farm_id: string; farm_code: string; farm_name: string };
 export interface Figure {
   actual: number | null;
   budget: number | null;
+  /**
+   * The API's Var, Var % (points for a percent metric) and colour. Absent (undefined) when the API sent no budget
+   * cell, and the card works them out from actual and budget; null means the API judged there is none.
+   */
+  var?: number | null;
+  var_pct?: number | null;
+  status?: Status;
+  /** Why the budget reads N/A, or is only partial, for the hover; absent when there is nothing to say. */
+  budgetHint?: string;
 }
 
 export const NO_FIGURE: Figure = { actual: null, budget: null };
@@ -72,6 +81,12 @@ export const fmt = (value: number | null | undefined, unit = '') =>
 const signed = (value: number, unit = '') =>
   `${value > 0 ? '+' : ''}${fmt(value, unit)}`;
 
+/** A percent metric to one decimal, as the cards read (32.0%); the rest is fmt. */
+const fig = (value: number | null | undefined, unit: string) =>
+  unit === '%' && value != null
+    ? `${value.toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
+    : fmt(value);
+
 /** Actual − budget and its share of the budget, and whether it is good news. */
 export function variance(f: Figure, lowerIsBetter: boolean) {
   if (f.actual == null || f.budget == null) return null;
@@ -85,6 +100,25 @@ export function variance(f: Figure, lowerIsBetter: boolean) {
     pct,
     up: diff >= 0,
     good: lowerIsBetter ? diff <= 0 : diff >= 0,
+    warn: false,
+  };
+}
+
+/** The Var a card shows: the API's own figures and colour when it sent them, else worked out here. */
+export function figureVariance(f: Figure, lowerIsBetter: boolean) {
+  if (f.var === undefined) return variance(f, lowerIsBetter);
+  if (f.var == null) return null;
+  return {
+    diff: f.var,
+    pct: f.var_pct ?? null,
+    up: f.var >= 0,
+    good:
+      f.status != null
+        ? f.status === 'GREEN'
+        : lowerIsBetter
+          ? f.var <= 0
+          : f.var >= 0,
+    warn: f.status === 'AMBER',
   };
 }
 
@@ -110,14 +144,23 @@ export function StatusDot({
   );
 }
 
+const toneOf = (v: NonNullable<ReturnType<typeof variance>>) =>
+  v.warn ? 'var(--warning)' : v.good ? 'var(--success)' : 'var(--danger)';
+
 function TrendArrow({ v }: { v: ReturnType<typeof variance> }) {
   if (!v) return null;
   const Icon = v.up ? ArrowUp : ArrowDown;
   return (
     <span
       className="inline-flex h-6 w-6 items-center justify-center rounded-full text-white"
-      style={{ backgroundColor: v.good ? 'var(--success)' : 'var(--danger)' }}
-      aria-label={v.good ? 'on or better than budget' : 'worse than budget'}
+      style={{ backgroundColor: toneOf(v) }}
+      aria-label={
+        v.warn
+          ? 'within tolerance of budget'
+          : v.good
+            ? 'on or better than budget'
+            : 'worse than budget'
+      }
     >
       <Icon className="h-3.5 w-3.5" strokeWidth={3} />
     </span>
@@ -133,15 +176,22 @@ function VarianceText({
 }) {
   if (!v) return <span className="text-(--text-secondary)">{NA}</span>;
   return (
-    <span
-      className="font-semibold"
-      style={{ color: v.good ? 'var(--success)' : 'var(--danger)' }}
-    >
+    <span className="font-semibold" style={{ color: toneOf(v) }}>
       {signed(v.diff, unit === '%' ? 'pp' : '')}
       {v.pct != null && unit !== '%' && (
         <span className="block text-[11px]">{signed(v.pct, '%')}</span>
       )}
     </span>
+  );
+}
+
+/** A budget figure; N/A or partial, it carries the hover that says why. */
+function BudgetValue({ figure, unit }: { figure: Figure; unit: string }) {
+  const text = fig(figure.budget, unit);
+  return figure.budgetHint ? (
+    <HoverHint hint={figure.budgetHint}>{text}</HoverHint>
+  ) : (
+    <>{text}</>
   );
 }
 
@@ -159,14 +209,14 @@ function FigureBlock({
   lowerIsBetter: boolean;
   t: T;
 }) {
-  const v = variance(figure, lowerIsBetter);
+  const v = figureVariance(figure, lowerIsBetter);
   return (
     <div className="min-w-0 flex-1">
       <div className="flex items-start justify-between gap-1">
         <div className="min-w-0">
           <p className="text-xs text-(--text-secondary)">{label}</p>
           <p className="truncate font-mono text-xl font-semibold tabular-nums">
-            {fmt(figure.actual, unit === '%' ? '%' : '')}
+            {fig(figure.actual, unit)}
           </p>
         </div>
         <TrendArrow v={v} />
@@ -175,7 +225,7 @@ function FigureBlock({
         <div>
           <p className="text-(--text-secondary)">{t('gmdBudget')}</p>
           <p className="font-mono tabular-nums">
-            {fmt(figure.budget, unit === '%' ? '%' : '')}
+            <BudgetValue figure={figure} unit={unit} />
           </p>
         </div>
         <div>
@@ -211,15 +261,15 @@ function SubLine({
   lowerIsBetter: boolean;
   t: T;
 }) {
-  const v = variance(figure, lowerIsBetter);
+  const v = figureVariance(figure, lowerIsBetter);
   return (
     <div className="flex items-center gap-2 text-xs">
       <span className="w-9 text-(--text-secondary)">{label}</span>
       <span className="font-mono font-semibold tabular-nums">
-        {fmt(figure.actual, unit === '%' ? '%' : '')}
+        {fig(figure.actual, unit)}
       </span>
       <span className="text-(--text-secondary)">
-        {t('gmdBudget')} {fmt(figure.budget, unit === '%' ? '%' : '')}
+        {t('gmdBudget')} <BudgetValue figure={figure} unit={unit} />
       </span>
       <span className="ml-auto">
         <VarianceText v={v} unit={unit} />
@@ -608,7 +658,7 @@ export function KgMeatCard({
   ytd?: Figure;
   t: T;
 }) {
-  const v = variance(main, false);
+  const v = figureVariance(main, false);
   return (
     <section
       className="rounded-md border border-(--border) bg-(--surface-raised) p-4"
@@ -627,7 +677,7 @@ export function KgMeatCard({
             </span>
             <TrendArrow v={v} />
             <span className="text-xs text-(--text-secondary)">
-              {t('gmdBudget')} {fmt(main.budget)}
+              {t('gmdBudget')} <BudgetValue figure={main} unit="" />
             </span>
             <span className="text-xs text-(--text-secondary)">
               {t('gmdVar')} <VarianceText v={v} unit="" />
@@ -643,7 +693,7 @@ export function KgMeatCard({
                 {fmt(ytd.actual)}
               </span>
               {' · '}
-              {t('gmdBudget')} {fmt(ytd.budget)}
+              {t('gmdBudget')} <BudgetValue figure={ytd} unit="" />
             </p>
           )}
         </div>

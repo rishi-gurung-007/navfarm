@@ -15,8 +15,25 @@ jest.mock('../src/hooks/useCompanyCurrency', () => ({
   useCompanyCurrency: () => ({ currency: { iso_code: 'USD' }, ready: true }),
 }));
 jest.mock('../src/hooks/useLanguage', () => {
-  const t = (key: string) => key;
+  // A key with its values after it, so a spec can see what a string was built from.
+  const t = (key: string, vars?: Record<string, unknown>) =>
+    vars ? `${key} ${Object.values(vars).join(' ')}` : key;
   return { useLanguage: () => ({ t }) };
+});
+// The chart is drawn by recharts, which draws nothing in jsdom: the spec reads the points the screen hands it.
+const chartProps: Array<{ title: string; points: any[] }> = [];
+jest.mock('../src/components/console/piggery/gm-dashboard-widgets', () => {
+  const actual = jest.requireActual(
+    '../src/components/console/piggery/gm-dashboard-widgets',
+  );
+  const R = jest.requireActual('react');
+  return {
+    ...actual,
+    ProgressChart: (props: any) => {
+      chartProps.push({ title: props.title, points: props.points });
+      return R.createElement(actual.ProgressChart, props);
+    },
+  };
 });
 
 const get = api.get as jest.Mock;
@@ -153,6 +170,7 @@ const response = (periodId: string, farmId?: string) => ({
 });
 
 beforeEach(() => {
+  chartProps.length = 0;
   get.mockReset().mockImplementation(async (url: string) => {
     const q = new URLSearchParams(url.split('?')[1]);
     return response(q.get('periodId') ?? 'p10', q.get('farmId') ?? undefined);
@@ -360,5 +378,216 @@ describe('GM Dashboard — one farm', () => {
       .map((li) => li.textContent);
     expect(items[0]).toContain('FCE Grower gmdAboveTarget (gmdThisWeek)');
     expect(items[1]).toContain('Farrowing Rate gmdOnTarget (gmdThisWeek)');
+  });
+});
+
+// Task 7 of the GM Dashboard Budget master: the API's budget, Var and colours reach the screen.
+describe('GM Dashboard — budgets', () => {
+  const cell = (
+    budget: number | null,
+    actual: number | null,
+    v: number | null,
+    pct: number | null,
+    status: 'GREEN' | 'AMBER' | 'RED' | null,
+    missing: string[] = [],
+  ) => ({
+    budget,
+    tolerance_pct: 5,
+    missing,
+    actual,
+    var: v,
+    var_pct: pct,
+    status,
+  });
+  const sales = (heads: number, cost: number, pct: number) => ({
+    heads,
+    cost_of_sales: cost,
+    revenue: 0,
+    gross_margin: 0,
+    gross_margin_pct: pct,
+  });
+  const load = async (extra: Record<string, unknown>) => {
+    get.mockImplementation(async () => ({
+      data: { ...response('p10').data, ...extra },
+    }));
+    render(<PiggeryGmDashboard />);
+    await screen.findByRole('region', { name: 'gmdBreedingMatrix' });
+  };
+  const empty = { month: {}, ytd: {}, by_period: [] };
+
+  it('KPI cards show Budget and Var from the API', async () => {
+    await load({
+      financial: {
+        month: { all: sales(4820, 0, 0) },
+        ytd: { all: null },
+        heads_by_period: [],
+      },
+      budget: {
+        ...empty,
+        month: {
+          all: { pigs_to_slaughter: cell(4500, 4820, 320, 7.1, 'GREEN') },
+        },
+      },
+    });
+    const text = screen.getByRole('region', {
+      name: 'gmdPigsToSlaughter',
+    }).textContent!;
+    expect(text).toContain('4,500');
+    expect(text).toContain('+320');
+    expect(text).toMatch(/\+7\.1\s?%/);
+  });
+
+  it("a percentage metric's Var reads in points", async () => {
+    await load({
+      financial: {
+        month: { all: sales(1, 0, 35.4) },
+        ytd: { all: null },
+        heads_by_period: [],
+      },
+      budget: {
+        ...empty,
+        month: {
+          all: { gross_margin_pct: cell(32, 35.4, 3.4, null, 'GREEN') },
+        },
+      },
+    });
+    const text = screen.getByRole('region', {
+      name: 'gmdGrossMargin',
+    }).textContent!;
+    expect(text).toContain('32.0%');
+    expect(text).toContain('+3.4 pp');
+  });
+
+  it('a cost metric under budget reads favourable', async () => {
+    await load({
+      financial: {
+        month: { all: sales(1, 8000, 0) },
+        ytd: { all: null },
+        heads_by_period: [],
+      },
+      budget: {
+        ...empty,
+        month: {
+          all: { cost_of_sales: cell(10000, 8000, -2000, -20, 'GREEN') },
+        },
+      },
+    });
+    const card = screen.getByRole('region', { name: 'gmdCostOfSales' });
+    expect(card.textContent).toContain('-2,000');
+    expect(
+      within(card).getByLabelText('on or better than budget'),
+    ).toBeTruthy();
+  });
+
+  it('a null budget shows N/A and the hover names the missing farms', async () => {
+    await load({
+      budget: {
+        ...empty,
+        month: {
+          all: {
+            avg_cdm: cell(null, null, null, null, null, ['MUL100', 'POR100']),
+          },
+        },
+      },
+    });
+    const card = screen.getByRole('region', { name: 'gmdAvgCdm' });
+    const hint = card.querySelector('[data-hint]')!;
+    expect(hint.textContent).toBe('N/A');
+    expect(hint.getAttribute('data-hint')).toContain('gmdNoBudgetFor');
+    expect(hint.getAttribute('data-hint')).toContain('GRASMERE');
+    expect(hint.getAttribute('data-hint')).toContain('PORTA');
+  });
+
+  it('a ratio YTD over a missing period shows the figure and says it is partial', async () => {
+    await load({
+      budget: {
+        ...empty,
+        ytd: {
+          all: { avg_cdm: cell(92, null, null, null, null, ['2026-02']) },
+        },
+      },
+    });
+    const hint = screen
+      .getByRole('region', { name: 'gmdAvgCdm' })
+      .querySelector('[data-hint]')!;
+    expect(hint.textContent).toBe('92');
+    expect(hint.getAttribute('data-hint')).toContain('gmdBudgetPartial');
+    expect(hint.getAttribute('data-hint')).toContain('2026-02');
+  });
+
+  it('the Slaughter & Financial rows take their dot colour from financial_rows', async () => {
+    await load({
+      financial_rows: [
+        {
+          key: 'pigs_to_slaughter',
+          label: 'Pigs to Slaughter',
+          unit: '',
+          lower_is_better: false,
+          cells: {
+            g: { value: 100, target: 120, status: 'RED' },
+            p: { value: 130, target: 120, status: 'GREEN' },
+          },
+        },
+      ],
+    });
+    const table = screen.getByRole('region', { name: 'gmdFinancialMatrix' });
+    const cells = within(within(table).getAllByRole('row')[1]).getAllByRole(
+      'cell',
+    );
+    expect(
+      cells[1].querySelector('[data-status]')?.getAttribute('data-status'),
+    ).toBe('RED');
+    expect(
+      cells[2].querySelector('[data-status]')?.getAttribute('data-status'),
+    ).toBe('GREEN');
+    expect(cells[1].getAttribute('title')).toContain('gmdTarget 120');
+  });
+
+  it('the Pigs to Slaughter chart draws the budget line from budget.by_period', async () => {
+    await load({
+      financial: {
+        month: { all: null },
+        ytd: { all: null },
+        heads_by_period: [{ period_code: '2026-10', heads: 500 }],
+      },
+      budget: {
+        ...empty,
+        by_period: [
+          { period_code: '2026-10', pigs_to_slaughter: 450, pbt: 10 },
+          { period_code: '2026-11', pigs_to_slaughter: 900, pbt: null },
+        ],
+      },
+    });
+    const pts = chartProps
+      .filter((c) => c.title === 'gmdPigsToSlaughterProgress')
+      .at(-1)!.points;
+    expect(pts.map((p) => [p.label, p.actual, p.budget])).toEqual([
+      ['Oct', 500, 450],
+      ['Nov', null, 900],
+    ]);
+  });
+
+  it('the PBT chart draws only its budget line', async () => {
+    await load({
+      financial: {
+        month: { all: null },
+        ytd: { all: null },
+        heads_by_period: [{ period_code: '2026-10', heads: 500 }],
+      },
+      budget: {
+        ...empty,
+        by_period: [
+          { period_code: '2026-10', pigs_to_slaughter: 450, pbt: 10 },
+          { period_code: '2026-11', pigs_to_slaughter: 900, pbt: 25 },
+        ],
+      },
+    });
+    const pts = chartProps
+      .filter((c) => c.title === 'gmdPbtProgress')
+      .at(-1)!.points;
+    expect(pts.map((p) => [p.actual, p.budget])).toEqual([
+      [null, 10],
+      [null, 25],
+    ]);
   });
 });

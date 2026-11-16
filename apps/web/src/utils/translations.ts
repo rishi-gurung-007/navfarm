@@ -2936,6 +2936,9 @@ export const translations = {
     gmdNoDataYet: 'No data yet',
     gmdBudget: 'Budget',
     gmdVar: 'Var',
+    gmdNoBudgetFor: 'No budget for {{names}}',
+    gmdBudgetPartial:
+      'Average of the periods that have a budget; none for {{names}}',
     gmdActual: 'Actual',
     gmdHead: 'head',
     gmdPigsToSlaughter: 'Pigs to Slaughter',
