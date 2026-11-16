@@ -6179,6 +6179,45 @@ export const reportingPeriod = mysqlTable(
   }),
 );
 
+export const gmBudget = mysqlTable(
+  'gm_budget',
+  {
+    budget_id: varchar('budget_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(
+      () => companyMaster.company_id,
+      { onDelete: 'cascade' },
+    ),
+    period_id: varchar('period_id', { length: 36 }).notNull(),
+    farm_id: varchar('farm_id', { length: 36 }).notNull(),
+    metric_code: varchar('metric_code', { length: 40 }).notNull(),
+    amount_type: varchar('amount_type', { length: 10 }).notNull(),
+    amount: decimal('amount', { precision: 18, scale: 4 }).notNull(),
+    tolerance_pct: decimal('tolerance_pct', { precision: 6, scale: 2 }),
+    notes: varchar('notes', { length: 500 }),
+    is_active: boolean('is_active').default(true).notNull(),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  },
+  (table) => ({
+    idxLookup: index('idx_gm_budget_lookup').on(
+      table.tenant_id,
+      table.company_id,
+      table.period_id,
+      table.farm_id,
+    ),
+  }),
+);
+
 /**
  * In-app feed alerts raised from alert_rule (Plan B). active_key = dedup_key
  * while ACTIVE, NULL once RESOLVED: the unique index is what makes "one open
