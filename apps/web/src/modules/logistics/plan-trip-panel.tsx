@@ -111,9 +111,12 @@ const looksLikeSilo = (location: Row | null): boolean =>
 export function PlanTripPanel({
   transfer,
   onChanged,
+  kind = 'STOCK',
 }: {
   transfer: TripTransfer;
   onChanged?: (trip: TransferTrip | null) => void;
+  /** STOCK: an Inventory Transfer Order. BATCH (Phase 3): a livestock batch transfer, always on a livestock truck. */
+  kind?: 'STOCK' | 'BATCH';
 }) {
   const { t } = useLanguage();
   const propTrip = transfer.trip ?? null;
@@ -161,7 +164,7 @@ export function PlanTripPanel({
       })
       .catch(() => live && setRoutes([]));
     // The truck type is a plain guess from the destination; the planner changes it if it is wrong.
-    if (toWarehouseId && !typeTouched)
+    if (kind === 'STOCK' && toWarehouseId && !typeTouched)
       api
         .get(`/location/${toWarehouseId}`)
         .then((res) => {
@@ -171,7 +174,7 @@ export function PlanTripPanel({
     return () => {
       live = false;
     };
-  }, [planning, toWarehouseId, typeTouched]);
+  }, [planning, toWarehouseId, typeTouched, kind]);
 
   const isDraftTo = transfer.status === 'DRAFT';
   const changed = (next: TransferTrip | null) => {
@@ -186,12 +189,18 @@ export function PlanTripPanel({
     setError('');
     try {
       const row = unwrap<Row>(
-        await api.post('/logistics/trip/plan', {
-          transfer_ids: [transfer.transfer_id],
-          planned_departure: departure,
-          route_id: routeId,
-          vehicle_type: vehicleType,
-        }),
+        kind === 'BATCH'
+          ? await api.post('/logistics/trip/plan-batch-transfer', {
+              batch_transfer_id: transfer.transfer_id,
+              planned_departure: departure,
+              route_id: routeId,
+            })
+          : await api.post('/logistics/trip/plan', {
+              transfer_ids: [transfer.transfer_id],
+              planned_departure: departure,
+              route_id: routeId,
+              vehicle_type: vehicleType,
+            }),
       );
       setPlanning(false);
       setDetail(row);
@@ -272,7 +281,7 @@ export function PlanTripPanel({
       )}
 
       {!trip && planning && isDraftTo && (
-        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className={`mt-3 grid grid-cols-1 gap-3 ${kind === 'BATCH' ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
           <div className="flex flex-col gap-1">
             <label className="nf-text-label" style={{ color: 'var(--text-secondary)' }}>
               {t('trpRoute')}
@@ -304,6 +313,7 @@ export function PlanTripPanel({
               onChange={(e) => setDeparture(e.target.value)}
             />
           </div>
+          {kind === 'STOCK' && (
           <div className="flex flex-col gap-1">
             <label className="nf-text-label" style={{ color: 'var(--text-secondary)' }}>
               {t('trpTruckType')}
@@ -325,7 +335,8 @@ export function PlanTripPanel({
               {t('trpTruckTypeHint')}
             </span>
           </div>
-          <div className="flex items-center justify-end gap-2 sm:col-span-3">
+          )}
+          <div className={`flex items-center justify-end gap-2 ${kind === 'BATCH' ? 'sm:col-span-2' : 'sm:col-span-3'}`}>
             <Button type="button" size="sm" variant="outline" onClick={() => setPlanning(false)} disabled={busy}>
               {t('trpClose')}
             </Button>

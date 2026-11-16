@@ -177,7 +177,11 @@ export function DispatchBoard() {
                 className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-xs"
               >
                 <a
-                  href={`/inventory/transfers?id=${encodeURIComponent(w.id)}`}
+                  href={
+                    w.kind === 'BATCH_TRANSFER'
+                      ? '/batches/transfers'
+                      : `/inventory/transfers?id=${encodeURIComponent(w.id)}`
+                  }
                   className="font-semibold text-[var(--accent)]"
                 >
                   {w.document_no}

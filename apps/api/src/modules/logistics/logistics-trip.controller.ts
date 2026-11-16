@@ -45,6 +45,12 @@ export class LogisticsTripController {
     return { data: await this.trips.plan(body as never, req.user.tenantId, req.user) };
   }
 
+  /** Phase 3: a trip for one cross-farm livestock batch transfer (a LIVESTOCK truck, loaded in head). */
+  @Post('plan-batch-transfer') @RequirePermission('LOGISTICS', 'TRIP', 'create')
+  async planBatchTransfer(@Body() body: Record<string, any>, @Req() req: any) {
+    return { data: await this.trips.planBatchTransfer(body as never, req.user.tenantId, req.user) };
+  }
+
   @Get(':id') @RequirePermission('LOGISTICS', 'TRIP', 'view')
   async get(@Param('id') id: string, @Req() req: any) {
     return { data: await this.trips.findOne(id, req.user.tenantId) };

@@ -56,6 +56,14 @@ beforeEach(() => {
           from_name: 'Mill',
           to_name: 'Grasmere',
         },
+        {
+          kind: 'BATCH_TRANSFER',
+          id: 'bt-1',
+          document_no: 'BTR-0582',
+          posting_date: '2026-11-16',
+          from_name: 'Grasmere',
+          to_name: 'Porta',
+        },
       ],
     },
   });
@@ -89,6 +97,16 @@ describe('DispatchBoard', () => {
       screen.getByRole('region', { name: 'Transfer Orders waiting for a trip' })
         .textContent,
     ).toContain('Mill → Grasmere');
+  });
+
+  it('sends a waiting batch transfer to the batch transfers screen', async () => {
+    render(<DispatchBoard />);
+    const link = await screen.findByRole('link', { name: 'BTR-0582' });
+    expect(link.getAttribute('href')).toBe('/batches/transfers');
+    expect(
+      screen.getByRole('region', { name: 'Transfer Orders waiting for a trip' })
+        .textContent,
+    ).toContain('Grasmere → Porta');
   });
 
   it('shows the server message when the board cannot load', async () => {

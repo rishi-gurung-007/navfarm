@@ -4393,6 +4393,8 @@ export const batchTransfer = mysqlTable('batch_transfer', {
     .notNull(),
   reason: varchar('reason', { length: 100 }),
   remarks: text('remarks'),
+  // 0257: the Logistics trip a cross-farm transfer travels on (null on a same-farm move or one with no trip).
+  trip_id: varchar('trip_id', { length: 36 }),
   status: varchar('status', { length: 20 }).default('DRAFT').notNull(),
   posted_at: timestamp('posted_at', { mode: 'string' }),
   posted_by: varchar('posted_by', { length: 36 }),
@@ -9633,8 +9635,10 @@ export const logisticsTripLine = mysqlTable(
     tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
     company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
     trip_id: varchar('trip_id', { length: 36 }).notNull(),
-    transfer_id: varchar('transfer_id', { length: 36 }).notNull(),
+    // Exactly one of transfer_id (a stock Transfer Order) and batch_transfer_id (0257, a livestock batch transfer) is set.
+    transfer_id: varchar('transfer_id', { length: 36 }),
     transfer_line_id: varchar('transfer_line_id', { length: 36 }),
+    batch_transfer_id: varchar('batch_transfer_id', { length: 36 }),
     weight_kg: decimal('weight_kg', { precision: 14, scale: 2 }),
     head_count: int('head_count'),
     bag_count: int('bag_count'),
@@ -9645,6 +9649,7 @@ export const logisticsTripLine = mysqlTable(
   (t) => ({
     idxTrip: index('idx_logistics_trip_line_trip').on(t.tenant_id, t.trip_id),
     idxTransfer: index('idx_logistics_trip_line_transfer').on(t.tenant_id, t.transfer_id),
+    idxBatchTransfer: index('idx_logistics_trip_line_batch_transfer').on(t.tenant_id, t.batch_transfer_id),
   }),
 );
 

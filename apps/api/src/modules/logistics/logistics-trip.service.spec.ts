@@ -636,4 +636,77 @@ describe('LogisticsTripService', () => {
       expect(span(narrow)).toBe(7);
     });
   });
+  describe('a trip for a batch transfer (Phase 3)', () => {
+    const transfer = (over: any = {}) => ({
+      transfer_id: 'bt-1', tenant_id: 't1', company_id: company, transfer_no: 'BTR-000001', from_batch_id: 'b-from', to_batch_id: 'b-to',
+      status: 'DRAFT', head_count: '120.0000', trip_id: null, deleted_at: null, ...over,
+    });
+    const batches = (from: string | null, to: string | null) => [
+      { batch_id: 'b-from', farm_id: from, tenant_id: 't1' }, { batch_id: 'b-to', farm_id: to, tenant_id: 't1' },
+    ];
+    const body = { batch_transfer_id: 'bt-1', planned_departure: '2026-11-20T06:00', route_id: 'rt-1' };
+
+    beforeEach(() => {
+      rows.set(schema.batchTransfer, [transfer()]);
+      rows.set(schema.batchHeader, batches('farm-a', 'farm-b'));
+      rows.set(schema.logisticsTrip, []);
+      rows.set(schema.logisticsTripLine, []);
+    });
+
+    it('plans a LIVESTOCK trip loaded in head, with one line on the transfer, and marks the transfer', async () => {
+      const created = await service.planBatchTransfer(body, 't1');
+      const trip = inserts.find((i) => i.table === schema.logisticsTrip)!.values;
+      expect(trip).toMatchObject({ status: 'DRAFT', load_unit: 'HEAD', load_value: '120.00', route_id: 'rt-1' });
+      const line = inserts.find((i) => i.table === schema.logisticsTripLine)!.values;
+      expect(line).toMatchObject({ transfer_id: null, batch_transfer_id: 'bt-1', head_count: 120, weight_kg: null, share_pct: '100.00' });
+      expect(updates.find((u) => u.table === schema.batchTransfer)!.set).toMatchObject({ trip_id: trip.trip_id });
+      expect(created).toBeDefined();
+    });
+
+    it('refuses a transfer inside one farm', async () => {
+      rows.set(schema.batchHeader, batches('farm-a', 'farm-a'));
+      await expect(service.planBatchTransfer(body, 't1')).rejects.toThrow('stays on one farm and needs no truck');
+      expect(inserts.some((i) => i.table === schema.logisticsTrip)).toBe(false);
+    });
+
+    it('refuses a posted transfer, one with no head, and one already on an open trip', async () => {
+      rows.set(schema.batchTransfer, [transfer({ status: 'POSTED' })]);
+      await expect(service.planBatchTransfer(body, 't1')).rejects.toThrow('POSTED and cannot be planned');
+      rows.set(schema.batchTransfer, [transfer({ head_count: '0.0000' })]);
+      await expect(service.planBatchTransfer(body, 't1')).rejects.toThrow('moves no head');
+      rows.set(schema.batchTransfer, [transfer({ trip_id: 'trip-9' })]);
+      rows.set(schema.logisticsTrip, [trip({ trip_id: 'trip-9', trip_no: 'TRP-000009', status: 'PLANNED' })]);
+      await expect(service.planBatchTransfer(body, 't1')).rejects.toThrow('already on trip TRP-000009');
+    });
+
+    it('reads a missing transfer as not found, and asks for the fields it needs', async () => {
+      rows.set(schema.batchTransfer, []);
+      await expect(service.planBatchTransfer(body, 't1')).rejects.toThrow("Batch transfer with ID 'bt-1' not found");
+      await expect(service.planBatchTransfer({} as never, 't1')).rejects.toThrow('Choose a batch transfer.');
+    });
+
+    it('isCrossFarm is true only for two different known farms', () => {
+      expect(service.isCrossFarm({ from: 'a', to: 'b' })).toBe(true);
+      expect(service.isCrossFarm({ from: 'a', to: 'a' })).toBe(false);
+      expect(service.isCrossFarm({ from: null, to: 'a' })).toBe(false);
+    });
+
+    it('assertTripForBatchTransfer gives the trip, or null, or refuses one that is not live', async () => {
+      await expect(service.assertTripForBatchTransfer('bt-1', 't1')).resolves.toBeNull();
+      rows.set(schema.batchTransfer, [transfer({ trip_id: 'trip-1' })]);
+      rows.set(schema.logisticsTrip, [trip({ status: 'PLANNED', vehicle_id: 'v-1', driver_id: 'dr-1' })]);
+      await expect(service.assertTripForBatchTransfer('bt-1', 't1')).resolves.toMatchObject({ trip_id: 'trip-1' });
+      rows.set(schema.logisticsTrip, [trip({ status: 'CANCELLED', vehicle_id: 'v-1', driver_id: 'dr-1' })]);
+      await expect(service.assertTripForBatchTransfer('bt-1', 't1')).rejects.toThrow('CANCELLED');
+    });
+
+    it('onBatchTransferPosted leaves the trip and then arrives it, in that order', async () => {
+      const order: string[] = [];
+      jest.spyOn(service, 'onShipped').mockImplementation(async () => { order.push('shipped'); return {} as never; });
+      jest.spyOn(service, 'onArrived').mockImplementation(async () => { order.push('arrived'); return {} as never; });
+      await service.onBatchTransferPosted('trip-1', 't1', { userId: 'u1' });
+      expect(order).toEqual(['shipped', 'arrived']);
+      expect(service.onShipped).toHaveBeenCalledWith('trip-1', 't1', { userId: 'u1' });
+    });
+  });
 });

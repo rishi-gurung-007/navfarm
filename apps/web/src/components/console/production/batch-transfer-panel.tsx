@@ -28,6 +28,7 @@ import { StatRow, StatCard } from '@/components/ui/stat-row';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { EmptyState, ErrorState, LoadingState } from '@/components/ui/states';
 import { AnimalMultiSelect, type AnimalOption } from './animal-multi-select';
+import { PlanTripPanel, type TripTransfer } from '@/modules/logistics/plan-trip-panel';
 import { animalLocationOptions, useCompanyLocations } from '../piggery/animal-locations';
 
 type Row = Record<string, any>;
@@ -296,6 +297,23 @@ export default function BatchTransferPanel() {
       await load();
     } catch (err: any) {
       setReverseError(err?.message || 'The transfer could not be reversed.');
+    } finally {
+      setReversing(false);
+    }
+  };
+
+  // A draft posts here once its trip is planned (a cross-farm transfer may be required to have one).
+  const postViewing = async () => {
+    if (!viewing || reversing) return;
+    setReversing(true);
+    setReverseError('');
+    try {
+      await api.post(`/batch-transfer/${viewing.transfer_id}/post`, {});
+      setNotice(`${viewing.transfer_no} posted.`);
+      setViewing(null);
+      await load();
+    } catch (err: any) {
+      setReverseError(err?.message || 'The transfer could not be posted.');
     } finally {
       setReversing(false);
     }
@@ -677,6 +695,10 @@ export default function BatchTransferPanel() {
             >
               Reverse transfer
             </Button>
+          ) : viewing?.status === 'DRAFT' ? (
+            <Button size="sm" disabled={reversing} onClick={postViewing}>
+              Post transfer
+            </Button>
           ) : undefined
         }
       >
@@ -685,6 +707,7 @@ export default function BatchTransferPanel() {
           message={reverseError}
           onClose={() => setReverseError('')}
         />
+        {viewing && <BatchTransferTrip key={viewing.transfer_id} transferId={viewing.transfer_id} />}
         {viewing && (
           <TransferLines
             transferId={viewing.transfer_id}
@@ -694,6 +717,28 @@ export default function BatchTransferPanel() {
       </Dialog>
     </div>
   );
+}
+
+/**
+ * The Logistics trip of one batch transfer (Phase 3): shown on a draft, to plan one, and on any transfer that has one.
+ * Read from the transfer itself, which carries its trip. A move inside one farm needs no truck, and the server says so
+ * when Plan Trip is pressed on one.
+ */
+function BatchTransferTrip({ transferId }: { transferId: string }) {
+  const [transfer, setTransfer] = useState<TripTransfer | null>(null);
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    let live = true;
+    api
+      .get(`/batch-transfer/${transferId}`)
+      .then((res) => live && setTransfer(unwrap<TripTransfer>(res)))
+      .catch(() => live && setTransfer(null));
+    return () => {
+      live = false;
+    };
+  }, [transferId, version]);
+  if (!transfer || (transfer.status !== 'DRAFT' && !transfer.trip)) return null;
+  return <PlanTripPanel kind="BATCH" transfer={transfer} onChanged={() => setVersion((v) => v + 1)} />;
 }
 
 /** The animals on one transfer, fetched on open rather than carried in the list payload. */

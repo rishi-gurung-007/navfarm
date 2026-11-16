@@ -210,3 +210,46 @@ describe('tripRequiredToShip', () => {
     expect(api.get).toHaveBeenCalledTimes(2);
   });
 });
+
+// Logistics Phase 3: a livestock batch transfer plans its trip through its own endpoint, on a livestock truck.
+describe('PlanTripPanel — a batch transfer', () => {
+  const draftBatchTransfer = { transfer_id: 'bt-1', status: 'DRAFT', trip: null };
+
+  it('posts the plan to the batch transfer endpoint, with no truck type to choose', async () => {
+    api.get.mockImplementation((path: string) => {
+      if (path.startsWith('/logistics/route')) return Promise.resolve({ data: [{ route_id: 'r-1', route_code: 'R-F1-F2' }] });
+      if (path.startsWith('/logistics/trip/')) return Promise.resolve({ data: tripDetail });
+      return Promise.resolve({ data: [] });
+    });
+    api.post.mockResolvedValue({ data: tripDetail });
+    const onChanged = jest.fn();
+    render(<PlanTripPanel kind="BATCH" transfer={draftBatchTransfer} onChanged={onChanged} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Plan Trip' }));
+    await screen.findByRole('option', { name: 'R-F1-F2' });
+    expect(screen.queryByLabelText('Truck Type')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Route'), { target: { value: 'r-1' } });
+    fireEvent.change(screen.getByLabelText('Planned Departure'), { target: { value: '2026-11-20T06:00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Plan' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1));
+    expect(api.post).toHaveBeenCalledWith('/logistics/trip/plan-batch-transfer', {
+      batch_transfer_id: 'bt-1',
+      planned_departure: '2026-11-20T06:00',
+      route_id: 'r-1',
+    });
+    // The truck type was never guessed from a destination location.
+    expect(api.get).not.toHaveBeenCalledWith(expect.stringMatching(/^\/location\//));
+    await waitFor(() => expect(onChanged).toHaveBeenCalledWith(expect.objectContaining({ trip_id: 'trip-1' })));
+  });
+
+  it('shows the server\'s words when the transfer stays on one farm', async () => {
+    api.get.mockResolvedValue({ data: [{ route_id: 'r-1', route_code: 'R-F1-F2' }] });
+    api.post.mockRejectedValue(new Error('This batch transfer stays on one farm and needs no truck.'));
+    render(<PlanTripPanel kind="BATCH" transfer={draftBatchTransfer} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Plan Trip' }));
+    await screen.findByRole('option', { name: 'R-F1-F2' });
+    fireEvent.change(screen.getByLabelText('Route'), { target: { value: 'r-1' } });
+    fireEvent.change(screen.getByLabelText('Planned Departure'), { target: { value: '2026-11-20T06:00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Plan' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('stays on one farm');
+  });
+});

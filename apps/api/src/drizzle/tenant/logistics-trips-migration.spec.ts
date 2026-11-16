@@ -9,7 +9,8 @@ describe('Tenant migration 0256 — Logistics Phase 2 trips', () => {
     const entry = journal.find((e) => e.tag === '0256_logistics_trips')!;
     expect(entry).toBeDefined();
     expect(entry.when).toBe(1792000000124);
-    const earlier = journal.filter((e) => e.tag !== entry.tag);
+    // Past every migration numbered before it (0257 follows it on this branch).
+    const earlier = journal.filter((e) => e.idx < entry.idx);
     expect(earlier.every((e) => e.when < entry.when)).toBe(true);
     expect(journal.filter((e) => e.tag.startsWith('0256_'))).toHaveLength(1);
   });

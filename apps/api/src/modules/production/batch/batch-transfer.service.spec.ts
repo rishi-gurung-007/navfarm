@@ -8,6 +8,7 @@ import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.ser
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { LogisticsTripService } from '../../logistics/logistics-trip.service';
 import * as schema from '../../../core/database/schema';
 
 describe('BatchTransferService', () => {
@@ -915,5 +916,101 @@ describe('BatchTransferService', () => {
         total: 10,
       });
     });
+  });
+});
+
+// Logistics Phase 3: a cross-farm transfer posts on its trip, or on none unless the company requires one.
+describe('BatchTransferService with Logistics', () => {
+  const draft = { status: 'DRAFT', company_id: 'comp-1', trip_id: null as string | null, from_batch_id: 'b-from', to_batch_id: 'b-to' };
+  const trips = {
+    tripRequiredToShip: jest.fn(),
+    batchTransferFarms: jest.fn(),
+    isCrossFarm: jest.fn((f: { from: string | null; to: string | null }) => !!f.from && !!f.to && f.from !== f.to),
+    assertTripForBatchTransfer: jest.fn(),
+    onBatchTransferPosted: jest.fn().mockResolvedValue(undefined),
+  };
+  const mockDb: any = { select: jest.fn(), update: jest.fn(), insert: jest.fn() };
+  let service: BatchTransferService;
+  let postInner: jest.SpyInstance;
+
+  const readsTransfer = (row: unknown) =>
+    mockDb.select.mockReturnValueOnce({ from: () => ({ where: () => ({ limit: async () => (row ? [row] : []) }) }) });
+
+  beforeEach(async () => {
+    Object.values(trips).forEach((f) => (f as jest.Mock).mockClear?.());
+    trips.tripRequiredToShip.mockReset().mockResolvedValue(false);
+    trips.batchTransferFarms.mockReset().mockResolvedValue({ from: 'farm-a', to: 'farm-b' });
+    trips.assertTripForBatchTransfer.mockReset();
+    mockDb.select.mockReset();
+    const module = await Test.createTestingModule({
+      providers: [
+        BatchTransferService,
+        { provide: ClsService, useValue: { get: jest.fn((key: string) => (key === 'tenantPostingTransaction' ? true : mockDb)) } },
+        { provide: AuditLogService, useValue: { log: jest.fn() } },
+        { provide: NumberSeriesService, useValue: {} },
+        { provide: SchedulerHeaderService, useValue: {} },
+        { provide: AnimalMovementLogService, useValue: {} },
+        { provide: AnimalBookValueService, useValue: {} },
+        { provide: GlPostingService, useValue: {} },
+        { provide: LogisticsTripService, useValue: trips },
+      ],
+    }).compile();
+    service = module.get(BatchTransferService);
+    postInner = jest.spyOn(service as any, 'postInner').mockResolvedValue({ transfer_id: 'tr-1', status: 'POSTED' });
+  });
+
+  it('posts a cross-farm transfer with no trip exactly as before when the setting is off', async () => {
+    readsTransfer(draft);
+    await service.post('tr-1', 't1');
+    expect(postInner).toHaveBeenCalled();
+    expect(trips.batchTransferFarms).not.toHaveBeenCalled();
+    expect(trips.onBatchTransferPosted).not.toHaveBeenCalled();
+  });
+
+  it('refuses a cross-farm transfer with no trip when the setting requires one, and moves nothing', async () => {
+    trips.tripRequiredToShip.mockResolvedValue(true);
+    readsTransfer(draft);
+    await expect(service.post('tr-1', 't1')).rejects.toThrow('needs a planned trip before it can post');
+    expect(postInner).not.toHaveBeenCalled();
+  });
+
+  it('lets a transfer inside one farm post with no trip even when the setting requires one', async () => {
+    trips.tripRequiredToShip.mockResolvedValue(true);
+    trips.batchTransferFarms.mockResolvedValue({ from: 'farm-a', to: 'farm-a' });
+    readsTransfer(draft);
+    await service.post('tr-1', 't1');
+    expect(postInner).toHaveBeenCalled();
+  });
+
+  it('posts on its trip, then moves the trip on and answers with the transfer as it now is', async () => {
+    trips.assertTripForBatchTransfer.mockResolvedValue({ trip_id: 'trip-1', trip_no: 'TRP-000009' });
+    readsTransfer({ ...draft, trip_id: 'trip-1' });
+    const findOne = jest.spyOn(service, 'findOne').mockResolvedValue({ transfer_id: 'tr-1', trip: { status: 'ARRIVED' } } as never);
+    const result = await service.post('tr-1', 't1', { userId: 'u1' });
+    expect(findOne).toHaveBeenCalledWith('tr-1', 't1');
+    expect((result as { trip: { status: string } }).trip.status).toBe('ARRIVED');
+    expect(postInner).toHaveBeenCalled();
+    expect(trips.onBatchTransferPosted).toHaveBeenCalledWith('trip-1', 't1', { userId: 'u1' });
+  });
+
+  it('does not post when its trip is not in a state to carry it', async () => {
+    trips.assertTripForBatchTransfer.mockRejectedValue(new BadRequestException('Trip TRP-000009 is CANCELLED; a transfer can only post on a planned, confirmed or in-transit trip.'));
+    readsTransfer({ ...draft, trip_id: 'trip-1' });
+    await expect(service.post('tr-1', 't1')).rejects.toThrow('CANCELLED');
+    expect(postInner).not.toHaveBeenCalled();
+    expect(trips.onBatchTransferPosted).not.toHaveBeenCalled();
+  });
+
+  it('leaves an already-posted transfer to postInner to refuse, asking Logistics nothing', async () => {
+    readsTransfer({ ...draft, status: 'POSTED' });
+    await service.post('tr-1', 't1');
+    expect(trips.tripRequiredToShip).not.toHaveBeenCalled();
+    expect(postInner).toHaveBeenCalled();
+  });
+
+  it('does not cancel a draft that is on a live trip', async () => {
+    jest.spyOn(service, 'findOne').mockResolvedValue({ transfer_id: 'tr-1', status: 'DRAFT', trip: { trip_no: 'TRP-000009', status: 'PLANNED' } } as never);
+    await expect(service.cancel('tr-1', 't1')).rejects.toThrow('on trip TRP-000009; cancel the trip first');
+    expect(mockDb.update).not.toHaveBeenCalled();
   });
 });

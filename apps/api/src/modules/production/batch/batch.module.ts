@@ -1,3 +1,4 @@
+import { LogisticsModule } from '../../logistics/logistics.module';
 import { Module, forwardRef } from '@nestjs/common';
 import { BatchService } from './batch.service';
 import { BatchController } from './batch.controller';
@@ -21,6 +22,7 @@ import { BioCostingModule } from '../../finance/bio-costing/bio-costing.module';
     BioCostingModule,
     InventoryLedgerModule,
     JournalModule,
+    LogisticsModule,
     NumberSeriesModule,
     SchedulerHeaderModule,
     forwardRef(() => BatchDailyDataModule),

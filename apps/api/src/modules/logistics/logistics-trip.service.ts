@@ -26,6 +26,13 @@ export type PlanTripInput = {
   vehicle_type: string;
   carrier_supplier_id?: string | null;
 };
+/** Phase 3: a trip for one cross-farm livestock batch transfer. The truck is a LIVESTOCK one and the load is its head. */
+export type PlanBatchTripInput = {
+  batch_transfer_id: string;
+  planned_departure: string;
+  route_id: string;
+  carrier_supplier_id?: string | null;
+};
 export type AssignTripInput = { vehicle_id: string; driver_id: string; carrier_supplier_id?: string | null };
 export type MoveTripInput = { to: string; reason?: string; hq_approval_ref?: string; at?: string };
 export type TripListQuery = { status?: string; limit?: number | string; offset?: number | string };
@@ -121,6 +128,24 @@ export class LogisticsTripService {
     return out;
   }
 
+  /** The same rule for livestock batch transfers as BatchTransferService.findAll: a transfer from or to a batch on the caller's farm (or LOB). */
+  private batchTransferScope(): SQL[] {
+    const scope = farmScope(this.cls);
+    const BT = schema.batchTransfer;
+    const out: SQL[] = [];
+    if (scope.farmId)
+      out.push(or(
+        sql`${BT.from_batch_id} IN (SELECT bh.batch_id FROM batch_header bh WHERE bh.farm_id = ${scope.farmId})`,
+        sql`${BT.to_batch_id} IN (SELECT bh.batch_id FROM batch_header bh WHERE bh.farm_id = ${scope.farmId})`,
+      )!);
+    if (scope.restricted && scope.lobId)
+      out.push(or(
+        sql`${BT.from_batch_id} IN (SELECT bh.batch_id FROM batch_header bh WHERE bh.lob_id = ${scope.lobId})`,
+        sql`${BT.to_batch_id} IN (SELECT bh.batch_id FROM batch_header bh WHERE bh.lob_id = ${scope.lobId})`,
+      )!);
+    return out;
+  }
+
   /**
    * A trip is visible within the caller's company and, for a farm- or LOB-restricted caller, only when at least one
    * of its TOs is (through its lines, which outlive a cancel that frees the TOs). Unrestricted callers see every trip.
@@ -131,9 +156,15 @@ export class LogisticsTripService {
     if (onTransfers.length) {
       const L = schema.logisticsTripLine;
       const T = schema.stockTransfer;
-      out.push(sql`exists (select 1 from ${L} inner join ${T} on ${eq(T.transfer_id, L.transfer_id)} where ${and(
-        eq(L.trip_id, schema.logisticsTrip.trip_id), isNull(L.deleted_at), ...onTransfers,
-      )})`);
+      const BT = schema.batchTransfer;
+      out.push(or(
+        sql`exists (select 1 from ${L} inner join ${T} on ${eq(T.transfer_id, L.transfer_id)} where ${and(
+          eq(L.trip_id, schema.logisticsTrip.trip_id), isNull(L.deleted_at), ...onTransfers,
+        )})`,
+        sql`exists (select 1 from ${L} inner join ${BT} on ${eq(BT.transfer_id, L.batch_transfer_id)} where ${and(
+          eq(L.trip_id, schema.logisticsTrip.trip_id), isNull(L.deleted_at), ...this.batchTransferScope(),
+        )})`,
+      )!);
     }
     return out;
   }
@@ -217,11 +248,29 @@ export class LogisticsTripService {
       .orderBy(asc(S.posting_date), asc(S.transfer_no))
       .limit(200);
 
+    // Livestock batch transfers between farms that have no trip yet (a move inside one farm needs no truck).
+    const BT = schema.batchTransfer;
+    const farmOf = (batch: SQL) => sql`(select bh.farm_id from batch_header bh where bh.batch_id = ${batch})`;
+    const farmName = (batch: SQL) => sql<string>`(select lm.location_name from batch_header bh inner join location_master lm on lm.location_id = bh.farm_id where bh.batch_id = ${batch})`;
+    const waitingBatch = await this.db
+      .select({
+        kind: sql<string>`'BATCH_TRANSFER'`, id: BT.transfer_id, document_no: BT.transfer_no, posting_date: BT.transfer_date,
+        from_name: farmName(sql`${BT.from_batch_id}`), to_name: farmName(sql`${BT.to_batch_id}`),
+      })
+      .from(BT)
+      .where(and(
+        eq(BT.tenant_id, tenantId), isNull(BT.deleted_at), isNull(BT.trip_id), eq(BT.status, 'DRAFT'),
+        sql`${farmOf(sql`${BT.from_batch_id}`)} is not null and ${farmOf(sql`${BT.to_batch_id}`)} is not null and ${farmOf(sql`${BT.from_batch_id}`)} <> ${farmOf(sql`${BT.to_batch_id}`)}`,
+        ...restrictedScopeConditions(farmScope(this.cls), { companyId: BT.company_id }), ...this.batchTransferScope(),
+      ))
+      .orderBy(asc(BT.transfer_date), asc(BT.transfer_no))
+      .limit(200);
+
     const status = (s: string) => trips.filter((t) => t.status === s);
     return {
       from: today, until,
       columns: { PLANNED: status('PLANNED'), CONFIRMED: status('CONFIRMED'), IN_TRANSIT: status('IN_TRANSIT'), ARRIVED: status('ARRIVED') },
-      waiting,
+      waiting: [...waiting, ...waitingBatch],
     };
   }
 
@@ -244,13 +293,24 @@ export class LogisticsTripService {
         .where(and(eq(schema.logisticsRoute.route_id, trip.route_id), eq(schema.logisticsRoute.tenant_id, tenantId))).limit(1)
       : [];
 
-    const transferIds = [...new Set(lines.map((l) => l.transfer_id))];
+    const transferIds = [...new Set(lines.map((l) => l.transfer_id).filter(Boolean))];
+    const batchIds = [...new Set(lines.map((l) => l.batch_transfer_id).filter(Boolean))];
+    const batchTransfers = batchIds.length
+      ? await this.db.select({
+        transfer_id: schema.batchTransfer.transfer_id, transfer_no: schema.batchTransfer.transfer_no, to_batch_id: schema.batchTransfer.to_batch_id,
+      }).from(schema.batchTransfer).where(and(eq(schema.batchTransfer.tenant_id, tenantId), inArray(schema.batchTransfer.transfer_id, batchIds)))
+      : [];
     const transfers = transferIds.length
       ? await this.db.select({ transfer_id: schema.stockTransfer.transfer_id, transfer_no: schema.stockTransfer.transfer_no, to_warehouse_id: schema.stockTransfer.to_warehouse_id })
         .from(schema.stockTransfer).where(and(eq(schema.stockTransfer.tenant_id, tenantId), inArray(schema.stockTransfer.transfer_id, transferIds)))
       : [];
     const farmOf = new Map<string, string | null>();
     for (const t of transfers) farmOf.set(t.transfer_id, await farmOfLocation(this.db, t.to_warehouse_id));
+    for (const b of batchTransfers) {
+      const [dest] = await this.db.select({ farm_id: schema.batchHeader.farm_id }).from(schema.batchHeader)
+        .where(and(eq(schema.batchHeader.batch_id, b.to_batch_id), eq(schema.batchHeader.tenant_id, tenantId))).limit(1);
+      farmOf.set(b.transfer_id, dest?.farm_id ?? null);
+    }
     const farmIds = [...new Set([...farmOf.values()].filter((f): f is string => !!f))];
     const farms = farmIds.length
       ? await this.db.select({ location_id: schema.locationMaster.location_id, location_name: schema.locationMaster.location_name })
@@ -258,7 +318,7 @@ export class LogisticsTripService {
       : [];
     const byFarm = new Map<string, Row>();
     for (const l of lines) {
-      const farmId = farmOf.get(l.transfer_id) ?? null;
+      const farmId = farmOf.get(l.transfer_id ?? l.batch_transfer_id) ?? null;
       const key = farmId ?? '';
       const f = byFarm.get(key) ?? {
         farm_id: farmId, farm_name: farms.find((x) => x.location_id === farmId)?.location_name ?? null,
@@ -278,7 +338,12 @@ export class LogisticsTripService {
       vehicle_no: vehicle?.registration_no ?? null,
       driver_name: driver?.driver_name ?? null,
       route_code: route?.route_code ?? null,
-      lines: lines.map((l) => ({ ...l, transfer_no: transfers.find((t) => t.transfer_id === l.transfer_id)?.transfer_no ?? null })),
+      lines: lines.map((l) => ({
+        ...l,
+        transfer_no: (l.transfer_id
+          ? transfers.find((t) => t.transfer_id === l.transfer_id)
+          : batchTransfers.find((b) => b.transfer_id === l.batch_transfer_id))?.transfer_no ?? null,
+      })),
       costs,
       farm_shares,
     };
@@ -423,6 +488,87 @@ export class LogisticsTripService {
 
       const created = await this.findOne(tripId, tenantId);
       await this.log('CREATE', created, user, undefined, { transfer_ids: ids });
+      return created;
+    });
+  }
+
+  /**
+   * Whether a livestock batch transfer moves head between two farms. Only that needs a truck: a move inside one farm
+   * (or between batches with no farm) never does. Takes the two batches' farms as batchTransferFarms reads them.
+   */
+  isCrossFarm(farms: { from: string | null; to: string | null }): boolean {
+    return !!farms.from && !!farms.to && farms.from !== farms.to;
+  }
+
+  /** The farms of a batch transfer's two batches. */
+  async batchTransferFarms(fromBatchId: string, toBatchId: string, tenantId: string): Promise<{ from: string | null; to: string | null }> {
+    const B = schema.batchHeader;
+    const rows = await this.db.select({ batch_id: B.batch_id, farm_id: B.farm_id }).from(B)
+      .where(and(eq(B.tenant_id, tenantId), inArray(B.batch_id, [fromBatchId, toBatchId])));
+    return {
+      from: rows.find((r) => r.batch_id === fromBatchId)?.farm_id ?? null,
+      to: rows.find((r) => r.batch_id === toBatchId)?.farm_id ?? null,
+    };
+  }
+
+  /** Phase 3: plan a trip for one DRAFT cross-farm livestock batch transfer. Always a LIVESTOCK truck, loaded in head. */
+  async planBatchTransfer(dto: PlanBatchTripInput, tenantId: string, user?: any) {
+    const departure = naive(dto?.planned_departure);
+    const problems: string[] = [];
+    if (!dto?.batch_transfer_id || typeof dto.batch_transfer_id !== 'string') problems.push('Choose a batch transfer.');
+    if (!departure) problems.push('Planned departure must be a local date and time (YYYY-MM-DDTHH:mm).');
+    if (!dto?.route_id) problems.push('Route is required.');
+    if (problems.length) throw new BadRequestException(problems.join(' '));
+
+    return withTenantTransaction(this.cls, async () => {
+      const BT = schema.batchTransfer;
+      const [transfer] = await this.db.select().from(BT)
+        .where(and(
+          eq(BT.tenant_id, tenantId), eq(BT.transfer_id, dto.batch_transfer_id), isNull(BT.deleted_at),
+          ...restrictedScopeConditions(farmScope(this.cls), { companyId: BT.company_id }), ...this.batchTransferScope(),
+        ))
+        // Locked so two planners cannot put one transfer on two trips at once.
+        .for('update');
+      if (!transfer) throw new NotFoundException(`Batch transfer with ID '${dto.batch_transfer_id}' not found.`);
+      assertCompanyInScope(farmScope(this.cls), transfer.company_id);
+      if (transfer.status !== 'DRAFT')
+        throw new BadRequestException(`This batch transfer is ${transfer.status} and cannot be planned onto a trip.`);
+      const farms = await this.batchTransferFarms(transfer.from_batch_id, transfer.to_batch_id, tenantId);
+      if (!this.isCrossFarm(farms)) throw new BadRequestException('This batch transfer stays on one farm and needs no truck.');
+      const head = Math.round(Number(transfer.head_count));
+      if (!(head > 0)) throw new BadRequestException('This batch transfer moves no head, so there is nothing to put on a truck.');
+      await this.assertNotOnOpenTrip([{ ...transfer, transfer_no: transfer.transfer_no }], tenantId);
+
+      const companyId = transfer.company_id;
+      const route = await this.routeOf(dto.route_id, companyId, tenantId);
+      const carrierId = dto.carrier_supplier_id ? String(dto.carrier_supplier_id).trim() || null : null;
+      if (carrierId) await this.assertCarrier(carrierId, companyId, tenantId);
+      const lines: Row[] = [{ batch_transfer_id: transfer.transfer_id, weight_kg: null, head_count: head, bag_count: null }];
+      const load = this.load(lines, 'HEAD');
+      const arrival = fromDate(estimateArrival(asDate(departure!), route));
+      const est = carrierId
+        ? await this.estimate(route, departure!, lines, carrierId, companyId, tenantId)
+        : { cost: null, note: ASSIGN_FIRST, shares: lines.map(() => null) };
+      const pct = this.sharePct(lines);
+
+      const tripId = randomUUID();
+      const tripNo = await this.generateTripNo(tenantId, companyId);
+      await this.db.insert(schema.logisticsTrip).values({
+        trip_id: tripId, tenant_id: tenantId, company_id: companyId, trip_no: tripNo, route_id: route.route_id,
+        carrier_supplier_id: carrierId, status: 'DRAFT', planned_departure: toDb(departure!), estimated_arrival: toDb(arrival),
+        load_value: dec(load.value), load_unit: 'HEAD', estimated_cost: dec(est.cost), estimate_note: notes(load.note, this.weightNote(lines), est.note),
+        created_by: user?.userId, updated_by: user?.userId,
+      } as never);
+      await this.db.insert(schema.logisticsTripLine).values({
+        trip_line_id: randomUUID(), tenant_id: tenantId, company_id: companyId, trip_id: tripId,
+        transfer_id: null, batch_transfer_id: transfer.transfer_id, weight_kg: null, head_count: head, bag_count: null,
+        share_pct: dec(pct[0]), estimated_cost_share: dec(est.shares[0]), created_by: user?.userId, updated_by: user?.userId,
+      } as never);
+      if (est.cost !== null) await this.writeEstimateCost(tripId, companyId, tenantId, est.cost, user);
+      await this.db.update(BT).set({ trip_id: tripId } as never).where(and(eq(BT.tenant_id, tenantId), eq(BT.transfer_id, transfer.transfer_id)));
+
+      const created = await this.findOne(tripId, tenantId);
+      await this.log('CREATE', created, user, undefined, { batch_transfer_id: transfer.transfer_id });
       return created;
     });
   }
@@ -758,6 +904,14 @@ export class LogisticsTripService {
       throw new BadRequestException(
         `Transfer order ${unshipped.transfer_no} has not shipped yet; ship it or cancel the trip before marking it arrived.`,
       );
+    const BT = schema.batchTransfer;
+    const unposted = (await this.db.select({ transfer_no: BT.transfer_no, status: BT.status, trip_id: BT.trip_id }).from(BT)
+      .where(and(eq(BT.tenant_id, tenantId), eq(BT.trip_id, trip.trip_id), isNull(BT.deleted_at))))
+      .find((t) => t.trip_id === trip.trip_id && t.status === 'DRAFT');
+    if (unposted)
+      throw new BadRequestException(
+        `Batch transfer ${unposted.transfer_no} has not been posted yet; post it or cancel the trip before marking it arrived.`,
+      );
   }
 
   async cancel(id: string, dto: { reason?: string }, tenantId: string, user?: any) {
@@ -777,6 +931,8 @@ export class LogisticsTripService {
       // The Transfer Orders are free to go on another trip.
       await this.db.update(schema.stockTransfer).set({ trip_id: null } as never)
         .where(and(eq(schema.stockTransfer.tenant_id, tenantId), eq(schema.stockTransfer.trip_id, id)));
+      await this.db.update(schema.batchTransfer).set({ trip_id: null } as never)
+        .where(and(eq(schema.batchTransfer.tenant_id, tenantId), eq(schema.batchTransfer.trip_id, id)));
       await this.log('CANCEL', { ...trip, ...set }, user, trip);
       return this.findOne(id, tenantId);
     });
@@ -868,6 +1024,54 @@ export class LogisticsTripService {
     const T = schema.logisticsTrip;
     const [trip] = await this.db.select().from(T)
       .where(and(eq(T.trip_id, transfer.trip_id), eq(T.tenant_id, tenantId), isNull(T.deleted_at))).limit(1);
+    if (!trip) return null;
+    const [vehicle] = trip.vehicle_id
+      ? await this.db.select({ registration_no: schema.logisticsVehicle.registration_no }).from(schema.logisticsVehicle)
+        .where(and(eq(schema.logisticsVehicle.vehicle_id, trip.vehicle_id), eq(schema.logisticsVehicle.tenant_id, tenantId))).limit(1)
+      : [];
+    const [driver] = trip.driver_id
+      ? await this.db.select({ driver_name: schema.logisticsDriver.driver_name }).from(schema.logisticsDriver)
+        .where(and(eq(schema.logisticsDriver.driver_id, trip.driver_id), eq(schema.logisticsDriver.tenant_id, tenantId))).limit(1)
+      : [];
+    return {
+      trip_id: trip.trip_id, trip_no: trip.trip_no, status: trip.status, vehicle_no: vehicle?.registration_no ?? null,
+      driver_name: driver?.driver_name ?? null, estimated_arrival: trip.estimated_arrival ?? null,
+    };
+  }
+
+  // ── For the livestock batch transfer (Phase 3) ──────────────────────────────────────────────────────────────────
+
+  /**
+   * The trip a batch transfer is on, with its truck, or null when it is on none. A trip past (or short of) posting is
+   * refused in words, as a Transfer Order's is: a transfer posts only on a planned, confirmed or in-transit trip.
+   */
+  async assertTripForBatchTransfer(batchTransferId: string, tenantId: string): Promise<{ trip_id: string; trip_no: string } | null> {
+    const BT = schema.batchTransfer;
+    const [transfer] = await this.db.select({ trip_id: BT.trip_id }).from(BT)
+      .where(and(eq(BT.transfer_id, batchTransferId), eq(BT.tenant_id, tenantId))).limit(1);
+    if (!transfer?.trip_id) return null;
+    const trip = await this.tripById(transfer.trip_id, tenantId);
+    if (!trip) return null;
+    if (!['PLANNED', 'CONFIRMED', 'IN_TRANSIT'].includes(trip.status))
+      throw new BadRequestException(`Trip ${trip.trip_no} is ${trip.status}; a transfer can only post on a planned, confirmed or in-transit trip.`);
+    if (!trip.vehicle_id || !trip.driver_id)
+      throw new BadRequestException(`Trip ${trip.trip_no} has no vehicle and driver yet; assign them before the transfer posts.`);
+    return { trip_id: trip.trip_id, trip_no: trip.trip_no };
+  }
+
+  /** The batch transfer has posted, in its transaction: heads moved at once, so the trip leaves and arrives together (as a Direct Transfer's does). */
+  async onBatchTransferPosted(tripId: string, tenantId: string, userPayload?: any): Promise<void> {
+    await this.onShipped(tripId, tenantId, userPayload);
+    await this.onArrived(tripId, tenantId, userPayload);
+  }
+
+  /** A short summary of a batch transfer's trip for its own screen, or null. */
+  async tripOfBatchTransfer(batchTransferId: string, tenantId: string) {
+    const BT = schema.batchTransfer;
+    const [transfer] = await this.db.select({ trip_id: BT.trip_id }).from(BT)
+      .where(and(eq(BT.transfer_id, batchTransferId), eq(BT.tenant_id, tenantId))).limit(1);
+    if (!transfer?.trip_id) return null;
+    const trip = await this.tripById(transfer.trip_id, tenantId);
     if (!trip) return null;
     const [vehicle] = trip.vehicle_id
       ? await this.db.select({ registration_no: schema.logisticsVehicle.registration_no }).from(schema.logisticsVehicle)
