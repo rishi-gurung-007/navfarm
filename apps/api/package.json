@@ -585,6 +585,13 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/migrate-all-tenants.ts"
         }
       },
+      "db-reconcile-tenant-migrations": {
+        "executor": "nx:run-commands",
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/reconcile-tenant-migrations.ts"
+        }
+      },
       "db-sync-nob-lob": {
         "executor": "nx:run-commands",
         "options": {
