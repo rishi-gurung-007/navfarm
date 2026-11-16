@@ -234,6 +234,57 @@ describe('GM Dashboard', () => {
     expect(screen.getByTestId('gmd-kg-value').textContent).toBe('3,000');
   });
 
+  // Rishi, 16 Nov: Pigs to Slaughter, Cost of Sales and Gross Margin are the ledgers' sold disposals.
+  it('fills the sales cards and matrix rows from the ledger figures', async () => {
+    const sales = (heads: number, cost: number, revenue: number) => ({
+      heads,
+      cost_of_sales: cost,
+      revenue,
+      gross_margin: revenue - cost,
+      gross_margin_pct: Math.round(((revenue - cost) / revenue) * 1000) / 10,
+    });
+    get.mockImplementation(async () => {
+      const r = response('p10');
+      return {
+        data: {
+          ...r.data,
+          financial: {
+            month: {
+              all: sales(147, 8000, 36427),
+              g: sales(122, 7000, 30232),
+              p: sales(25, 1000, 6195),
+            },
+            ytd: {
+              all: sales(500, 30000, 120000),
+              g: sales(400, 25000, 100000),
+              p: sales(100, 5000, 20000),
+            },
+            heads_by_period: [{ period_code: '2026-10', heads: 500 }],
+          },
+        },
+      };
+    });
+    render(<PiggeryGmDashboard />);
+    await screen.findByRole('region', { name: 'gmdBreedingMatrix' });
+    const pigs = screen.getByRole('region', { name: 'gmdPigsToSlaughter' });
+    expect(pigs.textContent).toContain('147');
+    expect(pigs.textContent).toContain('500');
+    expect(
+      within(
+        screen.getByRole('region', { name: 'gmdGrossMargin' }),
+      ).queryByText('gmdNoDataYet'),
+    ).toBeNull();
+    const financial = screen.getByRole('region', {
+      name: 'gmdFinancialMatrix',
+    });
+    const pigsRow = within(financial)
+      .getAllByRole('row')
+      .find((row) => row.textContent?.includes('Pigs to Slaughter'))!;
+    expect(
+      within(pigsRow).getAllByRole('cell')[1].getAttribute('title'),
+    ).toContain('122');
+  });
+
   it('reloads for a chosen farm and keeps every farm in the picker', async () => {
     render(<PiggeryGmDashboard />);
     await screen.findByRole('region', { name: 'gmdBreedingMatrix' });

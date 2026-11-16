@@ -34,9 +34,12 @@ import {
   farmRow,
   farmWindows,
   HeadMoveRow,
+  headsByPeriod,
   kgSoldPerSowYear,
   meanTarget,
   MetricRow,
+  SaleRow,
+  salesFigures,
   StageBatch,
   stageExit,
   StageExit,
@@ -273,6 +276,7 @@ export class PiggeryAnalyticsService {
       periods,
       farms,
       kg_sold_per_sow_year: { month: {}, ytd: {} },
+      financial: { month: {}, ytd: {}, heads_by_period: [] },
       breeding: [],
       weaner_grower: [],
       alerts: [],
@@ -366,6 +370,38 @@ export class PiggeryAnalyticsService {
     );
     kgYtd.all = kgSoldPerSowYear(allYtd, daysIn(ytd.startDate, ytd.endDate));
 
+    const sales = await this.soldDisposals(
+      tenantId,
+      companyId,
+      farms.map((f) => f.farm_id),
+      ytd.startDate,
+      ytd.endDate,
+    );
+    const keys: Array<[string, string | null]> = [
+      ['all', null],
+      ...farms.map((f): [string, string | null] => [f.farm_id, f.farm_id]),
+    ];
+    const financial: PiggeryGmDashboardData['financial'] = {
+      month: Object.fromEntries(
+        keys.map(([k, id]) => [
+          k,
+          salesFigures(sales, month.startDate, month.endDate, id),
+        ]),
+      ),
+      ytd: Object.fromEntries(
+        keys.map(([k, id]) => [
+          k,
+          salesFigures(sales, ytd.startDate, ytd.endDate, id),
+        ]),
+      ),
+      heads_by_period: headsByPeriod(
+        sales,
+        periods.filter((p) => p.business_year === chosen.business_year),
+        query.farmId ?? null,
+        to,
+      ),
+    };
+
     const breeding: MetricRow[] = BREEDING_ROWS.map((row) => ({
       key: row.key,
       label: row.label,
@@ -420,6 +456,7 @@ export class PiggeryAnalyticsService {
       periods,
       farms,
       kg_sold_per_sow_year: { month: kgMonth, ytd: kgYtd },
+      financial,
       breeding,
       weaner_grower: weanerGrower,
       alerts: alertsFrom([...breeding, ...weanerGrower], farms),
@@ -651,6 +688,60 @@ export class PiggeryAnalyticsService {
    * its unreversed CONSUMPTION kg; a weaner spell's entry weight is the weaning weight of the batch's litters, a
    * grower spell's the last weighing on or before it entered.
    */
+  /**
+   * The sold disposals of the farms' batches between two dates: heads and book value from the bio-asset ledger's
+   * disposal (TRANSFORMATION) entries, proceeds from the "Sale" journal the same batch posted that day. A disposal
+   * with no sale journal (a harvest into the store) is not a sale and is left out.
+   */
+  private async soldDisposals(
+    tenantId: string,
+    companyId: string,
+    farmIds: string[],
+    from: string,
+    to: string,
+  ): Promise<SaleRow[]> {
+    if (!farmIds.length) return [];
+    const [rows] = (await this.db.execute(sql`
+      SELECT x.farm_id AS farm_id, DATE_FORMAT(x.d, '%Y-%m-%d') AS d,
+             x.heads AS heads, x.cost AS cost, p.proceeds AS revenue
+      FROM (
+        SELECT b.farm_id, b.batch_no, bal.posting_date AS d,
+               SUM(-bal.quantity) AS heads, SUM(-bal.cost_amount) AS cost
+        FROM bio_asset_ledger bal
+        JOIN batch_header b ON b.batch_id = bal.batch_id
+        WHERE bal.tenant_id = ${tenantId}
+          ${companyId ? sql`AND bal.company_id = ${companyId}` : sql``}
+          AND bal.entry_type = 'TRANSFORMATION'
+          AND bal.posting_date BETWEEN ${from} AND ${to}
+          AND b.farm_id IN (${sql.join(
+            farmIds.map((id) => sql`${id}`),
+            sql`, `,
+          )})
+        GROUP BY b.farm_id, b.batch_no, bal.posting_date
+      ) x
+      JOIN (
+        SELECT h.source_document_no AS batch_no, h.posting_date AS d,
+               SUM(l.debit_amount) AS proceeds
+        FROM journal_header h
+        JOIN journal_line l ON l.journal_id = h.journal_id
+        WHERE h.tenant_id = ${tenantId}
+          ${companyId ? sql`AND h.company_id = ${companyId}` : sql``}
+          AND h.source_document_type = 'BATCH'
+          AND h.status = 'POSTED'
+          AND h.description LIKE 'Sale%'
+          AND h.posting_date BETWEEN ${from} AND ${to}
+        GROUP BY h.source_document_no, h.posting_date
+      ) p ON p.batch_no = x.batch_no AND p.d = x.d
+    `)) as unknown as [Array<Record<string, unknown>>, unknown];
+    return rows.map((r) => ({
+      farm_id: String(r.farm_id),
+      date: String(r.d),
+      heads: Number(r.heads),
+      cost: Number(r.cost),
+      revenue: Number(r.revenue),
+    }));
+  }
+
   private async stageExits(
     tenantId: string,
     companyId: string,

@@ -537,3 +537,68 @@ export function farmAlerts(rows: FarmRow[]): FarmAlert[] {
     }))
     .sort((a, b) => order[a.status] - order[b.status]);
 }
+
+/** One sold disposal of a batch (Rishi, 16 Nov): heads and book value from the bio-asset ledger, proceeds from the sale journal. */
+export interface SaleRow {
+  farm_id: string;
+  date: string;
+  heads: number;
+  cost: number;
+  revenue: number;
+}
+
+export interface SalesFigures {
+  heads: number;
+  cost_of_sales: number;
+  revenue: number;
+  gross_margin: number;
+  gross_margin_pct: number | null;
+}
+
+/**
+ * Pigs sold, cost of sales (their book value), revenue and gross margin of the sales in a window, for one farm or all
+ * (farmId null). Null when the window holds no sale at all, so a tenant that never sells shows N/A, not zeros.
+ */
+export function salesFigures(
+  rows: SaleRow[],
+  from: string,
+  to: string,
+  farmId: string | null,
+): SalesFigures | null {
+  const inWindow = rows.filter(
+    (r) => r.date >= from && r.date <= to && (!farmId || r.farm_id === farmId),
+  );
+  if (!inWindow.length) return null;
+  const sum = (pick: (r: SaleRow) => number) =>
+    round(
+      inWindow.reduce((a, r) => a + pick(r), 0),
+      2,
+    );
+  const revenue = sum((r) => r.revenue);
+  const cost = sum((r) => r.cost);
+  const grossMargin = round(revenue - cost, 2);
+  return {
+    heads: sum((r) => r.heads),
+    cost_of_sales: cost,
+    revenue,
+    gross_margin: grossMargin,
+    gross_margin_pct:
+      revenue > 0 ? round((grossMargin / revenue) * 100, 2) : null,
+  };
+}
+
+/** The business year's running total of pigs sold, one point per period up to the chosen one (the YTD chart's actuals). */
+export function headsByPeriod(
+  rows: SaleRow[],
+  periods: Array<{ period_code: string; start_date: string; end_date: string }>,
+  farmId: string | null,
+  to: string,
+): Array<{ period_code: string; heads: number | null }> {
+  let running = 0;
+  return periods.map((p) => {
+    if (p.start_date > to) return { period_code: p.period_code, heads: null };
+    const end = p.end_date < to ? p.end_date : to;
+    running += salesFigures(rows, p.start_date, end, farmId)?.heads ?? 0;
+    return { period_code: p.period_code, heads: running };
+  });
+}

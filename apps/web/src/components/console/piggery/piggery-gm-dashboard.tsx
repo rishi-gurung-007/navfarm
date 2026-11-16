@@ -44,10 +44,24 @@ type Period = {
   end_date: string;
 };
 
+/** Pigs sold, cost of sales and gross margin of a window, from the ledgers' sold disposals. */
+interface SalesFigures {
+  heads: number;
+  cost_of_sales: number;
+  revenue: number;
+  gross_margin: number;
+  gross_margin_pct: number | null;
+}
+
 export interface GmDashboardData {
   period: (Period & { ytd_from: string; to: string }) | null;
   periods: Period[];
   farms: Farm[];
+  financial: {
+    month: Record<string, SalesFigures | null>;
+    ytd: Record<string, SalesFigures | null>;
+    heads_by_period: Array<{ period_code: string; heads: number | null }>;
+  };
   kg_sold_per_sow_year: {
     month: Record<string, number | null>;
     ytd: Record<string, number | null>;
@@ -222,6 +236,14 @@ export default function PiggeryGmDashboard() {
     budget: null,
   };
 
+  // Pigs to Slaughter, Cost of Sales and Gross Margin are the ledgers' sold disposals; the rest has no data yet.
+  const salesMonth = data?.financial?.month[kgKey] ?? null;
+  const salesYtd = data?.financial?.ytd[kgKey] ?? null;
+  const salesFigure = (
+    sales: SalesFigures | null,
+    pick: (s: SalesFigures) => number | null,
+  ): Figure => ({ actual: sales ? pick(sales) : null, budget: null });
+
   // Kg Meat Sold / Sow / Year closes the Breeding & Farrowing matrix, as in the mockup; it has no lifecycle target.
   const breeding: MetricRow[] = [
     ...(data?.breeding ?? []),
@@ -242,13 +264,29 @@ export default function PiggeryGmDashboard() {
       ),
     },
   ];
+  const SALES_PICKS: Partial<
+    Record<string, (s: SalesFigures) => number | null>
+  > = {
+    pigs_to_slaughter: (s) => s.heads,
+    cost_of_sales: (s) => s.cost_of_sales,
+    gross_margin: (s) => s.gross_margin,
+    gross_margin_pct: (s) => s.gross_margin_pct,
+  };
   const financial: MetricRow[] = FINANCIAL_ROWS.map((r) => ({
     ...r,
     cells: Object.fromEntries(
-      farms.map((f) => [
-        f.farm_id,
-        { value: null, target: null, status: null },
-      ]),
+      farms.map((f) => {
+        const pick = SALES_PICKS[r.key];
+        const sales = data?.financial?.month[f.farm_id] ?? null;
+        return [
+          f.farm_id,
+          {
+            value: pick && sales ? pick(sales) : null,
+            target: null,
+            status: null as null,
+          },
+        ];
+      }),
     ),
   }));
   const farmView = farmId ? (data?.farm_view ?? null) : null;
@@ -260,7 +298,10 @@ export default function PiggeryGmDashboard() {
     values: {
       this_week: null,
       avg_4w: null,
-      this_month: null,
+      this_month:
+        SALES_PICKS[r.key] && salesMonth
+          ? SALES_PICKS[r.key]!(salesMonth)
+          : null,
       prev_month: null,
       three_month: null,
     },
@@ -270,7 +311,10 @@ export default function PiggeryGmDashboard() {
     .filter((p) => period && p.business_year === period.business_year)
     .map((p) => ({
       label: monthOf(p.period_code),
-      actual: null,
+      actual:
+        data?.financial?.heads_by_period.find(
+          (h) => h.period_code === p.period_code,
+        )?.heads ?? null,
       budget: null,
     }));
 
@@ -350,8 +394,8 @@ export default function PiggeryGmDashboard() {
               icon={PiggyBank}
               title={t('gmdPigsToSlaughter')}
               unit={t('gmdHead')}
-              month={NO_FIGURE}
-              ytd={NO_FIGURE}
+              month={salesFigure(salesMonth, (s) => s.heads)}
+              ytd={salesFigure(salesYtd, (s) => s.heads)}
               t={t}
             />
             <KpiCard
@@ -366,8 +410,8 @@ export default function PiggeryGmDashboard() {
               icon={Coins}
               title={t('gmdCostOfSales')}
               unit={money}
-              month={NO_FIGURE}
-              ytd={NO_FIGURE}
+              month={salesFigure(salesMonth, (s) => s.cost_of_sales)}
+              ytd={salesFigure(salesYtd, (s) => s.cost_of_sales)}
               lowerIsBetter
               t={t}
               sub={{
@@ -382,14 +426,14 @@ export default function PiggeryGmDashboard() {
               icon={BarChart3}
               title={t('gmdGrossMargin')}
               unit={money}
-              month={NO_FIGURE}
-              ytd={NO_FIGURE}
+              month={salesFigure(salesMonth, (s) => s.gross_margin)}
+              ytd={salesFigure(salesYtd, (s) => s.gross_margin)}
               t={t}
               sub={{
                 label: t('gmdGrossMarginPct'),
                 unit: '%',
-                month: NO_FIGURE,
-                ytd: NO_FIGURE,
+                month: salesFigure(salesMonth, (s) => s.gross_margin_pct),
+                ytd: salesFigure(salesYtd, (s) => s.gross_margin_pct),
                 lowerIsBetter: false,
               }}
             />
@@ -435,7 +479,7 @@ export default function PiggeryGmDashboard() {
                 title={t('gmdFinancialMatrix')}
                 rows={farmFinancial}
                 t={t}
-                note={t('gmdNoDataYet')}
+                note={salesMonth ? period.period_code : t('gmdNoDataYet')}
               />
             </div>
           ) : (
@@ -465,7 +509,11 @@ export default function PiggeryGmDashboard() {
                 rows={financial}
                 farms={farms}
                 t={t}
-                note={t('gmdNoDataYet')}
+                note={
+                  data?.financial?.month.all
+                    ? period.period_code
+                    : t('gmdNoDataYet')
+                }
               />
             </div>
           )}

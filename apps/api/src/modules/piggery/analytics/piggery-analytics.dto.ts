@@ -3,6 +3,7 @@ import type {
   FarmAlert,
   FarmRow,
   MetricRow,
+  SalesFigures,
 } from './gm-dashboard.metrics';
 
 export interface QueryPiggeryGmDashboardDto {
@@ -30,6 +31,13 @@ export interface PiggeryGmDashboardData {
   kg_sold_per_sow_year: {
     month: Record<string, number | null>;
     ytd: Record<string, number | null>;
+  };
+  /** Pigs sold, cost of sales and gross margin from the ledgers, per farm and for all ("all"); null with no sale in the window. */
+  financial: {
+    month: Record<string, SalesFigures | null>;
+    ytd: Record<string, SalesFigures | null>;
+    /** The business year's running total of pigs sold by period, for the chosen farm or all farms. */
+    heads_by_period: Array<{ period_code: string; heads: number | null }>;
   };
   breeding: MetricRow[];
   weaner_grower: MetricRow[];

@@ -4,9 +4,11 @@ import {
   farmAlerts,
   farmRow,
   farmWindows,
+  headsByPeriod,
   kgSoldPerSowYear,
   meanTarget,
   ragStatus,
+  salesFigures,
   stageExit,
   stageFigures,
   stageSegments,
@@ -538,5 +540,81 @@ describe('the target a cell shows', () => {
         () => true,
       ).target,
     ).toBe(90);
+  });
+});
+
+// Rishi, 16 Nov: Pigs to Slaughter, Cost of Sales and Gross Margin come from the ledgers' sold disposals.
+describe('salesFigures', () => {
+  const sales = [
+    { farm_id: 'g', date: '2026-09-28', heads: 67, cost: 4000, revenue: 16603 },
+    { farm_id: 'g', date: '2026-10-08', heads: 55, cost: 3000, revenue: 13629 },
+    { farm_id: 'p', date: '2026-10-24', heads: 25, cost: 2500, revenue: 6195 },
+  ];
+
+  it('adds the sales in the window for one farm, or for all farms', () => {
+    expect(salesFigures(sales, '2026-09-27', '2026-10-24', 'g')).toEqual({
+      heads: 122,
+      cost_of_sales: 7000,
+      revenue: 30232,
+      gross_margin: 23232,
+      gross_margin_pct: 76.85,
+    });
+    expect(salesFigures(sales, '2026-09-27', '2026-10-24', null)?.heads).toBe(
+      147,
+    );
+  });
+
+  it('counts a sale on the first and last day, and none outside', () => {
+    expect(salesFigures(sales, '2026-10-08', '2026-10-08', 'g')?.heads).toBe(
+      55,
+    );
+    expect(salesFigures(sales, '2026-10-09', '2026-11-16', 'g')).toBeNull();
+  });
+
+  it('has no margin percentage when nothing was received', () => {
+    const free = [
+      { farm_id: 'g', date: '2026-10-08', heads: 5, cost: 100, revenue: 0 },
+    ];
+    const f = salesFigures(free, '2026-10-01', '2026-10-31', 'g');
+    expect(f?.gross_margin).toBe(-100);
+    expect(f?.gross_margin_pct).toBeNull();
+  });
+});
+
+describe('headsByPeriod', () => {
+  const periods = [
+    {
+      period_code: '2026-09',
+      start_date: '2026-08-23',
+      end_date: '2026-09-26',
+    },
+    {
+      period_code: '2026-10',
+      start_date: '2026-09-27',
+      end_date: '2026-10-24',
+    },
+    {
+      period_code: '2026-11',
+      start_date: '2026-10-25',
+      end_date: '2026-11-21',
+    },
+    {
+      period_code: '2026-12',
+      start_date: '2026-11-22',
+      end_date: '2026-12-26',
+    },
+  ];
+  const sales = [
+    { farm_id: 'g', date: '2026-09-13', heads: 11, cost: 1, revenue: 2 },
+    { farm_id: 'g', date: '2026-10-08', heads: 55, cost: 1, revenue: 2 },
+  ];
+
+  it('runs a total up to today and leaves later periods empty', () => {
+    expect(headsByPeriod(sales, periods, null, '2026-11-16')).toEqual([
+      { period_code: '2026-09', heads: 11 },
+      { period_code: '2026-10', heads: 66 },
+      { period_code: '2026-11', heads: 66 },
+      { period_code: '2026-12', heads: null },
+    ]);
   });
 });
