@@ -35,6 +35,13 @@ describe('Budget master configuration', () => {
     ]);
   });
 
+  it('the Reporting Period picker offers inactive periods; Farm and Metric do not opt in', () => {
+    // Only one period is active (open for posting); a budget may be set for any past or future period.
+    expect(field('period_id')?.entityIncludeInactive).toBe(true);
+    expect(field('farm_id')?.entityIncludeInactive).toBeFalsy();
+    expect(field('metric_code')?.entityIncludeInactive).toBeFalsy();
+  });
+
   it('period, farm and metric are required and read-only on edit', () => {
     for (const key of ['period_id', 'farm_id', 'metric_code']) {
       expect(field(key)).toMatchObject({ required: true, createOnly: true });

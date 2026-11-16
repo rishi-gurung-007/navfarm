@@ -138,6 +138,8 @@ export interface MasterDataField {
   entityLabelKeys?: string[];
   /** Display only the related record's business code instead of its name (IDs remain internal). */
   entityDisplay?: "name" | "code";
+  /** Offer inactive rows too: for a lookup where active is not what makes a row selectable, e.g. a Reporting Period; default false. */
+  entityIncludeInactive?: boolean;
   /** Select multiple related values with checkboxes (submitted as an array). */
   multiple?: boolean;
   /**

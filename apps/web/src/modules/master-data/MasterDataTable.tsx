@@ -280,6 +280,11 @@ export function isFieldVisible(f: MasterDataField, form: Row): boolean {
  * - "query" mode (one or more parents): appends each set parent as a query param via
  *   queryParams; unset parents are simply omitted rather than blocking the fetch.
  */
+/** Where a picker's options are cached: an opted-in field (entityIncludeInactive) never shares the active-only list. */
+function entityOptionsKey(ep: string, includeInactive?: boolean): string {
+  return includeInactive ? `${ep}#inactive` : ep;
+}
+
 function resolveEndpoint(f: MasterDataField, form: Row): string | null {
   if (!f.entityEndpoint) return null;
   const parents = parentKeys(f);
@@ -1262,7 +1267,10 @@ export function MasterDataTable({
       !field.entityEndpoint
     )
       return undefined;
-    const loaded = entityOptions[field.entityEndpoint];
+    const loaded =
+      entityOptions[
+        entityOptionsKey(field.entityEndpoint, field.entityIncludeInactive)
+      ];
     if (!loaded?.length) return undefined;
     const valueKey = field.entityValueKey || 'id';
     const labelKeys = field.entityLabelKeys || [];
@@ -1760,17 +1768,19 @@ export function MasterDataTable({
     // Includes the select-entity columns nested inside a jsonRow, whose
     // dropdowns are otherwise never populated because they are not top-level
     // fields.
-    const endpoints = Array.from(
-      new Set(
-        [...config.fields, ...config.fields.flatMap((f) => f.jsonRow || [])]
-          .filter(
-            (f) =>
-              f.type === 'select-entity' && f.entityEndpoint && !f.dependsOn,
-          )
-          .map((f) => f.entityEndpoint!),
-      ),
-    );
-    endpoints.forEach(async (ep) => {
+    const loads = new Map<string, { ep: string; includeInactive: boolean }>();
+    [...config.fields, ...config.fields.flatMap((f) => f.jsonRow || [])]
+      .filter(
+        (f) => f.type === 'select-entity' && f.entityEndpoint && !f.dependsOn,
+      )
+      .forEach((f) => {
+        const includeInactive = !!f.entityIncludeInactive;
+        loads.set(entityOptionsKey(f.entityEndpoint!, includeInactive), {
+          ep: f.entityEndpoint!,
+          includeInactive,
+        });
+      });
+    loads.forEach(async ({ ep, includeInactive }, key) => {
       try {
         const [basePath, search] = ep.split('?');
         const params = new URLSearchParams(search || '');
@@ -1783,16 +1793,22 @@ export function MasterDataTable({
         // endpoints that already always filter to active (e.g. NOB/LOB,
         // costing-method) and is honored by every findAll that carries the
         // isActive query param.
-        if (!params.has('isActive')) params.set('isActive', 'true');
+        // A field with entityIncludeInactive opts out: active is not what makes
+        // its row selectable (a Reporting Period), so it asks for every row.
+        if (!includeInactive && !params.has('isActive'))
+          params.set('isActive', 'true');
         const activeOnlyEp = `${basePath}?${params.toString()}`;
         const res = await api.get(activeOnlyEp);
         const list = unwrap<Row[]>(res);
         const unblocked = Array.isArray(list)
-          ? list.filter((r) => !r.is_blocked && r.is_active !== false)
+          ? list.filter(
+              (r) =>
+                !r.is_blocked && (includeInactive || r.is_active !== false),
+            )
           : [];
-        setEntityOptions((prev) => ({ ...prev, [ep]: unblocked }));
+        setEntityOptions((prev) => ({ ...prev, [key]: unblocked }));
       } catch {
-        setEntityOptions((prev) => ({ ...prev, [ep]: prev[ep] || [] }));
+        setEntityOptions((prev) => ({ ...prev, [key]: prev[key] || [] }));
       }
     });
     // entityReloadKey is included so creating a related record (e.g. a new
@@ -4373,7 +4389,14 @@ export function MasterDataTable({
     }
     if (f.type === 'select-entity') {
       const resolvedEp = resolveEndpoint(f, form);
-      const loadedOptions = resolvedEp ? entityOptions[resolvedEp] : undefined;
+      const loadedOptions = resolvedEp
+        ? entityOptions[
+            entityOptionsKey(
+              resolvedEp,
+              !f.dependsOn && f.entityIncludeInactive,
+            )
+          ]
+        : undefined;
       let options = loadedOptions || [];
       const parents = parentKeys(f);
       // "query" mode never blocks — an unset parent just narrows the results less, it

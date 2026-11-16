@@ -36,6 +36,8 @@ const budget: MasterDataConfig = {
       required: true,
       createOnly: true,
       entityEndpoint: '/reporting-period',
+      // Only one period is "active" (the one open for posting); a budget may be set for any past or future period.
+      entityIncludeInactive: true,
       entityValueKey: 'period_id',
       entityLabelKeys: ['period_code'],
     },
