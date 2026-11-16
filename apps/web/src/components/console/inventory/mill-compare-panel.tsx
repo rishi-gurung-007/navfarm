@@ -8,6 +8,7 @@
  * The API does the arithmetic (mill-capacity.rules.ts); this page only shows
  * and exports it.
  */
+import { DateInput } from '@/components/ui/date-input';
 import { useRef, useState } from "react";
 import { api } from "@/services/api-client";
 import { showToast } from "@/components/ui/toast";
@@ -155,7 +156,7 @@ export default function MillComparePanel() {
           />
         </Field>
         <Field label={t("mcrDate")} htmlFor="mill-compare-date">
-          <input id="mill-compare-date" type="date" className="nf-input-sm" value={date} onChange={(event) => setDate(event.target.value)} />
+          <DateInput id="mill-compare-date" className="nf-input-sm" value={date} onChange={(event) => setDate(event.target.value)} />
         </Field>
         <Button onClick={load} disabled={!date || loading}>{t("mcrLoad")}</Button>
         <Button className="ml-auto" variant="outline" onClick={exportCsv} disabled={!report || report.rows.length === 0}>{t("mcrExport")}</Button>

@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, MaxLength, IsNumber, IsArray, ValidateNested, IsIn } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
+import { ItemQcSpecLineDto } from '../../../inventory/qc-inspection/dto/qc-inspection.dto';
 
 export const FEED_FORMS = ['BULK', 'BAGGED'] as const;
 
@@ -20,7 +21,93 @@ export class ItemAttributeValueInput {
   attribute_value: string;
 }
 
-export class CreateItemDto {
+/**
+ * The Bio Asset Costing tab of the Item Card (TDD Item Card customization, row 8). Read only when the item is a biological asset; sent for any
+ * other item it is dropped. Values are checked by item-bio-costing.rules.ts. A null or empty value clears a term.
+ */
+export class ItemBioCostingDto {
+  @ApiPropertyOptional({ description: 'FA/Bio Asset Costing Method', enum: ['AMORTIZATION', 'FAIR_VALUE'], nullable: true })
+  @IsOptional() @IsString()
+  bio_costing_method?: string | null;
+
+  @ApiPropertyOptional({ description: 'Gender the item stands for; drives where the residual applies (Female = sow)', enum: ['F', 'M'], nullable: true })
+  @IsOptional() @IsString() @MaxLength(1)
+  bio_gender?: string | null;
+
+  @ApiPropertyOptional({ description: 'Amortization / Fair Value start period, weeks of age', nullable: true })
+  @IsOptional() @IsInt() @Min(0)
+  bio_start_age_weeks?: number | null;
+
+  @ApiPropertyOptional({ description: 'Start period, days of age beyond the weeks (0 to 6)', nullable: true })
+  @IsOptional() @IsInt() @Min(0) @Max(6)
+  bio_start_age_days?: number | null;
+
+  @ApiPropertyOptional({ description: 'Useful life in months', nullable: true })
+  @IsOptional() @IsInt() @Min(1)
+  bio_useful_life_months?: number | null;
+
+  @ApiPropertyOptional({ description: 'Residual value rule', enum: ['NONE', 'FIXED', 'WEIGHT_X_PRICE'], nullable: true })
+  @IsOptional() @IsString()
+  bio_residual_rule?: string | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional() @IsNumber() @Min(0)
+  bio_residual_fixed_amount?: number | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional() @IsNumber() @Min(0)
+  bio_residual_weight_kg?: number | null;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional() @IsNumber() @Min(0)
+  bio_residual_price_per_kg?: number | null;
+
+  @ApiPropertyOptional({ description: 'How often the costing run is made', enum: ['WEEKLY', 'MONTHLY', 'QUARTERLY', 'YEARLY'], nullable: true })
+  @IsOptional() @IsString()
+  bio_run_frequency?: string | null;
+
+  @ApiPropertyOptional({ description: 'Days counted in a period', enum: ['FREQUENCY_DAYS', 'ACTUAL'], nullable: true })
+  @IsOptional() @IsString()
+  bio_day_basis?: string | null;
+
+  @ApiPropertyOptional({ description: 'The date costing should start for this item; the scheduler never catches up before it', nullable: true })
+  @IsOptional() @IsString()
+  bio_effective_from?: string | null;
+
+  @ApiPropertyOptional({ description: 'A scheduled run is posted without waiting for a person' })
+  @IsOptional() @IsBoolean()
+  bio_auto_post?: boolean;
+
+  @ApiPropertyOptional({ description: 'GL account: acquisition cost of the asset', nullable: true })
+  @IsOptional() @IsUUID()
+  bio_acquisition_gl_id?: string | null;
+
+  @ApiPropertyOptional({ description: 'GL account: accumulated amortisation', nullable: true })
+  @IsOptional() @IsUUID()
+  bio_accum_amort_gl_id?: string | null;
+
+  @ApiPropertyOptional({ description: 'GL account: amortisation expense', nullable: true })
+  @IsOptional() @IsUUID()
+  bio_amort_expense_gl_id?: string | null;
+
+  @ApiPropertyOptional({ description: 'GL account: fair value gain / loss', nullable: true })
+  @IsOptional() @IsUUID()
+  bio_fv_gain_loss_gl_id?: string | null;
+
+  @ApiPropertyOptional({ description: 'GL account: fair value loss. Left out, a loss goes to the fair value gain / loss account.', nullable: true })
+  @IsOptional() @IsUUID()
+  bio_fv_loss_gl_id?: string | null;
+
+  @ApiPropertyOptional({ description: 'GL account: mortality / impairment loss', nullable: true })
+  @IsOptional() @IsUUID()
+  bio_writeoff_gl_id?: string | null;
+
+  @ApiPropertyOptional({ description: 'Posting group the item takes its accounts from (biological group for an animal item, inventory group for stock); blank to unlink', nullable: true })
+  @IsOptional() @Transform(({ value }) => (value === '' ? null : value)) @IsUUID()
+  posting_group_id?: string | null;
+}
+
+export class CreateItemDto extends ItemBioCostingDto {
   @ApiProperty({ required: false, description: 'Manual code when the number series permits it; otherwise generated.' })
   @IsString()
   @IsOptional()
@@ -122,6 +209,18 @@ export class CreateItemDto {
   @IsBoolean()
   @IsOptional()
   is_inventoriable?: boolean;
+
+  @ApiProperty({ description: 'QC required: a received quantity is written to the Inventory Ledger only when its QC inspection is completed and accepted. Needs a QC specification on the item.', default: false, required: false })
+  @IsBoolean()
+  @IsOptional()
+  is_qc_required?: boolean;
+
+  @ApiProperty({ type: [ItemQcSpecLineDto], description: 'The QC checks (QC Code, Description, QC Type, Min/Max) saved with a new QC-required item. Edit them later through /item-qc-spec.', required: false })
+  @IsArray()
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => ItemQcSpecLineDto)
+  qc_specs?: ItemQcSpecLineDto[];
 
   @ApiProperty({ description: 'Minimum stock count limit', required: false })
   @IsNumber()
@@ -242,7 +341,7 @@ export class CreateItemFromTemplateDto {
   company_id?: string;
 }
 
-export class UpdateItemDto {
+export class UpdateItemDto extends ItemBioCostingDto {
   @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
@@ -339,6 +438,11 @@ export class UpdateItemDto {
   @IsBoolean()
   @IsOptional()
   is_inventoriable?: boolean;
+
+  @ApiProperty({ description: 'QC required: a received quantity is written to the Inventory Ledger only when its QC inspection is completed and accepted. Needs a QC specification on the item.', default: false, required: false })
+  @IsBoolean()
+  @IsOptional()
+  is_qc_required?: boolean;
 
   @ApiProperty({ required: false })
   @IsNumber()

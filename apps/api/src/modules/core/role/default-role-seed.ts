@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import * as schema from '../../../core/database/schema';
+import { SEMEN_COLLECTOR_GRANTS, SEMEN_COLLECTOR_ROLE } from './semen-collector-role';
 import { MILL_MANAGER_GRANTS, MILL_MANAGER_ROLE } from './mill-manager-role';
 
 /**
@@ -49,7 +50,7 @@ const MASTER_DATA_RESOURCES = [
 ];
 
 const INVENTORY_RESOURCES = [
-  'BIO_ASSET_LEDGER', 'GOODS_RECEIPT', 'LEDGER',
+  'BIO_ASSET_LEDGER', 'GOODS_RECEIPT', 'LEDGER', 'QC_INSPECTION',
   'STOCK_ADJUSTMENT', 'STOCK_COUNT', 'STOCK_TRANSFER',
 ];
 
@@ -188,6 +189,17 @@ export async function seedDefaultCompanyRoles(
     is_system_role: true,
   });
   await tx.insert(schema.rolePermissions).values(MILL_MANAGER_GRANTS.map((g) => row(millManagerRoleId, g)));
+
+  /* ── Semen Collector: the AI Station technician — grants live in semen-collector-role.ts ── */
+  const semenCollectorRoleId = crypto.randomUUID();
+  await tx.insert(schema.roleMaster).values({
+    role_id: semenCollectorRoleId,
+    company_id: companyId,
+    ...SEMEN_COLLECTOR_ROLE,
+    // Not locked: a company adds the permissions its collectors need in Roles.
+    is_system_role: false,
+  });
+  await tx.insert(schema.rolePermissions).values(SEMEN_COLLECTOR_GRANTS.map((g) => row(semenCollectorRoleId, g)));
 
   return { superAdminRoleId, managerRoleId, accountantRoleId, operatorRoleId, millManagerRoleId };
 }

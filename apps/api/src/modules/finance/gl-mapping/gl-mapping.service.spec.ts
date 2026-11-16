@@ -3,7 +3,7 @@ import { GlMappingService } from './gl-mapping.service';
 import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 
 describe('GlMappingService', () => {
   let service: GlMappingService;
@@ -172,6 +172,45 @@ describe('GlMappingService', () => {
 
       expect(mockDbInsert).toHaveBeenCalled();
       expect(result.transaction_type).toBe('PURCHASE');
+    });
+
+    const selectSequence = (...results: unknown[][]) => {
+      for (const rows of results) {
+        mockDbSelect.mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(rows) }) }),
+        });
+      }
+    };
+    // company, debit account, credit account, duplicate check (none), then the row read back
+    const createSelects = () => selectSequence([{ company_id: 'comp-1' }], [{ gl_account_id: 'gl-1' }], [{ gl_account_id: 'gl-2' }], [], [{ mapping_id: 'map-1' }]);
+
+    it('refuses a transaction type that is not an Inventory Ledger type, before it touches the table', async () => {
+      await expect(
+        service.create({ company_id: 'comp-1', transaction_type: 'BIO_LITTER_BIRTH', debit_gl_account_id: 'gl-1', credit_gl_account_id: 'gl-2' }, 'tenant-123'),
+      ).rejects.toThrow(/not an Inventory Ledger transaction type/);
+      expect(mockDbSelect).not.toHaveBeenCalled();
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses an entry type the transaction type is never written with (a PURCHASE is POSITIVE), before it touches the table', async () => {
+      await expect(
+        service.create({ company_id: 'comp-1', transaction_type: 'PURCHASE', entry_type: 'NEGATIVE', debit_gl_account_id: 'gl-1', credit_gl_account_id: 'gl-2' }, 'tenant-123'),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockDbSelect).not.toHaveBeenCalled();
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+
+    it('stores the entry type a mapping is narrowed to, and NULL (any entry type) when none is given', async () => {
+      const values = jest.fn().mockResolvedValue({});
+      mockDbInsert.mockReturnValue({ values });
+
+      createSelects();
+      await service.create({ company_id: 'comp-1', transaction_type: 'TRANSFER_SHIPMENT', entry_type: 'TRANSFER', debit_gl_account_id: 'gl-1', credit_gl_account_id: 'gl-2' }, 'tenant-123');
+      expect(values).toHaveBeenLastCalledWith(expect.objectContaining({ transaction_type: 'TRANSFER_SHIPMENT', entry_type: 'TRANSFER' }));
+
+      createSelects();
+      await service.create({ company_id: 'comp-1', transaction_type: 'TRANSFER_SHIPMENT', entry_type: '', debit_gl_account_id: 'gl-1', credit_gl_account_id: 'gl-2' }, 'tenant-123');
+      expect(values).toHaveBeenLastCalledWith(expect.objectContaining({ entry_type: null }));
     });
   });
 });

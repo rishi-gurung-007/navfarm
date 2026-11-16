@@ -1,5 +1,6 @@
 "use client";
 
+import { formatDate, formatDateTime } from '@/utils/date-short';
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -94,7 +95,7 @@ const fmtMoney = (v: unknown, currency: CompanyCurrency | null | undefined, empt
 const formatStamp = (v: string | null | undefined, emptyText = "Date not available") => {
   if (!v) return emptyText;
   const parsed = new Date(v.replace(" ", "T"));
-  return Number.isNaN(parsed.getTime()) ? v : parsed.toLocaleString();
+  return Number.isNaN(parsed.getTime()) ? v : formatDateTime(parsed);
 };
 
 function fromApi(r: ApiRow, currency: CompanyCurrency | null | undefined, empty: EmptyApprovalLabels): ApprovalItem {
@@ -552,7 +553,7 @@ export function ApprovalsPageShell({ activeTab }: { activeTab: ApprovalStatus })
             {viewingItem.status === "APPROVED" && viewingItem.approver && (
               <div className="p-2.5 rounded-[var(--radius-xs)] bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400">
                 <p className="font-semibold">✓ {t("apAuthorizedBy", { approver: viewingItem.approver })}</p>
-                <p className="text-[11px]">{t("apApprovedOn", { date: viewingItem.approval_date || "" })}</p>
+                <p className="text-[11px]">{t("apApprovedOn", { date: formatDate(viewingItem.approval_date || "") })}</p>
               </div>
             )}
 

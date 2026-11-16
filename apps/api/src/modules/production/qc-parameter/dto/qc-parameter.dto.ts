@@ -1,8 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsUUID, IsNumber, IsBoolean, IsIn, IsInt, Min } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsUUID, IsNumber, IsBoolean, IsIn, IsInt, Min, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
+import { QC_PARAM_TYPES } from '../qc-parameter.rules';
 
-const PARAM_TYPES = ['NUMERIC', 'BOOLEAN', 'GRADE'] as const;
+// The client's QC Parameter Master fields: QC Code, Description, QC Type, Unit of Measurement, Min / Max / Target Value, Mandatory, Active.
 
 export class CreateQcParameterDto {
   @ApiProperty({ description: 'Company UUID scope (omit for a tenant-wide template)', required: false })
@@ -10,96 +11,91 @@ export class CreateQcParameterDto {
   @IsOptional()
   company_id?: string;
 
-  @ApiProperty({ description: 'Line of Business UUID this parameter applies to' })
+  @ApiProperty({ description: 'QC Code: unique identification of the QC parameter, unique per company', example: 'QC-MOISTURE-001' })
   @IsString()
   @IsNotEmpty()
-  lob_id: string;
-
-  @ApiProperty({ description: 'Unique parameter code', example: 'QC_BIRD_WEIGHT' })
-  @IsString()
-  @IsNotEmpty()
+  @MaxLength(50)
   param_code: string;
 
-  @ApiProperty({ description: 'Display name', example: 'Live Bird Weight at Slaughter' })
+  @ApiProperty({ description: 'Description: what needs to be inspected', example: 'Moisture Percentage' })
   @IsString()
   @IsNotEmpty()
+  @MaxLength(100)
   param_name: string;
 
-  @ApiProperty({ description: 'Parameter type', enum: PARAM_TYPES })
+  @ApiProperty({ description: 'QC Type: type of inspection', enum: QC_PARAM_TYPES, example: 'NUMERIC' })
   @IsString()
   @IsNotEmpty()
-  @IsIn(PARAM_TYPES)
+  @IsIn(QC_PARAM_TYPES)
   param_type: string;
 
-  @ApiProperty({ description: 'Unit of measure (NUMERIC)', required: false })
+  @ApiProperty({ description: 'Unit of Measurement (NUMERIC)', required: false, example: '%' })
   @IsString()
   @IsOptional()
+  @MaxLength(20)
   uom?: string;
 
-  @ApiProperty({ description: 'Minimum acceptable value (NUMERIC)', required: false })
+  @ApiProperty({ description: 'Min Value: minimum acceptable value (NUMERIC)', required: false, example: 10 })
   @IsNumber()
   @IsOptional()
   min_value?: number;
 
-  @ApiProperty({ description: 'Maximum acceptable value (NUMERIC)', required: false })
+  @ApiProperty({ description: 'Max Value: maximum acceptable value (NUMERIC)', required: false, example: 14 })
   @IsNumber()
   @IsOptional()
   max_value?: number;
 
-  @ApiProperty({ description: 'What constitutes PASS', required: false })
-  @IsString()
+  @ApiProperty({ description: 'Target Value: ideal expected value (NUMERIC), between Min and Max', required: false, example: 12 })
+  @IsNumber()
   @IsOptional()
-  pass_criteria?: string;
+  target_value?: number;
 
-  @ApiProperty({ description: 'What constitutes FAIL', required: false })
-  @IsString()
-  @IsOptional()
-  fail_criteria?: string;
-
-  @ApiProperty({ description: 'Grade scale definitions (GRADE type), e.g. { "A": "2.0-2.5kg" }', required: false })
-  @IsOptional()
-  grade_scale?: Record<string, string>;
-
-  @ApiProperty({ description: 'Must this parameter pass for overall QC to pass?', required: false, default: true })
+  @ApiProperty({ description: 'Mandatory: whether inspection is compulsory (a failed mandatory parameter fails the QC)', required: false, default: true })
   @IsBoolean()
   @IsOptional()
   is_mandatory?: boolean;
+
+  @ApiProperty({ description: 'Active: whether this parameter is active', required: false, default: true })
+  @IsBoolean()
+  @IsOptional()
+  is_active?: boolean;
 }
 
+/** QC Code identifies the parameter and is not changed once created; null clears a value. */
 export class UpdateQcParameterDto {
   @ApiProperty({ required: false })
   @IsString()
+  @IsNotEmpty()
   @IsOptional()
+  @MaxLength(100)
   param_name?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, enum: QC_PARAM_TYPES })
   @IsString()
   @IsOptional()
-  uom?: string;
+  @IsIn(QC_PARAM_TYPES)
+  param_type?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, nullable: true })
+  @IsString()
+  @IsOptional()
+  @MaxLength(20)
+  uom?: string | null;
+
+  @ApiProperty({ required: false, nullable: true })
   @IsNumber()
   @IsOptional()
-  min_value?: number;
+  min_value?: number | null;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, nullable: true })
   @IsNumber()
   @IsOptional()
-  max_value?: number;
+  max_value?: number | null;
 
-  @ApiProperty({ required: false })
-  @IsString()
+  @ApiProperty({ required: false, nullable: true })
+  @IsNumber()
   @IsOptional()
-  pass_criteria?: string;
-
-  @ApiProperty({ required: false })
-  @IsString()
-  @IsOptional()
-  fail_criteria?: string;
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  grade_scale?: Record<string, string>;
+  target_value?: number | null;
 
   @ApiProperty({ required: false })
   @IsBoolean()
@@ -118,10 +114,16 @@ export class QueryQcParameterDto {
   @IsUUID()
   companyId?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, description: 'Parameters for this line of business, plus those that apply to every line' })
   @IsOptional()
   @IsString()
   lobId?: string;
+
+  // Text, not boolean: implicit conversion turns the text 'false' into true.
+  @ApiProperty({ required: false, enum: ['true', 'false'] })
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  isActive?: string;
 
   @ApiProperty({ required: false })
   @IsOptional()

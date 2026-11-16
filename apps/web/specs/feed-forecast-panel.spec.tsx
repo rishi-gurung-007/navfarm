@@ -1,3 +1,4 @@
+import { parseTyped } from '@/utils/date-input';
 import React from 'react';
 import {
   render,
@@ -479,8 +480,6 @@ describe('FeedForecastPanel — admin', () => {
   it('keeps the filters on one row and the date pair together (review, 27 Sep)', async () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
-    const from = screen.getByLabelText('ffDateFrom');
-    const to = screen.getByLabelText('ffDateTo');
     // Date From and Date To share a container, so a wrap can never leave "Date To" alone.
     expect(from.closest('div')!.parentElement).toBe(
       to.closest('div')!.parentElement,
@@ -496,7 +495,8 @@ describe('FeedForecastPanel — admin', () => {
     await screen.findByRole('table');
     expect(forecastCalls()).toHaveLength(0);
     const input = screen.getByLabelText('ffDateFrom') as HTMLInputElement;
-    const next = new Date(`${input.value}T00:00:00Z`);
+    // The field shows DD/MM/YY; the form holds the stored date.
+    const next = new Date(`${parseTyped(input.value)}T00:00:00Z`);
     next.setUTCDate(next.getUTCDate() + 1);
     fireEvent.change(input, {
       target: { value: next.toISOString().slice(0, 10) },

@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
@@ -461,7 +462,7 @@ export default function ReceiveStockPanel({
                       className="whitespace-nowrap px-3 py-2.5 font-mono text-xs"
                       style={S.primary}
                     >
-                      {row.posting_date}
+                      {formatDate(row.posting_date)}
                     </TableCell>
 
                     {/* Source & Destination Warehouses */}
@@ -674,7 +675,7 @@ export default function ReceiveStockPanel({
                   Receipt / Posting Date
                 </p>
                 <p className="mt-1 font-medium font-mono" style={S.primary}>
-                  {viewingReceipt.posting_date}
+                  {formatDate(viewingReceipt.posting_date)}
                 </p>
               </div>
               <div>

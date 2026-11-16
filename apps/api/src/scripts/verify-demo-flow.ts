@@ -109,13 +109,13 @@ const CHECKS: Check[] = [
 
   // ── Batches: head counts
   {
-    name: 'Batch Wise head: opening (a split child opens empty) + transfers in − out − deaths − harvested = head on hand',
+    name: 'Batch Wise head: opening (a split child opens empty) + transfers in − out − deaths − disposed or selected as gilts = head on hand',
     violations: `SELECT b.batch_no, b.opening_quantity, s.current_quantity AS on_hand,
                         ((CASE WHEN b.batch_no REGEXP '-S[0-9]{4}$' THEN 0 ELSE b.opening_quantity END)
                           + COALESCE((SELECT SUM(t.head_count) FROM batch_transfer t WHERE t.to_batch_id = b.batch_id AND t.status = 'POSTED'), 0)
                           - COALESCE((SELECT SUM(t.head_count) FROM batch_transfer t WHERE t.from_batch_id = b.batch_id AND t.status = 'POSTED'), 0)
                           - COALESCE((SELECT SUM(x.quantity) FROM batch_transaction x WHERE x.batch_id = b.batch_id AND x.transaction_type = 'MORTALITY' AND x.reversed_at IS NULL), 0)
-                          - COALESCE((SELECT SUM(-a.quantity) FROM bio_asset_ledger a WHERE a.batch_id = b.batch_id AND a.entry_type = 'TRANSFORMATION'), 0)
+                          - COALESCE((SELECT SUM(-a.quantity) FROM bio_asset_ledger a WHERE a.batch_id = b.batch_id AND a.document_type IN ('BATCH_DISPOSAL', 'GILT_SELECTION') AND a.quantity < 0), 0)
                         ) AS expected
                  FROM batch_header b
                  JOIN batch_bio_asset_state s ON s.batch_id = b.batch_id
@@ -235,8 +235,76 @@ const CHECKS: Check[] = [
                  WHERE NOT EXISTS (SELECT 1 FROM reason_master r WHERE r.category = c.category AND r.company_id IS NOT NULL)`,
   },
   {
-    name: 'batch numbers follow the BATCH series (BATCH-000001, or a split child BATCH-000001-S1234)',
-    violations: `SELECT batch_no FROM batch_header WHERE batch_no NOT REGEXP '^BATCH-[0-9]{6}(-S[0-9]{4})?$' LIMIT 20`,
+    name: 'batch numbers follow the BATCH series (BATCH-000001, or a split child BATCH-000001-S1234); a litter lot follows the LITTER_LOT series (LIT-000001)',
+    violations: `SELECT batch_no, is_litter_lot FROM batch_header
+                 WHERE (is_litter_lot = 0 AND batch_no NOT REGEXP '^BATCH-[0-9]{6}(-S[0-9]{4})?$')
+                    OR (is_litter_lot = 1 AND batch_no NOT REGEXP '^LIT-[0-9]{6}$')
+                 LIMIT 20`,
+  },
+  {
+    name: 'a semen lot\'s stock value = its doses x its cost per dose',
+    violations: `SELECT s.lot_no, s.doses_collected, s.unit_cost_per_dose, SUM(l.amount) AS stock_value
+                 FROM semen_batch s JOIN inventory_ledger l ON l.lot_no = s.lot_no AND l.transaction_type = 'OUTPUT' AND l.document_type = 'BREEDING'
+                 WHERE s.inventory_posted = 1
+                 GROUP BY s.semen_batch_id, s.lot_no, s.doses_collected, s.unit_cost_per_dose
+                 HAVING ABS(SUM(l.amount) - s.doses_collected * s.unit_cost_per_dose) > 0.01
+                 LIMIT 20`,
+    needs: `SELECT 1 FROM semen_batch WHERE inventory_posted = 1 LIMIT 1`,
+  },
+  {
+    name: 'every priced semen issue to a mating that has a sow in a bio-asset batch was charged to her (a Bio Asset Ledger row of the same cost)',
+    violations: `SELECT l.document_no, l.batch_no, ABS(l.amount) AS issue_cost
+                 FROM inventory_ledger l
+                 JOIN batch_header b ON b.batch_no = l.batch_no AND b.company_id = l.company_id AND b.costing_method = 'BIO_ASSET'
+                 WHERE l.document_type = 'BREEDING' AND l.transaction_type = 'CONSUMPTION' AND l.gl_mapping_type = 'BIO_SEMEN_USE' AND ABS(l.amount) >= 0.005
+                   AND NOT EXISTS (SELECT 1 FROM bio_asset_ledger a WHERE a.document_type = 'BREEDING_SEMEN' AND a.document_line_id = l.document_line_id AND ABS(a.cost_amount - ABS(l.amount)) < 0.01)
+                 LIMIT 20`,
+  },
+  {
+    name: 'an animal that left by sale, cull or slaughter with a value to account for has an exit journal (proceeds, or the loss on her book value)',
+    violations: `SELECT a.animal_code, a.disposal_type, a.disposal_value, a.gain_loss_on_disposal
+                 FROM animal_register a
+                 WHERE a.disposal_type IN ('SOLD', 'CULLED', 'SLAUGHTERED') AND a.is_active = 0
+                   AND (COALESCE(a.disposal_value, 0) > 0 OR ABS(COALESCE(a.gain_loss_on_disposal, 0)) > 0.005)
+                   AND NOT EXISTS (SELECT 1 FROM journal_header j WHERE j.source_document_no = a.animal_code AND j.status = 'POSTED' AND j.source_document_type = 'BATCH')
+                 LIMIT 20`,
+    needs: `SELECT 1 FROM animal_register WHERE disposal_type IN ('SOLD', 'CULLED', 'SLAUGHTERED') LIMIT 1`,
+  },
+  {
+    name: 'animals received on a goods receipt are in the GL: a journal of the receipt\'s cost (Dr asset / Cr payables) for every priced line',
+    violations: `SELECT a.document_no, a.cost_amount
+                 FROM bio_asset_ledger a
+                 WHERE a.document_type = 'GOODS_RECEIPT' AND a.transaction_type = 'PURCHASE' AND a.cost_amount >= 0.005
+                   AND EXISTS (SELECT 1 FROM gl_mapping_master m WHERE m.transaction_type = 'BIO_ACQUISITION' AND m.is_active = 1 AND m.deleted_at IS NULL)
+                   AND NOT EXISTS (SELECT 1 FROM journal_header j WHERE j.source_document_type = 'GOODS_RECEIPT' AND j.source_document_no = a.document_no
+                                     AND j.status = 'POSTED' AND ABS(j.total_debit - a.cost_amount) < 0.01)
+                 LIMIT 20`,
+    needs: `SELECT 1 FROM bio_asset_ledger WHERE document_type = 'GOODS_RECEIPT' LIMIT 1`,
+  },
+  {
+    name: 'an animal registered with no receipt (bought local, or born on the farm) with a cost is in the GL, once her mapping is set up',
+    violations: `SELECT r.animal_code, r.entry_type, r.acquisition_cost
+                 FROM animal_register r
+                 WHERE r.source_receipt_id IS NULL AND r.entry_type IN ('PURCHASED_LOCAL', 'BORN_ON_FARM') AND r.acquisition_cost >= 0.005
+                   AND EXISTS (SELECT 1 FROM gl_mapping_master m WHERE m.is_active = 1 AND m.deleted_at IS NULL
+                                 AND m.transaction_type = CASE r.entry_type WHEN 'BORN_ON_FARM' THEN 'BIO_GILT_ACQUISITION' ELSE 'BIO_ACQUISITION' END)
+                   AND NOT EXISTS (SELECT 1 FROM journal_header j WHERE j.source_document_type = 'ANIMAL_REGISTRATION' AND j.source_document_no = r.animal_code AND j.status = 'POSTED')
+                 LIMIT 20`,
+    needs: `SELECT 1 FROM animal_register WHERE source_receipt_id IS NULL AND entry_type IN ('PURCHASED_LOCAL', 'BORN_ON_FARM') LIMIT 1`,
+  },
+  {
+    name: 'no biological asset account (1050 pre-mature, 1055 piglets, 1060 mature) and no work in progress (1020) holds a negative balance',
+    violations: `SELECT a.account_code, ROUND(SUM(l.debit_amount - l.credit_amount), 2) AS balance
+                 FROM journal_line l JOIN gl_account_master a ON a.gl_account_id = l.gl_account_id JOIN journal_header j ON j.journal_id = l.journal_id
+                 WHERE j.status = 'POSTED' AND a.account_code IN ('1020', '1050', '1055', '1060')
+                 GROUP BY a.account_code HAVING SUM(l.debit_amount - l.credit_amount) < -0.01`,
+    needs: `SELECT 1 FROM journal_header LIMIT 1`,
+  },
+  {
+    name: 'every piglet lot a farrowing made is marked as a litter lot, and no other batch is',
+    violations: `SELECT b.batch_no, b.is_litter_lot FROM batch_header b
+                 WHERE b.is_litter_lot <> EXISTS (SELECT 1 FROM farrowing_record f WHERE f.piglet_batch_id = b.batch_id)
+                 LIMIT 20`,
   },
   {
     name: 'animal codes follow the ANIMAL series (PIG-YYYY-NNNN, year of birth)',

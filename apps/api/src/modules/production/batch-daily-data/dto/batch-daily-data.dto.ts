@@ -40,6 +40,12 @@ export class MortalityAnimalDto {
   @IsString()
   @MaxLength(200)
   reason_text?: string;
+
+  @ApiProperty({ description: 'Where the body went (TDD row 10 Disposal Destination), for example incineration or burial.', required: false })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  disposal_destination?: string;
 }
 
 export class CreateBatchDailyDataDto {

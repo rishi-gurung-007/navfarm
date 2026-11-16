@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import {
   BadRequestException,
   Injectable,
@@ -156,6 +157,18 @@ export class ReasonService {
     return row;
   }
   async create(dto: CreateReasonDto, tenantId: string, user?: any) {
+    // The number is drawn from the series inside this transaction, so a save that fails after it (a duplicate,
+    // a bad reference) rolls the counter back instead of burning the number.
+    return withTenantTransaction(this.cls, () =>
+      this.createRecord(dto, tenantId, user),
+    );
+  }
+
+  private async createRecord(
+    dto: CreateReasonDto,
+    tenantId: string,
+    user?: any,
+  ) {
     await this.assertStages(dto.applicable_stages, tenantId, dto.company_id);
     const reason_code = await this.numbering.resolveNewCode(
       'REASON',
@@ -166,20 +179,18 @@ export class ReasonService {
       dto as unknown as Record<string, unknown>,
     );
     const reason_id = randomUUID();
-    await this.db
-      .insert(table)
-      .values({
-        ...dto,
-        reason_code,
-        reason_id,
-        tenant_id: tenantId,
-        reason_name: dto.reason_name.trim(),
-        applicable_stages: dto.applicable_stages?.length
-          ? dto.applicable_stages
-          : null,
-        created_by: user?.userId,
-        updated_by: user?.userId,
-      });
+    await this.db.insert(table).values({
+      ...dto,
+      reason_code,
+      reason_id,
+      tenant_id: tenantId,
+      reason_name: dto.reason_name.trim(),
+      applicable_stages: dto.applicable_stages?.length
+        ? dto.applicable_stages
+        : null,
+      created_by: user?.userId,
+      updated_by: user?.userId,
+    });
     return this.log('CREATE', await this.findOne(reason_id, tenantId), user);
   }
   async update(id: string, dto: UpdateReasonDto, tenantId: string, user?: any) {

@@ -109,6 +109,102 @@ describe('rebuild-demo master chain (four-farm plan Task 3)', () => {
     expect(list[list.length - 1]).toBe('verify-demo-flow.ts');
   });
 
+  it('the costing preset is the lean layout with the costing volume, then the reconciliation', () => {
+    const plan = buildPlan({ chaptersOnly: false, skipReset: false, preset: 'costing' });
+    const list = scripts(plan);
+    expect(list).toContain('seed-nine-farm-demo.ts');
+    expect(list).not.toContain('seed-four-farm-feed-demo.ts');
+    const chapters = plan.find((s) => s.script === 'demo-chapters.ts')!;
+    expect(chapters.args).toEqual(expect.arrayContaining(['--lean', '--volume=costing', '--no-daily-entries']));
+    // --volume=costing must come after --lean, which sets the lean volume first.
+    expect(chapters.args.indexOf('--volume=costing')).toBeGreaterThan(chapters.args.indexOf('--lean'));
+    expect(chapters.args).not.toContain('--no-batches');
+    expect(list[list.length - 1]).toBe('verify-demo-flow.ts');
+  });
+
+  it('the costing-two preset posts only a sow and a boar: the masters, then chapter 18 only (--costing-two), then its own verification', () => {
+    const plan = buildPlan({ chaptersOnly: false, skipReset: false, preset: 'costing-two' });
+    const list = scripts(plan);
+    expect(list).toContain('seed-nine-farm-demo.ts');
+    expect(list).not.toContain('seed-four-farm-feed-demo.ts');
+    const chapters = plan.find((s) => s.script === 'demo-chapters.ts')!;
+    expect(chapters.args).toEqual(expect.arrayContaining(['--costing-two', '--lean', '--volume=costing']));
+    expect(chapters.args).not.toContain('--costing-test');
+    expect(list[list.length - 1]).toBe('verify-costing-two.ts');
+    expect(list).not.toContain('verify-demo-flow.ts');
+  });
+
+  it('the costing-conv preset converts two culled sows: the masters, chapter 21 only (--costing-conv), then its own verification', () => {
+    const plan = buildPlan({ chaptersOnly: false, skipReset: false, preset: 'costing-conv' });
+    const list = scripts(plan);
+    expect(list).toContain('seed-nine-farm-demo.ts');
+    const chapters = plan.find((s) => s.script === 'demo-chapters.ts')!;
+    expect(chapters.args).toEqual(expect.arrayContaining(['--costing-conv', '--lean', '--volume=costing']));
+    expect(chapters.args).not.toContain('--costing-freq');
+    expect(list[list.length - 1]).toBe('verify-costing-conv.ts');
+    expect(list).not.toContain('verify-demo-flow.ts');
+  });
+
+  it('the costing-freq preset lets the scheduler cost a quarterly, a monthly and a yearly item: the masters, chapter 20 only (--costing-freq), then its own verification', () => {
+    const plan = buildPlan({ chaptersOnly: false, skipReset: false, preset: 'costing-freq' });
+    const list = scripts(plan);
+    expect(list).toContain('seed-nine-farm-demo.ts');
+    expect(list).not.toContain('seed-four-farm-feed-demo.ts');
+    const chapters = plan.find((s) => s.script === 'demo-chapters.ts')!;
+    expect(chapters.args).toEqual(expect.arrayContaining(['--costing-freq', '--lean', '--volume=costing']));
+    expect(chapters.args).not.toContain('--costing-fv');
+    expect(list[list.length - 1]).toBe('verify-costing-freq.ts');
+    expect(list).not.toContain('verify-demo-flow.ts');
+  });
+
+  it('the costing-fv preset costs two gilts by fair value: the masters (no amortisation terms chapter), chapter 19 only (--costing-fv), then its own verification', () => {
+    const plan = buildPlan({ chaptersOnly: false, skipReset: false, preset: 'costing-fv' });
+    const list = scripts(plan);
+    expect(list).toContain('seed-nine-farm-demo.ts');
+    expect(list).not.toContain('seed-four-farm-feed-demo.ts');
+    const chapters = plan.find((s) => s.script === 'demo-chapters.ts')!;
+    expect(chapters.args).toEqual(expect.arrayContaining(['--costing-fv', '--lean', '--volume=costing']));
+    expect(chapters.args).not.toContain('--costing-two');
+    expect(list[list.length - 1]).toBe('verify-costing-fv.ts');
+    expect(list).not.toContain('verify-demo-flow.ts');
+  });
+
+  it('the costing-test preset posts no demo herd: the masters, then chapter 16 only (--costing-test), then its own verification', () => {
+    const plan = buildPlan({ chaptersOnly: false, skipReset: false, preset: 'costing-test' });
+    const list = scripts(plan);
+    expect(list).toContain('seed-nine-farm-demo.ts');
+    expect(list).not.toContain('seed-four-farm-feed-demo.ts');
+    const chapters = plan.find((s) => s.script === 'demo-chapters.ts')!;
+    expect(chapters.args).toEqual(expect.arrayContaining(['--costing-test', '--lean', '--volume=costing']));
+    expect(chapters.args.indexOf('--volume=costing')).toBeGreaterThan(chapters.args.indexOf('--lean'));
+    expect(list[list.length - 1]).toBe('verify-costing-test.ts');
+    expect(list).not.toContain('verify-demo-flow.ts');
+  });
+
+  it('the ledger-check preset is the lean flow, then the costing test and the ledger-type postings, then three read-backs', () => {
+    const plan = buildPlan({ chaptersOnly: false, skipReset: false, preset: 'ledger-check' });
+    const list = scripts(plan);
+    expect(list).toContain('seed-nine-farm-demo.ts');
+    expect(list).not.toContain('seed-four-farm-feed-demo.ts');
+    const chapterSteps = plan.filter((s) => s.script === 'demo-chapters.ts');
+    expect(chapterSteps).toHaveLength(3);
+    expect(chapterSteps[0].args).toEqual(expect.arrayContaining(['--lean']));
+    expect(chapterSteps[0].args.some((a) => a.startsWith('--chapter='))).toBe(false);
+    expect(chapterSteps[1].args).toEqual(expect.arrayContaining(['--costing-test', '--lean', '--volume=costing']));
+    expect(chapterSteps[2].args).toEqual(expect.arrayContaining(['--chapter=17-ledger-types', '--lean']));
+    // the two on-demand chapters run after the lean flow they add to, and everything is read back last
+    expect(plan.indexOf(chapterSteps[0])).toBeLessThan(plan.indexOf(chapterSteps[1]));
+    expect(plan.indexOf(chapterSteps[1])).toBeLessThan(plan.indexOf(chapterSteps[2]));
+    expect(list.slice(-4)).toEqual(['demo-chapters.ts', 'verify-costing-test.ts', 'demo-chapters.ts', 'verify-ledger-types.ts']);
+    expect(plan.indexOf(plan.find((s) => s.script === 'verify-demo-flow.ts')!)).toBeLessThan(plan.indexOf(chapterSteps[1]));
+    expect(plan.find((s) => s.script === 'verify-costing-test.ts')!.args).toEqual(['--shared-tenant']);
+  });
+
+  it('the ledger-check preset re-posts all three chapters with --chapters-only, and the other presets still post one', () => {
+    expect(buildPlan({ chaptersOnly: true, skipReset: false, preset: 'ledger-check' })).toHaveLength(3);
+    expect(buildPlan({ chaptersOnly: true, skipReset: false, preset: 'lean' })).toHaveLength(1);
+  });
+
   it('the small preset seeds no batches; other runs still do', () => {
     const small = buildPlan({ chaptersOnly: false, skipReset: false, volume: 'light', preset: 'small' }).pop()!;
     expect(small.args).toContain('--no-batches');

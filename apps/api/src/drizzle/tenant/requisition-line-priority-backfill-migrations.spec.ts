@@ -7,19 +7,19 @@ const journal = JSON.parse(
 ).entries as Array<{ idx: number; when: number; tag: string }>;
 const sql = (tag: string) => readFileSync(join(dir, `${tag}.sql`), 'utf8');
 
-describe('Tenant migration 0216 — feed lines drafted from a saved calculation take their priority', () => {
-  it('journals after 0215 with a later `when`', () => {
+describe('Tenant migration 0253 — feed lines drafted from a saved calculation take their priority', () => {
+  it('journals after 0252 with a later `when`', () => {
     const at = (tag: string) => journal.find((e) => e.tag === tag)!;
-    expect(at('0216_requisition_line_priority_backfill').idx).toBe(
-      at('0215_accounting_period').idx + 1,
+    expect(at('0253_requisition_line_priority_backfill').idx).toBe(
+      at('0252_accounting_period').idx + 1,
     );
-    expect(at('0216_requisition_line_priority_backfill').when).toBeGreaterThan(
-      at('0215_accounting_period').when,
+    expect(at('0253_requisition_line_priority_backfill').when).toBeGreaterThan(
+      at('0252_accounting_period').when,
     );
   });
 
   it('fills only feed lines with no priority, by requisitionPriority against the run planning date', () => {
-    const fill = sql('0216_requisition_line_priority_backfill');
+    const fill = sql('0253_requisition_line_priority_backfill');
     expect(fill).toMatch(/UPDATE `requisition_line` rl/);
     expect(fill).toContain(
       'JOIN `feed_forecast_run` fr ON fr.`run_id` = r.`feed_forecast_run_id`',

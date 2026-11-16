@@ -1,5 +1,6 @@
 "use client";
 
+import { formatDate } from '@/utils/date-short';
 import {
   Bar,
   BarChart,
@@ -111,7 +112,7 @@ export function FeedSiloDashboardCharts({
           ) : <EmptyState className="h-72 py-0" title={t("fsdChartUnavailable")} />}
           <table className="sr-only" aria-label={t("fsdProjectedBalanceData")}>
             <thead><tr><th>{t("ffDate")}</th><th>{t("fsdProjectedClosingKg")}</th></tr></thead>
-            <tbody>{balances.map((point) => <tr key={`${point.itemId}-${point.date}`}><td>{point.date}</td><td>{point.closingKg}</td></tr>)}</tbody>
+            <tbody>{balances.map((point) => <tr key={`${point.itemId}-${point.date}`}><td>{formatDate(point.date)}</td><td>{point.closingKg}</td></tr>)}</tbody>
           </table>
         </CardContent>
       </Card>
@@ -142,7 +143,7 @@ export function FeedSiloDashboardCharts({
           ) : <EmptyState className="h-72 py-0" title={t("fsdChartUnavailable")} />}
           <table className="sr-only" aria-label={t("fsdDietDemandData")}>
             <thead><tr><th>{t("ffDate")}</th><th>{t("fsdCurrentDietDemand")}</th><th>{t("fsdNextDietDemand")}</th></tr></thead>
-            <tbody>{demand.map((point) => <tr key={point.date}><td>{point.date}</td><td>{point.currentDietKg}</td><td>{point.nextDietKg}</td></tr>)}</tbody>
+            <tbody>{demand.map((point) => <tr key={point.date}><td>{formatDate(point.date)}</td><td>{point.currentDietKg}</td><td>{point.nextDietKg}</td></tr>)}</tbody>
           </table>
         </CardContent>
       </Card>

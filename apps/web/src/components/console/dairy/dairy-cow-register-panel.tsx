@@ -1,5 +1,6 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
 import { NA } from '@/utils/na';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus, Search } from 'lucide-react';
@@ -477,8 +478,7 @@ export default function DairyCowRegisterPanel() {
             </label>
             <label className="block">
               <span className="nf-text-label">{t('anpDateOfBirth')}</span>
-              <input
-                type="date"
+              <DateInput
                 value={form.dob}
                 onChange={(e) => setForm({ ...form, dob: e.target.value })}
                 className="nf-input w-full text-sm"
@@ -498,8 +498,7 @@ export default function DairyCowRegisterPanel() {
             </label>
             <label className="block">
               <span className="nf-text-label">{t('anpEntryDate')}</span>
-              <input
-                type="date"
+              <DateInput
                 value={form.entry_date}
                 onChange={(e) =>
                   setForm({ ...form, entry_date: e.target.value })

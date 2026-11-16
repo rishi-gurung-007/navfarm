@@ -6,10 +6,10 @@ import { LOGISTICS_CONFIGS } from '@/modules/master-data/logistics-configs';
  * The master form treats a number field with no `step` as whole numbers only,
  * so a freight rate of 2.50 or a latitude of -17.8272 could not be typed.
  * Every logistics number field whose column is decimal(p,s) with s > 0 states
- * a step with s decimals — read from migration 0228 itself, so the form and
+ * a step with s decimals — read from migration 0254 itself, so the form and
  * the table cannot drift apart.
  */
-const sql = readFileSync(resolve(__dirname, '../../api/src/drizzle/tenant/0228_logistics_masters.sql'), 'utf8');
+const sql = readFileSync(resolve(__dirname, '../../api/src/drizzle/tenant/0254_logistics_masters.sql'), 'utf8');
 
 function decimalScales(): Map<string, number> {
   const scales = new Map<string, number>();

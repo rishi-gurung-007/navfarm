@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate, formatDateTime } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -35,6 +37,7 @@ import PiggeryLifecycleStepper, {
   type PiggeryStage,
 } from '../piggery/piggery-lifecycle-stepper';
 import { buildLifecycleStages } from '../piggery/build-lifecycle-stages';
+import { dataEntryStrip } from './data-entry-stage-strip';
 import {
   resolvePiggeryStageId,
   computeStageDay,
@@ -260,6 +263,9 @@ export default function OperationalBatchDataEntry() {
   // whenever the batch changes, so re-selecting a batch re-defaults to "the
   // first open day" instead of wherever the picker was left.
   const userPickedDateRef = React.useRef(false);
+  // Days the screen has itself moved past because everything with animals on them was already locked. The "go to the next pending date" rule must not
+  // pull the posting date back onto one of them, or the two rules hand the date back and forth for ever (the screen refetches and blinks).
+  const autoAdvancedDatesRef = React.useRef<Set<string>>(new Set());
 
   // Real lifecycle for the selected batch, built from stage_master + this
   // batch's stage_log — BATCH_WISE only (ANIMAL_WISE has no single stage).
@@ -328,7 +334,7 @@ export default function OperationalBatchDataEntry() {
             stageDay: st.day,
             stageTotalDays: st.totalDays,
             stageDates: b.start_date
-              ? `${b.start_date} – ${b.expected_end_date || 'ongoing'}`
+              ? `${formatDate(b.start_date)} – ${b.expected_end_date || 'ongoing'}`
               : '',
             assignedCount: Number(b.opening_quantity) || 0,
             currentCount:
@@ -946,7 +952,7 @@ export default function OperationalBatchDataEntry() {
         const npd = schedData?.next_pending_date || '';
         if (npd) {
           setNextPendingDate(npd);
-          if (!userPickedDateRef.current && selectedDate !== npd) {
+          if (!userPickedDateRef.current && selectedDate !== npd && !autoAdvancedDatesRef.current.has(`${selectedBatchId}|${npd}`)) {
             setSelectedDate(npd);
           }
         }
@@ -1065,12 +1071,16 @@ export default function OperationalBatchDataEntry() {
           // to a different stage because THIS one is locked is exactly
           // backwards. Keep whatever stage they had selected; only fall back
           // if that stage genuinely isn't part of this date at all.
+          // Only a stage the strip shows can stay selected: one with animals on this date or now.
+          const onStrip = new Set(dataEntryStrip(progress).map((x) => x.stage.stage_id));
+          const firstOnStrip = progress.find((p: Row) => onStrip.has(p.stage_id))?.stage_id;
           setSelectedStageId((prev) => {
-            const prevStage = prev
-              ? stages.find((s) => s.stage_id === prev)
-              : undefined;
+            const prevStage =
+              prev && onStrip.has(prev)
+                ? stages.find((s) => s.stage_id === prev)
+                : undefined;
             if (userPickedDateRef.current)
-              return prevStage ? prev : stages[0]?.stage_id || null;
+              return prevStage ? prev : firstOnStrip || stages[0]?.stage_id || null;
             if (prevStage && prevStage.lock_status !== 'LOCKED') return prev;
             const nextOpen = progress.find(
               (p: Row) =>
@@ -1100,6 +1110,7 @@ export default function OperationalBatchDataEntry() {
               .toISOString()
               .slice(0, 10);
 
+            autoAdvancedDatesRef.current.add(`${selectedBatchId}|${selectedDate}`);
             setSelectedDate(dayAfter);
             setDataEntryValues(values);
             setDataEntryLoading(false);
@@ -1146,6 +1157,7 @@ export default function OperationalBatchDataEntry() {
               .slice(0, 10);
 
             if (!userPickedDateRef.current) {
+              autoAdvancedDatesRef.current.add(`${selectedBatchId}|${selectedDate}`);
               setSelectedDate(dayAfter);
               setDataEntryValues(values);
               setDataEntryLoading(false);
@@ -1479,7 +1491,7 @@ export default function OperationalBatchDataEntry() {
     if (!currentBatch) return;
     if (selectedDate > todayStr) {
       setSaveErrorMsg(
-        `Cannot save draft for future date (${selectedDate}). Today is ${todayStr}.`,
+        `Cannot save draft for future date (${formatDate(selectedDate)}). Today is ${formatDate(todayStr)}.`,
       );
       return;
     }
@@ -1507,10 +1519,10 @@ export default function OperationalBatchDataEntry() {
     if (!currentBatch || !selectedStageId) return;
     if (selectedDate > todayStr) {
       setStageActionError(
-        `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`,
+        `Cannot post data entry for future date (${formatDate(selectedDate)}). Today is ${formatDate(todayStr)}.`,
       );
       setSaveErrorMsg(
-        `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`,
+        `Cannot post data entry for future date (${formatDate(selectedDate)}). Today is ${formatDate(todayStr)}.`,
       );
       return;
     }
@@ -1519,7 +1531,7 @@ export default function OperationalBatchDataEntry() {
     if (entryScope !== 'ALL') {
       const match = stageAnimals.find((a: Row) => a.animal_id === entryScope);
       if (match?.is_posted) {
-        const msg = `Data entry for animal ${match.animal_code} has already been posted on ${selectedDate}.`;
+        const msg = `Data entry for animal ${match.animal_code} has already been posted on ${formatDate(selectedDate)}.`;
         setStageActionError(msg);
         setSaveErrorMsg(msg);
         return;
@@ -1532,7 +1544,7 @@ export default function OperationalBatchDataEntry() {
         pendingCount === 0 &&
         selectedStage?.lock_status === 'LOCKED'
       ) {
-        const msg = `All animals in this stage have already been posted on ${selectedDate}.`;
+        const msg = `All animals in this stage have already been posted on ${formatDate(selectedDate)}.`;
         setStageActionError(msg);
         setSaveErrorMsg(msg);
         return;
@@ -1579,7 +1591,7 @@ export default function OperationalBatchDataEntry() {
         const nextStage = remainingUnposted[0];
         setSelectedStageId(nextStage.stage_id);
         setSaveSuccessMsg(
-          `✓ Stage posted. Switched to ${nextStage.stage_name || 'next stage'} to complete entry for ${selectedDate}.`,
+          `✓ Stage posted. Switched to ${nextStage.stage_name || 'next stage'} to complete entry for ${formatDate(selectedDate)}.`,
         );
         setTimeout(() => setSaveSuccessMsg(''), 5000);
         loadDataEntry();
@@ -1593,7 +1605,7 @@ export default function OperationalBatchDataEntry() {
         userPickedDateRef.current = false;
 
         setSaveSuccessMsg(
-          `✓ All stages posted for ${selectedDate}. Moved to ${nextDate} for the next entry.`,
+          `✓ All stages posted for ${formatDate(selectedDate)}. Moved to ${formatDate(nextDate)} for the next entry.`,
         );
         setTimeout(() => setSaveSuccessMsg(''), 5000);
         // Clear previous entries so stale inputs don't linger on new date
@@ -1692,7 +1704,7 @@ export default function OperationalBatchDataEntry() {
     if (!currentBatch) return;
     if (selectedDate > todayStr) {
       setSaveErrorMsg(
-        `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`,
+        `Cannot post data entry for future date (${formatDate(selectedDate)}). Today is ${formatDate(todayStr)}.`,
       );
       return;
     }
@@ -1710,7 +1722,7 @@ export default function OperationalBatchDataEntry() {
       userPickedDateRef.current = false;
 
       setSaveSuccessMsg(
-        `✓ ${selectedDate} posted and locked for batch ${currentBatch.code}. Moved to ${nextDate} for the next entry.`,
+        `✓ ${formatDate(selectedDate)} posted and locked for batch ${currentBatch.code}. Moved to ${formatDate(nextDate)} for the next entry.`,
       );
       setDataEntryValues({});
       setDataEntryTexts({});
@@ -1741,7 +1753,7 @@ export default function OperationalBatchDataEntry() {
     if (!currentBatch || !generalNotes.trim()) return;
     if (selectedDate > todayStr) {
       setSaveErrorMsg(
-        `Cannot record note for future date (${selectedDate}). Today is ${todayStr}.`,
+        `Cannot record note for future date (${formatDate(selectedDate)}). Today is ${formatDate(todayStr)}.`,
       );
       return;
     }
@@ -2559,9 +2571,24 @@ export default function OperationalBatchDataEntry() {
   const animalListStage = animalListStageId
     ? dataEntryProgress.find((p) => p.stage_id === animalListStageId)
     : null;
+  // The badge and this list are who stands in the stage now. Data entry for the posting date acts on who was there that
+  // day, so an animal transferred in after it is listed but marked as not part of that day's entry.
   const animalListRows = animalListStageId
     ? batchAnimalRoster.filter((a) => a.current_stage_id === animalListStageId)
     : [];
+  const animalListDayIds = animalListStageId
+    ? new Set<string>(
+        (
+          dataEntryStages.find((s) => s.stage_id === animalListStageId)
+            ?.animals ?? []
+        ).map((a: Row) => a.animal_id),
+      )
+    : new Set<string>();
+  const animalListJoinedLater = animalListDayIds.size
+    ? animalListRows.filter((a) => !animalListDayIds.has(a.animal_id))
+    : [];
+  // The stages the animal-wise strip shows: only those with animals on the posting date or now (data-entry-stage-strip.ts).
+  const stripStages = dataEntryStrip(dataEntryProgress);
 
   return (
     <div className="space-y-6 animate-fade-in text-[var(--text-primary)]">
@@ -2644,7 +2671,7 @@ export default function OperationalBatchDataEntry() {
                 <div className="whitespace-nowrap">
                   <span style={S.muted}>{t('bdeStartDate')} </span>
                   <span className="font-semibold" style={S.primary}>
-                    {currentBatch?.startDate || NA}
+                    {currentBatch?.startDate ? formatDate(currentBatch?.startDate) : NA}
                   </span>
                 </div>
                 <div className="whitespace-nowrap">
@@ -2782,7 +2809,7 @@ export default function OperationalBatchDataEntry() {
                   {t('bdeStartDate')}
                 </p>
                 <p className="font-semibold text-[var(--text-primary)]">
-                  {currentBatch?.startDate || NA}
+                  {currentBatch?.startDate ? formatDate(currentBatch?.startDate) : NA}
                 </p>
               </div>
               <div>
@@ -2854,7 +2881,7 @@ export default function OperationalBatchDataEntry() {
           {!isAnimalWise && (
             <div>
               <h3 className="text-xs font-bold uppercase tracking-wider text-[var(--text-primary)] mb-3">
-                Selected Day — {selectedDate}
+                Selected Day — {formatDate(selectedDate)}
               </h3>
               <div className="flex flex-wrap items-center gap-4 text-xs bg-[var(--surface-raised)] p-4 rounded-[var(--radius-md)] border border-[var(--border)]">
                 <div>
@@ -3077,8 +3104,7 @@ export default function OperationalBatchDataEntry() {
                     (Next Pending Date)
                   </span>
                 </label>
-                <input
-                  type="date"
+                <DateInput
                   value={selectedDate}
                   disabled
                   readOnly
@@ -3105,7 +3131,7 @@ export default function OperationalBatchDataEntry() {
                       }}
                       options={postedDays.map((d) => ({
                         value: d.date,
-                        label: `${d.date}${d.stages.length ? ` — ${d.stages.join(', ')}` : ''}${d.reopened ? ' (reopened)' : ''}`,
+                        label: `${formatDate(d.date)}${d.stages.length ? ` — ${d.stages.join(', ')}` : ''}${d.reopened ? ' (reopened)' : ''}`,
                       }))}
                       placeholder={`${postedDays.length} posted date${postedDays.length === 1 ? '' : 's'} — view…`}
                       searchPlaceholder="Search dates…"
@@ -3119,7 +3145,7 @@ export default function OperationalBatchDataEntry() {
                 selectedDate !== nextPendingDate && (
                   <div className="flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400 px-3 py-1 rounded-[var(--radius-sm)] text-xs h-8">
                     <span>
-                      Viewing Past Date: <strong>{selectedDate}</strong>{' '}
+                      Viewing Past Date: <strong>{formatDate(selectedDate)}</strong>{' '}
                       (Read-only)
                     </span>
                     <button
@@ -3130,7 +3156,7 @@ export default function OperationalBatchDataEntry() {
                       }}
                       className="font-bold underline ml-1 hover:text-amber-900 dark:hover:text-amber-200 cursor-pointer"
                     >
-                      Return to Next Pending Date ({nextPendingDate})
+                      Return to Next Pending Date ({formatDate(nextPendingDate)})
                     </button>
                   </div>
                 )}
@@ -3175,7 +3201,7 @@ export default function OperationalBatchDataEntry() {
                     }
                     title={
                       isFutureDate
-                        ? `Cannot save draft for future date (${selectedDate})`
+                        ? `Cannot save draft for future date (${formatDate(selectedDate)})`
                         : undefined
                     }
                     className="text-xs h-8 gap-1.5 font-semibold rounded-[var(--radius-sm)] shadow-2xs"
@@ -3203,9 +3229,9 @@ export default function OperationalBatchDataEntry() {
                     mortalityIncomplete
                       ? t('deMortPostBlocked')
                       : isFutureDate
-                        ? `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`
+                        ? `Cannot post data entry for future date (${formatDate(selectedDate)}). Today is ${formatDate(todayStr)}.`
                         : !!nextPendingDate && selectedDate !== nextPendingDate
-                          ? `Only the next pending date (${nextPendingDate}) can be posted.`
+                          ? `Only the next pending date (${formatDate(nextPendingDate)}) can be posted.`
                           : undefined
                   }
                   className="nf-btn-primary text-xs h-8 gap-1.5 font-semibold rounded-[var(--radius-sm)] shadow-2xs"
@@ -3255,7 +3281,7 @@ export default function OperationalBatchDataEntry() {
                       }
                       title={
                         isFutureDate
-                          ? `Cannot save draft for future date (${selectedDate})`
+                          ? `Cannot save draft for future date (${formatDate(selectedDate)})`
                           : undefined
                       }
                       className="text-xs h-8 gap-1.5 font-semibold rounded-[var(--radius-sm)] shadow-2xs"
@@ -3319,7 +3345,7 @@ export default function OperationalBatchDataEntry() {
                             awMortalityIncomplete
                               ? t('deMortPostBlocked')
                               : isFutureDate
-                                ? `Cannot post data entry for future date (${selectedDate}). Today is ${todayStr}.`
+                                ? `Cannot post data entry for future date (${formatDate(selectedDate)}). Today is ${formatDate(todayStr)}.`
                                 : isCurrentAnimalPosted
                                   ? `Data entry for animal ${currentAnimal?.animal_code} is already posted on this date.`
                                   : areAllAnimalsPosted
@@ -3362,6 +3388,21 @@ export default function OperationalBatchDataEntry() {
                               value: a.animal_id,
                               label: `${a.animal_code} ${a.is_posted ? '(✓ Posted)' : '(Pending)'}`,
                             })),
+                            // In this stage now but not on the posting date: shown so the transfer is visible, not selectable.
+                            ...batchAnimalRoster
+                              .filter(
+                                (a) =>
+                                  a.current_stage_id ===
+                                    selectedStage.stage_id &&
+                                  !stageAnimals.some(
+                                    (s) => s.animal_id === a.animal_id,
+                                  ),
+                              )
+                              .map((a: Row) => ({
+                                value: a.animal_id,
+                                label: `${a.animal_code} (joined after ${formatDate(selectedDate)} — not part of this date)`,
+                                disabled: true,
+                              })),
                           ]}
                           searchPlaceholder="Search animal code…"
                         />
@@ -3383,7 +3424,7 @@ export default function OperationalBatchDataEntry() {
             >
               <Lock className="h-4 w-4 shrink-0" />
               <span>
-                {selectedDate} has been posted and locked
+                {formatDate(selectedDate)} has been posted and locked
                 {lockInfo.lockedAt
                   ? ` (${String(lockInfo.lockedAt).slice(0, 16).replace('T', ' ')})`
                   : ''}
@@ -3407,7 +3448,7 @@ export default function OperationalBatchDataEntry() {
                 style={{ color: '#d97706' }}
               />
               <span>
-                Cannot post data entry for future date ({selectedDate}). Today
+                Cannot post data entry for future date ({formatDate(selectedDate)}). Today
                 is {todayStr}.
               </span>
             </div>
@@ -3439,19 +3480,19 @@ export default function OperationalBatchDataEntry() {
               actually there. Clicking a circle/label selects that stage for
               data entry; clicking the headcount specifically opens the
               animal-list popup instead. */}
-              {dataEntryProgress.length > 0 && (
+              {stripStages.length > 0 && (
                 <div className="w-full rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-5 overflow-x-auto shadow-2xs">
                   <div
                     className="relative"
                     style={{
-                      minWidth: `${Math.max(780, dataEntryProgress.length * 108)}px`,
+                      minWidth: `${Math.max(780, stripStages.length * 108)}px`,
                     }}
                   >
                     <div className="absolute top-4 left-6 right-6 h-[3px] bg-[var(--border)] z-0 rounded-full" />
                     <div className="flex items-start justify-between relative z-10">
-                      {dataEntryProgress.map((p) => {
+                      {stripStages.map(({ stage: p, head, onDateOnly }) => {
                         const selected = p.stage_id === selectedStageId;
-                        const hasAnimals = p.animal_count > 0;
+                        const hasAnimals = head > 0;
                         const stageLocked =
                           dataEntryStages.find((s) => s.stage_id === p.stage_id)
                             ?.lock_status === 'LOCKED';
@@ -3481,7 +3522,7 @@ export default function OperationalBatchDataEntry() {
                                 hasAnimals ? 'View animal list' : undefined
                               }
                             >
-                              {hasAnimals ? p.animal_count : '•'}
+                              {hasAnimals ? head : '•'}
                             </button>
                             <div className="mt-2.5 text-center flex flex-col items-center w-full px-0.5">
                               <p
@@ -3502,7 +3543,14 @@ export default function OperationalBatchDataEntry() {
                                     POSTED
                                   </span>
                                 ) : hasAnimals ? (
-                                  <span className="px-2 py-0.5 rounded-full bg-[var(--accent)] text-white text-[9px] font-bold uppercase tracking-wider shadow-2xs">
+                                  <span
+                                    className="px-2 py-0.5 rounded-full bg-[var(--accent)] text-white text-[9px] font-bold uppercase tracking-wider shadow-2xs"
+                                    title={
+                                      onDateOnly
+                                        ? `${head} animal(s) were in ${p.stage_code} on ${formatDate(selectedDate)}, so this date has entries due; none are there now.`
+                                        : undefined
+                                    }
+                                  >
                                     ACTIVE
                                   </span>
                                 ) : (
@@ -3581,9 +3629,7 @@ export default function OperationalBatchDataEntry() {
                           <span className="text-[11px]" style={S.muted}>
                             Posted{' '}
                             {selectedStage.locked_at
-                              ? new Date(
-                                  selectedStage.locked_at,
-                                ).toLocaleString()
+                              ? formatDateTime(selectedStage.locked_at)
                               : ''}
                           </span>
                         </div>
@@ -3679,7 +3725,7 @@ export default function OperationalBatchDataEntry() {
                               style={S.muted}
                             >
                               No activities scheduled for this stage on{' '}
-                              {selectedDate}.
+                              {formatDate(selectedDate)}.
                             </div>
                           );
                         }
@@ -3731,7 +3777,7 @@ export default function OperationalBatchDataEntry() {
                                   <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
                                   <span style={S.primary}>
                                     All {stageAnimals.length} animals in this
-                                    stage are already posted for {selectedDate}.
+                                    stage are already posted for {formatDate(selectedDate)}.
                                     Data entry is locked.
                                   </span>
                                 </div>
@@ -3783,7 +3829,7 @@ export default function OperationalBatchDataEntry() {
                               style={S.muted}
                             >
                               Selected animal not found in this stage on{' '}
-                              {selectedDate}.
+                              {formatDate(selectedDate)}.
                             </div>
                           );
                         }
@@ -3806,7 +3852,7 @@ export default function OperationalBatchDataEntry() {
                                   <span style={S.primary}>
                                     Data entry for{' '}
                                     <strong>{animal.animal_code}</strong> has
-                                    already been posted on {selectedDate}.
+                                    already been posted on {formatDate(selectedDate)}.
                                     Fields are read-only.
                                   </span>
                                 </div>
@@ -3941,7 +3987,7 @@ export default function OperationalBatchDataEntry() {
                       </a>
                       <div className="flex items-center gap-2 shrink-0">
                         <span className="text-[10px] font-mono text-[var(--text-muted)]">
-                          {new Date(att.created_at).toLocaleDateString()}
+                          {formatDate(att.created_at)}
                         </span>
                         <button
                           onClick={() =>
@@ -4047,6 +4093,17 @@ export default function OperationalBatchDataEntry() {
                 </TableBody>
               </table>
             </div>
+          )}
+          {animalListJoinedLater.length > 0 && (
+            <p className="mt-3 text-xs" style={S.muted}>
+              {animalListJoinedLater.length === 1
+                ? `${animalListJoinedLater[0].animal_code} joined this batch after ${formatDate(selectedDate)}`
+                : `${animalListJoinedLater.length} animals (${animalListJoinedLater
+                    .map((a) => a.animal_code)
+                    .join(', ')}) joined this batch after ${formatDate(selectedDate)}`}
+              {animalListJoinedLater.length === 1 ? ' and is' : ' and are'} not
+              part of the entry for this date.
+            </p>
           )}
         </Dialog>
       )}

@@ -1,10 +1,12 @@
 'use client';
 
 import { NA } from '@/utils/na';
+import { formatDate as formatDateShared } from '@/utils/date-short';
 import { useEffect, useMemo, useState } from 'react';
 import {
   Loader2,
   Calendar,
+  CalendarClock,
   Tag,
   Dna,
   HeartPulse,
@@ -21,6 +23,7 @@ import {
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { api } from '@/services/api-client';
+import { AnimalCodeLabel } from '@/components/console/piggery/animal-code-label';
 
 type Row = Record<string, any>;
 
@@ -30,6 +33,7 @@ interface AnimalDetailsModalProps {
   onOpenStageTransition?: (animal: Row) => void;
   onOpenDispose?: (animal: Row) => void;
   onOpenOutOfProduction?: (animal: Row) => void;
+  onOpenConversion?: (animal: Row) => void;
 }
 
 type TabKey =
@@ -55,7 +59,9 @@ import {
   ConsumptionSummary,
   DeathRecord,
   SemenLots,
+  ParityExpense,
 } from './animal-card-activity';
+import { AnimalLedgerPostings } from './animal-ledger-postings';
 import { formatQuantity } from '@/lib/utils';
 
 function unwrap<T = any>(res: any): T {
@@ -69,20 +75,15 @@ function fmt(v: any): string {
 
 function formatDate(d?: string | null): string {
   if (!d) return NA;
-  try {
-    const s = String(d).trim();
-    if (s.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-    return new Date(d).toISOString().slice(0, 10);
-  } catch {
-    return String(d);
-  }
+  return formatDateShared(d);
 }
 
 function formatMoney(amount?: number | string | null): string {
   if (amount === null || amount === undefined || amount === '') return NA;
   const num = Number(amount);
   if (isNaN(num)) return NA;
-  return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // The sign before the symbol: -$23.37, not $-23.37.
+  return `${num < 0 ? '-' : ''}$${Math.abs(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 const human = (v: any) => fmt(v).replaceAll('_', ' ').toLowerCase();
@@ -102,6 +103,7 @@ export default function AnimalDetailsModal({
   onOpenStageTransition,
   onOpenDispose,
   onOpenOutOfProduction,
+  onOpenConversion,
 }: AnimalDetailsModalProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
 
@@ -123,6 +125,9 @@ export default function AnimalDetailsModal({
 
   // What the work done on the animal shows: recorded weights, consumption, death record, a boar's semen.
   const [activity, setActivity] = useState<Row | null>(null);
+  // A sow's cost parity by parity, for the Costing tab.
+  const [parityExpense, setParityExpense] = useState<Row | null>(null);
+  const [loadingParityExpense, setLoadingParityExpense] = useState(false);
   // The append-only movement log — the one source of the animal's moves (assignments, transfers, stage changes, death).
   const [movementLog, setMovementLog] = useState<Row[]>([]);
 
@@ -136,6 +141,7 @@ export default function AnimalDetailsModal({
       setMedications([]);
       setLedgerEntries([]);
       setActivity(null);
+      setParityExpense(null);
       setMovementLog([]);
       setActiveTab('overview');
       return;
@@ -207,6 +213,18 @@ export default function AnimalDetailsModal({
       })
       .catch(() => {
         if (!isCancelled) setActivity(null);
+      });
+    setLoadingParityExpense(true);
+    api
+      .get(`/animal/${animalId}/parity-expense`)
+      .then((res) => {
+        if (!isCancelled) setParityExpense(unwrap<Row>(res));
+      })
+      .catch(() => {
+        if (!isCancelled) setParityExpense(null);
+      })
+      .finally(() => {
+        if (!isCancelled) setLoadingParityExpense(false);
       });
     api
       .get(`/animal/${animalId}/movement-log`)
@@ -601,6 +619,21 @@ export default function AnimalDetailsModal({
                 Out of Production
               </Button>
             )}
+            {onOpenConversion && animal && animal.is_active && animal.costing_start_date && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!animal.out_of_production_date}
+                title={animal.out_of_production_date ? undefined : 'Record her out-of-production date first'}
+                onClick={() => {
+                  onClose();
+                  onOpenConversion(animal);
+                }}
+                className="gap-1.5 text-xs font-semibold"
+              >
+                Convert to Inventory
+              </Button>
+            )}
             {onOpenDispose && animal && (
               <Button
                 variant="destructive"
@@ -642,7 +675,7 @@ export default function AnimalDetailsModal({
               <strong>{activeWithdrawal.medicationName}</strong>. Withdrawal
               period active for{' '}
               <strong>{activeWithdrawal.daysRemaining} more day(s)</strong>{' '}
-              (until {activeWithdrawal.expiryDate}). Slaughter or sale is
+              (until {formatDate(activeWithdrawal.expiryDate)}). Slaughter or sale is
               restricted.
             </span>
           </div>
@@ -716,7 +749,7 @@ export default function AnimalDetailsModal({
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)]">
                       {activity?.current_weight_date
-                        ? `Recorded ${activity.current_weight_date}`
+                        ? `Recorded ${formatDate(activity.current_weight_date)}`
                         : 'None recorded'}
                     </span>
                   </div>
@@ -807,6 +840,93 @@ export default function AnimalDetailsModal({
                   </div>
                 </div>
 
+                {/* Section: worked out by the API from her item, her gilt selection, her litter's farrowing and her posted weights. */}
+                <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
+                  <h4 className="mb-3 font-bold text-[var(--text-primary)] uppercase tracking-wider text-[11px] flex items-center gap-1.5 border-b border-[var(--border)] pb-2">
+                    <CalendarClock className="h-3.5 w-3.5 text-[var(--accent)]" />{' '}
+                    Production Life, Origin & Weight
+                  </h4>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Amortization Start Date
+                      </span>
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {formatDate(animal?.amortization_start_date)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Amortization End Date
+                      </span>
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {formatDate(animal?.amortization_end_date)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Out of Production Date
+                      </span>
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {formatDate(animal?.out_of_production_date)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Colour Code
+                      </span>
+                      <span className="flex items-center gap-1.5 font-medium text-[var(--text-primary)]">
+                        {animal?.colour_code && (
+                          <span
+                            aria-hidden
+                            className="inline-block h-2.5 w-2.5 rounded-full border border-[var(--border)]"
+                            style={{ background: String(animal.colour_code).toLowerCase() }}
+                          />
+                        )}
+                        {fmt(animal?.colour_code)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Lot No.
+                      </span>
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {fmt(animal?.lot_no)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Birth Weight
+                      </span>
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {animal?.birth_weight_kg != null
+                          ? `${Number(animal.birth_weight_kg).toFixed(2)} kg`
+                          : NA}
+                      </span>
+                      {animal?.birth_weight_kg != null && (
+                        <span className="block text-[10px] text-[var(--text-secondary)]">
+                          Litter average
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
+                        Current Weight
+                      </span>
+                      <span className="font-mono text-[var(--text-primary)]">
+                        {animal?.current_weight_kg != null
+                          ? `${Number(animal.current_weight_kg).toFixed(1)} kg`
+                          : NA}
+                      </span>
+                      {animal?.current_weight_date && (
+                        <span className="block text-[10px] text-[var(--text-secondary)]">
+                          Recorded {formatDate(animal.current_weight_date)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 {/* Section: Placement & Location */}
                 <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
                   <h4 className="mb-3 font-bold text-[var(--text-primary)] uppercase tracking-wider text-[11px] flex items-center gap-1.5 border-b border-[var(--border)] pb-2">
@@ -869,10 +989,13 @@ export default function AnimalDetailsModal({
                       <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
                         Source Batch / Receipt
                       </span>
+                      {/* The name, with what it is: the goods receipt she arrived on, or the batch or litter she was born in. Never the id. */}
                       <span className="font-mono text-[var(--text-primary)]">
-                        {fmt(
-                          animal?.source_batch_id || animal?.source_receipt_id,
-                        )}
+                        {animal?.source_batch_id
+                          ? `Batch · ${animal?.source_batch_label || animal?.source_batch_no || NA}`
+                          : animal?.source_receipt_id
+                            ? `GRN · ${animal?.source_receipt_no || NA}`
+                            : NA}
                       </span>
                     </div>
                     <div>
@@ -951,6 +1074,9 @@ export default function AnimalDetailsModal({
                     </div>
                   )}
                 </div>
+
+                {/* Her QR code and barcode, to print for a card or an ear-tag sheet and scan on Livestock › Scan Animal. */}
+                {animal && <AnimalCodeLabel animal={animal} breedName={current.breed || animal.breed_name} />}
               </div>
             )}
 
@@ -1233,7 +1359,7 @@ export default function AnimalDetailsModal({
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)] mt-1 block">
                       {activity?.current_weight_date
-                        ? `Last recorded ${activity.current_weight_date}`
+                        ? `Last recorded ${formatDate(activity.current_weight_date)}`
                         : 'No weight recorded yet'}
                     </span>
                   </div>
@@ -1249,7 +1375,7 @@ export default function AnimalDetailsModal({
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)] mt-1 block">
                       {activity?.adg_g_per_day != null
-                        ? `Between ${activity.first_weight_date} and ${activity.current_weight_date}`
+                        ? `Between ${formatDate(activity.first_weight_date)} and ${formatDate(activity.current_weight_date)}`
                         : 'Needs two weights on different days'}
                     </span>
                   </div>
@@ -1421,6 +1547,12 @@ export default function AnimalDetailsModal({
                                   {isMale ? 'Sow' : 'Boar'}
                                 </th>
                                 <th className="px-3 py-2">Batch</th>
+                                <th className="px-3 py-2">Semen Lot</th>
+                                {!isMale && (
+                                  <th className="px-3 py-2 text-right">
+                                    Semen Cost
+                                  </th>
+                                )}
                                 <th className="px-3 py-2">Preg Check</th>
                                 <th className="px-3 py-2">Result</th>
                                 <th className="px-3 py-2">Due Date</th>
@@ -1453,6 +1585,35 @@ export default function AnimalDetailsModal({
                                   <td className="px-3 py-2 text-[var(--text-secondary)]">
                                     {m.batch_no || NA}
                                   </td>
+                                  <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
+                                    {m.semen_lot_no ? (
+                                      <>
+                                        {m.semen_lot_no}
+                                        <span className="block text-[10px] text-[var(--text-muted)]">
+                                          {formatQuantity(
+                                            m.semen_dose_qty ?? 1,
+                                          )}{' '}
+                                          dose
+                                          {Number(m.semen_dose_qty ?? 1) === 1
+                                            ? ''
+                                            : 's'}
+                                          {m.semen_cost_per_dose != null &&
+                                          Number(m.semen_cost_per_dose) > 0
+                                            ? ` · ${formatMoney(m.semen_cost_per_dose)} / dose`
+                                            : ''}
+                                        </span>
+                                      </>
+                                    ) : (
+                                      NA
+                                    )}
+                                  </td>
+                                  {!isMale && (
+                                    <td className="px-3 py-2 font-mono text-right text-[var(--text-primary)]">
+                                      {m.semen_cost != null
+                                        ? formatMoney(m.semen_cost)
+                                        : NA}
+                                    </td>
+                                  )}
                                   <td className="px-3 py-2 font-mono text-[var(--text-muted)]">
                                     {formatDate(m.preg_check_date)}
                                   </td>
@@ -1611,7 +1772,7 @@ export default function AnimalDetailsModal({
                                 )}
                               </div>
                               <span className="font-mono text-xs text-[var(--text-muted)]">
-                                {ev.date}
+                                {formatDate(ev.date)}
                               </span>
                             </div>
 
@@ -1690,7 +1851,9 @@ export default function AnimalDetailsModal({
                       {formatMoney(animal?.amortisation_monthly)}
                     </span>
                     <span className="text-[10px] text-[var(--text-secondary)]">
-                      IAS 41 depreciation
+                      {animal?.latest_amortisation_date
+                        ? `Latest charge, ${formatDate(animal.latest_amortisation_date)}`
+                        : 'Latest charge: none posted yet'}
                     </span>
                   </div>
                 </div>
@@ -1726,8 +1889,15 @@ export default function AnimalDetailsModal({
                         Residual Value
                       </span>
                       <span className="font-mono text-[var(--text-primary)]">
-                        {formatMoney(animal?.residual_value)}
+                        {formatMoney(animal?.residual_effective)}
                       </span>
+                      {animal?.residual_source && (
+                        <span className="block text-[10px] text-[var(--text-secondary)]">
+                          {animal.residual_source === 'ITEM'
+                            ? 'From her item'
+                            : 'No item costs her'}
+                        </span>
+                      )}
                     </div>
                     <div>
                       <span className="text-[10px] uppercase text-[var(--text-muted)] block font-semibold">
@@ -1777,75 +1947,38 @@ export default function AnimalDetailsModal({
                   </div>
                 </div>
 
-                {/* Bio-Asset Ledger Table */}
-                <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-2xs">
-                  <div className="mb-3 flex items-center justify-between border-b border-[var(--border)] pb-2">
-                    <h4 className="font-bold text-[var(--text-primary)] uppercase tracking-wider text-[11px] flex items-center gap-1.5">
-                      <Layers className="h-3.5 w-3.5 text-[var(--accent)]" />{' '}
-                      Bio-Asset Ledger Postings
-                    </h4>
-                    <span className="text-[10px] font-mono text-[var(--text-muted)]">
-                      {ledgerEntries.length} Posting
-                      {ledgerEntries.length === 1 ? '' : 's'}
-                    </span>
-                  </div>
+                {/* Bio-Asset Ledger Postings: a card that folds away, filtered by kind and paged. */}
+                <AnimalLedgerPostings
+                  entries={ledgerEntries}
+                  loading={loadingLedger}
+                  animalCode={animal?.animal_code ?? ''}
+                  format={{
+                    date: formatDate,
+                    money: formatMoney,
+                    quantity: formatQuantity,
+                  }}
+                />
 
-                  {loadingLedger ? (
-                    <div className="py-8 text-center">
-                      <Loader2 className="mx-auto h-5 w-5 animate-spin text-[var(--text-muted)]" />
-                      <p className="mt-2 text-xs text-[var(--text-muted)]">
-                        Loading ledger entries…
-                      </p>
-                    </div>
-                  ) : ledgerEntries.length === 0 ? (
-                    <p className="py-4 text-center text-[var(--text-muted)]">
-                      No standalone bio-asset ledger entries posted yet.
-                      Valuation reflects registered acquisition cost.
-                    </p>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs border-collapse">
-                        <thead>
-                          <tr className="border-b border-[var(--border)] text-[10px] uppercase font-bold text-[var(--text-muted)] bg-[var(--surface-raised)]">
-                            <th className="px-3 py-2">Posting Date</th>
-                            <th className="px-3 py-2">Entry Type</th>
-                            <th className="px-3 py-2">Unit Cost / Rate</th>
-                            <th className="px-3 py-2">Quantity</th>
-                            <th className="px-3 py-2 text-right">Amount</th>
-                            <th className="px-3 py-2">Reference</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[var(--border)]">
-                          {ledgerEntries.map((le, idx) => (
-                            <tr
-                              key={le.ledger_id || idx}
-                              className="hover:bg-[var(--surface-raised)]/60"
-                            >
-                              <td className="px-3 py-2 font-mono text-[var(--text-primary)]">
-                                {formatDate(le.posting_date)}
-                              </td>
-                              <td className="px-3 py-2 font-semibold text-[var(--text-primary)]">
-                                {le.entry_type}
-                              </td>
-                              <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
-                                {formatMoney(le.unit_cost)}
-                              </td>
-                              <td className="px-3 py-2 font-mono text-[var(--text-secondary)]">
-                                {formatQuantity(le.quantity ?? 1)}
-                              </td>
-                              <td className="px-3 py-2 font-mono font-bold text-right text-[var(--text-primary)]">
-                                {formatMoney(le.computed_cost || le.amount)}
-                              </td>
-                              <td className="px-3 py-2 font-mono text-[var(--text-muted)]">
-                                {le.posting_reference || le.reference || NA}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
+                {/* A sow's cost, parity by parity: what she ate and was dosed with, overhead and amortisation, in each parity's window. */}
+                {!isMale && (
+                  <ParityExpense
+                    data={parityExpense}
+                    loading={loadingParityExpense}
+                  />
+                )}
+
+                {/* What she ate. Feed and overhead before her costing start are capitalised into the book value (rows above);
+                    from the start they are expensed, so they are not postings here but still belong to her cost. */}
+                <p className="text-[11px] text-[var(--text-muted)] px-1">
+                  Feed and overhead before{' '}
+                  {animal?.costing_start_date
+                    ? formatDate(animal.costing_start_date)
+                    : 'the costing start date'}{' '}
+                  are added to the book value (Consumption rows above). From
+                  that date they are expensed in the period and do not appear as
+                  postings; they are listed below.
+                </p>
+                <ConsumptionSummary activity={activity} />
               </div>
             )}
           </>

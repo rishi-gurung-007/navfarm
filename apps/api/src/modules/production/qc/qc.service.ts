@@ -65,6 +65,9 @@ export class QcService {
       if (!param) {
         throw new BadRequestException(`QC parameter with ID '${r.param_id}' not found.`);
       }
+      if (!param.is_active) {
+        throw new BadRequestException(`QC parameter '${param.param_code}' is not active.`);
+      }
 
       let resultStatus = 'PASS';
       if (param.param_type === 'NUMERIC') {

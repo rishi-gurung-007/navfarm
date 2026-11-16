@@ -21,6 +21,7 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { UomService } from '../../master-data/uom/uom.service';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SiloFeedService } from '../silo-feed/silo-feed.service';
 import { LogisticsTripService } from '../../logistics/logistics-trip.service';
 import { StockTransferService } from './stock-transfer.service';
@@ -119,12 +120,13 @@ function setup(queues: Map<unknown, unknown[][]>, opts: { withLogistics?: boolea
     { log: jest.fn().mockResolvedValue({}) } as unknown as AuditLogService,
     ledger as unknown as InventoryLedgerService,
     { postInventoryLedgerEntry: jest.fn() } as unknown as GlPostingService,
+    {} as unknown as NumberSeriesService, // origin's 5th constructor argument; no shipment or receipt path numbers anything
     { resolveConversionFactor: jest.fn().mockResolvedValue(1) } as unknown as UomService,
     { assertCanReceive: jest.fn().mockResolvedValue(undefined) } as unknown as SiloFeedService,
   ] as const;
   const service = opts.withLogistics === false
     ? new StockTransferService(...args)
-    : new StockTransferService(...args, undefined, trips);
+    : new StockTransferService(...args, undefined, undefined, undefined, trips);
   const as = <T>(work: () => Promise<T>) => cls.run(async () => { cls.set(FARM_SCOPE_KEY, SCOPE); return work(); });
   const selects = (table: unknown) => log.filter((e) => e.op === 'select' && e.table === table).length;
   const updatesOf = (table: unknown) => log.filter((e) => e.op === 'update' && e.table === table).map((e) => e.set);

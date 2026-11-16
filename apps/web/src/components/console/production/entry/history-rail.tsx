@@ -1,5 +1,6 @@
 "use client";
 
+import { formatDate } from '@/utils/date-short';
 import React from "react";
 import { useLanguage } from "@/hooks/useLanguage";
 import type { DayState, HistoryDay } from "./types";
@@ -81,7 +82,7 @@ export function HistoryRail({
               ].join(" ")}
             >
               <span className="block text-[13px] font-semibold text-(--text-primary)">
-                {day.date}
+                {formatDate(day.date)}
                 {day.date === today && (
                   <span className="ml-1 text-[11px] font-normal text-(--text-secondary)">· {t("deToday")}</span>
                 )}

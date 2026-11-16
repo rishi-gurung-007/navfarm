@@ -47,7 +47,7 @@ describe('ItemTypeService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ItemTypeService,
-        { provide: ClsService, useValue: { get: jest.fn().mockReturnValue(mockDb) } },
+        { provide: ClsService, useValue: { get: jest.fn((key: string) => (key === 'tenantPostingTransaction' ? true : mockDb)) } },
         { provide: AuditLogService, useValue: { log: jest.fn().mockResolvedValue({}) } },
         { provide: NumberSeriesService, useValue: numberSeries },
       ],

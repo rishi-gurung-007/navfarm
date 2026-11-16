@@ -81,6 +81,16 @@ describe('GlPostingService', () => {
     );
   });
 
+  it('posts under gl_mapping_type when a row names one, and under its transaction type otherwise', async () => {
+    const resolve = jest.spyOn(service as any, 'resolveMapping').mockResolvedValue({ debit_gl_account_id: 'gl-dr', credit_gl_account_id: 'gl-cr' });
+    mockDbSelect.mockReturnValue(itemLookup({ valuation_method: null }));
+
+    await service.postInventoryLedgerEntry({ ...baseLedgerEntry, transaction_type: 'CONSUMPTION', gl_mapping_type: 'BIO_CONSUMPTION_PREMATURE' } as any);
+    await service.postInventoryLedgerEntry({ ...baseLedgerEntry, transaction_type: 'CONSUMPTION', gl_mapping_type: null } as any);
+
+    expect(resolve.mock.calls.map((c) => c[2])).toEqual(['BIO_CONSUMPTION_PREMATURE', 'CONSUMPTION']);
+  });
+
   it('throws when no mapping matches at all', async () => {
     mockDbSelect
       .mockReturnValueOnce(itemLookup({ valuation_method: null }))
@@ -123,7 +133,102 @@ describe('GlPostingService', () => {
   });
 
 
+  describe('entry type as a lookup dimension', () => {
+    const wildcard = { item_category_id: null, nob_id: null, lob_id: null, stage_id: null, valuation_method: null, entry_type: null, debit_gl_account_id: 'gl-any-dr', credit_gl_account_id: 'gl-any-cr' };
+    const transfer = { ...wildcard, entry_type: 'TRANSFER', debit_gl_account_id: 'gl-transfer-dr', credit_gl_account_id: 'gl-transfer-cr' };
+    const debitPosted = () => (mockJournalService.createAndPostSystemJournal.mock.calls[0][0] as any).lines[0].glAccountId;
+
+    it("passes the ledger row's entry type to the lookup, and constrains on it to the matching value or a wildcard", async () => {
+      let query: any;
+      mockDbSelect.mockReturnValueOnce(itemLookup({ valuation_method: null })).mockReturnValueOnce({ from: () => ({ where: (condition: any) => {
+        query = new MySqlDialect().sqlToQuery(condition);
+        return [wildcard];
+      } }) });
+      await service.postInventoryLedgerEntry({ ...baseLedgerEntry, transaction_type: 'TRANSFER_SHIPMENT', entry_type: 'TRANSFER' } as any);
+      expect(query.sql).toContain('`entry_type` = ?');
+      expect(query.sql).toContain('`entry_type` is null');
+      expect(query.params).toContain('TRANSFER');
+    });
+
+    it('prefers a mapping pinned to the ledger row\'s entry type over a wildcard one', async () => {
+      mockDbSelect.mockReturnValueOnce(itemLookup({ valuation_method: null })).mockReturnValueOnce(mappingLookup([wildcard, transfer]));
+      await service.postInventoryLedgerEntry({ ...baseLedgerEntry, transaction_type: 'TRANSFER_SHIPMENT', entry_type: 'TRANSFER' } as any);
+      expect(debitPosted()).toBe('gl-transfer-dr');
+    });
+
+    it('falls back to the wildcard mapping when no mapping is pinned to that entry type', async () => {
+      mockDbSelect.mockReturnValueOnce(itemLookup({ valuation_method: null })).mockReturnValueOnce(mappingLookup([wildcard]));
+      await service.postInventoryLedgerEntry({ ...baseLedgerEntry, transaction_type: 'TRANSFER_SHIPMENT', entry_type: 'NEGATIVE' } as any);
+      expect(debitPosted()).toBe('gl-any-dr');
+    });
+
+    it('does not constrain on entry type for a batch cost, which has none', async () => {
+      let query: any;
+      mockDbSelect.mockReturnValueOnce({ from: () => ({ where: (condition: any) => {
+        query = new MySqlDialect().sqlToQuery(condition);
+        return [wildcard];
+      } }) });
+      await service.postBatchCostEntry({ tenantId: 'tenant-1', companyId: 'comp-1', transactionType: 'OVERHEAD', amount: 50, documentNo: 'BATCH-001', postingDate: '2026-06-01' });
+      expect(query.sql).not.toMatch(/entry_type/);
+    });
+  });
+
   // Each farm has its own cost centre (decisions, 11 Oct).
+  describe('an animal\'s own asset account', () => {
+    const mapping = (over: object = {}) => mappingLookup([{ item_category_id: null, nob_id: null, lob_id: null, valuation_method: null, debit_gl_account_id: 'gl-1050', credit_gl_account_id: 'gl-1010', ...over }]);
+    const lines = () => (mockJournalService.createAndPostSystemJournal.mock.calls[0][0] as any).lines as Array<{ glAccountId: string; debitAmount: number; creditAmount: number }>;
+
+    it('puts the whole debit of an inventory entry on the account named, and leaves the credit with the mapping', async () => {
+      mockDbSelect.mockReturnValueOnce(itemLookup({ valuation_method: null })).mockReturnValueOnce(mapping());
+      await service.postInventoryLedgerEntry(baseLedgerEntry as any, 'u1', { debitAccountId: 'gl-1060' });
+      expect(lines().map((l) => [l.glAccountId, l.debitAmount, l.creditAmount])).toEqual([['gl-1060', 100, 0], ['gl-1010', 0, 100]]);
+    });
+
+    it('splits the debit of an entry between accounts in proportion to the parts, rescaled to the entry (the rounding on the last), the mapping taking a part with no account', async () => {
+      mockDbSelect.mockReturnValueOnce(itemLookup({ valuation_method: null })).mockReturnValueOnce(mapping());
+      // 3 parts of a 100.00 entry: 1 kg to class A, 1 kg to class A, 1 kg to an animal whose item names no account
+      await service.postInventoryLedgerEntry(baseLedgerEntry as any, 'u1', { debitSplit: [{ accountId: 'gl-1060', amount: 1 }, { accountId: 'gl-1060', amount: 1 }, { accountId: null, amount: 1 }] });
+      const l = lines();
+      expect(l.filter((x) => x.debitAmount > 0).map((x) => [x.glAccountId, x.debitAmount])).toEqual([['gl-1060', 66.6667], ['gl-1050', 33.3333]]);
+      expect(l.reduce((n, x) => n + x.debitAmount, 0)).toBeCloseTo(100, 4);
+      expect(l.reduce((n, x) => n + x.creditAmount, 0)).toBeCloseTo(100, 4);
+    });
+
+    it('swaps the overridden accounts as the mapping\'s are for an unfavourable posting (the asset side stays the asset side)', async () => {
+      mockDbSelect.mockReturnValue(mapping({ debit_gl_account_id: 'gl-1060', credit_gl_account_id: 'gl-4010' }));
+      await service.postBatchCostEntry({ tenantId: 't', companyId: 'c', transactionType: 'BIO_DISPOSAL_SOLD', amount: 50, documentNo: 'A', postingDate: '2026-06-01', debitAccountId: 'gl-1065x', reverseDirection: true });
+      expect(lines().map((l) => [l.glAccountId, l.debitAmount, l.creditAmount])).toEqual([['gl-4010', 50, 0], ['gl-1065x', 0, 50]]);
+    });
+
+    // The animal's rows, joined to her item: the acquisition account on its Bio Asset Costing tab.
+    const animalAccounts = (rows: any[]) => ({ from: jest.fn().mockReturnValue({ innerJoin: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue(rows) }) }) });
+
+    it('carries an animal in the acquisition account of her item, and none for one whose item names none', async () => {
+      mockDbSelect.mockReturnValueOnce(animalAccounts([
+        { animal_id: 'a-1', account: 'gl-1060' },
+        { animal_id: 'a-2', account: null },
+      ]));
+      const accounts = await service.animalAssetAccountIds(['a-1', 'a-2', 'a-3']);
+      expect(accounts.get('a-1')).toBe('gl-1060');
+      expect(accounts.has('a-2')).toBe(false);
+      expect(accounts.has('a-3')).toBe(false);
+    });
+
+    it('asks nothing for no animals', async () => {
+      expect((await service.animalAssetAccountIds([])).size).toBe(0);
+      expect(mockDbSelect).not.toHaveBeenCalled();
+    });
+
+    it('names the item\'s own account for the moments before an animal exists (a receipt, a registration), and none where the item names none', async () => {
+      mockDbSelect.mockReturnValueOnce(itemLookup({ account: 'gl-item' }));
+      await expect(service.assetAccountForItem('t', 'c', 'item-1')).resolves.toBe('gl-item');
+      mockDbSelect.mockReturnValueOnce(itemLookup({ account: null }));
+      await expect(service.assetAccountForItem('t', 'c', 'item-1')).resolves.toBeUndefined();
+      mockDbSelect.mockReturnValueOnce(itemLookup(null));
+      await expect(service.assetAccountForItem('t', 'c', 'item-1')).resolves.toBeUndefined();
+    });
+  });
+
   describe('farm cost centre on inventory journals', () => {
     const locLookup = (row: any) => ({
       from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue(row ? [row] : []) }) }),
@@ -163,6 +268,36 @@ describe('GlPostingService', () => {
       mockDbSelect.mockReturnValueOnce(itemLookup({ valuation_method: null })).mockReturnValueOnce(mapping());
       await service.postInventoryLedgerEntry(baseLedgerEntry as any);
       expect(mockDbSelect).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('postAccountTransfer — value moved from one account to another, with no mapping', () => {
+    const params = {
+      tenantId: 'tenant-1',
+      companyId: 'company-1',
+      postingDate: '2026-11-11',
+      sourceDocumentType: 'BATCH_TRANSFER',
+      documentNo: 'BTR-0002',
+      description: 'Transfer BTR-0002',
+      debitAccountId: 'acct-premature',
+      creditAccountId: 'acct-weaners',
+      amount: 1.9236,
+    };
+
+    it('posts Dr the account the value goes to / Cr the one it leaves, for the amount', async () => {
+      await service.postAccountTransfer(params);
+      const journal = mockJournalService.createAndPostSystemJournal.mock.calls[0][0] as any;
+      expect(journal).toMatchObject({ sourceDocumentType: 'BATCH_TRANSFER', sourceDocumentNo: 'BTR-0002', postingDate: '2026-11-11' });
+      expect(journal.lines.map((l: any) => [l.glAccountId, l.debitAmount, l.creditAmount])).toEqual([
+        ['acct-premature', 1.9236, 0],
+        ['acct-weaners', 0, 1.9236],
+      ]);
+    });
+
+    it('posts nothing from an account to itself, or for a nil amount', async () => {
+      await expect(service.postAccountTransfer({ ...params, debitAccountId: 'acct-weaners' })).resolves.toBeNull();
+      await expect(service.postAccountTransfer({ ...params, amount: 0.004 })).resolves.toBeNull();
+      expect(mockJournalService.createAndPostSystemJournal).not.toHaveBeenCalled();
     });
   });
 });

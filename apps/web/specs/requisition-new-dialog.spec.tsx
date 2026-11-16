@@ -1,3 +1,4 @@
+import { formatDate } from '@/utils/date-short';
 import React from 'react';
 import {
   render,
@@ -1085,11 +1086,12 @@ describe('RequisitionNewDialog — header first, then lines (Task 18b)', () => {
     await fillLine(1, 's1', '3000', '2099-10-05');
 
     const dateInput = screen.getByLabelText('rqdReqDate') as HTMLInputElement;
-    expect(dateInput.value).toBe(todayIso());
+    // The field shows the app's one date style; the request carries the stored date.
+    expect(dateInput.value).toBe(formatDate(todayIso()));
 
     // Edit to past date
     fireEvent.change(dateInput, { target: { value: '2025-01-10' } });
-    expect(dateInput.value).toBe('2025-01-10');
+    expect(dateInput.value).toBe('10/01/25');
 
     fireEvent.click(screen.getByRole('button', { name: 'rqNewCreate' }));
     await waitFor(() =>

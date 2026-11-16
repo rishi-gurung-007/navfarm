@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDateTime } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -247,7 +248,7 @@ export default function SettingsPage() {
                       style={{ color: 'var(--text-muted)' }}
                     >
                       {t('settingsSessionIssued')}{' '}
-                      {new Date(s.issuedAt).toLocaleString()}
+                      {formatDateTime(s.issuedAt)}
                     </span>
                   </div>
                   <button

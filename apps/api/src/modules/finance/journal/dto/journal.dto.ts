@@ -105,4 +105,14 @@ export class QueryJournalDto extends MasterListQueryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @ApiProperty({ description: 'Earliest posting date (YYYY-MM-DD), inclusive', required: false })
+  @IsOptional()
+  @IsDateString()
+  dateFrom?: string;
+
+  @ApiProperty({ description: 'Latest posting date (YYYY-MM-DD), inclusive', required: false })
+  @IsOptional()
+  @IsDateString()
+  dateTo?: string;
 }

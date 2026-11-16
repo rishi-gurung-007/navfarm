@@ -173,8 +173,16 @@ describe('MortalityAnimalsField', () => {
     fireEvent.click(screen.getByTestId('mortality-animals-button'));
     const dead = screen.getByTestId('mortality-dead-d-1');
     expect(dead.textContent).toContain('PIG-0099');
-    expect(dead.textContent).toContain('Died 2026-10-06');
+    expect(dead.textContent).toContain('Died 06/10/26');
     expect((within(dead).getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
   });
 });
 
+describe('mortality payload: disposal destination', () => {
+  it('sends where the body went when it is said, and nothing when it is not', () => {
+    const base = { animal_id: 'a1', dead_weight_kg: '120', reason_id: 'r1', reason_text: '' };
+    expect(mortalityPayload([{ ...base, disposal_destination: ' Burial ' }])[0]).toMatchObject({ disposal_destination: 'Burial' });
+    expect(mortalityPayload([base])[0]).not.toHaveProperty('disposal_destination');
+    expect(mortalityPayload([{ ...base, disposal_destination: '  ' }])[0]).not.toHaveProperty('disposal_destination');
+  });
+});

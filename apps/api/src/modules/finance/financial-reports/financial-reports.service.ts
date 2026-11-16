@@ -1,9 +1,11 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, lte, between, isNull, sql, inArray, or } from 'drizzle-orm';
+import { eq, and, lte, between, isNull, isNotNull, sql, inArray, or } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { animalOnFarm, animalScopeConditions, batchOnFarm, batchScopeConditions, farmScope, FarmScope } from '../../../common/farm-scope';
+import { rollForwardByProfile, tieOutRow, type LedgerFact, type TieOutRow } from '../bio-costing/bio-costing-report.rules';
+import { bioEventOf } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 interface AccountBalanceRow {
   gl_account_id: string;
@@ -241,6 +243,7 @@ export class FinancialReportsService {
       .select({
         entry_id: schema.bioAssetLedger.entry_id,
         entry_type: schema.bioAssetLedger.entry_type,
+        transaction_type: schema.bioAssetLedger.transaction_type,
         posting_date: schema.bioAssetLedger.posting_date,
         cost_amount: schema.bioAssetLedger.cost_amount,
         quantity: schema.bioAssetLedger.quantity,
@@ -248,6 +251,8 @@ export class FinancialReportsService {
         animal_id: schema.bioAssetLedger.animal_id,
         stage: schema.bioAssetLedger.stage,
         costing_method: schema.bioAssetLedger.costing_method,
+        document_type: schema.bioAssetLedger.document_type,
+        remaining_quantity: schema.bioAssetLedger.remaining_quantity,
       })
       .from(schema.bioAssetLedger)
       .where(and(...conditions))
@@ -268,7 +273,14 @@ export class FinancialReportsService {
     const periodTransactions: any[] = [];
 
     for (const e of allEntries) {
-      const amount = Number(e.cost_amount) || 0;
+      let amount = Number(e.cost_amount) || 0;
+      // A goods receipt of animals puts its whole price in the ledger as a PURCHASE row; each animal registered from it then takes her own
+      // ACQUISITION row at the same price and reduces the receipt's remaining quantity. Only the part not yet registered is still the receipt's:
+      // counting both would carry every registered animal twice.
+      const event = bioEventOf(e);
+      if (event === 'PURCHASE' && e.remaining_quantity != null && Number(e.quantity) > 0) {
+        amount = (amount * Number(e.remaining_quantity)) / Number(e.quantity);
+      }
       const isPrior = e.posting_date < dateFrom;
 
       if (isPrior) {
@@ -277,14 +289,12 @@ export class FinancialReportsService {
         periodMovements += amount;
         periodTransactions.push(e);
 
-        switch (e.entry_type) {
+        switch (event) {
           case 'ACQUISITION':
             acquisitions += amount;
             break;
           case 'CONSUMPTION':
-          case 'OVERHEAD':
           case 'OVERHEAD_COST':
-          case 'GROWTH_ADJMT':
             growthCapitalization += amount;
             break;
           case 'AMORTIZATION':
@@ -296,9 +306,7 @@ export class FinancialReportsService {
           case 'TRANSFORMATION':
             harvestTransfers += amount;
             break;
-          case 'WRITEOFF':
           case 'MORTALITY':
-          case 'DEAD_PLANT':
             disposals += amount;
             break;
           default:
@@ -343,9 +351,20 @@ export class FinancialReportsService {
         scope.lobId ?? undefined,
       );
 
+      // Each costed item's own acquisition account (the sheet's "GP-Imp-F Acquisition Cost" and the rest): an animal's cost, capitalised feed and fair value
+      // movement are posted there, so leaving them out reads as a variance as large as the herd. Its own accumulated amortisation account too (V1.3 names
+      // one per amortised item): the amortisation the ledger deducts is credited there.
+      const itemAcquisitionIds = new Set(
+        (await this.db.select({ id: schema.itemMaster.bio_acquisition_gl_id, accum: schema.itemMaster.bio_accum_amort_gl_id }).from(schema.itemMaster)
+          .where(and(eq(schema.itemMaster.company_id, companyId), eq(schema.itemMaster.is_biological_asset, true), isNotNull(schema.itemMaster.bio_acquisition_gl_id))))
+          .flatMap((r) => [r.id, r.accum].filter((x): x is string => !!x)),
+      );
+      // The asset accounts and the accumulated amortisation deducted from them: the ledger's carrying value is net of the amortisation.
       const bioGlAccounts = glRows.filter((r) =>
+        itemAcquisitionIds.has(r.gl_account_id) ||
         r.account_code.startsWith('1050') ||
         r.account_code.startsWith('1060') ||
+        r.account_code.startsWith('1065') ||
         r.account_name.toLowerCase().includes('biological asset')
       );
 
@@ -366,10 +385,16 @@ export class FinancialReportsService {
       };
     }
 
+    // Bio-asset costing, Phase 6: the same ledger split by costed item, and each item's amortisation and fair-value movement
+    // tied to the GL accounts it posts to (the journal lines the trial balance reads).
+    const { byProfile, costingTieOut } = await this.bioCostingBreakdown(tenantId, companyId, conditions, dateFrom, dateTo, scope);
+
     return {
       dateFrom,
       dateTo,
       openingCarryingValue,
+      byProfile,
+      costingTieOut,
       movements: {
         acquisitions,
         growthCapitalization,
@@ -387,6 +412,100 @@ export class FinancialReportsService {
       glReconciliation,
       transactionCount: periodTransactions.length,
     };
+  }
+
+  /**
+   * The roll-forward by costed item, and the tie-out of the run postings to the GL. The ledger side of each row is built from the
+   * ledger alone; the GL side from posted journal lines of the costing runs and the exits. They are independent, so a difference means
+   * something real: a death whose amortisation was never cleared, a run journal reversed on one side only.
+   */
+  private async bioCostingBreakdown(tenantId: string, companyId: string, conditions: any[], dateFrom: string, dateTo: string, scope: FarmScope) {
+    const L = schema.bioAssetLedger, A = schema.animalRegister, I = schema.itemMaster;
+    const ledgerRows = await this.db
+      .select({
+        entry_type: L.entry_type, transaction_type: L.transaction_type, document_type: L.document_type, posting_date: L.posting_date, amount: L.cost_amount, run_id: L.run_id, animal_id: L.animal_id,
+        item_method: I.bio_costing_method, item_code: I.item_code, expense_gl: I.bio_amort_expense_gl_id, accum_gl: I.bio_accum_amort_gl_id, fv_gl: I.bio_fv_gain_loss_gl_id, fv_loss_gl: I.bio_fv_loss_gl_id,
+        died: sql<number>`(${A.is_active} = 0 AND ${A.disposal_type} = 'DIED' AND ${A.disposal_date} <= ${dateTo})`,
+      })
+      .from(L)
+      .leftJoin(A, eq(A.animal_id, L.animal_id))
+      .leftJoin(I, eq(I.item_id, A.item_id))
+      .where(and(...conditions));
+    // What each row records, worked out once from its codes. An animal whose item has costing terms is grouped under the item (her accounts are the item's);
+    // any other row (an animal no item costs, or batch-level cost) has none. The field is still called profile_code, for the screens that read it.
+    const rows = ledgerRows.map((r) => {
+      const costed = !!r.item_method;
+      return {
+        ...r,
+        profile_code: costed ? r.item_code : null,
+        expense_gl: costed ? r.expense_gl : null,
+        accum_gl: costed ? r.accum_gl : null,
+        fv_gl: costed ? r.fv_gl : null,
+        fv_loss_gl: costed ? r.fv_loss_gl : null,
+        event: bioEventOf(r),
+      };
+    });
+
+    const facts: LedgerFact[] = rows.map((r) => ({
+      profile_code: r.profile_code, has_animal: !!r.animal_id, event: r.event, posting_date: r.posting_date, amount: Number(r.amount) || 0,
+    }));
+    const byProfile = rollForwardByProfile(facts, dateFrom, dateTo);
+
+    // Farm-filtered ledger: journal lines carry no farm, so there is no GL figure to set beside it.
+    if (scope.farmId) {
+      return { byProfile, costingTieOut: { available: false, reason: 'GL journal lines do not carry a farm dimension.', rows: [] as TieOutRow[] } };
+    }
+
+    const runRows = rows.filter((r) => r.run_id && r.posting_date <= dateTo);
+    const accountIds = new Set<string>();
+    for (const r of runRows) for (const id of [r.expense_gl, r.accum_gl, r.fv_gl, r.fv_loss_gl]) if (id) accountIds.add(id);
+    if (!accountIds.size) return { byProfile, costingTieOut: { available: true, reason: null, rows: [] as TieOutRow[] } };
+
+    const JL = schema.journalLine, JH = schema.journalHeader, GA = schema.glAccountMaster;
+    const gl = await this.db
+      .select({ account_id: JL.gl_account_id, code: GA.account_code, name: GA.account_name, source: JH.source_document_type, posting_date: JH.posting_date, debit: JL.debit_amount, credit: JL.credit_amount })
+      .from(JL)
+      .innerJoin(JH, eq(JL.journal_id, JH.journal_id))
+      .innerJoin(GA, eq(JL.gl_account_id, GA.gl_account_id))
+      .where(and(
+        eq(JH.tenant_id, tenantId), eq(JH.company_id, companyId), eq(JH.status, 'POSTED'), isNull(JH.deleted_at),
+        inArray(JH.source_document_type, ['BIO_COSTING_RUN', 'BIO_ASSET_EXIT']), inArray(JL.gl_account_id, [...accountIds]), lte(JH.posting_date, dateTo),
+        ...(scope.lobId ? [eq(JL.lob_id, scope.lobId)] : []),
+      ));
+    const named = new Map<string, { code: string; name: string }>();
+    for (const g of gl) named.set(g.account_id, { code: g.code, name: g.name });
+    const nameOf = async (id: string) => {
+      if (named.has(id)) return named.get(id)!;
+      const [a] = await this.db.select({ code: GA.account_code, name: GA.account_name }).from(GA).where(eq(GA.gl_account_id, id)).limit(1);
+      return a ?? { code: id, name: '' };
+    };
+    const inPeriod = (d: string) => d >= dateFrom && d <= dateTo;
+    const sum = (id: string, fn: (g: (typeof gl)[number]) => number) => gl.filter((g) => g.account_id === id).reduce((n, g) => n + fn(g), 0);
+
+    const tie: TieOutRow[] = [];
+    for (const id of new Set(runRows.map((r) => r.expense_gl).filter((x): x is string => !!x))) {
+      const ledger = runRows.filter((r) => r.expense_gl === id && r.event === 'AMORTIZATION' && inPeriod(r.posting_date)).reduce((n, r) => n - (Number(r.amount) || 0), 0);
+      const glAmount = sum(id, (g) => (g.source === 'BIO_COSTING_RUN' && inPeriod(g.posting_date) ? Number(g.debit) - Number(g.credit) : 0));
+      tie.push(tieOutRow('AMORTISATION_EXPENSE', await nameOf(id), 'PERIOD', ledger, glAmount));
+    }
+    for (const id of new Set(runRows.map((r) => r.accum_gl).filter((x): x is string => !!x))) {
+      // What the accumulated account should hold: everything the runs have amortised, except for animals that have died (their amortisation is cleared at death).
+      const ledger = runRows.filter((r) => r.accum_gl === id && r.event === 'AMORTIZATION' && !Number(r.died)).reduce((n, r) => n - (Number(r.amount) || 0), 0);
+      const glAmount = sum(id, (g) => Number(g.credit) - Number(g.debit));
+      tie.push(tieOutRow('ACCUMULATED_AMORTISATION', await nameOf(id), 'TO_DATE', ledger, glAmount));
+    }
+    // An item that splits gain from loss (COA: FV Gain / FV Loss) ties out over the pair: gains are credited to one, losses debited to the other.
+    const fvPairs = new Map<string, { gain: string; loss: string | null }>();
+    for (const r of runRows) if (r.fv_gl) fvPairs.set(`${r.fv_gl}|${r.fv_loss_gl ?? ''}`, { gain: r.fv_gl, loss: r.fv_loss_gl && r.fv_loss_gl !== r.fv_gl ? r.fv_loss_gl : null });
+    for (const [key, pair] of fvPairs) {
+      const ledger = runRows.filter((r) => `${r.fv_gl}|${r.fv_loss_gl ?? ''}` === key && r.event === 'FAIR_VALUE_ADJMT' && inPeriod(r.posting_date)).reduce((n, r) => n + (Number(r.amount) || 0), 0);
+      const net = (id: string) => sum(id, (g) => (g.source === 'BIO_COSTING_RUN' && inPeriod(g.posting_date) ? Number(g.credit) - Number(g.debit) : 0));
+      const glAmount = net(pair.gain) + (pair.loss ? net(pair.loss) : 0);
+      const gainName = await nameOf(pair.gain);
+      const name = pair.loss ? { code: `${gainName.code} / ${(await nameOf(pair.loss)).code}`, name: `${gainName.name} / ${(await nameOf(pair.loss)).name}` } : gainName;
+      tie.push(tieOutRow('FAIR_VALUE_GAIN_LOSS', name, 'PERIOD', ledger, glAmount));
+    }
+    return { byProfile, costingTieOut: { available: true, reason: null, rows: tie } };
   }
 
   async getPiggeryHerdAnalytics(tenantId: string, queryCompanyId: string, batchId?: string) {

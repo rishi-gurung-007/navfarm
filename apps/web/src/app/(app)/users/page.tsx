@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDateTime } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -210,7 +211,7 @@ export default function TeamPage() {
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime())
       ? String(value)
-      : parsed.toLocaleString();
+      : formatDateTime(parsed);
   };
 
   const initials = (name?: string) =>

@@ -1,5 +1,6 @@
 "use client";
 
+import { DateInput } from '@/components/ui/date-input';
 import { useEffect, useState } from "react";
 import { Loader2, Inbox } from "lucide-react";
 import { Toast } from "@/components/ui/toast";
@@ -63,7 +64,7 @@ export default function TrialBalancePanel() {
         </div>
         <div className="flex items-center gap-1.5">
           <span className="text-[11px] font-medium" style={S.muted}>{t("tbAsOf")}</span>
-          <input type="date" value={asOfDate} onChange={(e) => setAsOfDate(e.target.value)} className={inputCls} style={S.input} />
+          <DateInput value={asOfDate} onChange={(e) => setAsOfDate(e.target.value)} className={inputCls} style={S.input} />
         </div>
       </div>
 

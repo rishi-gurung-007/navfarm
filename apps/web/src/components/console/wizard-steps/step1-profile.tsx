@@ -1,3 +1,4 @@
+import { DateInput } from '@/components/ui/date-input';
 import React, { useEffect, useId, useState } from "react";
 import { Select } from "@/components/ui/select";
 import { Field } from "@/components/ui/field";
@@ -234,9 +235,8 @@ export default function Step1Profile({ onSubmit, isSubmitting, initialData }: St
           </Select>
         </div>
         <Field label={t("ctIncorporationDate")} htmlFor={fieldId("incorporation_date")}>
-          <Input
+          <DateInput
             id={fieldId("incorporation_date")}
-            type="date"
             value={formData.incorporation_date}
             onChange={(e) => setFormData({ ...formData, incorporation_date: e.target.value })}
           />

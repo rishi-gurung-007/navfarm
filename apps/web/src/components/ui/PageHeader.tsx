@@ -45,6 +45,8 @@ export interface PageHeaderProps {
   actions?: ReactNode;
   /** Secondary metadata — counts, status, last-updated. Sits under the description. */
   meta?: ReactNode;
+  /** A small control beside the title, to its right — an info tooltip that explains the page. */
+  titleAddon?: ReactNode;
   /**
    * Optional controls row — search, filters, view options — below the heading
    * block. Use it when the controls belong to the page rather than to one
@@ -63,6 +65,7 @@ export function PageHeader({
   title,
   actions,
   meta,
+  titleAddon,
   toolbar,
   sticky = true,
 }: PageHeaderProps) {
@@ -74,9 +77,18 @@ export function PageHeader({
     >
       <div data-page-header-row>
         <div data-page-header-heading>
-          <h1 className="nf-text-page-title" data-page-title>
-            {title}
-          </h1>
+          {titleAddon ? (
+            <div className="flex items-center gap-2">
+              <h1 className="nf-text-page-title" data-page-title>
+                {title}
+              </h1>
+              {titleAddon}
+            </div>
+          ) : (
+            <h1 className="nf-text-page-title" data-page-title>
+              {title}
+            </h1>
+          )}
           {meta && <div data-page-header-meta>{meta}</div>}
         </div>
         {actions && <div data-page-header-actions>{actions}</div>}

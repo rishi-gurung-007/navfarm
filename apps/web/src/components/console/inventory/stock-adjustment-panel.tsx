@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
@@ -776,7 +778,7 @@ export default function StockAdjustmentPanel() {
                       {row.adjustment_no}
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>
-                      {row.posting_date}
+                      {formatDate(row.posting_date)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>
                       {warehouseLabel(row.warehouse_id)}
@@ -899,8 +901,7 @@ export default function StockAdjustmentPanel() {
                   <Calendar className="h-3 w-3 text-(--accent)" />
                   Date <span className="text-(--danger)">*</span>
                 </label>
-                <input
-                  type="date"
+                <DateInput
                   value={header.posting_date}
                   onChange={(e) =>
                     setHeader((h) => ({ ...h, posting_date: e.target.value }))
@@ -1645,7 +1646,7 @@ export default function StockAdjustmentPanel() {
                 >
                   {t('sapPostingDate')}
                 </p>
-                <p style={S.primary}>{viewing.posting_date}</p>
+                <p style={S.primary}>{formatDate(viewing.posting_date)}</p>
               </div>
               <div>
                 <p
@@ -1673,7 +1674,7 @@ export default function StockAdjustmentPanel() {
                   >
                     {t('sapPostedAt')}
                   </p>
-                  <p style={S.primary}>{viewing.posted_at}</p>
+                  <p style={S.primary}>{formatDate(viewing.posted_at)}</p>
                 </div>
               )}
             </div>

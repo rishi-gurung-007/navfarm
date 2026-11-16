@@ -1,4 +1,5 @@
 import {
+  acceptedBoarIds,
   checkFarrowing,
   checkMating,
   checkSemen,
@@ -7,6 +8,7 @@ import {
   isBreedingBatch,
   isLiveBoar,
   isLiveSow,
+  lotDosesOf,
   lotState,
   openMatingOf,
   whyNotFarrowing,
@@ -126,6 +128,12 @@ describe("checkFarrowing", () => {
     expect(issues).toEqual([]);
   });
 
+  it("refuses a Total Born that is not born alive + born dead + mummified, and accepts one that is (or none)", () => {
+    expect(fields(run({ piglets_born_live: "10", piglets_stillborn: "1", piglets_mummified: "1", piglets_total_born: "13" }))).toContain("piglets_total_born");
+    expect(fields(run({ piglets_born_live: "10", piglets_stillborn: "1", piglets_mummified: "1", piglets_total_born: "12" }))).not.toContain("piglets_total_born");
+    expect(fields(run({ piglets_total_born: "" }))).not.toContain("piglets_total_born");
+  });
+
   it("needs an open mating and a sow that is not nursing", () => {
     expect(fields(run({}, { mating: undefined }))).toContain("breeding_id");
     expect(fields(run({}, { sow: { ...sow, status: "LACTATING" } }))).toContain("sow_animal_id");
@@ -155,9 +163,13 @@ describe("checkFarrowing", () => {
 });
 
 describe("checkSemen", () => {
+  const given = (over: object = {}) => ({
+    collector_id: "", volume_ml: "", doses: "30", morphology_pct: "", motility_pct: "", concentration_m_per_ml: "", accepted: true, reject_reason: "", ...over,
+  });
   const form = (over: object = {}) => ({
-    batch_id: "b", boar_animal_ids: ["b1"], collection_date: "2026-10-14", doses_collected: "30", output_item_id: "item",
-    volume_ml: "", motility_pct: "", concentration_m_per_ml: "", amortisation_period: "", feed_cost_period: "", drug_cost_period: "", overhead_cost_period: "", ...over,
+    batch_id: "b", boar_animal_ids: ["b1"], collection_date: "2026-10-14", output_item_id: "item",
+    results: { b1: given() } as Record<string, object>,
+    amortisation_period: "", feed_cost_period: "", drug_cost_period: "", overhead_cost_period: "", ...over,
   });
   const boar = { animal_id: "b1", animal_code: "BOAR-1" };
   const run = (over: object = {}, lots: object[] = [], boars: object[] = [boar]) => checkSemen({ form: form(over), boars, lots });
@@ -166,10 +178,14 @@ describe("checkSemen", () => {
     expect(run()).toEqual([]);
   });
 
-  it("needs the batch, a boar, whole doses and the semen item", () => {
-    expect(fields(run({ batch_id: "", boar_animal_ids: [], doses_collected: "10.5", output_item_id: "" }))).toEqual([
-      "batch_id", "boar_animal_ids", "doses_collected", "output_item_id",
-    ]);
+  it("needs the batch, a boar and the semen item", () => {
+    expect(fields(run({ batch_id: "", boar_animal_ids: [], output_item_id: "" }, [], [])).sort()).toEqual(["batch_id", "boar_animal_ids", "output_item_id"]);
+  });
+
+  it("asks for the breed once the batch is chosen, and not before", () => {
+    expect(fields(run({ breed_id: "" }))).toEqual(["breed_id"]);
+    expect(fields(run({ batch_id: "", breed_id: "" }))).not.toContain("breed_id");
+    expect(run({ breed_id: "tempo" })).toEqual([]);
   });
 
   it("refuses a future date or one before the boar entered", () => {
@@ -177,11 +193,135 @@ describe("checkSemen", () => {
     expect(fields(run({}, [], [{ ...boar, entry_date: "2026-10-15" }]))).toContain("collection_date");
   });
 
-  it("warns, without blocking, about a boar collected too recently and low motility", () => {
+  it("works the lot's doses out from the accepted boars, and ignores a rejected boar's", () => {
+    const two = form({ boar_animal_ids: ["b1", "b2"], results: { b1: given({ doses: "40" }), b2: given({ doses: "99", accepted: false, reject_reason: "discoloured" }) } });
+    expect(lotDosesOf(two)).toBe(40);
+    expect(acceptedBoarIds(two)).toEqual(["b1"]);
+    expect(lotDosesOf(form({ results: { b1: given({ doses: "" }) } }))).toBe(0);
+  });
+
+  it("wants whole doses from every accepted boar, beside that boar", () => {
+    expect(fields(run({ results: { b1: given({ doses: "10.5" }) } }))).toEqual(["results.b1.doses"]);
+    expect(fields(run({ results: { b1: given({ doses: "" }) } }))).toEqual(["results.b1.doses"]);
+  });
+
+  it("wants a reason for a rejected ejaculate, and at least one accepted boar", () => {
+    const rejected = run({ results: { b1: given({ accepted: false }) } });
+    expect(fields(rejected).sort()).toEqual(["boar_animal_ids", "results.b1.reject_reason"]);
+    expect(fields(run({ results: { b1: given({ accepted: false, reject_reason: "bad" }) } }))).toEqual(["boar_animal_ids"]);
+  });
+
+  it("bounds each boar's volume, morphology, motility and concentration", () => {
+    const bad = run({ results: { b1: given({ volume_ml: "0", morphology_pct: "101", motility_pct: "120", concentration_m_per_ml: "-1" }) } });
+    expect(fields(bad).sort()).toEqual(["results.b1.concentration_m_per_ml", "results.b1.morphology_pct", "results.b1.motility_pct", "results.b1.volume_ml"]);
+  });
+
+  it("checks no rest or motility rule when the line has none: no figure is made up", () => {
     const lots = [{ boar_id: "b1", collection_date: "2026-10-13" }];
-    const issues = run({ motility_pct: "60" }, lots);
-    expect(errorsOf(issues)).toEqual([]);
-    expect(fields(issues, "warn").sort()).toEqual(["boar_animal_ids", "motility_pct"]);
-    expect(fields(run({ motility_pct: "120" }))).toContain("motility_pct");
+    expect(run({ results: { b1: given({ motility_pct: "5" }) } }, lots)).toEqual([]);
+  });
+
+  it("counts a boar tapped in an earlier collection even when his ejaculate was rejected", () => {
+    expect(daysSinceCollection("b1", [{ boar_id: "other", collection_date: "2026-10-12", results: [{ boar_id: "b1" }] }], "2026-10-14")).toBe(2);
+  });
+
+  describe("with the rules of the boar's line", () => {
+    const rules = { pooling_allowed: true, min_boars_per_lot: null, max_boars_per_lot: null, min_rest_days: 3, min_motility_pct: "70.00", rule_enforcement: "WARN" };
+    const lots = [{ boar_id: "b1", collection_date: "2026-10-13" }];
+    const lowMotility = { results: { b1: given({ motility_pct: "60" }) } };
+    const runWith = (r: object, over: object = {}) => checkSemen({ form: form(over), boars: [boar], lots, rules: { ...rules, ...r } });
+
+    it("warns, without blocking, about a boar collected inside the line's rest days and low motility", () => {
+      const issues = runWith({}, lowMotility);
+      expect(errorsOf(issues)).toEqual([]);
+      expect(fields(issues, "warn").sort()).toEqual(["boar_animal_ids", "results.b1.motility_pct"]);
+    });
+
+    it("stops the collection instead when the line blocks", () => {
+      expect(fields(runWith({ rule_enforcement: "BLOCK" }, lowMotility)).sort()).toEqual(["boar_animal_ids", "results.b1.motility_pct"]);
+    });
+
+    it("reads the rest days and the motility floor from the line, not from a constant", () => {
+      expect(runWith({ min_rest_days: 1, min_motility_pct: "50" }, lowMotility)).toEqual([]);
+      expect(fields(runWith({ min_rest_days: 2 }), "warn")).toEqual(["boar_animal_ids"]);
+    });
+
+    it("counts only the accepted boars against the line's pooling limits", () => {
+      const two = { boar_animal_ids: ["b1", "b2"], results: { b1: given(), b2: given({ accepted: false, reject_reason: "bad" }) } };
+      expect(fields(runWith({ pooling_allowed: false, min_rest_days: null }, two))).toEqual([]);
+      const both = { boar_animal_ids: ["b1", "b2"], results: { b1: given(), b2: given() } };
+      expect(fields(runWith({ pooling_allowed: false, min_rest_days: null }, both))).toEqual(["boar_animal_ids"]);
+      expect(fields(runWith({ max_boars_per_lot: 1, min_rest_days: null }, both))).toEqual(["boar_animal_ids"]);
+      expect(fields(runWith({ min_boars_per_lot: 2, min_rest_days: null }))).toEqual(["boar_animal_ids"]);
+      expect(runWith({ min_boars_per_lot: 2, max_boars_per_lot: 2, min_rest_days: null }, both)).toEqual([]);
+    });
+  });
+
+  describe("the line's own collection rules (its Breeding Line Setup)", () => {
+    const base = { pooling_allowed: true, min_boars_per_lot: null, max_boars_per_lot: null, min_rest_days: null, min_motility_pct: null, rule_enforcement: "WARN" };
+    const check = (r: object, over: object = {}, lots: object[] = [], lineBoarIds?: string[]) =>
+      checkSemen({ form: form(over), boars: [boar], lots, rules: { ...base, ...r }, lineBoarIds });
+    // 2026-10-14 is a Wednesday, 2026-10-13 a Tuesday.
+    const sunWed = { collection_mode: "SCHEDULED", collection_weekdays: ["SUN", "WED"] };
+
+    it("asks for the outside reference unless the collection is from a plan, which carries it", () => {
+      const z = { reference_required: true, reference_label: "Breeding Web reference" };
+      const issues = check(z);
+      expect(fields(issues)).toEqual(["plan_id"]);
+      expect(issues[0]).toMatchObject({ level: "error" });
+      expect(issues[0].text).toContain("Breeding Web reference");
+      expect(check(z, { plan_id: "p1" })).toEqual([]);
+      expect(check({ reference_required: false })).toEqual([]);
+    });
+
+    it("says when the day is not one of the line's collection days, as a warning or a stop as the line enforces", () => {
+      expect(check(sunWed)).toEqual([]);
+      const tuesday = check(sunWed, { collection_date: "2026-10-13" });
+      expect(tuesday).toEqual([expect.objectContaining({ level: "warn", field: "collection_date" })]);
+      expect(tuesday[0].text).toContain("Sunday and Wednesday");
+      expect(tuesday[0].text).toContain("Tuesday");
+      expect(check({ ...sunWed, rule_enforcement: "BLOCK" }, { collection_date: "2026-10-13" })).toEqual([expect.objectContaining({ level: "error", field: "collection_date" })]);
+    });
+
+    it("does not ask a line that is collected on request, or a collection from a plan made for that day, about the weekday", () => {
+      expect(check({ collection_mode: "ON_REQUEST", collection_weekdays: null }, { collection_date: "2026-10-13" })).toEqual([]);
+      expect(check(sunWed, { collection_date: "2026-10-13", plan_id: "p1", plan_info: { collection_date: "2026-10-13" } })).toEqual([]);
+      expect(check(sunWed, { collection_date: "2026-10-13", plan_id: "p1", plan_info: { collection_date: "2026-10-14" } }).map((i) => i.field)).toEqual(["collection_date", "collection_date"]); // another day than the plan, and not one of the line's days
+    });
+
+    it("warns when a collection from a plan is dated another day than the plan", () => {
+      const planned = { plan_id: "p1", plan_info: { plan_no: "CP-1", collection_date: "2026-10-14" } };
+      expect(check({}, planned)).toEqual([]);
+      const issues = check({}, { ...planned, collection_date: "2026-10-12" });
+      expect(issues).toEqual([expect.objectContaining({ level: "warn", field: "collection_date" })]);
+      expect(issues[0].text).toContain("14/10/26");
+      expect(issues[0].text).toContain("12/10/26");
+    });
+
+    it("holds a line to the boars it taps a day, counting those already collected that day", () => {
+      const two = { boars_per_collection_day: 2 };
+      const others = ["b2", "b3"];
+      const tapped = (id: string) => ({ collection_date: "2026-10-14", boar_id: id, boars: [], results: [] });
+      // one boar chosen, none yet today: short of 2
+      expect(check(two, {}, [], ["b1", ...others])).toEqual([expect.objectContaining({ level: "warn", field: "boar_animal_ids" })]);
+      // one chosen and one already collected today: exactly 2
+      expect(check(two, {}, [tapped("b2")], ["b1", ...others])).toEqual([]);
+      // one chosen and two already collected today: over
+      const over = check(two, {}, [tapped("b2"), tapped("b3")], ["b1", ...others]);
+      expect(over).toEqual([expect.objectContaining({ level: "error", field: "boar_animal_ids" })]);
+      expect(over[0].text).toContain("at most 0 more");
+      // another day, or another line's boar, does not count
+      expect(check(two, {}, [{ ...tapped("b2"), collection_date: "2026-10-13" }], ["b1", ...others]).map((i) => i.field)).toEqual(["boar_animal_ids"]);
+      expect(check(two, {}, [tapped("x9")], ["b1", ...others]).map((i) => i.field)).toEqual(["boar_animal_ids"]);
+      // no limit set: nothing said
+      expect(check({ boars_per_collection_day: null }, {}, [], ["b1"])).toEqual([]);
+    });
+
+    it("warns that a line whose semen goes to a list of farms has no destination without a plan naming it", () => {
+      const issues = check({ destination_rule: "LIST" });
+      expect(issues).toEqual([expect.objectContaining({ level: "warn", field: "plan_id" })]);
+      expect(check({ destination_rule: "LIST" }, { plan_id: "p1" })).toEqual([]);
+      expect(check({ destination_rule: "ONE" })).toEqual([]);
+    });
   });
 });

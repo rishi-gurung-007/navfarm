@@ -1,5 +1,6 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
 import { NA } from '@/utils/na';
 import { useEffect, useState, useMemo } from 'react';
 import {
@@ -886,8 +887,7 @@ export default function CreateSchedulerModal({
                       Effective From (Start Date){' '}
                       <span className="text-red-500">*</span>
                     </label>
-                    <input
-                      type="date"
+                    <DateInput
                       value={effectiveFrom}
                       onChange={(e) => setEffectiveFrom(e.target.value)}
                       className={`${inputCls} w-full`}
@@ -900,8 +900,7 @@ export default function CreateSchedulerModal({
                     <label className="mb-1 block font-semibold" style={S.sub}>
                       Effective To (Expected End Date)
                     </label>
-                    <input
-                      type="date"
+                    <DateInput
                       value={effectiveTo}
                       onChange={(e) => setEffectiveTo(e.target.value)}
                       className={`${inputCls} w-full`}

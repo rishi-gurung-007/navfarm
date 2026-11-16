@@ -1,3 +1,4 @@
+import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, count, isNull, or, sql } from 'drizzle-orm';
@@ -68,6 +69,12 @@ export class QrCodeService {
   }
 
   async create(dto: CreateQrCodeDto, tenantId: string, userPayload?: any) {
+    // The number is drawn from the series inside this transaction, so a failure after it (a ledger or GL write, a bad
+    // reference) rolls the counter back instead of burning the number. Joins the caller's transaction when one is open.
+    return withTenantTransaction(this.cls, () => this.createRecord(dto, tenantId, userPayload));
+  }
+
+  private async createRecord(dto: CreateQrCodeDto, tenantId: string, userPayload?: any) {
     const [batch] = await this.db.select().from(schema.batchHeader).where(and(
       eq(schema.batchHeader.batch_id, dto.batch_id),
       eq(schema.batchHeader.tenant_id, tenantId),
@@ -225,6 +232,38 @@ export class QrCodeService {
       expiryDate: string | null;
       warehouseId: string | null;
       quality?: { volume_ml: number | null; motility_pct: number | null; concentration_m_per_ml: number | null };
+      /** What the line's setup put on the lot (Phase 5): the label on the sachets, the week, the colorant and where it is for. */
+      label?: string | null;
+      week?: { no: number; year: number };
+      colorantName?: string | null;
+      destinationFarmId?: string | null;
+    },
+    tenantId: string,
+    userPayload?: any,
+  ) {
+    // The number is drawn from the series inside this transaction, so a failure after it (a ledger or GL write, a bad
+    // reference) rolls the counter back instead of burning the number. Joins the caller's transaction when one is open.
+    return withTenantTransaction(this.cls, () => this.createForSemenLotRecord(params, tenantId, userPayload));
+  }
+
+  private async createForSemenLotRecord(
+    params: {
+      boar: typeof schema.animalRegister.$inferSelect;
+      /** The other boars a pooled lot was mixed from; the lot's `boar` is the first of them. */
+      poolBoars?: (typeof schema.animalRegister.$inferSelect)[];
+      boarBatch: typeof schema.batchHeader.$inferSelect;
+      item: typeof schema.itemMaster.$inferSelect;
+      lotNo: string;
+      collectionDate: string;
+      doses: number;
+      expiryDate: string | null;
+      warehouseId: string | null;
+      quality?: { volume_ml: number | null; motility_pct: number | null; concentration_m_per_ml: number | null };
+      /** What the line's setup put on the lot (Phase 5): the label on the sachets, the week, the colorant and where it is for. */
+      label?: string | null;
+      week?: { no: number; year: number };
+      colorantName?: string | null;
+      destinationFarmId?: string | null;
     },
     tenantId: string,
     userPayload?: any,
@@ -238,12 +277,22 @@ export class QrCodeService {
       const [wh] = await this.db.select().from(schema.locationMaster).where(eq(schema.locationMaster.location_id, params.warehouseId)).limit(1);
       facilityCode = wh?.location_code || null;
     }
+    let destination: { code: string | null; name: string | null } | null = null;
+    if (params.destinationFarmId) {
+      const [farm] = await this.db.select().from(schema.locationMaster).where(eq(schema.locationMaster.location_id, params.destinationFarmId)).limit(1);
+      destination = farm ? { code: farm.location_code, name: farm.location_name } : null;
+    }
     const packNo = await this.generatePackNo(tenantId, boarBatch.company_id);
     const originChain = await this.buildOriginChain(boarBatch.batch_id);
     const qrData = {
       type: 'SEMEN_LOT',
       pack_no: packNo,
       lot_no: params.lotNo,
+      // What is printed on the sachets, and what was added to the semen, as the line's setup says.
+      ...(params.label ? { label: params.label } : {}),
+      ...(params.week ? { week: params.week.no, week_year: params.week.year } : {}),
+      ...(params.colorantName ? { colorant: params.colorantName } : {}),
+      ...(destination ? { destination_farm: destination } : {}),
       item_code: item.item_code,
       item_name: item.item_name,
       boar: { animal_code: boar.animal_code, rfid_tag: boar.rfid_tag || null, breed: breed?.breed_name || null },

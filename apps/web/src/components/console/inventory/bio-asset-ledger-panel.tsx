@@ -6,6 +6,8 @@
  * that entry (+1, "from GR-…"), and a death is the only -. The page reads like the Inventory Ledger Entries page: the
  * same filters, columns, badges, exports and entry view.
  */
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import {
@@ -34,11 +36,16 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Badge } from '@/components/ui/badge';
 import { Dialog } from '@/components/ui/dialog';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { Field } from '@/components/ui/field';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import BioAssetLedgerDetail, {
   BIO_DOCUMENT_LABEL,
-  BIO_TRANSACTION_LABEL,
 } from './bio-asset-ledger-detail';
+import {
+  formatEntryType,
+  formatTransactionType,
+} from './inventory-ledger-detail';
 
 const PAGE_SIZE = 25;
 
@@ -58,8 +65,6 @@ const S = {
 };
 
 const inputCls = 'nf-input-sm';
-
-const TRANSACTION_LABEL = BIO_TRANSACTION_LABEL;
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
@@ -258,173 +263,208 @@ export default function BioAssetLedgerPanel() {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Stats & export — the page title already names the ledger. */}
-      <div className="flex flex-wrap items-center justify-end gap-3">
-        <div className="flex items-center gap-2">
-          <Badge variant="neutral" className="text-xs font-mono">
-            {rows.length} {rows.length === 1 ? 'entry' : 'entries'}
-          </Badge>
-          {exportButton('xlsx')}
-          {exportButton('csv')}
-          {hasActiveFilters && (
-            <button
-              type="button"
-              onClick={resetFilters}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium hover:bg-[var(--surface-raised)] transition"
-              style={S.sub}
-            >
-              <RotateCcw className="h-3 w-3" /> Reset Filters
-            </button>
-          )}
-        </div>
-      </div>
+      <PageHeader
+        title={t('invBioAssetLedger')}
+        actions={
+          <div className="flex items-center gap-2">
+            <Badge variant="neutral" className="text-xs font-mono">
+              {rows.length} {rows.length === 1 ? 'entry' : 'entries'}
+            </Badge>
+            {exportButton('xlsx')}
+            {exportButton('csv')}
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium hover:bg-[var(--surface-raised)] transition"
+                style={S.sub}
+              >
+                <RotateCcw className="h-3 w-3" /> Reset Filters
+              </button>
+            )}
+          </div>
+        }
+      />
 
       <div
-        className="flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] border p-2.5"
+        className="flex flex-wrap items-end gap-3 rounded-[var(--radius-md)] border p-3"
         style={S.surface}
       >
-        <div className="relative">
-          <input
-            type="text"
-            value={documentNo}
-            onChange={(e) => setDocumentNo(e.target.value)}
-            placeholder="Search Document No., Item, Animal, Batch, GRN…"
-            className={`${inputCls} w-60 pl-7`}
-            style={S.input}
-          />
-          <Search
-            className="absolute left-2 top-2 h-3.5 w-3.5"
-            style={S.muted}
-          />
-        </div>
+        {/* Document No / Search */}
+        <Field label={t('ilpSearch')} htmlFor="bal-search">
+          <div className="relative">
+            <input
+              id="bal-search"
+              type="text"
+              value={documentNo}
+              onChange={(e) => setDocumentNo(e.target.value)}
+              placeholder="Search Document No., Item, Animal, Batch, GRN…"
+              className={`${inputCls} w-60 pl-8 h-9`}
+              style={S.input}
+            />
+            <Search
+              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
+              style={S.muted}
+            />
+          </div>
+        </Field>
 
-        <div className="min-w-[12rem] max-w-[190px]">
-          <SearchableSelect
-            ariaLabel="Location Code"
-            value={warehouseId}
-            onChange={setWarehouseId}
-            options={[
-              {
-                value: '',
-                code: 'ALL',
-                name: 'All Locations',
-                label: 'All Locations (Location Code)',
-              },
-              ...warehouses.map((wh) => ({
-                value: wh.warehouse_id,
-                code: wh.warehouse_code,
-                name: wh.warehouse_name,
-                label: `${wh.warehouse_code} — ${wh.warehouse_name}`,
-              })),
-            ]}
-            columnHeaders={['Code', 'Location Name']}
-            columns={[
-              { key: 'code', label: 'Code' },
-              { key: 'name', label: 'Location Name' },
-            ]}
-            placeholder="All Locations"
-            triggerClassName="nf-input-sm w-full h-9"
-          />
-        </div>
+        {/* Location Code */}
+        <Field label={t('ilpLocation')} htmlFor="bal-location">
+          <div className="min-w-[12rem] max-w-[190px]">
+            <SearchableSelect
+              id="bal-location"
+              ariaLabel="Location Code"
+              value={warehouseId}
+              onChange={setWarehouseId}
+              options={[
+                {
+                  value: '',
+                  code: 'ALL',
+                  name: 'All Locations',
+                  label: 'All Locations (Location Code)',
+                },
+                ...warehouses.map((wh) => ({
+                  value: wh.warehouse_id,
+                  code: wh.warehouse_code,
+                  name: wh.warehouse_name,
+                  label: `${wh.warehouse_code} — ${wh.warehouse_name}`,
+                })),
+              ]}
+              columnHeaders={['Code', 'Location Name']}
+              columns={[
+                { key: 'code', label: 'Code' },
+                { key: 'name', label: 'Location Name' },
+              ]}
+              placeholder="All Locations"
+              triggerClassName="nf-input-sm w-full h-9"
+            />
+          </div>
+        </Field>
 
-        <div className="min-w-[13rem] max-w-[200px]">
-          <SearchableSelect
-            ariaLabel="Item"
-            value={itemId}
-            onChange={setItemId}
-            options={[
-              {
-                value: '',
-                code: 'ALL',
-                name: t('ilpAllItemsOptions', { count: items.length }),
-                label: t('ilpAllItemsOptions', { count: items.length }),
-              },
-              ...items.map((it) => ({
-                value: it.item_id,
-                code: it.item_code,
-                name: it.item_name,
-                label: `${it.item_code} — ${it.item_name}`,
-              })),
-            ]}
-            columnHeaders={['Code', 'Item Name']}
-            columns={[
-              { key: 'code', label: 'Code' },
-              { key: 'name', label: 'Item Name' },
-            ]}
-            placeholder={t('ilpAllItemsOptions', { count: items.length })}
-            triggerClassName="nf-input-sm w-full h-9"
-          />
-        </div>
+        {/* Item */}
+        <Field label={t('ilpItemLabel')} htmlFor="bal-item">
+          <div className="min-w-[13rem] max-w-[200px]">
+            <SearchableSelect
+              id="bal-item"
+              ariaLabel="Item"
+              value={itemId}
+              onChange={setItemId}
+              options={[
+                {
+                  value: '',
+                  code: 'ALL',
+                  name: t('ilpAllItemsOptions', { count: items.length }),
+                  label: t('ilpAllItemsOptions', { count: items.length }),
+                },
+                ...items.map((it) => ({
+                  value: it.item_id,
+                  code: it.item_code,
+                  name: it.item_name,
+                  label: `${it.item_code} — ${it.item_name}`,
+                })),
+              ]}
+              columnHeaders={['Code', 'Item Name']}
+              columns={[
+                { key: 'code', label: 'Code' },
+                { key: 'name', label: 'Item Name' },
+              ]}
+              placeholder={t('ilpAllItemsOptions', { count: items.length })}
+              triggerClassName="nf-input-sm w-full h-9"
+            />
+          </div>
+        </Field>
 
-        <div className="min-w-[9rem]">
-          <SearchableSelect
-            ariaLabel="Entry Type"
-            value={entryType}
-            onChange={setEntryType}
-            options={[
-              { value: '', label: 'All Entry Types' },
-              { value: 'POSITIVE', label: 'Positive (+)' },
-              { value: 'NEGATIVE', label: 'Negative (-)' },
-            ]}
-            columnHeaders={false}
-            triggerClassName="nf-input-sm min-w-[9rem] h-9"
-          />
-        </div>
+        {/* Entry Type */}
+        <Field label={t('ilpType')} htmlFor="bal-entry-type">
+          <div className="min-w-[9rem]">
+            <SearchableSelect
+              id="bal-entry-type"
+              ariaLabel="Entry Type"
+              value={entryType}
+              onChange={setEntryType}
+              options={[
+                { value: '', label: 'All Entry Types' },
+                { value: 'POSITIVE', label: 'Positive (+)' },
+                { value: 'NEGATIVE', label: 'Negative (-)' },
+                { value: 'TRANSFER', label: 'Transfer' },
+                { value: 'OVERHEAD', label: 'Overhead' },
+                { value: 'DESCRIPTIVE', label: 'Descriptive' },
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[9rem] h-9"
+            />
+          </div>
+        </Field>
 
-        <div className="min-w-[11rem]">
-          <SearchableSelect
-            ariaLabel="Transaction Type"
-            value={transactionType}
-            onChange={setTransactionType}
-            options={[
-              { value: '', label: t('ilpAllTransactionTypes') },
-              { value: 'PURCHASE', label: 'Purchase' },
-              { value: 'ANIMAL_REGISTRATION', label: 'Animal Registration' },
-              { value: 'MORTALITY', label: 'Mortality' },
-            ]}
-            columnHeaders={false}
-            triggerClassName="nf-input-sm min-w-[11rem] h-9"
-          />
-        </div>
+        {/* Transaction Type */}
+        <Field label={t('ilpTransactionType')} htmlFor="bal-transaction-type">
+          <div className="min-w-[11rem]">
+            <SearchableSelect
+              id="bal-transaction-type"
+              ariaLabel="Transaction Type"
+              value={transactionType}
+              onChange={setTransactionType}
+              options={[
+                { value: '', label: t('ilpAllTransactionTypes') },
+                { value: 'PURCHASE', label: 'Purchase' },
+                { value: 'CONSUMPTION', label: 'Consumption' },
+                { value: 'OUTPUT', label: 'Output' },
+                { value: 'TRANSFER_SHIPMENT', label: 'Transfer_Shipment' },
+                { value: 'TRANSFER_RECEIPT', label: 'Transfer_Receipt' },
+                { value: 'SALES', label: 'Sales' },
+                { value: 'VARIANCE_POSITIVE', label: 'Variance_Positive' },
+                { value: 'VARIANCE_NEGATIVE', label: 'Variance_Negative' },
+                { value: 'OVERHEAD', label: 'Overhead' },
+                { value: 'DESCRIPTIVE', label: 'Descriptive' },
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[11rem] h-9"
+            />
+          </div>
+        </Field>
 
-        <div className="min-w-[10rem]">
-          <SearchableSelect
-            ariaLabel="Sort By"
-            value={sortBy}
-            onChange={(val) => setSortBy(val as 'created_at' | 'posting_date')}
-            options={[
-              { value: 'created_at', label: 'Recently Posted First' },
-              { value: 'posting_date', label: 'Posting Date' },
-            ]}
-            columnHeaders={false}
-            triggerClassName="nf-input-sm min-w-[10rem] h-9"
-          />
-        </div>
+        {/* Sort By */}
+        <Field label={t('ilpSortBy')} htmlFor="bal-sort-by">
+          <div className="min-w-[10rem]">
+            <SearchableSelect
+              id="bal-sort-by"
+              ariaLabel="Sort By"
+              value={sortBy}
+              onChange={(val) =>
+                setSortBy(val as 'created_at' | 'posting_date')
+              }
+              options={[
+                { value: 'created_at', label: 'Recently Posted First' },
+                { value: 'posting_date', label: 'Posting Date' },
+              ]}
+              columnHeaders={false}
+              triggerClassName="nf-input-sm min-w-[10rem] h-9"
+            />
+          </div>
+        </Field>
 
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-medium" style={S.muted}>
-            {t('ilpFrom')}
-          </span>
-          <input
-            type="date"
+        {/* Date From */}
+        <Field label={t('ilpFrom')} htmlFor="bal-date-from">
+          <DateInput
+            id="bal-date-from"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
-            className={inputCls}
+            className={`${inputCls} h-9`}
             style={S.input}
           />
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-medium" style={S.muted}>
-            {t('ilpTo')}
-          </span>
-          <input
-            type="date"
+        </Field>
+
+        {/* Date To */}
+        <Field label={t('ilpTo')} htmlFor="bal-date-to">
+          <DateInput
+            id="bal-date-to"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
-            className={inputCls}
+            className={`${inputCls} h-9`}
             style={S.input}
           />
-        </div>
+        </Field>
       </div>
 
       <Toast variant="danger" message={error} onClose={() => setError('')} />
@@ -434,7 +474,7 @@ export default function BioAssetLedgerPanel() {
         style={S.surface}
       >
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm min-w-[1250px]">
+          <table className="w-full border-collapse text-left text-sm min-w-[1320px]">
             <TableHeader>
               <tr className="border-b border-(--row-border)">
                 <TableHead className="whitespace-nowrap w-20">
@@ -465,6 +505,9 @@ export default function BioAssetLedgerPanel() {
                 <TableHead className="whitespace-nowrap text-right w-28">
                   {t('ilpRemaining')}
                 </TableHead>
+                <TableHead className="whitespace-nowrap text-center w-16">
+                  UOM
+                </TableHead>
                 <TableHead className="whitespace-nowrap text-right w-24">
                   {t('ilpRate')}
                 </TableHead>
@@ -484,7 +527,7 @@ export default function BioAssetLedgerPanel() {
               {loading ? (
                 <tr>
                   <TableCell
-                    colSpan={15}
+                    colSpan={16}
                     className="py-12 text-center"
                     style={S.sub}
                   >
@@ -498,7 +541,7 @@ export default function BioAssetLedgerPanel() {
               ) : rows.length === 0 ? (
                 <tr>
                   <TableCell
-                    colSpan={15}
+                    colSpan={16}
                     className="py-12 text-center"
                     style={S.sub}
                   >
@@ -511,7 +554,7 @@ export default function BioAssetLedgerPanel() {
               ) : (
                 pagedRows.map((row) => {
                   const qty = Number(row.quantity || 0);
-                  const isPos = qty > 0;
+                  const isPos = (qty !== 0 ? qty : Number(row.amount || 0)) > 0;
                   return (
                     <TableRow
                       key={row.entry_id}
@@ -528,7 +571,7 @@ export default function BioAssetLedgerPanel() {
                         className="whitespace-nowrap font-medium"
                         style={S.primary}
                       >
-                        {row.posting_date}
+                        {formatDate(row.posting_date)}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
                         <div className="flex flex-col">
@@ -576,14 +619,13 @@ export default function BioAssetLedgerPanel() {
                           variant="neutral"
                           className="text-[11px] font-semibold"
                         >
-                          {TRANSACTION_LABEL[row.transaction_type] ??
-                            row.transaction_type}
+                          {formatTransactionType(row.transaction_type)}
                         </Badge>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">
                         <StatusBadge
-                          status={isPos ? 'POSITIVE' : 'NEGATIVE'}
-                          label={isPos ? 'Positive (+)' : 'Negative (-)'}
+                          status={row.entry_type}
+                          label={formatEntryType(row.entry_type, qty)}
                         />
                       </TableCell>
                       <TableCell
@@ -593,16 +635,13 @@ export default function BioAssetLedgerPanel() {
                         }}
                       >
                         {isPos ? `+${qtyText(qty)}` : qtyText(qty)}
-                        <span className="ml-1 text-[10px] font-normal text-[var(--text-muted)]">
-                          {row.uom}
-                        </span>
                       </TableCell>
                       {/* Remaining: a GRN's animals not registered yet. */}
                       <TableCell
                         className="whitespace-nowrap text-right font-mono text-xs"
                         style={S.sub}
                       >
-                        {row.transaction_type === 'PURCHASE' ? (
+                        {row.document_type === 'GOODS_RECEIPT' ? (
                           <span
                             className={
                               Number(row.remaining_quantity) === 0
@@ -611,13 +650,16 @@ export default function BioAssetLedgerPanel() {
                             }
                           >
                             {qtyText(Number(row.remaining_quantity ?? 0))}
-                            <span className="ml-0.5 text-[10px] text-[var(--text-muted)]">
-                              {row.uom}
-                            </span>
                           </span>
                         ) : (
                           <span style={S.muted}>{NA}</span>
                         )}
+                      </TableCell>
+                      <TableCell
+                        className="whitespace-nowrap text-center font-mono text-xs uppercase"
+                        style={S.sub}
+                      >
+                        {row.uom || '—'}
                       </TableCell>
                       <TableCell
                         className="whitespace-nowrap text-right font-mono text-xs"

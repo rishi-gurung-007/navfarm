@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import React, { useState, useEffect } from 'react';
 import { Plus, ArrowRight, Layers, RefreshCw } from 'lucide-react';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -338,7 +339,7 @@ export default function OperationalAreasPage() {
                   >
                     Created:{' '}
                     {area.created_at
-                      ? new Date(area.created_at).toLocaleDateString()
+                      ? formatDate(area.created_at)
                       : 'Active'}
                   </span>
                   <button

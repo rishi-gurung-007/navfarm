@@ -89,7 +89,10 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           required={required}
           tabIndex={-1}
           aria-hidden="true"
-          className="absolute h-px w-px overflow-hidden opacity-0"
+          // Fixed to the viewport's corner, not absolute where it happens to sit: an absolute box with no positioned parent
+          // takes its place at the bottom of a long page and makes the whole window scrollable, which let a focus or a modal
+          // push the shell (sidebar and header) out of view and leave blank space under it.
+          className="pointer-events-none fixed left-0 top-0 h-px w-px overflow-hidden opacity-0"
         >
           {children}
         </select>

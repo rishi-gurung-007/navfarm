@@ -4,6 +4,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../../core/database/schema';
+import { NumberSeriesService } from '../../number-series/number-series.service';
 import { STARTER_GL_ACCOUNTS, STARTER_GL_MAPPINGS, STARTER_WAREHOUSE } from './starter-master-data.seed-data';
 
 /**
@@ -16,7 +17,10 @@ import { STARTER_GL_ACCOUNTS, STARTER_GL_MAPPINGS, STARTER_WAREHOUSE } from './s
  */
 @Injectable()
 export class MasterDataSeedService {
-  constructor(private readonly cls: ClsService) {}
+  constructor(
+    private readonly cls: ClsService,
+    private readonly numberSeries: NumberSeriesService,
+  ) {}
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -58,10 +62,15 @@ export class MasterDataSeedService {
         const creditAccountId = accountIdByCode.get(mapping.credit_account_code);
         if (!debitAccountId || !creditAccountId) continue; // defensive — every code above is defined in the same list
 
+        // A starter mapping takes a code from the GL_MAPPING series like one made on the screen; null when the
+        // company has no such series, as for any master (the column is nullable).
+        const mappingCode = await this.numberSeries.resolveOptionalCode('GL_MAPPING', undefined, tenantId, companyId, undefined, mapping as unknown as Record<string, unknown>);
+
         await tx.insert(schema.glMappingMaster).values({
           mapping_id: randomUUID(),
           tenant_id: tenantId,
           company_id: companyId,
+          mapping_code: mappingCode,
           transaction_type: mapping.transaction_type,
           debit_gl_account_id: debitAccountId,
           credit_gl_account_id: creditAccountId,

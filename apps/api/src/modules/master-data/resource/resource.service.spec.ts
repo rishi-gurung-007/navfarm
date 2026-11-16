@@ -48,7 +48,7 @@ describe('ResourceService', () => {
         {
           provide: ClsService,
           useValue: {
-            get: jest.fn().mockReturnValue(mockDb),
+            get: jest.fn((key: string) => (key === 'tenantPostingTransaction' ? true : mockDb)),
           },
         },
         {

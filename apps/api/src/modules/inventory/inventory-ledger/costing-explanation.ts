@@ -2,7 +2,7 @@
  * How an issue was priced, laid out step by step so the ledger screen can show the working.
  *
  * The explanation is rebuilt from what the ledger holds — the receipts the issue drew from (its
- * applications) and, for Average, the stock book before the issue — using the same rules `applyFifo` priced
+ * applications) and, for Average, the stock book before the issue — using the same rules `allocateAndCostOutbound` priced
  * it with. It also re-prices the issue and reports whether that agrees with what was posted, so an entry
  * posted before the item's costing method was changed is flagged rather than explained wrongly.
  */
@@ -28,6 +28,8 @@ export interface ExplainBookReceipt {
   document_no: string | null;
   posting_date: string | null;
   transaction_type: string | null;
+  /** True when the row is the offsetting entry of a reversal. */
+  is_reversal?: boolean;
   quantity: number;
   rate: number;
   amount: number;
@@ -121,7 +123,7 @@ export function explainCosting(input: ExplainInput): CostingExplanation {
   };
 }
 
-/** The method an item's `valuation_method` means, as applyFifo reads it. */
+/** The method an item's `valuation_method` means, as allocateAndCostOutbound reads it. */
 export function costingMethodOf(valuationMethod: string | null | undefined): CostingMethodName {
   const m = String(valuationMethod ?? 'FIFO').toUpperCase();
   if (m === 'AVG' || m === 'AVERAGE') return 'AVG';

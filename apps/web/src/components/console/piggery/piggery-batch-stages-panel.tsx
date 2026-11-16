@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
@@ -447,7 +448,7 @@ export default function PiggeryBatchStagesPanel() {
             </strong>{' '}
             ·{t('pbsStartDateLabel')}:{' '}
             <strong className="text-[var(--text-primary)]">
-              {currentBatch?.startDate || NA}
+              {currentBatch?.startDate ? formatDate(currentBatch?.startDate) : NA}
             </strong>{' '}
             ·{t('pbsCurrentStageLabel')}:{' '}
             <strong className="text-[var(--accent)]">{currentStageName}</strong>
@@ -631,7 +632,7 @@ export default function PiggeryBatchStagesPanel() {
         <div className="p-3.5 bg-[var(--surface-raised)] border-t border-[var(--border)]">
           <p className="text-[11px] text-[var(--text-muted)] flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
-            {t('pbsFooterNote', { startDate: currentBatch?.startDate || NA })}
+            {t('pbsFooterNote', { startDate: formatDate(currentBatch?.startDate || NA) })}
           </p>
         </div>
       </div>

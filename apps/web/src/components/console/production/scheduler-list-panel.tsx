@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, Loader2, Plus, Search } from 'lucide-react';
@@ -201,10 +202,10 @@ export default function SchedulerListPanel() {
                     <StatusBadge status={r.scheduler_status} />
                   </TableCell>
                   <TableCell className="whitespace-nowrap" style={S.sub}>
-                    {r.effective_from || NA}
+                    {r.effective_from ? formatDate(r.effective_from) : NA}
                   </TableCell>
                   <TableCell className="whitespace-nowrap" style={S.sub}>
-                    {r.effective_to || NA}
+                    {r.effective_to ? formatDate(r.effective_to) : NA}
                   </TableCell>
                   <TableCell className="text-right" style={S.primary}>
                     {r.animal_count != null

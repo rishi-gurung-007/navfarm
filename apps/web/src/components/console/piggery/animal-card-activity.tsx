@@ -1,7 +1,13 @@
 'use client';
 
 import { NA } from '@/utils/na';
-import { HeartCrack, Scale, UtensilsCrossed, Droplets } from 'lucide-react';
+import {
+  HeartCrack,
+  Scale,
+  UtensilsCrossed,
+  Droplets,
+  PiggyBank,
+} from 'lucide-react';
 
 type Row = Record<string, any>;
 
@@ -141,7 +147,9 @@ export function DeathRecord({ activity }: { activity: Row | null }) {
     ],
     ['Cause of death', dash(m.cause_of_death)],
     ['Post-mortem findings', dash(m.post_mortem_notes)],
-    ['Disposal method', dash(m.disposal_method)],
+    ['Weight at death', m.weight_kg != null ? `${m.weight_kg} kg` : NA],
+    ['Book value at death', m.book_value_at_death != null ? money(m.book_value_at_death) : NA],
+    ['Disposal destination', dash(m.disposal_method)],
     ['Pen', dash(m.pen)],
     ['Remarks', dash(m.remarks)],
   ];
@@ -251,6 +259,135 @@ export function SemenLots({ activity }: { activity: Row | null }) {
             </tbody>
           </table>
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A sow's cost, parity by parity. Each parity's window runs from its mating to its weaning (to today while the litter is not weaned); cost on the days
+ * outside every window has its own row, so the rows always add up to the total. The window is ours, awaiting Rishi / Finance.
+ */
+export function ParityExpense({
+  data,
+  loading,
+}: {
+  data: Row | null;
+  loading: boolean;
+}) {
+  const rows: Row[] = data?.rows ?? [];
+  const total: Row | null = data?.total ?? null;
+  const hasParity = rows.some((r) => r.row_type === 'PARITY');
+  const cell = 'px-3 py-2.5 text-right font-mono whitespace-nowrap';
+  return (
+    <div className={card}>
+      <h4 className={heading}>
+        <PiggyBank className="h-3.5 w-3.5 text-[var(--accent)]" /> Cost by
+        Parity
+      </h4>
+      {loading ? (
+        <p className="py-4 text-center text-[var(--text-muted)]">Loading…</p>
+      ) : !total || total.total === 0 ? (
+        <p className="py-4 text-center text-[var(--text-muted)]">
+          No feed, medicine, overhead or amortisation has been charged to this
+          animal yet.
+        </p>
+      ) : (
+        <>
+          <p className="mb-2 text-[11px] text-[var(--text-muted)]">
+            A parity runs from its mating date to its weaning date (to today
+            while the litter is not weaned).{' '}
+            {data?.costing_start_date
+              ? `Feed and overhead before ${day(data.costing_start_date)} (her costing start date) went into her book value; from it, and every amortisation charge, they are expensed.`
+              : 'She has no costing start date, so her feed and overhead went into her book value.'}
+            {!hasParity &&
+              ' She has no confirmed service yet, so all of it falls outside a parity.'}
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className={headRow}>
+                  <th className={th}>Parity</th>
+                  <th className={th}>Window</th>
+                  <th className={`${th} text-right`}>Days</th>
+                  <th className={`${th} text-right`}>Feed</th>
+                  <th className={`${th} text-right`}>Medicine, Semen & Other</th>
+                  <th className={`${th} text-right`}>Overhead</th>
+                  <th className={`${th} text-right`}>Amortisation</th>
+                  <th className={`${th} text-right`}>Total</th>
+                  <th className={`${th} text-right`}>In Book Value</th>
+                  <th className={`${th} text-right`}>Expensed</th>
+                  <th className={`${th} text-right`}>Per Day</th>
+                  <th className={`${th} text-right`}>Weaned</th>
+                  <th className={`${th} text-right`}>Per Piglet Weaned</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {rows.map((r, i) => (
+                  <tr key={r.row_type === 'PARITY' ? `p${r.parity_number}-${i}` : 'outside'}>
+                    <td className="px-3 py-2.5 font-bold text-[var(--text-primary)] whitespace-nowrap">
+                      {r.row_type === 'PARITY' ? (
+                        <>
+                          Parity {r.parity_number}
+                          {r.status === 'IN_PROGRESS' && (
+                            <span className="ml-1.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                              In progress
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          Outside a parity
+                          <span className="block text-[10px] font-normal text-[var(--text-muted)]">
+                            Before her first service, and the days between a
+                            weaning and the next service
+                          </span>
+                        </>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 font-mono whitespace-nowrap">
+                      {r.window_start
+                        ? `${day(r.window_start)} → ${day(r.window_end)}`
+                        : NA}
+                    </td>
+                    <td className={cell}>{num(r.days)}</td>
+                    <td className={cell}>{money(r.feed)}</td>
+                    <td className={cell}>{money(r.other_consumption)}</td>
+                    <td className={cell}>{money(r.overhead)}</td>
+                    <td className={cell}>{money(r.amortisation)}</td>
+                    <td className={`${cell} font-bold text-[var(--text-primary)]`}>
+                      {money(r.total)}
+                    </td>
+                    <td className={cell}>{money(r.capitalised)}</td>
+                    <td className={cell}>{money(r.expensed)}</td>
+                    <td className={cell}>{money(r.per_day)}</td>
+                    <td className={cell}>{num(r.piglets_weaned)}</td>
+                    <td className={cell}>{money(r.cost_per_piglet_weaned)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              {total && (
+                <tfoot>
+                  <tr className="border-t-2 border-[var(--border)] font-bold">
+                    <td className="px-3 py-2.5" colSpan={3}>
+                      Whole cost to {day(data?.as_of)}
+                    </td>
+                    <td className={cell}>{money(total.feed)}</td>
+                    <td className={cell}>{money(total.other_consumption)}</td>
+                    <td className={cell}>{money(total.overhead)}</td>
+                    <td className={cell}>{money(total.amortisation)}</td>
+                    <td className={`${cell} text-[var(--text-primary)]`}>
+                      {money(total.total)}
+                    </td>
+                    <td className={cell}>{money(total.capitalised)}</td>
+                    <td className={cell}>{money(total.expensed)}</td>
+                    <td className={cell} colSpan={3} />
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </>
       )}
     </div>
   );

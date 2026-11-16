@@ -765,7 +765,7 @@ export class SchedulerHeaderService {
 
     const entered = await this.stageEntryDate(batchId, stageId);
     const from = String(header.effective_from).slice(0, 10);
-    if (!entered || entered <= from) return null;
+    if (!entered || entered === from) return null;
 
     const lineIds = (
       await this.db
@@ -818,6 +818,37 @@ export class SchedulerHeaderService {
       })
       .where(eq(schema.schedulerHeader.scheduler_id, header.scheduler_id));
     return entered;
+  }
+
+  /**
+   * An animal of an animal-wise batch was moved into a stage by a user: that stage gets the batch's scheduler, as a
+   * batch's own stage transfer does (Arun, 12 Nov). Without it the stage had no data entry and never reached the Daily
+   * Data Entry strip until someone created the scheduler by hand: on BATCH-000001 PIG-2024-0001 moved to Gestation and
+   * the strip kept showing Quarantine and Insemination only. Only the stage the user moved the animal to — never the
+   * batch's other occupied stages (Rishi, 15 Oct) — and only when the stage's Scheduler Auto Create is on. Idempotent
+   * and matched by stage code (createForStage), so a stage that already has one is left as it is.
+   */
+  async openForAnimalStageMove(
+    batchId: string,
+    stageId: string,
+    tenantId: string,
+    userPayload?: { userId?: string },
+  ): Promise<void> {
+    const [batch] = await this.db
+      .select({ tracking_mode: schema.batchHeader.tracking_mode })
+      .from(schema.batchHeader)
+      .where(eq(schema.batchHeader.batch_id, batchId))
+      .limit(1);
+    if (batch?.tracking_mode !== 'ANIMAL_WISE') return;
+
+    const [stage] = await this.db
+      .select({ scheduler_auto_create: schema.stageMaster.scheduler_auto_create })
+      .from(schema.stageMaster)
+      .where(eq(schema.stageMaster.stage_id, stageId))
+      .limit(1);
+    if (!stage?.scheduler_auto_create) return;
+
+    await this.createForStage(batchId, stageId, tenantId, userPayload);
   }
 
   /**
@@ -892,8 +923,8 @@ export class SchedulerHeaderService {
    * holds has a scheduler"): every death, transfer and stage move ends here, so an animal moving into a stage opened a
    * scheduler there behind the user's back — creating one scheduler for one batch and stage was followed by schedulers
    * for every other stage the batch's animals stood in. A scheduler is created where the user asks for one (the Create
-   * Scheduler form, batch creation, a stage transfer). The cost of the reversal: animals at a stage that never had a
-   * scheduler have no data entry until someone creates it.
+   * Scheduler form, batch creation, a stage transfer, a user moving an animal to a stage — openForAnimalStageMove). The
+   * cost of the reversal: animals that reach a stage any other way have no data entry there until someone creates it.
    */
   private async reopenOccupiedStageSchedulers(
     batch: typeof schema.batchHeader.$inferSelect,
@@ -955,13 +986,16 @@ export class SchedulerHeaderService {
     userPayload?: { userId?: string },
     options?: CreateForStageOptions,
   ): Promise<any> {
-    return this.createForStageInternal(
-      batchId,
-      stageId,
-      tenantId,
-      userPayload,
-      undefined,
-      options,
+    // The scheduler number is drawn inside this transaction, so a failure after it does not burn the number.
+    return withTenantTransaction(this.cls, () =>
+      this.createForStageInternal(
+        batchId,
+        stageId,
+        tenantId,
+        userPayload,
+        undefined,
+        options,
+      ),
     );
   }
 
@@ -979,13 +1013,15 @@ export class SchedulerHeaderService {
   ) {
     if (batch.tenant_id !== tenantId)
       throw new NotFoundException(`Batch '${batch.batch_id}' not found.`);
-    return this.createForStageInternal(
-      batch.batch_id,
-      stageId,
-      tenantId,
-      userPayload,
-      batch,
-      options,
+    return withTenantTransaction(this.cls, () =>
+      this.createForStageInternal(
+        batch.batch_id,
+        stageId,
+        tenantId,
+        userPayload,
+        batch,
+        options,
+      ),
     );
   }
 
@@ -1032,6 +1068,32 @@ export class SchedulerHeaderService {
       .where(eq(schema.stageMaster.stage_id, stageId))
       .limit(1);
     if (!stage) throw new NotFoundException(`Stage '${stageId}' not found.`);
+
+    // A batch has one scheduler per stage, and stages are matched by code everywhere else (countLiveAnimalsAtStage,
+    // stageEntryDate): the same stage exists once for the tenant and once for each company, so a scheduler on the
+    // company's Quarantine is the batch's Quarantine scheduler whichever copy this caller names. Without this a second,
+    // twin scheduler was made, and it counted the same animals again (the head counts of an Animal Wise batch then
+    // exceeded its live animals).
+    if (stage.stage_code) {
+      const [sameStage] = await this.db
+        .select({ header: schema.schedulerHeader })
+        .from(schema.schedulerHeader)
+        .innerJoin(
+          schema.stageMaster,
+          eq(schema.schedulerHeader.stage_id, schema.stageMaster.stage_id),
+        )
+        .where(
+          and(
+            eq(schema.schedulerHeader.batch_id, batchId),
+            eq(schema.stageMaster.stage_code, stage.stage_code),
+          ),
+        )
+        .limit(1);
+      if (sameStage)
+        return authorizedBatch
+          ? sameStage.header
+          : this.findOne(sameStage.header.scheduler_id);
+    }
 
     // Every stage's scheduler — not just the first — starts on the batch start
     // date, so a batch created with a back-dated start date has all its stages
@@ -1488,6 +1550,46 @@ export class SchedulerHeaderService {
   }
 
   /**
+   * A schedule's days are the days data entry asks for. They can be moved while nothing has been entered against it (a day posted or locked under
+   * the old dates would be stranded), so a scheduler started on the wrong day is corrected before its first entry.
+   */
+  private async assertDatesCanMove(header: {
+    batch_id: string;
+    stage_id: string;
+    lines?: Array<{ line_id: string }>;
+  }) {
+    const lineIds = (header.lines ?? []).map((l) => l.line_id);
+    if (lineIds.length) {
+      const [used] = await this.db
+        .select({ n: count() })
+        .from(schema.batchDailyData)
+        .where(
+          and(
+            eq(schema.batchDailyData.batch_id, header.batch_id),
+            inArray(schema.batchDailyData.line_id, lineIds),
+          ),
+        );
+      if (Number(used?.n ?? 0) > 0)
+        throw new BadRequestException(
+          'Data has already been entered against this scheduler, so its dates cannot be changed.',
+        );
+    }
+    const [locked] = await this.db
+      .select({ n: count() })
+      .from(schema.batchDataEntryLock)
+      .where(
+        and(
+          eq(schema.batchDataEntryLock.batch_id, header.batch_id),
+          eq(schema.batchDataEntryLock.stage_id, header.stage_id),
+        ),
+      );
+    if (Number(locked?.n ?? 0) > 0)
+      throw new BadRequestException(
+        'Days of this stage have already been locked in data entry, so the scheduler dates cannot be changed.',
+      );
+  }
+
+  /**
    * Updates non-status fields on scheduler_header (notes, data_entry_level, dates, animal_count).
    */
   async updateHeader(
@@ -1505,6 +1607,23 @@ export class SchedulerHeaderService {
     if (dto.effective_from !== undefined)
       updates.effective_from = dto.effective_from;
     if (dto.effective_to !== undefined) updates.effective_to = dto.effective_to;
+    const from = String(dto.effective_from ?? header.effective_from).slice(
+      0,
+      10,
+    );
+    const to =
+      dto.effective_to !== undefined ? dto.effective_to : header.effective_to;
+    if (to && String(to).slice(0, 10) < from)
+      throw new BadRequestException(
+        'The end date cannot be before the start date.',
+      );
+    const datesChanged =
+      (dto.effective_from !== undefined &&
+        from !== String(header.effective_from).slice(0, 10)) ||
+      (dto.effective_to !== undefined &&
+        String(to ?? '').slice(0, 10) !==
+          String(header.effective_to ?? '').slice(0, 10));
+    if (datesChanged) await this.assertDatesCanMove(header);
     if (dto.animal_count !== undefined)
       updates.animal_count = dto.animal_count.toString();
     if (dto.notes !== undefined) updates.notes = dto.notes;

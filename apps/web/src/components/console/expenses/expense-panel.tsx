@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -535,7 +537,7 @@ export default function ExpensePanel({
                       </button>
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>
-                      {r.posting_date}
+                      {formatDate(r.posting_date)}
                     </TableCell>
                     <TableCell style={S.primary}>
                       {r.location_id ? locName(r.location_id) : NA}
@@ -644,8 +646,7 @@ export default function ExpensePanel({
           />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Field label={t('jpPostingDate')} required>
-              <input
-                type="date"
+              <DateInput
                 value={form.posting_date}
                 onChange={(e) => set('posting_date', e.target.value)}
                 className="nf-input"
@@ -956,7 +957,7 @@ export default function ExpensePanel({
                       className="font-semibold text-sm mt-0.5"
                       style={S.primary}
                     >
-                      {viewingEntry.posting_date}
+                      {formatDate(viewingEntry.posting_date)}
                     </p>
                   </div>
                   <div>

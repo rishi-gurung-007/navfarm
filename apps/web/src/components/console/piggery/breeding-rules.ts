@@ -6,6 +6,8 @@
  * The thresholds marked "guidance" are ours, not the client's; they only colour a hint and never block a save.
  */
 
+import { formatDate } from '@/utils/date-short';
+
 export type Row = Record<string, any>;
 export type Issue = { level: "error" | "warn"; field: string; text: string };
 
@@ -44,7 +46,7 @@ export function openMatingOf(sowId: string, matings: Row[]): Row | undefined {
 /** Why a sow cannot be served now, or null when she can. Mirrors BreedingService.assertSowCanBeServed. */
 export function whyNotServed(sow: Row, matings: Row[]): string | null {
   const open = openMatingOf(sow.animal_id, matings);
-  if (open) return `open service ${String(open.mating_date).slice(0, 10)} — not farrowed`;
+  if (open) return `open service ${formatDate(open.mating_date)} — not farrowed`;
   if (sow.status === "PREGNANT") return "pregnant";
   if (sow.status === "LACTATING") return "nursing — wean first";
   return null;
@@ -61,7 +63,7 @@ export function whyNotFarrowing(sow: Row, matings: Row[]): string | null {
 export function lotState(lot: Row, matingDate: string): { left: number; usable: boolean; why: string | null } {
   const left = Number(lot.doses_collected) - Number(lot.doses_used_internal || 0) - Number(lot.doses_sold || 0);
   if (left <= 0) return { left, usable: false, why: "no doses left" };
-  if (lot.expiry_date && String(lot.expiry_date).slice(0, 10) < matingDate) return { left, usable: false, why: `expired ${String(lot.expiry_date).slice(0, 10)}` };
+  if (lot.expiry_date && String(lot.expiry_date).slice(0, 10) < matingDate) return { left, usable: false, why: `expired ${formatDate(lot.expiry_date)}` };
   if (lot.collection_date && String(lot.collection_date).slice(0, 10) > matingDate) return { left, usable: false, why: "collected after the mating" };
   return { left, usable: true, why: null };
 }
@@ -69,7 +71,8 @@ export function lotState(lot: Row, matingDate: string): { left: number; usable: 
 /** Days since a boar's latest collection (as the main boar or pooled), or null when he has none on record. */
 export function daysSinceCollection(boarId: string, lots: Row[], onDate: string): number | null {
   const dates = lots
-    .filter((l) => l.boar_id === boarId || (l.boars || []).some((b: Row) => b.boar_id === boarId))
+    // a boar tapped counts whether or not his ejaculate was used: his results are on the lot as well as its boars
+    .filter((l) => l.boar_id === boarId || (l.boars || []).some((b: Row) => b.boar_id === boarId) || (l.results || []).some((b: Row) => b.boar_id === boarId))
     .map((l) => String(l.collection_date).slice(0, 10))
     .filter((d) => d <= onDate)
     .sort();
@@ -104,7 +107,7 @@ export function checkMating({ form, sow, boar, lot, matings, gestationDays }: Ma
 
   const isAi = form.mating_type === "AI";
   if (!isAi && !form.boar_animal_id) err("boar_animal_id", "A natural mating needs the boar.");
-  if (isAi && !form.semen_lot_id) warn("semen_lot_id", "No semen lot chosen — no doses will be taken out of stock, and the sire is not traced.");
+  if (isAi && !form.semen_lot_id) err("semen_lot_id", "Choose the semen lot — its doses leave stock and it names the sire.");
   if (boar && boar.is_active === false) err("boar_animal_id", `${boar.animal_code} is no longer active.`);
 
   if (isAi) {
@@ -181,6 +184,10 @@ export function checkFarrowing({ form, sow, mating }: FarrowingCheck): Issue[] {
   if (Number.isNaN(fin) || fin < 0 || !isWhole(fin)) err("foster_received", "Fostered in must be a whole number.");
   if (Number.isNaN(fout) || fout < 0 || !isWhole(fout)) err("fostered_out", "Fostered out must be a whole number.");
 
+  // TDD row 12: when the farm enters Total Born it must equal born alive + born dead + mummified.
+  if (form.piglets_total_born !== "" && form.piglets_total_born != null && !Number.isNaN(live) && num(form.piglets_total_born) !== live + still + mummy) {
+    err("piglets_total_born", `Total born must equal born alive + born dead + mummified (${live + still + mummy}).`);
+  }
   if (!Number.isNaN(live) && live + still + mummy === 0) err("piglets_born_live", "A farrowing needs at least one piglet born — live, stillborn or mummified.");
   if (!Number.isNaN(live) && fout > live + fin) err("fostered_out", `Only ${live + fin} piglets are there to foster out (${live} born alive + ${fin} received).`);
   if (live + still + mummy > 0) {
@@ -207,51 +214,184 @@ export function checkFarrowing({ form, sow, mating }: FarrowingCheck): Issue[] {
 
 // ── Semen collection ────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The rules of the boar's breeding line (a breeding_line_setup row, read from /breeding-line-setup/effective). Null when
+ * neither the line nor the company has one: then no pooling, rest or motility rule is checked, and none is made up here.
+ */
+export interface LineRules {
+  pooling_allowed: boolean;
+  min_boars_per_lot: number | null;
+  max_boars_per_lot: number | null;
+  min_rest_days: number | null;
+  min_motility_pct: number | string | null;
+  rule_enforcement: string;
+  // What the line puts on a lot it posts (Phase 5): shown on the form so the technician knows before saving.
+  label_template?: string | null;
+  colorant_name?: string | null;
+  colorant_item_id?: string | null;
+  colorant_qty_per_lot?: number | string | null;
+  // The line's collection rules (Breeding Line Setup), checked on the form as well as by the API.
+  collection_mode?: string;
+  collection_weekdays?: string[] | null;
+  boars_per_collection_day?: number | null;
+  reference_required?: boolean;
+  reference_label?: string | null;
+  destination_rule?: string;
+  destination_farm_ids?: string[] | null;
+  restrict_to_destination?: string;
+}
+
+const WEEKDAY_CODES = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+const WEEKDAY_NAMES: Record<string, string> = { SUN: "Sunday", MON: "Monday", TUE: "Tuesday", WED: "Wednesday", THU: "Thursday", FRI: "Friday", SAT: "Saturday" };
+
+/** MON..SUN for a stored date. */
+export const weekdayOf = (date: string): string => WEEKDAY_CODES[new Date(`${String(date).slice(0, 10)}T00:00:00Z`).getUTCDay()];
+
+/** "Sunday and Wednesday" / "Monday, Tuesday and Friday". */
+export function weekdayList(codes: string[]): string {
+  const names = codes.map((c) => WEEKDAY_NAMES[c] ?? c);
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : (names[0] ?? "");
+}
+
+/** What one boar gave at a collection, as the form holds it (every figure typed, so every one a string). */
+export interface SemenBoarResultForm {
+  collector_id: string;
+  volume_ml: string;
+  doses: string;
+  morphology_pct: string;
+  motility_pct: string;
+  concentration_m_per_ml: string;
+  accepted: boolean;
+  reject_reason: string;
+}
+
+export const emptyBoarResult = (): SemenBoarResultForm => ({
+  collector_id: "",
+  volume_ml: "",
+  doses: "",
+  morphology_pct: "",
+  motility_pct: "",
+  concentration_m_per_ml: "",
+  accepted: true,
+  reject_reason: "",
+});
+
+/** The result the form holds for a boar; an untouched boar is accepted with nothing entered. */
+export const boarResultOf = (form: Row, boarId: string): SemenBoarResultForm => ({ ...emptyBoarResult(), ...(form.results?.[boarId] ?? {}) });
+
+/** The boars whose ejaculate goes into the lot, in the order chosen. */
+export const acceptedBoarIds = (form: Row): string[] => form.boar_animal_ids.filter((id: string) => boarResultOf(form, id).accepted);
+
+/** The lot's doses: what its accepted boars gave, added up. */
+export const lotDosesOf = (form: Row): number =>
+  acceptedBoarIds(form).reduce((t: number, id: string) => {
+    const d = num(boarResultOf(form, id).doses);
+    return t + (Number.isNaN(d) ? 0 : d);
+  }, 0);
+
 export interface SemenCheck {
   form: Row;
   boars: Row[];
   lots: Row[];
+  rules?: LineRules | null;
+  /** Every boar of the line the form is for, so the boars it has already tapped on the day can be counted. */
+  lineBoarIds?: string[];
 }
 
-export function checkSemen({ form, boars, lots }: SemenCheck): Issue[] {
+export function checkSemen({ form, boars, lots, rules, lineBoarIds }: SemenCheck): Issue[] {
   const out: Issue[] = [];
   const err = (field: string, text: string) => out.push({ level: "error", field, text });
   const warn = (field: string, text: string) => out.push({ level: "warn", field, text });
   const today = todayIso();
 
   if (!form.batch_id) err("batch_id", "Choose the batch first.");
+  // The form starts with the breed empty ("") and a batch of one line fills it in; older callers without the field are not asked.
+  if (form.batch_id && form.breed_id === "") err("breed_id", "Choose the breed (line) of the boars.");
   if (!form.boar_animal_ids.length) err("boar_animal_ids", "Choose at least one boar.");
   if (!form.collection_date) err("collection_date", "Enter the collection date.");
   else if (form.collection_date > today) err("collection_date", "The collection date cannot be in the future.");
 
+  // How a rule the line sets is reported: as a stop or only as a warning, as the line says.
+  const soft = rules?.rule_enforcement === "BLOCK" ? err : warn;
+  // A rejected ejaculate is in no lot, so only the accepted boars count towards the line's pooling limits.
+  const count = acceptedBoarIds(form).length;
+  if (rules && count > 1 && !rules.pooling_allowed) err("boar_animal_ids", "This line is never pooled: choose one boar per lot.");
+  if (rules?.max_boars_per_lot != null && count > rules.max_boars_per_lot) err("boar_animal_ids", `This line allows at most ${rules.max_boars_per_lot} boar${rules.max_boars_per_lot === 1 ? "" : "s"} in a lot.`);
+  if (rules?.min_boars_per_lot != null && count > 0 && count < rules.min_boars_per_lot) err("boar_animal_ids", `This line needs at least ${rules.min_boars_per_lot} boars in a lot.`);
+
+  // ── The line's own collection rules, as its Breeding Line Setup sets them ──
+  if (rules?.reference_required && !form.plan_id) {
+    const what = rules.reference_label?.trim() || "reference";
+    err("plan_id", `A ${what} is required for this line: plan the collection in Boar Selection with it, then record it from the plan.`);
+  }
+  const plannedForThisDay = !!form.plan_id && !!form.plan_info && String(form.plan_info.collection_date).slice(0, 10) === form.collection_date;
+  if (form.plan_id && form.plan_info && form.collection_date && !plannedForThisDay) {
+    warn("collection_date", `Plan ${form.plan_info.plan_no ?? ""} was for ${formatDate(form.plan_info.collection_date)}; this collection is dated ${formatDate(form.collection_date)}.`);
+  }
+  if (rules?.collection_mode === "SCHEDULED" && rules.collection_weekdays?.length && form.collection_date && !plannedForThisDay) {
+    const day = weekdayOf(form.collection_date);
+    if (!rules.collection_weekdays.includes(day)) {
+      soft("collection_date", `This line is collected on ${weekdayList(rules.collection_weekdays)}; ${formatDate(form.collection_date)} is a ${WEEKDAY_NAMES[day]}.`);
+    }
+  }
+  if (rules?.boars_per_collection_day != null && form.collection_date && lineBoarIds && form.boar_animal_ids.length) {
+    const n = rules.boars_per_collection_day;
+    const tappedToday = new Set<string>();
+    for (const l of lots) {
+      if (String(l.collection_date).slice(0, 10) !== form.collection_date) continue;
+      for (const id of [l.boar_id, ...(l.boars || []).map((b: Row) => b.boar_id), ...(l.results || []).map((b: Row) => b.boar_id)]) {
+        if (id && lineBoarIds.includes(id) && !form.boar_animal_ids.includes(id)) tappedToday.add(id);
+      }
+    }
+    const total = tappedToday.size + form.boar_animal_ids.length;
+    const plural = (k: number) => `boar${k === 1 ? "" : "s"}`;
+    if (total > n) {
+      err("boar_animal_ids", `This line taps ${n} ${plural(n)} a day; ${tappedToday.size} already ${tappedToday.size === 1 ? "has" : "have"} been collected on ${formatDate(form.collection_date)}, so at most ${Math.max(0, n - tappedToday.size)} more.`);
+    } else if (total < n) {
+      warn("boar_animal_ids", `This line taps ${n} ${plural(n)} a day; ${total} so far on ${formatDate(form.collection_date)}.`);
+    }
+  }
+  if (rules?.destination_rule === "LIST" && !form.plan_id) {
+    warn("plan_id", "This line's semen goes to a list of farms: record the collection from a plan that names the farm, or the lot has no destination.");
+  }
+
   for (const b of boars) {
     if (b.entry_date && form.collection_date && form.collection_date < String(b.entry_date).slice(0, 10)) {
-      err("collection_date", `${b.animal_code} entered on ${String(b.entry_date).slice(0, 10)}.`);
+      err("collection_date", `${b.animal_code} entered on ${formatDate(b.entry_date)}.`);
     }
-    if (form.collection_date) {
+    if (form.collection_date && rules?.min_rest_days != null) {
       const since = daysSinceCollection(b.animal_id, lots, form.collection_date);
-      // Guidance: a boar is usually collected no more than every 3–4 days.
-      if (since === 0) warn("boar_animal_ids", `${b.animal_code} was already collected on ${form.collection_date}.`);
-      else if (since != null && since < 3) warn("boar_animal_ids", `${b.animal_code} was collected ${since} day${since === 1 ? "" : "s"} ago — boars are usually rested 3 days or more.`);
+      if (since != null && since < rules.min_rest_days) soft("boar_animal_ids", `${b.animal_code} was collected ${since} day${since === 1 ? "" : "s"} ago — this line rests a boar ${rules.min_rest_days} day${rules.min_rest_days === 1 ? "" : "s"} or more.`);
     }
   }
 
-  const doses = num(form.doses_collected);
-  if (Number.isNaN(doses) || doses < 1 || !isWhole(doses)) err("doses_collected", "Doses collected must be a whole number, at least 1.");
+  // What each boar gave. Fields are `results.<animal id>.<figure>`, so a message sits beside the figure it is about.
+  if (form.boar_animal_ids.length && count === 0) err("boar_animal_ids", "At least one boar's ejaculate must be accepted into the lot.");
+  for (const b of boars) {
+    const r = boarResultOf(form, b.animal_id);
+    const at = (k: string) => `results.${b.animal_id}.${k}`;
+    if (!r.accepted) {
+      if (!r.reject_reason.trim()) err(at("reject_reason"), "Say why it was rejected.");
+      continue;
+    }
+    const doses = num(r.doses);
+    if (Number.isNaN(doses) || doses < 1 || !isWhole(doses)) err(at("doses"), "Doses must be a whole number, at least 1.");
+    const volume = num(r.volume_ml);
+    if (!Number.isNaN(volume) && volume <= 0) err(at("volume_ml"), "Volume must be above 0.");
+    const morphology = num(r.morphology_pct);
+    if (!Number.isNaN(morphology) && (morphology < 0 || morphology > 100)) err(at("morphology_pct"), "Morphology is a percentage, 0–100.");
+    const conc = num(r.concentration_m_per_ml);
+    if (!Number.isNaN(conc) && conc <= 0) err(at("concentration_m_per_ml"), "Concentration must be above 0.");
+    const motility = num(r.motility_pct);
+    if (!Number.isNaN(motility)) {
+      if (motility < 0 || motility > 100) err(at("motility_pct"), "Motility is a percentage, 0–100.");
+      else if (rules?.min_motility_pct != null && motility < Number(rules.min_motility_pct)) soft(at("motility_pct"), `Under this line's minimum of ${Number(rules.min_motility_pct)}%.`);
+    }
+  }
   if (!form.output_item_id) {
     err("output_item_id", "Choose the semen item — it is what puts the doses into inventory and makes them usable for AI. Without it the collection is only a note.");
   }
 
-  const motility = num(form.motility_pct);
-  if (!Number.isNaN(motility)) {
-    if (motility < 0 || motility > 100) err("motility_pct", "Motility is a percentage, 0–100.");
-    // Guidance: AI semen is commonly required to be at least 70% motile.
-    else if (motility < 70) warn("motility_pct", "Motility under 70% is usually too low to use for AI.");
-  }
-  const volume = num(form.volume_ml);
-  if (!Number.isNaN(volume) && volume <= 0) err("volume_ml", "Volume must be above 0.");
-  const conc = num(form.concentration_m_per_ml);
-  if (!Number.isNaN(conc) && conc <= 0) err("concentration_m_per_ml", "Concentration must be above 0.");
   for (const k of ["amortisation_period", "feed_cost_period", "drug_cost_period", "overhead_cost_period"]) {
     const v = num(form[k]);
     if (!Number.isNaN(v) && v < 0) err(k, "A cost cannot be negative.");
@@ -261,3 +401,7 @@ export function checkSemen({ form, boars, lots }: SemenCheck): Issue[] {
 
 export const errorsOf = (issues: Issue[]) => issues.filter((i) => i.level === "error");
 export const issueFor = (issues: Issue[], field: string) => issues.find((i) => i.field === field);
+
+/** How a collector reads in a list: his name, with his Employee ID in front when it differs (CM — Chris Moore). */
+export const collectorLabel = (c: { collector_code?: string | null; collector_name?: string | null }) =>
+  c.collector_code && c.collector_name && c.collector_code !== c.collector_name ? `${c.collector_code} — ${c.collector_name}` : (c.collector_name ?? c.collector_code ?? "");

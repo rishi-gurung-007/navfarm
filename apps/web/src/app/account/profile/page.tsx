@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -205,7 +206,7 @@ export default function ProfilePage() {
                     style={{ color: 'var(--text-primary)' }}
                   >
                     {profile.createdAt
-                      ? new Date(profile.createdAt).toLocaleDateString()
+                      ? formatDate(profile.createdAt)
                       : NA}
                   </dd>
                 </div>

@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -10,6 +12,9 @@ import {
   Inbox,
   Eye,
   CheckCircle2,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { Dialog } from '@/components/ui/dialog';
@@ -72,6 +77,42 @@ const STATUS_VARIANT: Record<string, 'neutral' | 'success' | 'danger'> = {
   CANCELLED: 'danger',
 };
 
+type JournalSort = { key: string; dir: 'asc' | 'desc' };
+
+/** A column heading that sorts the list: the first click sorts that column descending (newest or largest first), the next flips it. */
+function SortHead({
+  field,
+  sort,
+  onSort,
+  right,
+  children,
+}: {
+  field: string;
+  sort: JournalSort;
+  onSort: (next: JournalSort) => void;
+  right?: boolean;
+  children: React.ReactNode;
+}) {
+  const active = sort.key === field;
+  const Icon = !active ? ArrowUpDown : sort.dir === 'asc' ? ArrowUp : ArrowDown;
+  return (
+    <TableHead
+      className={`whitespace-nowrap ${right ? 'text-right' : ''}`}
+      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+    >
+      <button
+        type="button"
+        onClick={() => onSort({ key: field, dir: active && sort.dir === 'desc' ? 'asc' : 'desc' })}
+        className={`inline-flex items-center gap-1 uppercase tracking-wider cursor-pointer hover:text-[var(--text-primary)] ${right ? 'flex-row-reverse' : ''}`}
+        style={active ? { color: 'var(--accent)' } : undefined}
+      >
+        {children}
+        <Icon className="h-3 w-3" style={active ? undefined : { opacity: 0.5 }} />
+      </button>
+    </TableHead>
+  );
+}
+
 export default function JournalPanel() {
   const { t } = useLanguage();
   const [rows, setRows] = useState<Row[]>([]);
@@ -85,6 +126,11 @@ export default function JournalPanel() {
   );
   const [search, setSearch] = useState(openNo);
   const [statusFilter, setStatusFilter] = useState('');
+  // The posting dates to list, both ends inclusive; either may be left empty.
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  // Newest first until a column is chosen: the list is cut at 200, so the order is the API's, not the browser's.
+  const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'posting_date', dir: 'desc' });
   const [sourceOf, setSourceOf] = useState<Row | null>(null);
 
   const [glAccounts, setGlAccounts] = useState<Row[]>([]);
@@ -113,6 +159,10 @@ export default function JournalPanel() {
       if (companyId) params.set('companyId', companyId);
       if (search) params.set('search', search);
       if (statusFilter) params.set('status', statusFilter);
+      if (dateFrom) params.set('dateFrom', dateFrom);
+      if (dateTo) params.set('dateTo', dateTo);
+      params.set('sort', sort.key);
+      params.set('dir', sort.dir);
       params.set('limit', '200');
       const res = await api.get(`/journal?${params.toString()}`);
       setRows(unwrap<Row[]>(res) || []);
@@ -126,11 +176,11 @@ export default function JournalPanel() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, statusFilter]);
+  }, [search, statusFilter, dateFrom, dateTo, sort]);
 
   useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, pageSize]);
+  }, [search, statusFilter, dateFrom, dateTo, pageSize, sort]);
   const openedByNo = useRef(false);
   useEffect(() => {
     if (!openNo || openedByNo.current) return;
@@ -252,41 +302,51 @@ export default function JournalPanel() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold" style={S.primary}>
-            {t('jpJournalEntries')}
-          </h2>
-          <p className="mt-0.5 text-xs" style={S.sub}>
-            {t('jpJournalEntriesDescription')}
-          </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-0 flex-1 sm:flex-none">
+          <Search
+            className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
+            style={S.muted}
+          />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={t('jpSearchPlaceholder')}
+            aria-label={t('jpSearchJournalEntries')}
+            className="h-9 w-full pl-8 text-[13px] sm:w-44"
+          />
         </div>
-        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          <div className="relative min-w-0 flex-1 sm:flex-none">
-            <Search
-              className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
-              style={S.muted}
-            />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t('jpSearchPlaceholder')}
-              aria-label={t('jpSearchJournalEntries')}
-              className="h-9 w-full pl-8 text-[13px] sm:w-44"
-            />
-          </div>
-          <Select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            aria-label={t('jpFilterByStatus')}
-            fullWidth={false}
-            className="h-9 w-full min-w-0 text-[13px] sm:w-auto sm:min-w-[9.5rem]"
-          >
-            <option value="">{t('jpAllStatuses')}</option>
-            <option value="DRAFT">{t('jpDraft')}</option>
-            <option value="POSTED">{t('jpPosted')}</option>
-            <option value="CANCELLED">{t('jpCancelled')}</option>
-          </Select>
+        <Select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          aria-label={t('jpFilterByStatus')}
+          fullWidth={false}
+          className="h-9 w-full min-w-0 text-[13px] sm:w-auto sm:min-w-[9.5rem]"
+        >
+          <option value="">{t('jpAllStatuses')}</option>
+          <option value="DRAFT">{t('jpDraft')}</option>
+          <option value="POSTED">{t('jpPosted')}</option>
+          <option value="CANCELLED">{t('jpCancelled')}</option>
+        </Select>
+        <DateInput
+          aria-label="From posting date"
+          title="From posting date"
+          placeholder="From posting date"
+          className="nf-input-sm w-40"
+          value={dateFrom}
+          max={dateTo || undefined}
+          onChange={(e) => setDateFrom(e.target.value)}
+        />
+        <DateInput
+          aria-label="To posting date"
+          title="To posting date"
+          placeholder="To posting date"
+          className="nf-input-sm w-40"
+          value={dateTo}
+          min={dateFrom || undefined}
+          onChange={(e) => setDateTo(e.target.value)}
+        />
+        <div className="ml-auto flex items-center gap-2">
           <Button onClick={openCreate} size="sm" className="shrink-0">
             <Plus className="h-3.5 w-3.5" /> {t('jpNewJournalEntry')}
           </Button>
@@ -306,22 +366,24 @@ export default function JournalPanel() {
                 className="border-b"
                 style={{ borderColor: 'var(--row-border)' }}
               >
-                <TableHead className="whitespace-nowrap">
+                <SortHead field="journal_no" sort={sort} onSort={setSort}>
                   {t('jpJournalNo')}
-                </TableHead>
-                <TableHead className="whitespace-nowrap">
+                </SortHead>
+                <SortHead field="posting_date" sort={sort} onSort={setSort}>
                   {t('jpPostingDate')}
-                </TableHead>
-                <TableHead className="whitespace-nowrap">
+                </SortHead>
+                <SortHead field="source" sort={sort} onSort={setSort}>
                   {t('jpSource')}
-                </TableHead>
-                <TableHead className="whitespace-nowrap text-right">
+                </SortHead>
+                <SortHead field="total_debit" sort={sort} onSort={setSort} right>
                   {t('jpDebit')}
-                </TableHead>
-                <TableHead className="whitespace-nowrap text-right">
+                </SortHead>
+                <SortHead field="total_credit" sort={sort} onSort={setSort} right>
                   {t('jpCredit')}
-                </TableHead>
-                <TableHead className="text-right">{t('jpStatus')}</TableHead>
+                </SortHead>
+                <SortHead field="status" sort={sort} onSort={setSort} right>
+                  {t('jpStatus')}
+                </SortHead>
                 <TableHead className="text-right">{t('jpActions')}</TableHead>
               </tr>
             </TableHeader>
@@ -361,7 +423,7 @@ export default function JournalPanel() {
                       {row.journal_no}
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.primary}>
-                      {row.posting_date}
+                      {formatDate(row.posting_date)}
                     </TableCell>
                     <TableCell className="whitespace-nowrap" style={S.sub}>
                       {row.source_document_no ? (
@@ -452,8 +514,7 @@ export default function JournalPanel() {
                 {t('jpPostingDate')}{' '}
                 <span style={{ color: 'var(--danger)' }}>*</span>
               </label>
-              <input
-                type="date"
+              <DateInput
                 value={header.posting_date}
                 onChange={(e) =>
                   setHeader((h) => ({ ...h, posting_date: e.target.value }))
@@ -660,7 +721,7 @@ export default function JournalPanel() {
                 >
                   {t('jpPostingDate')}
                 </p>
-                <p style={S.primary}>{viewing.posting_date}</p>
+                <p style={S.primary}>{formatDate(viewing.posting_date)}</p>
               </div>
               <div>
                 <p

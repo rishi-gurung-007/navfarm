@@ -1,6 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AnimalService, resolveAgeAtEntryWeeks } from './animal.service';
 import { BatchService } from '../../production/batch/batch.service';
+import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
+import { BioCostingStartService } from '../../finance/bio-costing/bio-costing-start.service';
+import { BioCostingResidualService } from '../../finance/bio-costing/bio-costing-residual.service';
+import { BioCostingExitService } from '../../finance/bio-costing/bio-costing-exit.service';
+import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { ClsService } from 'nestjs-cls';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
@@ -18,6 +23,13 @@ import {
 } from '../../../test-utils/transaction-cls';
 
 describe('AnimalService', () => {
+  const exitService = { clearOnExit: jest.fn() };
+  const glPosting = {
+    hasMapping: jest.fn(),
+    postBatchCostEntry: jest.fn(),
+    animalAssetAccountId: jest.fn().mockResolvedValue(undefined),
+    assetAccountForItem: jest.fn().mockResolvedValue(undefined),
+  };
   let service: AnimalService;
   let module: TestingModule;
   let batchService: {
@@ -162,6 +174,46 @@ describe('AnimalService', () => {
         AnimalService,
         { provide: ClsService, useValue: cls },
         {
+          provide: AnimalBookValueService,
+          useValue: {
+            valueOf: jest.fn().mockResolvedValue({
+              acquisition: 0,
+              capitalised: 0,
+              amortised: 0,
+              fairValue: 0,
+              exits: 0,
+              bookValue: 0,
+              hasRows: false,
+            }),
+            valuesFor: jest.fn().mockResolvedValue(new Map()),
+            refreshCache: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: BioCostingStartService,
+          useValue: {
+            assignAnimal: jest.fn().mockResolvedValue({
+              assigned: false,
+              reason: 'NO_MATCHING_PROFILE',
+            }),
+            // A new birth date asks what moves her costing start; nothing costs this animal, so nothing moves.
+            startForNewBirthDate: jest.fn().mockResolvedValue(null),
+          },
+        },
+        {
+          provide: BioCostingResidualService,
+          useValue: {
+            forAnimal: jest.fn().mockResolvedValue({
+              residual: 0,
+              source: 'ITEM',
+              latest_amortisation: null,
+              latest_amortisation_date: null,
+            }),
+          },
+        },
+        { provide: BioCostingExitService, useValue: exitService },
+        { provide: GlPostingService, useValue: glPosting },
+        {
           provide: AuditLogService,
           useValue: { log: jest.fn().mockResolvedValue({}) },
         },
@@ -186,6 +238,7 @@ describe('AnimalService', () => {
             addTransaction: jest.fn().mockResolvedValue({}),
             syncSchedulerCounts: jest.fn().mockResolvedValue(undefined),
             alignSchedulerToStageEntry: jest.fn().mockResolvedValue(null),
+            openSchedulerForAnimalStage: jest.fn().mockResolvedValue(undefined),
             recordAnimalExit: jest
               .fn()
               .mockResolvedValue({ valueRelieved: null, batch: null }),
@@ -459,7 +512,11 @@ describe('AnimalService', () => {
       expect(animalInsert.animal_code).toBe('PIG-2026-0001');
       expect(result.animal_code).toBe('PIG-2026-0001');
       const ledgerInsert = insertedRecords[1];
-      expect(ledgerInsert.entry_type).toBe('ACQUISITION');
+      expect(ledgerInsert).toMatchObject({
+        entry_type: 'TRANSFER',
+        transaction_type: 'TRANSFER_RECEIPT',
+        document_type: 'ANIMAL_REGISTRATION',
+      });
       expect(ledgerInsert.cost_amount).toBe('2857.57');
     });
 
@@ -498,7 +555,7 @@ describe('AnimalService', () => {
         { userId: 'user-1' },
       );
       expect(insertedRecords[1]).toMatchObject({
-        entry_type: 'ACQUISITION',
+        entry_type: 'TRANSFER',
         batch_id: 'b-171',
         batch_no: 'BATCH-000171',
       });
@@ -641,6 +698,119 @@ describe('AnimalService', () => {
         service.update('a-1', { current_batch_id: null } as any, 'tenant-123'),
       ).rejects.toThrow(/transfer/i);
       expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  // Bio-asset costing Phase 2: the card shows what the animal's own bio-asset ledger says, not the register's cache.
+  describe('findOne — book value from the ledger', () => {
+    const row = {
+      animal_id: 'a-1',
+      book_value: '300.0000',
+      total_amortised: '0.0000',
+      current_bio_asset_value: '300.0000',
+    };
+
+    it('overlays the ledger-derived book value, accumulated amortisation and current value on the cached columns', async () => {
+      mockDbSelect.mockReturnValueOnce(found(row));
+      (module.get(AnimalBookValueService) as any).valueOf = jest
+        .fn()
+        .mockResolvedValue({
+          acquisition: 300,
+          capitalised: 97.5,
+          amortised: 20,
+          fairValue: 0,
+          exits: 0,
+          bookValue: 377.5,
+          hasRows: true,
+        });
+      const animal = await service.findOne('a-1');
+      expect(animal).toMatchObject({
+        book_value: '377.5000',
+        total_amortised: '20.0000',
+        current_bio_asset_value: '377.5000',
+      });
+    });
+
+    it('keeps the column for an animal the ledger has never seen, rather than showing nil', async () => {
+      mockDbSelect.mockReturnValueOnce(found(row));
+      const animal = await service.findOne('a-1');
+      expect(animal.book_value).toBe('300.0000');
+    });
+  });
+
+  describe('where an animal came from, by name', () => {
+    const rowOf = (over: object) => ({
+      animal_id: 'a-1',
+      book_value: '300.0000',
+      total_amortised: '0.0000',
+      current_bio_asset_value: '300.0000',
+      ...over,
+    });
+
+    it('names the goods receipt an animal arrived on, not its id', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(
+          found(
+            rowOf({
+              source_receipt_id: '6e453f5e-2449-4ba2-a5ce-064faa721c28',
+            }),
+          ),
+        )
+        .mockReturnValueOnce(found({ receipt_no: 'GR-000007' }));
+      const animal = await service.findOne('a-1');
+      expect(animal).toMatchObject({
+        source_receipt_no: 'GR-000007',
+        source_batch_no: null,
+        source_batch_label: null,
+      });
+    });
+
+    it('names the source batch by its number', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found(rowOf({ source_batch_id: 'b-1' })))
+        .mockReturnValueOnce(
+          found({ batch_no: 'BATCH-000007', is_litter_lot: false }),
+        );
+      const animal = await service.findOne('a-1');
+      expect(animal).toMatchObject({
+        source_receipt_no: null,
+        source_batch_no: 'BATCH-000007',
+        source_batch_label: 'BATCH-000007',
+      });
+    });
+
+    it('names a litter by its sow and the day she farrowed, since a litter is not a batch to anyone reading the card', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found(rowOf({ source_batch_id: 'lot-1' })))
+        .mockReturnValueOnce(
+          found({ batch_no: 'LIT-000002', is_litter_lot: true }),
+        )
+        .mockReturnValueOnce(
+          rowsOf([
+            {
+              sow: 'PIG-2025-0002',
+              farrowed: '2026-08-07',
+              lot_no: 'LOT-00004',
+            },
+          ]),
+        );
+      const animal = await service.findOne('a-1');
+      expect(animal).toMatchObject({
+        source_batch_no: 'LIT-000002',
+        source_batch_label:
+          'Litter of PIG-2025-0002, farrowed 2026-08-07 (LOT-00004)',
+      });
+    });
+
+    it('has none for an animal with no source, and looks nothing up', async () => {
+      mockDbSelect.mockReturnValueOnce(found(rowOf({})));
+      const animal = await service.findOne('a-1');
+      expect(animal).toMatchObject({
+        source_receipt_no: null,
+        source_batch_no: null,
+        source_batch_label: null,
+      });
+      expect(mockDbSelect).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -1213,7 +1383,9 @@ describe('AnimalService', () => {
       expect(set).toHaveBeenCalledWith({
         remaining_quantity: expect.anything(),
       });
-      const bio = inserted.find((v) => v.entry_type === 'ACQUISITION');
+      const bio = inserted.find(
+        (v) => v.document_type === 'ANIMAL_REGISTRATION',
+      );
       expect(bio).toMatchObject({
         document_type: 'ANIMAL_REGISTRATION',
         source_entry_id: 'bio-grn-1',
@@ -1244,7 +1416,8 @@ describe('AnimalService', () => {
 
       expect(inserted[0].acquisition_cost).toBe('1200');
       expect(
-        inserted.find((v) => v.entry_type === 'ACQUISITION').source_entry_id,
+        inserted.find((v) => v.document_type === 'ANIMAL_REGISTRATION')
+          .source_entry_id,
       ).toBe('bio-grn-2');
     });
 
@@ -1480,6 +1653,150 @@ describe('AnimalService', () => {
     });
   });
 
+  describe('what registering an animal posts to the general ledger', () => {
+    const register = (over: object) =>
+      (service as any).postAcquisitionJournal(
+        {
+          animalCode: 'PIG-2026-0009',
+          companyId: 'co-1',
+          entryType: 'PURCHASED_LOCAL',
+          fromReceipt: false,
+          amount: 900,
+          date: '2026-10-20',
+          nobId: 'nob-1',
+          lobId: 'lob-1',
+          ...over,
+        },
+        'tenant-1',
+        { userId: 'u1' },
+      );
+    const posted = () =>
+      glPosting.postBatchCostEntry.mock.calls.map(
+        ([p]: any) =>
+          `${p.transactionType}:${p.amount}:${p.sourceDocumentType}:${p.documentNo}`,
+      );
+
+    beforeEach(() => {
+      glPosting.hasMapping.mockReset().mockResolvedValue(true);
+      glPosting.postBatchCostEntry.mockReset().mockResolvedValue({});
+    });
+
+    it('an animal bought with no goods receipt is an asset owed for: Dr asset / Cr payables, against her registration', async () => {
+      await register({});
+      expect(posted()).toEqual([
+        'BIO_ACQUISITION:900:ANIMAL_REGISTRATION:PIG-2026-0009',
+      ]);
+    });
+
+    it('a gilt born on the farm takes her cost out of Piglets Inventory', async () => {
+      await register({ entryType: 'BORN_ON_FARM', amount: 7.5073 });
+      expect(posted()).toEqual([
+        'BIO_GILT_ACQUISITION:7.5073:ANIMAL_REGISTRATION:PIG-2026-0009',
+      ]);
+    });
+
+    it('an animal that arrived on a goods receipt posts nothing: the receipt did', async () => {
+      await register({ fromReceipt: true, entryType: 'PURCHASED_IMPORTED' });
+      expect(glPosting.postBatchCostEntry).not.toHaveBeenCalled();
+    });
+
+    it('posts nothing for an animal at no cost, a transfer in, or where the mapping is not set up', async () => {
+      await register({ amount: 0 });
+      await register({ entryType: 'TRANSFERRED_IN' });
+      glPosting.hasMapping.mockResolvedValue(false);
+      await register({});
+      expect(glPosting.postBatchCostEntry).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('what an exit posts to the general ledger', () => {
+    const animal = {
+      animal_id: 'a-1',
+      animal_code: 'PIG-2025-0002',
+      company_id: 'co-1',
+      nob_id: 'nob-1',
+      lob_id: 'lob-1',
+      costing_start_date: '2026-05-25',
+    } as any;
+    const exit = (dto: object, book: number | null) =>
+      (service as any).postExitJournals(
+        animal,
+        { disposal_date: '2026-10-20', ...dto },
+        book,
+        'tenant-1',
+        { userId: 'u1' },
+      );
+    const posted = () =>
+      glPosting.postBatchCostEntry.mock.calls.map(
+        ([p]: any) =>
+          `${p.transactionType}:${p.amount}${p.reverseDirection ? ':reversed' : ''}`,
+      );
+
+    beforeEach(() => {
+      glPosting.hasMapping.mockReset().mockResolvedValue(true);
+      glPosting.postBatchCostEntry.mockReset().mockResolvedValue({});
+      glPosting.animalAssetAccountId.mockReset().mockResolvedValue(undefined);
+      exitService.clearOnExit.mockReset().mockResolvedValue({ cleared: 12 });
+    });
+
+    it('a sale above her book value books the proceeds and the gain, after clearing what she was amortised', async () => {
+      await exit({ disposal_type: 'SOLD', disposal_value: 1000 }, 900);
+      expect(exitService.clearOnExit).toHaveBeenCalledWith(
+        'a-1',
+        '2026-10-20',
+        'tenant-1',
+        'u1',
+        'sold',
+      );
+      expect(posted()).toEqual([
+        'BIO_SALE_PROCEEDS:1000',
+        'BIO_DISPOSAL_SOLD:100',
+      ]);
+    });
+
+    it('a sale below her book value books the loss in the opposite direction', async () => {
+      await exit({ disposal_type: 'SOLD', disposal_value: 700 }, 900);
+      expect(posted()).toEqual([
+        'BIO_SALE_PROCEEDS:700',
+        'BIO_DISPOSAL_SOLD:200:reversed',
+      ]);
+    });
+
+    it('a cull with no proceeds writes her book value off as a loss and books no proceeds', async () => {
+      await exit({ disposal_type: 'CULLED' }, 900);
+      expect(posted()).toEqual(['BIO_DISPOSAL_SOLD:900:reversed']);
+    });
+
+    it('a death with no batch to post it is written off to mortality at her book value (mature once her costing has started)', async () => {
+      await exit({ disposal_type: 'DIED' }, 640);
+      expect(posted()).toEqual(['BIO_MORTALITY_MATURE:640']);
+      glPosting.postBatchCostEntry.mockClear();
+      await (service as any).postExitJournals(
+        { ...animal, costing_start_date: '2027-01-01' },
+        { disposal_type: 'DIED', disposal_date: '2026-10-20' },
+        640,
+        'tenant-1',
+      );
+      expect(posted()).toEqual(['BIO_MORTALITY_PREMATURE:640']);
+    });
+
+    it('a transfer posts nothing: she moves, she does not leave the books', async () => {
+      await exit({ disposal_type: 'TRANSFERRED' }, 900);
+      expect(exitService.clearOnExit).not.toHaveBeenCalled();
+      expect(glPosting.postBatchCostEntry).not.toHaveBeenCalled();
+    });
+
+    it('posts nothing, and clears nothing, where a mapping it needs is not set up', async () => {
+      glPosting.hasMapping.mockImplementation(
+        async (_t: string, _c: string, type: string) =>
+          type !== 'BIO_SALE_PROCEEDS',
+      );
+      await exit({ disposal_type: 'SOLD', disposal_value: 1000 }, 900);
+      expect(exitService.clearOnExit).not.toHaveBeenCalled();
+      expect(glPosting.postBatchCostEntry).not.toHaveBeenCalled();
+    });
+  });
+
   describe('dispose', () => {
     // E1: a sale, slaughter, transfer out or cull keeps the batch in step, as a death does.
     it('tells the batch when an animal leaves it other than by dying', async () => {
@@ -1549,6 +1866,9 @@ describe('AnimalService', () => {
       });
       mockDbInsert.mockReturnValue({ values: jest.fn().mockResolvedValue({}) });
       jest.spyOn(service as any, 'exitStageId').mockResolvedValue(null);
+      const journals = jest
+        .spyOn(service as any, 'postExitJournals')
+        .mockResolvedValue(undefined);
       batchService.recordAnimalExit.mockResolvedValueOnce({
         valueRelieved: 425.2,
         batch: {
@@ -1579,15 +1899,18 @@ describe('AnimalService', () => {
         batch_no: 'BATCH-000140',
         cost_amount: '-425.2',
       });
-      expect(batchService.postAnimalDisposalJournal).toHaveBeenCalledWith(
+      // The sale's journals are posted once, by postExitJournals, from the value her batch gave up (not her own column).
+      expect(journals).toHaveBeenCalledTimes(1);
+      expect(journals).toHaveBeenCalledWith(
+        expect.objectContaining({ animal_code: 'PIG-2026-0001' }),
         expect.objectContaining({
-          documentNo: 'PIG-2026-0001',
-          postingDate: '2026-10-17',
-          bookValue: 425.2,
-          proceeds: 500,
-          stageId: 'st-g',
-          label: 'Sale',
+          disposal_type: 'SOLD',
+          disposal_date: '2026-10-17',
+          disposal_value: 500,
         }),
+        425.2,
+        'tenant-123',
+        { userId: 'user-1' },
       );
     });
 
@@ -1806,6 +2129,27 @@ describe('AnimalService', () => {
         .calls[0][0];
       expect(setArg.gain_loss_on_disposal).toBeNull();
       expect(setArg.status).toBe('DEAD');
+    });
+
+    it('refuses a death of a costed breeding asset recorded without her weight at death (TDD row 10)', async () => {
+      mockDbSelect
+        .mockReturnValueOnce(found({ current_batch_id: 'batch-1' })) // peek
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            where: jest.fn().mockReturnValue({
+              for: jest.fn().mockResolvedValue([{ batch_id: 'batch-1' }]),
+            }),
+          }),
+        }) // batch lock
+        .mockReturnValueOnce(
+          found({
+            animal_id: 'a-1', company_id: 'comp-1', is_active: true, current_batch_id: 'batch-1',
+            animal_code: 'PF-SOW-01', costing_start_date: '2025-04-07',
+          }),
+        );
+      await expect(
+        service.dispose('a-1', { disposal_type: 'DIED', disposal_date: '2026-06-01', notes: 'found dead' } as any, 'tenant-123', { userId: 'user-1' }),
+      ).rejects.toThrow(/weight at death/);
     });
 
     it('posts a death inside an ACTIVE batch through the batch mortality path, not a bare register flip', async () => {
@@ -2112,32 +2456,33 @@ describe('AnimalService', () => {
   });
 
   describe('lookupByTag', () => {
+    // breed, stage, batch, pen, and the pen's farm
+    const lookupQuery = (rows: any[]) => {
+      const query: any = {
+        leftJoin: jest.fn(() => query),
+        where: jest.fn(() => query),
+        limit: jest.fn().mockResolvedValue(rows),
+      };
+      return { from: jest.fn(() => query), query };
+    };
+
     it('resolves an animal matching RFID tag and returns active withdrawal checks', async () => {
+      const lookup = lookupQuery([
+        {
+          animal: {
+            animal_id: 'a-1',
+            rfid_tag: 'RFID-12345',
+            animal_code: 'PIG-2026-0001',
+          },
+          breed: { breed_name: 'Yorkshire' },
+          stage: { stage_name: 'Gilt' },
+          batch: { batch_no: 'BATCH-01' },
+          pen: { code: 'PEN-04', name: 'Farrowing pen 4' },
+          farm: { code: 'FARM-01', name: 'Home farm' },
+        },
+      ]);
       mockDbSelect
-        .mockReturnValueOnce({
-          from: jest.fn().mockReturnValue({
-            leftJoin: jest.fn().mockReturnValue({
-              leftJoin: jest.fn().mockReturnValue({
-                leftJoin: jest.fn().mockReturnValue({
-                  where: jest.fn().mockReturnValue({
-                    limit: jest.fn().mockResolvedValue([
-                      {
-                        animal: {
-                          animal_id: 'a-1',
-                          rfid_tag: 'RFID-12345',
-                          animal_code: 'PIG-2026-0001',
-                        },
-                        breed: { breed_name: 'Yorkshire' },
-                        stage: { stage_name: 'Gilt' },
-                        batch: { batch_no: 'BATCH-01' },
-                      },
-                    ]),
-                  }),
-                }),
-              }),
-            }),
-          }),
-        })
+        .mockReturnValueOnce({ from: lookup.from })
         .mockReturnValueOnce({
           from: jest.fn().mockReturnValue({
             innerJoin: jest.fn().mockReturnValue({
@@ -2153,6 +2498,50 @@ describe('AnimalService', () => {
       expect(res.breed_name).toBe('Yorkshire');
       expect(res.stage_name).toBe('Gilt');
       expect(res.hasActiveWithdrawal).toBe(false);
+      expect(lookup.query.leftJoin).toHaveBeenCalledTimes(5);
+      // A scanned label says where to find her: the pen and its farm.
+      expect(res).toMatchObject({
+        batch_no: 'BATCH-01',
+        location_code: 'PEN-04',
+        location_name: 'Farrowing pen 4',
+        farm_name: 'Home farm',
+      });
+    });
+
+    it('returns no pen or farm for an animal with no location', async () => {
+      mockDbSelect
+        .mockReturnValueOnce({
+          from: lookupQuery([
+            {
+              animal: { animal_id: 'a-2', animal_code: 'PIG-2026-0002' },
+              breed: null,
+              stage: null,
+              batch: null,
+              pen: null,
+              farm: null,
+            },
+          ]).from,
+        })
+        .mockReturnValueOnce({
+          from: jest.fn().mockReturnValue({
+            innerJoin: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue([]),
+            }),
+          }),
+        })
+        .mockReturnValueOnce(joinedTreatmentRows([]));
+
+      const res = await service.lookupByTag('PIG-2026-0002', 'tenant-123');
+
+      expect(res).toMatchObject({ location_code: null, location_name: null, farm_name: null });
+    });
+
+    it('refuses a code that matches no animal in scope with a 404', async () => {
+      mockDbSelect.mockReturnValueOnce({ from: lookupQuery([]).from });
+
+      await expect(service.lookupByTag('NOPE-1', 'tenant-123')).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('rejects an empty tag string', async () => {
@@ -2561,6 +2950,13 @@ describe('AnimalService', () => {
 
       expect(res.current_stage_id).toBe('st-flush');
       expect(res.current_location_id).toBe('loc-1');
+      // The stage moved to gets the batch's scheduler, or it has no data entry and is missing from the strip.
+      expect(module.get(BatchService).openSchedulerForAnimalStage).toHaveBeenCalledWith(
+        'batch-1',
+        'st-flush',
+        'tenant-123',
+        { userId: 'user-1' },
+      );
     });
 
     it('refuses a stage that is set to the other sex', async () => {

@@ -45,6 +45,11 @@ export const STARTER_GL_ACCOUNTS: StarterGlAccount[] = [
     account_type: 'ASSET',
   },
   {
+    account_code: '1055',
+    account_name: 'Piglets Inventory — Current Biological Assets',
+    account_type: 'ASSET',
+  },
+  {
     account_code: '1060',
     account_name: 'Biological Assets — Mature (NCA)',
     account_type: 'ASSET',
@@ -74,6 +79,11 @@ export const STARTER_GL_ACCOUNTS: StarterGlAccount[] = [
   {
     account_code: '4030',
     account_name: 'Inventory Adjustment Gain',
+    account_type: 'INCOME',
+  },
+  {
+    account_code: '4040',
+    account_name: 'Boar Cost Recovered (Semen Produced)',
     account_type: 'INCOME',
   },
   // Expenses
@@ -288,6 +298,12 @@ export const STARTER_GL_MAPPINGS: StarterGlMapping[] = [
     debit_account_code: '1060',
     credit_account_code: '4020',
   },
+  // A premature herd is carried in the pre-mature asset account, so its revaluation debits that, not 1060.
+  {
+    transaction_type: 'BIO_FAIR_VALUE_PREMATURE',
+    debit_account_code: '1050',
+    credit_account_code: '4020',
+  },
   {
     transaction_type: 'BIO_HARVEST',
     debit_account_code: '1030',
@@ -303,6 +319,30 @@ export const STARTER_GL_MAPPINGS: StarterGlMapping[] = [
     transaction_type: 'BIO_SALE_PROCEEDS',
     debit_account_code: '1200',
     credit_account_code: '1060',
+  },
+  // A culled breeding animal converted to inventory (TDD row 11): she comes into Finished Goods at her market value, out of the asset; the gain or loss goes through BIO_DISPOSAL_SOLD.
+  {
+    transaction_type: 'BIO_FA_CONVERSION',
+    debit_account_code: '1030',
+    credit_account_code: '1060',
+  },
+  // Semen used by an AI mating: out of the semen stock (Finished Goods), into the sow's pre-mature asset, which hands it on to her litter at the farrowing.
+  {
+    transaction_type: 'BIO_SEMEN_USE',
+    debit_account_code: '1050',
+    credit_account_code: '1030',
+  },
+  // Semen collected: stock at the cost of producing it, against the recovery of the boar's cost (his costs are expensed or sit in his own asset, never in WIP).
+  {
+    transaction_type: 'BIO_SEMEN_PRODUCTION',
+    debit_account_code: '1030',
+    credit_account_code: '4040',
+  },
+  // The same, once her costing has begun: expensed, as her feed is.
+  {
+    transaction_type: 'BIO_SEMEN_EXPENSE',
+    debit_account_code: '5080',
+    credit_account_code: '1030',
   },
 ];
 

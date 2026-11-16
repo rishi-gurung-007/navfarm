@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState, useMemo } from 'react';
 import {
@@ -160,6 +162,9 @@ export default function SchedulerDetailPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [acting, setActing] = useState(false);
+  const [editingDates, setEditingDates] = useState(false);
+  const [dates, setDates] = useState({ from: '', to: '' });
+  const [datesSaved, setDatesSaved] = useState(false);
 
   const [items, setItems] = useState<Row[]>(itemsProp || []);
   const [resources, setResources] = useState<Row[]>(resourcesProp || []);
@@ -262,6 +267,35 @@ export default function SchedulerDetailPanel({
       onChanged?.();
     } catch (err: any) {
       setError(err?.message || 'Could not update the scheduler status.');
+    } finally {
+      setActing(false);
+    }
+  };
+
+  const startEditingDates = () => {
+    if (!header) return;
+    setDates({
+      from: String(header.effective_from ?? '').slice(0, 10),
+      to: String(header.effective_to ?? '').slice(0, 10),
+    });
+    setEditingDates(true);
+  };
+
+  const saveDates = async () => {
+    if (!header || !dates.from) return;
+    setActing(true);
+    setError('');
+    try {
+      await api.patch(`/scheduler-header/${header.scheduler_id}`, {
+        effective_from: dates.from,
+        ...(dates.to ? { effective_to: dates.to } : {}),
+      });
+      setEditingDates(false);
+      setDatesSaved(true);
+      load();
+      onChanged?.();
+    } catch (err: any) {
+      setError(err?.message || 'Could not change the scheduler dates.');
     } finally {
       setActing(false);
     }
@@ -693,7 +727,7 @@ export default function SchedulerDetailPanel({
                     {t('scLabelEffectiveFrom')}
                   </p>
                   <p className="font-semibold mt-0.5" style={S.primary}>
-                    {header.effective_from || NA}
+                    {header.effective_from ? formatDate(header.effective_from) : NA}
                   </p>
                 </div>
                 <div>
@@ -704,7 +738,7 @@ export default function SchedulerDetailPanel({
                     {t('scLabelEffectiveTo')}
                   </p>
                   <p className="font-semibold mt-0.5" style={S.primary}>
-                    {header.effective_to || NA}
+                    {header.effective_to ? formatDate(header.effective_to) : NA}
                   </p>
                 </div>
                 <div>
@@ -762,7 +796,7 @@ export default function SchedulerDetailPanel({
                       {t('scLabelActualEndDate')}
                     </p>
                     <p className="font-semibold mt-0.5" style={S.primary}>
-                      {header.actual_end_date}
+                      {formatDate(header.actual_end_date)}
                     </p>
                   </div>
                 )}
@@ -822,7 +856,91 @@ export default function SchedulerDetailPanel({
                     {t('scResume')}
                   </Button>
                 )}
+                {header.scheduler_status !== 'COMPLETED' && !editingDates && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={startEditingDates}
+                    disabled={acting}
+                  >
+                    <Pencil className="mr-1.5 h-3.5 w-3.5" /> {t('scEditDates')}
+                  </Button>
+                )}
               </div>
+              {datesSaved && !editingDates && (
+                <p
+                  className="mt-2 text-xs"
+                  style={{ color: 'var(--success)' }}
+                  role="status"
+                >
+                  {t('scDatesSaved')}
+                </p>
+              )}
+              {editingDates && (
+                <div
+                  className="mt-3 rounded-[var(--radius-sm)] border p-3"
+                  style={S.raised}
+                >
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div>
+                      <label
+                        htmlFor="sched-from"
+                        className="mb-1 block text-[10px] font-bold uppercase tracking-wider"
+                        style={S.muted}
+                      >
+                        {t('scLabelEffectiveFrom')}
+                      </label>
+                      <DateInput
+                        id="sched-from"
+                        className={inputCls}
+                        style={S.input}
+                        value={dates.from}
+                        onChange={(e) =>
+                          setDates((d) => ({ ...d, from: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="sched-to"
+                        className="mb-1 block text-[10px] font-bold uppercase tracking-wider"
+                        style={S.muted}
+                      >
+                        {t('scLabelEffectiveTo')}
+                      </label>
+                      <DateInput
+                        id="sched-to"
+                        className={inputCls}
+                        style={S.input}
+                        value={dates.to}
+                        min={dates.from}
+                        onChange={(e) =>
+                          setDates((d) => ({ ...d, to: e.target.value }))
+                        }
+                      />
+                    </div>
+                    <Button
+                      size="sm"
+                      className="nf-btn-primary"
+                      onClick={saveDates}
+                      disabled={acting || !dates.from}
+                    >
+                      {t('scSaveDates')}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setEditingDates(false)}
+                      disabled={acting}
+                    >
+                      {t('cancel')}
+                    </Button>
+                  </div>
+                  <p className="mt-2 text-[11px]" style={S.muted}>
+                    {t('scDatesHint')}
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>

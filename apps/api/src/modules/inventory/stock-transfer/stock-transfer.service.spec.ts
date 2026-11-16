@@ -4,6 +4,7 @@ import {
 } from '../../../test-utils/transaction-cls';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ClsService } from 'nestjs-cls';
+import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import { StockTransferService } from './stock-transfer.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
@@ -28,6 +29,11 @@ import * as schema from '../../../core/database/schema';
  * farm join made it in.
  */
 describe('StockTransferService', () => {
+  // The transfer number comes from the Stock Transfer series, drawn inside the save transaction.
+  const numberSeriesMock = {
+    seriesCodeForDocument: jest.fn().mockResolvedValue('STOCK_TRANSFER'),
+    generateNext: jest.fn().mockResolvedValue('TR-000001'),
+  };
   let service: StockTransferService;
   let cls: ReturnType<typeof transactionCls>;
 
@@ -180,6 +186,7 @@ describe('StockTransferService', () => {
             postInventoryLedgerEntry: jest.fn().mockResolvedValue({}),
           },
         },
+        { provide: NumberSeriesService, useValue: numberSeriesMock },
         {
           provide: UomService,
           useValue: { resolveConversionFactor: mockResolveConversionFactor },
@@ -441,6 +448,7 @@ describe('StockTransferService', () => {
               postInventoryLedgerEntry: jest.fn().mockResolvedValue({}),
             },
           },
+          { provide: NumberSeriesService, useValue: numberSeriesMock },
           {
             provide: UomService,
             useValue: { resolveConversionFactor: mockResolveConversionFactor },

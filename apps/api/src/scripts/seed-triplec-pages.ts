@@ -446,6 +446,7 @@ async function apply() {
         uom: 'KG',
         min_value: 105,
         max_value: 130,
+        target_value: 118,
         is_mandatory: true,
       },
       {
@@ -455,26 +456,17 @@ async function apply() {
         uom: 'MM',
         min_value: 8,
         max_value: 16,
-      },
-      {
-        param_code: 'CONDITION',
-        param_name: 'Body Condition',
-        param_type: 'GRADE',
-        grade_scale: { A: 'Excellent', B: 'Good', C: 'Fair' },
+        target_value: 12,
       },
       {
         param_code: 'HEALTHY',
         param_name: 'Free of Lesions',
         param_type: 'BOOLEAN',
-        pass_criteria: 'true',
       },
     ];
+    // The client's QC Parameter Master has no Line of Business or grade scale (0247): a parameter applies to every line.
     for (const q of list)
-      await must('POST', '/qc-parameter', {
-        ...q,
-        company_id: companyId,
-        lob_id: lob?.lob_id,
-      });
+      await must('POST', '/qc-parameter', { ...q, company_id: companyId });
     return `${list.length} created`;
   });
 

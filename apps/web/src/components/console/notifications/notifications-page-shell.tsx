@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDateTime } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import React, { useEffect, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
@@ -714,9 +715,7 @@ export function NotificationsPageShell({
                         className="p-4 font-mono"
                         style={{ color: 'var(--text-muted)' }}
                       >
-                        {new Date(log.sent_at).toLocaleString(undefined, {
-                          hour12: true,
-                        })}
+                        {formatDateTime(log.sent_at)}
                       </TableCell>
                       <TableCell className="p-4">
                         {/* Channel is which pipe carried the message, not a

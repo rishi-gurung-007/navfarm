@@ -18,11 +18,15 @@ import { ShieldAlert } from "lucide-react";
  */
 export const LIVESTOCK_SECTIONS = [
   { key: "register", href: "/livestock", labelKey: "navLivestockRegister" },
+  // Scan an animal's QR code or barcode (printed from her register card) and open her details.
+  { key: "scan", href: "/livestock/scan", labelKey: "navLivestockScan" },
   // A page route, not the API path. The breeding controller lives at
   // 'piggery/breeding'; the screen lives at /livestock/breeding. Conflating the
   // two pointed this nav item at a route that does not exist and, because the
   // href dropped out of the nav set, gave the highlight to /livestock instead.
   { key: "breeding", href: "/livestock/breeding", labelKey: "pigBreeding" },
+  // The AI Station: semen collection, boar selection and boar condition. Its own page, so the breeding page keeps to the sows.
+  { key: "ai-station", href: "/livestock/ai-station", labelKey: "pigAiStation" },
   // Health sits in this family but renders through ProductionPageShell (it is
   // batch-and-animal shaped, not register-shaped), so it has no tab key here —
   // it is listed so the sidebar has one list to render from.
@@ -30,6 +34,17 @@ export const LIVESTOCK_SECTIONS = [
   { key: "facility", href: "/livestock/facility", labelKey: "pigFacilityOccupancy" },
   { key: "analytics", href: "/livestock/analytics", labelKey: "pigHerdAnalytics" },
 ] as const;
+
+/**
+ * Sections kept out of the sidebar for now (3 Nov 2026): their pages and routes are intact, only the menu entries are off. To show
+ * one again, take its key out of this list.
+ */
+const HIDDEN_FROM_MENU: readonly string[] = ["analytics"];
+
+/** What the Livestock menu lists: every section except the ones switched off above. */
+export const LIVESTOCK_MENU_SECTIONS = LIVESTOCK_SECTIONS.filter(
+  (section) => section.key === null || !HIDDEN_FROM_MENU.includes(section.key),
+);
 
 export type LivestockTabKey = Exclude<(typeof LIVESTOCK_SECTIONS)[number]["key"], null>;
 
@@ -62,7 +77,16 @@ export function useLivestockPageState() {
   return { ready, activeLob, mayView };
 }
 
-export function LivestockPageShell({ activeKey, children }: { activeKey: LivestockTabKey; children: React.ReactNode }) {
+export function LivestockPageShell({
+  activeKey,
+  hideTitle = false,
+  children,
+}: {
+  activeKey: LivestockTabKey;
+  /** The page puts its own title at the top (it changes with the tab), so the section title is not repeated above it. */
+  hideTitle?: boolean;
+  children: React.ReactNode;
+}) {
   const { t } = useLanguage();
   const { ready, activeLob, mayView } = useLivestockPageState();
 
@@ -110,13 +134,16 @@ export function LivestockPageShell({ activeKey, children }: { activeKey: Livesto
 
   return (
     <ConsolePage>
-      <PageHeader
-        title={isRegister ? (isDairy ? t("dairyCowRegister") : t("pigSwineRegister")) : t(sectionLabelKey)}
-        description={
-          isRegister ? (isDairy ? t("dairyCowHerdRegisterDesc") : t("pigAnimalRegisterDesc")) : undefined
-        }
-      />
-      {children}
+      {!hideTitle && (
+        <PageHeader
+          title={isRegister ? (isDairy ? t("dairyCowRegister") : t("pigSwineRegister")) : t(sectionLabelKey)}
+          description={
+            isRegister ? (isDairy ? t("dairyCowHerdRegisterDesc") : t("pigAnimalRegisterDesc")) : undefined
+          }
+        />
+      )}
+      {/* With no section title above it, the page's own header needs the breathing room the title's row gave. */}
+      {hideTitle ? <div className="pt-4 sm:pt-6">{children}</div> : children}
     </ConsolePage>
   );
 }

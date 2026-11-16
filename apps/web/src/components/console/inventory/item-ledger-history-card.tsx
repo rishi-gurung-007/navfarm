@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import {
@@ -24,8 +25,8 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import {
-  formatBcDocumentType,
-  formatBcEntryType,
+  formatDocumentType,
+  formatTransactionType,
 } from './inventory-ledger-detail';
 
 type Row = Record<string, any>;
@@ -352,7 +353,7 @@ export default function ItemLedgerHistoryCard({
                             className="py-2.5 px-3 font-mono"
                             style={S.primary}
                           >
-                            {layer.posting_date}
+                            {formatDate(layer.posting_date)}
                           </TableCell>
                           <TableCell className="py-2.5 px-3">
                             <div className="flex flex-col">
@@ -363,7 +364,7 @@ export default function ItemLedgerHistoryCard({
                                 {layer.document_no}
                               </span>
                               <span className="text-[10px]" style={S.muted}>
-                                {formatBcDocumentType(layer.document_type)}
+                                {formatDocumentType(layer.document_type)}
                               </span>
                             </div>
                           </TableCell>
@@ -563,7 +564,7 @@ export default function ItemLedgerHistoryCard({
                             className="py-2.5 px-3 font-mono"
                             style={S.primary}
                           >
-                            {out.posting_date}
+                            {formatDate(out.posting_date)}
                           </TableCell>
                           <TableCell className="py-2.5 px-3">
                             <div className="flex flex-col">
@@ -576,12 +577,12 @@ export default function ItemLedgerHistoryCard({
                               <span className="text-[10px]" style={S.muted}>
                                 {out.batch_no
                                   ? `Batch: ${out.batch_no}`
-                                  : formatBcDocumentType(out.document_type)}
+                                  : formatDocumentType(out.document_type)}
                               </span>
                             </div>
                           </TableCell>
                           <TableCell className="py-2.5 px-3" style={S.sub}>
-                            {formatBcEntryType(out.transaction_type)}
+                            {formatTransactionType(out.transaction_type)}
                           </TableCell>
                           <TableCell
                             className="py-2.5 px-3 font-mono"

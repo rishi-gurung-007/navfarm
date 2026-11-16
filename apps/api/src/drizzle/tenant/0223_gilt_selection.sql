@@ -1,0 +1,70 @@
+-- 21 Oct 2026 (litter costing and gilt selection, Phase 5): TDD row 6, event 2 - GILT SELECTION. A selection is a header (the batch the piglets are in,
+-- the date, the production week), lines (one per litter the gilts come from) and, once posted, one row per gilt created (RFID, birth date, batch
+-- week, teat count, the animal register row and the cost she carries). Additive: three tables.
+CREATE TABLE `gilt_selection` (
+  `selection_id` varchar(36) NOT NULL,
+  `tenant_id` varchar(36) NOT NULL,
+  `company_id` varchar(36) NOT NULL,
+  `selection_no` varchar(30) NOT NULL,
+  `batch_id` varchar(36) NOT NULL,
+  `batch_no` varchar(50) NOT NULL,
+  `farm_id` varchar(36),
+  `location_id` varchar(36),
+  `sub_location_id` varchar(36),
+  `selection_date` date NOT NULL,
+  `production_week` int,
+  `gilt_item_id` varchar(36),
+  `animal_batch_id` varchar(36),
+  `status` varchar(12) NOT NULL DEFAULT 'DRAFT',
+  `head_released` decimal(10,4),
+  `value_released` decimal(18,4),
+  `remarks` varchar(300),
+  `posted_at` timestamp NULL,
+  `posted_by` varchar(36),
+  `created_by` varchar(36),
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`selection_id`),
+  UNIQUE KEY `uq_gilt_selection_no` (`company_id`, `selection_no`),
+  KEY `idx_gilt_selection_tenant` (`tenant_id`, `company_id`, `status`),
+  KEY `idx_gilt_selection_batch` (`batch_id`),
+  CONSTRAINT `fk_gilt_selection_company` FOREIGN KEY (`company_id`) REFERENCES `company_master` (`company_id`) ON DELETE RESTRICT
+);
+--> statement-breakpoint
+CREATE TABLE `gilt_selection_line` (
+  `line_id` varchar(36) NOT NULL,
+  `selection_id` varchar(36) NOT NULL,
+  `line_no` int NOT NULL,
+  `farrow_id` varchar(36) NOT NULL,
+  `piglet_item_id` varchar(36),
+  `source_batch_id` varchar(36),
+  `lot_no` varchar(50),
+  `sow_animal_id` varchar(36) NOT NULL,
+  `parity_number` int,
+  `boar_animal_id` varchar(36),
+  `colour_code` varchar(30),
+  `piglets_produced` int,
+  `sow_tsi` decimal(10,2),
+  `gilts_selected` int NOT NULL,
+  PRIMARY KEY (`line_id`),
+  UNIQUE KEY `uq_gilt_selection_line` (`selection_id`, `line_no`),
+  KEY `idx_gilt_selection_line_farrow` (`farrow_id`),
+  CONSTRAINT `fk_gilt_selection_line_header` FOREIGN KEY (`selection_id`) REFERENCES `gilt_selection` (`selection_id`) ON DELETE CASCADE
+);
+--> statement-breakpoint
+CREATE TABLE `gilt_selection_gilt` (
+  `gilt_id` varchar(36) NOT NULL,
+  `selection_id` varchar(36) NOT NULL,
+  `line_id` varchar(36) NOT NULL,
+  `rfid_tag` varchar(50) NOT NULL,
+  `dob` date,
+  `batch_week` int,
+  `no_of_teats` int NOT NULL,
+  `animal_id` varchar(36),
+  `animal_code` varchar(50),
+  `acquisition_cost` decimal(18,4),
+  PRIMARY KEY (`gilt_id`),
+  KEY `idx_gilt_selection_gilt_selection` (`selection_id`),
+  KEY `idx_gilt_selection_gilt_animal` (`animal_id`),
+  CONSTRAINT `fk_gilt_selection_gilt_header` FOREIGN KEY (`selection_id`) REFERENCES `gilt_selection` (`selection_id`) ON DELETE CASCADE
+);

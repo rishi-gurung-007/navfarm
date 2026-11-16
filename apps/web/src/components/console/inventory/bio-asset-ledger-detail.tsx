@@ -5,6 +5,7 @@
  * key figures, item and tracking panels, and — for a GRN's entry — the animals registered from it, as a receipt lists
  * the issues applied to it. A registration shows the GRN entry it was taken from.
  */
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -33,6 +34,10 @@ import {
   TableHead,
   TableCell,
 } from '@/components/ui/table';
+import {
+  formatEntryType,
+  formatTransactionType,
+} from './inventory-ledger-detail';
 
 type Row = Record<string, any>;
 
@@ -44,16 +49,42 @@ const S = {
   accent: { color: 'var(--accent)' },
 };
 
-export const BIO_TRANSACTION_LABEL: Record<string, string> = {
+/** The event a Bio Asset Ledger row is, as the API reads it from the row's codes — the names the rows were known by before the entry type was standardised. */
+export const BIO_EVENT_LABEL: Record<string, string> = {
   PURCHASE: 'Purchase',
-  ANIMAL_REGISTRATION: 'Animal Registration',
+  ACQUISITION: 'Acquisition',
+  CONSUMPTION: 'Consumption',
+  OVERHEAD_COST: 'Overhead Cost',
+  COST_ALLOCATION: 'Cost Allocation',
+  TRANSFER_OUT: 'Transfer Out',
+  TRANSFER_IN: 'Transfer In',
+  AMORTIZATION: 'Amortization',
+  FAIR_VALUE_ADJMT: 'Fair Value Adjustment',
   MORTALITY: 'Mortality',
+  TRANSFORMATION: 'Transformation',
 };
 
+/** The document behind a Bio Asset Ledger row — which event it is. Transaction and entry types are shared with the Inventory Ledger. */
 export const BIO_DOCUMENT_LABEL: Record<string, string> = {
   GOODS_RECEIPT: 'GRN',
   ANIMAL_REGISTRATION: 'Animal Registration',
+  BATCH: 'Batch / Lot Receipt',
+  BATCH_OVERHEAD: 'Batch Overhead',
+  BREEDING_SEMEN: 'Semen Used (Mating)',
+  BATCH_TRANSFER: 'Batch Transfer',
+  BATCH_AMORTIZATION: 'Batch Amortisation',
+  BATCH_FAIR_VALUE: 'Batch Fair Value',
+  BATCH_MATURITY: 'Batch Maturity',
+  BATCH_HARVEST: 'Batch Harvest',
+  BATCH_DISPOSAL: 'Batch Disposal',
+  ANIMAL_DISPOSAL: 'Animal Disposal',
+  LITTER_BIRTH_COST: 'Litter Birth Cost',
+  LITTER_COST: 'Litter Lactation Cost',
+  GILT_SELECTION: 'Gilt Selection',
   MORTALITY: 'Mortality',
+  BIO_COSTING_RUN: 'Costing Run',
+  BIO_FAIR_VALUE_RUN: 'Fair Value Run',
+  MANUAL_ENTRY: 'Manual Entry',
 };
 
 const qtyText = (n: number) =>
@@ -136,8 +167,9 @@ export default function BioAssetLedgerDetail({
   }
 
   const qty = Number(entry.quantity || 0);
-  const isPositive = qty > 0;
-  const isGrn = entry.entry_type === 'PURCHASE';
+  // A cost allocation moves value, not head: its sign is the sign of its amount.
+  const isPositive = (qty !== 0 ? qty : Number(entry.amount || 0)) > 0;
+  const isGrn = entry.document_type === 'GOODS_RECEIPT';
   const remaining = Number(entry.remaining_quantity ?? 0);
   const registeredPct =
     isGrn && qty > 0 ? Math.round(((qty - remaining) / qty) * 100) : 0;
@@ -157,10 +189,7 @@ export default function BioAssetLedgerDetail({
             </h2>
             <Badge variant="neutral" className="text-[11px]">
               <span style={S.muted}>TRANSACTION TYPE:&nbsp;</span>
-              <strong>
-                {BIO_TRANSACTION_LABEL[entry.transaction_type] ??
-                  entry.transaction_type}
-              </strong>
+              <strong>{formatTransactionType(entry.transaction_type)}</strong>
             </Badge>
             <span
               className="inline-flex items-center gap-1 text-[11px]"
@@ -168,8 +197,8 @@ export default function BioAssetLedgerDetail({
             >
               ENTRY TYPE:{' '}
               <StatusBadge
-                status={isPositive ? 'POSITIVE' : 'NEGATIVE'}
-                label={isPositive ? 'Positive (+)' : 'Negative (-)'}
+                status={entry.entry_type}
+                label={formatEntryType(entry.entry_type, qty)}
               />
             </span>
             <Badge variant="neutral" className="text-[11px]">
@@ -178,7 +207,7 @@ export default function BioAssetLedgerDetail({
           </div>
           <span className="flex items-center gap-1 text-xs" style={S.sub}>
             <Calendar className="h-3.5 w-3.5" style={S.muted} /> Posting Date:{' '}
-            <strong style={S.primary}>{entry.posting_date}</strong>
+            <strong style={S.primary}>{formatDate(entry.posting_date)}</strong>
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -337,7 +366,7 @@ export default function BioAssetLedgerDetail({
                   </span>
                 </div>
               </>
-            ) : entry.transaction_type === 'ANIMAL_REGISTRATION' ? (
+            ) : entry.document_type === 'ANIMAL_REGISTRATION' ? (
               <>
                 <p className="text-sm font-semibold" style={S.primary}>
                   {entry.source_grn_no
@@ -348,6 +377,40 @@ export default function BioAssetLedgerDetail({
                   {entry.source_grn_no
                     ? 'Taken from that GRN entry'
                     : 'No source GRN'}
+                </p>
+              </>
+            ) : entry.document_type === 'BATCH' ? (
+              <>
+                <p className="text-sm font-semibold" style={S.primary}>
+                  {entry.lot_no ? `Lot ${entry.lot_no}` : 'Batch input'}
+                </p>
+                <p className="mt-0.5 text-xs" style={S.sub}>
+                  Head received into {entry.batch_no || 'the batch'}
+                </p>
+              </>
+            ) : entry.document_type === 'LITTER_BIRTH_COST' ||
+              entry.document_type === 'LITTER_COST' ? (
+              <>
+                <p className="text-sm font-semibold" style={S.primary}>
+                  {isPositive
+                    ? 'Cost received by the lot'
+                    : 'Cost given by the sow batch'}
+                </p>
+                <p className="mt-0.5 text-xs" style={S.sub}>
+                  {entry.lot_no ? `Lot ${entry.lot_no} · ` : ''}Lactation feed,
+                  drug and overhead
+                </p>
+              </>
+            ) : entry.document_type === 'BATCH_TRANSFER' ? (
+              <>
+                <p className="text-sm font-semibold" style={S.primary}>
+                  {entry.transaction_type === 'TRANSFER_RECEIPT'
+                    ? 'Transferred in'
+                    : 'Transferred out'}
+                </p>
+                <p className="mt-0.5 text-xs" style={S.sub}>
+                  {entry.lot_no ? `Lot ${entry.lot_no} · ` : ''}
+                  {entry.document_no}
                 </p>
               </>
             ) : (
@@ -402,13 +465,12 @@ export default function BioAssetLedgerDetail({
               </Field>
             </div>
             <Field label="Transaction Type">
-              {BIO_TRANSACTION_LABEL[entry.transaction_type] ??
-                entry.transaction_type}
+              {formatTransactionType(entry.transaction_type)}
             </Field>
             <Field label="Entry Type">
               <StatusBadge
-                status={isPositive ? 'POSITIVE' : 'NEGATIVE'}
-                label={isPositive ? 'Positive (+)' : 'Negative (-)'}
+                status={entry.entry_type}
+                label={formatEntryType(entry.entry_type, qty)}
               />
             </Field>
           </div>
@@ -517,7 +579,7 @@ export default function BioAssetLedgerDetail({
                       >
                         {a.entry_no}
                       </TableCell>
-                      <TableCell style={S.primary}>{a.posting_date}</TableCell>
+                      <TableCell style={S.primary}>{formatDate(a.posting_date)}</TableCell>
                       <TableCell>
                         <a
                           className="font-mono text-xs text-(--accent) hover:underline"

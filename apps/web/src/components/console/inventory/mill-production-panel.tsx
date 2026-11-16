@@ -6,6 +6,7 @@
  * Posting puts the KG into the BIN's stock at the feed's standard cost and journals it through the MILL_OUTPUT GL
  * mapping; the API refuses it, with nothing written, until finance has set that mapping up.
  */
+import { DateInput } from '@/components/ui/date-input';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Factory } from 'lucide-react';
 import { api } from '@/services/api-client';
@@ -157,9 +158,8 @@ export default function MillProductionPanel() {
       >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Field label={t('mpoProductionDate')} htmlFor="mpo-date" required>
-            <input
+            <DateInput
               id="mpo-date"
-              type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
               className="nf-input-sm w-full"

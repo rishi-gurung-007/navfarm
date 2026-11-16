@@ -85,6 +85,7 @@ export const mortalityChapter: DemoChapter = {
         {
           transaction_date: dateDaysAgo(2),
           animal_ids: [gilt.animal_id],
+          animal_weights: [{ animal_id: gilt.animal_id, weight_kg: 62 }], // a costed animal's death needs her weight (TDD row 10); DEMO figure
           remarks: GILT_REMARKS,
           mortality_detail: {
             cause_of_death: 'Respiratory disease (pneumonia)',

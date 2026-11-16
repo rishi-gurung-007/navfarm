@@ -1,3 +1,4 @@
+import { datesInText } from '../utils/date-short';
 // The browser always talks to the Next.js origin. next.config.js proxies this
 // boundary to the private API process, so API port 2877 never needs to be
 // reachable from a tester's machine.
@@ -73,8 +74,9 @@ function errorMessage(payload: unknown, fallback: string): string {
   if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
     candidate = (candidate as { message?: unknown }).message ?? candidate;
   }
-  if (Array.isArray(candidate)) return candidate.join(' ');
-  return typeof candidate === 'string' ? candidate : fallback;
+  // Dates the server wrote into its sentence read in the app's one date style.
+  if (Array.isArray(candidate)) return datesInText(candidate.join(' '));
+  return typeof candidate === 'string' ? datesInText(candidate) : fallback;
 }
 
 // Single canonical list of every localStorage key a session touches.

@@ -1,5 +1,7 @@
 'use client';
 
+import { DateInput } from '@/components/ui/date-input';
+import { formatDateTime } from '@/utils/date-short';
 import { useEffect, useState } from 'react';
 import { Check, FileSpreadsheet, Loader2, Play, RefreshCw } from 'lucide-react';
 import { api } from '@/services/api-client';
@@ -208,9 +210,8 @@ export default function FarrowingReportPanel() {
           />
         </Field>
         <Field label={t('rptDateFrom')} htmlFor="rpt-date-from" required>
-          <input
+          <DateInput
             id="rpt-date-from"
-            type="date"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
             className="nf-input w-full"
@@ -218,9 +219,8 @@ export default function FarrowingReportPanel() {
           />
         </Field>
         <Field label={t('rptDateTo')} htmlFor="rpt-date-to" required>
-          <input
+          <DateInput
             id="rpt-date-to"
-            type="date"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
             className="nf-input w-full"
@@ -357,7 +357,7 @@ export default function FarrowingReportPanel() {
             </span>
             <span style={S.muted}>
               {t('rptGeneratedAt', {
-                at: new Date(report.generated_at).toLocaleString(),
+                at: formatDateTime(report.generated_at),
               })}
             </span>
           </div>

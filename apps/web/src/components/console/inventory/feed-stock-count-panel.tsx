@@ -20,6 +20,7 @@
  * Approval itself stays in the Approvals inbox (D25); this screen only
  * submits, links to the request, and posts once the decision is in.
  */
+import { formatDate } from '@/utils/date-short';
 import { useCallback, useEffect, useState } from "react";
 import { Inbox } from "lucide-react";
 import { api } from "@/services/api-client";
@@ -605,7 +606,7 @@ export default function FeedStockCountPanel() {
                       onChange={setPeriodId}
                       options={periods.map((p) => ({
                         value: p.period_id,
-                        label: `${p.period_code} (${String(p.stock_take_date).slice(0, 10)})`,
+                        label: `${p.period_code} (${formatDate(p.stock_take_date)})`,
                       }))}
                       placeholder={t("fscReportingPeriodPick")}
                       columnHeaders={false}

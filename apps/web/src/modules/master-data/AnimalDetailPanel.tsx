@@ -1,7 +1,8 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ageBetween, formatAge } from './utils/age';
 import { X, Loader2, ChevronRight } from 'lucide-react';
 import { api } from '@/services/api-client';
@@ -9,6 +10,7 @@ import { API_ORIGIN } from '@/lib/api-client';
 import { Toast } from '@/components/ui/toast';
 import { ReadField } from '@/components/ui/field';
 import { formatAmount, formatQuantity } from '@/lib/utils';
+import { AnimalCodeLabel } from '@/components/console/piggery/animal-code-label';
 
 type Row = Record<string, any>;
 
@@ -46,6 +48,7 @@ const fmtQty = (v: any) =>
   v === null || v === undefined || v === '' ? '' : formatQuantity(v);
 const fmtAmount = (v: any) =>
   v === null || v === undefined || v === '' ? '' : formatAmount(v);
+const fmtDate = (v: any) => (v ? formatDate(v) : '');
 const asObject = (value: any): Row => {
   if (!value) return {};
   if (typeof value !== 'string') return value;
@@ -128,7 +131,9 @@ function pregCheckTimelineEvent(m: Row, isMale: boolean): TimelineEvent | null {
       : `Pregnancy check — ${human(m.conception_result)}`,
     summary: [
       human(m.preg_check_method),
-      fmt(m.expected_farrowing_date) ? `due ${m.expected_farrowing_date}` : '',
+      fmt(m.expected_farrowing_date)
+        ? `due ${formatDate(m.expected_farrowing_date)}`
+        : '',
     ]
       .filter(Boolean)
       .join(' · '),
@@ -262,7 +267,7 @@ function TimelineList({
                   {ev.title}
                 </span>
                 <span className="shrink-0 font-mono text-xs" style={S.sub}>
-                  {ev.date}
+                  {formatDate(ev.date)}
                 </span>
               </div>
               <div className="mt-1 flex items-center justify-between gap-2">
@@ -358,31 +363,6 @@ function BreedingRecordTable({
           !matings.some((m) => m.breeding_id === f.breeding_id),
       );
 
-  const headers = isMale
-    ? [
-        'Date',
-        'Type',
-        'Sow',
-        'Batch',
-        'Sow parity',
-        'Boar parity',
-        'Result',
-        'Litter (live / total)',
-        'Weaned',
-      ]
-    : [
-        'Date',
-        'Type',
-        'Boar',
-        'Batch',
-        'Parity',
-        'Preg check',
-        'Result',
-        'Expected farrowing',
-        'Farrowed (live / total)',
-        'Weaned',
-      ];
-
   if (!matings.length && !unlinked.length) {
     return (
       <p className="text-xs" style={S.muted}>
@@ -392,7 +372,6 @@ function BreedingRecordTable({
   }
 
   const litters = isMale ? [...farrowByBreeding.values()] : [];
-  const cell = 'px-2 py-2 whitespace-nowrap';
 
   return (
     <div className="flex flex-col gap-4">
@@ -411,150 +390,135 @@ function BreedingRecordTable({
       )}
 
       {matings.length > 0 && (
-        <div
-          className="overflow-x-auto rounded-[var(--radius-sm)] border"
-          style={S.surface}
-        >
-          <table className="w-full border-collapse text-left text-xs">
-            <thead
-              className="border-b"
-              style={{ ...S.raised, color: 'var(--text-secondary)' }}
-            >
-              <tr>
-                {headers.map((h) => (
-                  <th key={h} className={`${cell} font-semibold`}>
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {matings.map((m) => {
-                const f = farrowByBreeding.get(m.breeding_id);
-                const open = openRow === m.breeding_id;
-                const litter = f
-                  ? `${fmt(f.piglets_born_live)} / ${fmt(f.piglets_born_total)}`
-                  : '';
-                const weaned =
-                  f && Number(f.piglets_weaned) > 0
-                    ? fmt(f.piglets_weaned)
-                    : '';
-                const type = m.pooled
-                  ? `${human(m.mating_type)} (pooled lot ${fmt(m.semen_lot_no)})`
-                  : human(m.mating_type);
-                const values = isMale
-                  ? [
-                      m.mating_date,
-                      type,
-                      m.sow_code,
-                      m.batch_no,
-                      m.parity_number,
-                      m.boar_parity_number,
-                      m.conception_result,
-                      litter,
-                      weaned,
-                    ]
-                  : [
-                      m.mating_date,
-                      type,
+        <ul className="flex flex-col gap-2">
+          {matings.map((m) => {
+            const f = farrowByBreeding.get(m.breeding_id);
+            const open = openRow === m.breeding_id;
+            const litter = f
+              ? `${fmt(f.piglets_born_live)} / ${fmt(f.piglets_born_total)}`
+              : '';
+            const weaned =
+              f && Number(f.piglets_weaned) > 0 ? fmt(f.piglets_weaned) : '';
+            const type = m.pooled
+              ? `${human(m.mating_type)} (pooled lot ${fmt(m.semen_lot_no)})`
+              : human(m.mating_type);
+            const result = fmt(m.conception_result);
+            // Everything but date, type and result, which the card heads carry.
+            const summary: [string, string][] = isMale
+              ? [
+                  ['Sow', fmt(m.sow_code)],
+                  ['Batch', fmt(m.batch_no)],
+                  ['Sow parity', fmt(m.parity_number)],
+                  ['Boar parity', fmt(m.boar_parity_number)],
+                  ['Litter (live / total)', litter],
+                  ['Weaned', weaned],
+                ]
+              : [
+                  [
+                    'Boar',
+                    fmt(
                       m.boar_code ||
                         (m.semen_lot_no ? `pooled lot ${m.semen_lot_no}` : ''),
-                      m.batch_no,
-                      m.parity_number,
-                      m.preg_check_date,
-                      m.conception_result,
-                      m.expected_farrowing_date,
-                      litter,
-                      weaned,
-                    ];
-                return (
-                  <Fragment key={m.breeding_id}>
-                    <tr
-                      className="cursor-pointer border-b transition hover:bg-[var(--surface-raised)]"
-                      style={{ borderColor: 'var(--border)' }}
-                      onClick={() => onToggle(m.breeding_id)}
-                      aria-expanded={open}
+                    ),
+                  ],
+                  ['Batch', fmt(m.batch_no)],
+                  ['Parity', fmt(m.parity_number)],
+                  ['Preg check', fmt(m.preg_check_date)],
+                  ['Expected farrowing', fmt(m.expected_farrowing_date)],
+                  ['Farrowed (live / total)', litter],
+                  ['Weaned', weaned],
+                ];
+            return (
+              <li key={m.breeding_id}>
+                <button
+                  type="button"
+                  onClick={() => onToggle(m.breeding_id)}
+                  aria-expanded={open}
+                  className="w-full rounded-[var(--radius-sm)] border p-3 text-left transition hover:bg-[var(--surface-raised)]"
+                  style={open ? S.raised : S.surface}
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span
+                      className="min-w-0 truncate text-sm"
+                      style={S.primary}
                     >
-                      {values.map((v, i) => (
-                        <td
-                          key={headers[i]}
-                          className={`${cell} ${i === 0 ? 'font-mono' : ''}`}
-                          style={fmt(v) ? S.primary : S.muted}
-                        >
-                          {fmt(v) || NA}
-                        </td>
-                      ))}
-                    </tr>
-                    {open && (
-                      <tr
-                        className="border-b"
-                        style={{ borderColor: 'var(--border)' }}
-                      >
-                        <td
-                          colSpan={headers.length}
-                          className="p-3"
-                          style={S.raised}
-                        >
-                          <div className="flex flex-col gap-3">
-                            <DetailGrid
-                              rows={[
-                                ['Second mating', fmt(m.second_mating_date)],
-                                ['Semen doses', fmtQty(m.semen_dose_qty)],
-                                ['Check method', fmt(m.preg_check_method)],
-                                [
-                                  'Pregnancy check date',
-                                  fmt(m.preg_check_date),
-                                ],
-                                [
-                                  'Expected farrowing',
-                                  fmt(m.expected_farrowing_date),
-                                ],
-                                ['Boar parity', fmt(m.boar_parity_number)],
-                                ['Notes', fmt(m.notes)],
-                              ]}
-                            />
-                            {f && (
-                              <DetailGrid
-                                rows={[
-                                  ['Farrowing date', fmt(f.farrowing_date)],
-                                  ['Farrowing status', fmt(f.farrowing_status)],
-                                  ['Born live', fmt(f.piglets_born_live)],
-                                  ['Stillborn', fmt(f.piglets_stillborn)],
-                                  ['Mummified', fmt(f.piglets_mummified)],
-                                  [
-                                    'Avg birth weight',
-                                    fmtQty(f.avg_birth_weight_kg),
-                                  ],
-                                  [
-                                    Number(f.piglets_weaned) > 0
-                                      ? 'Weaning date'
-                                      : 'Planned weaning',
-                                    fmt(f.weaning_date),
-                                  ],
-                                  [
-                                    'Avg weaning weight',
-                                    fmtQty(f.avg_weaning_weight_kg),
-                                  ],
-                                  [
-                                    'Litter mass weaned',
-                                    Number(f.piglets_weaned) > 0 &&
-                                    Number(f.avg_weaning_weight_kg) > 0
-                                      ? `${(Number(f.piglets_weaned) * Number(f.avg_weaning_weight_kg)).toFixed(1)} kg`
-                                      : '',
-                                  ],
-                                ]}
-                              />
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                      <span className="font-mono">
+                        {fmt(m.mating_date) || NA}
+                      </span>
+                      {type && <span style={S.sub}> · {type}</span>}
+                    </span>
+                    <span
+                      className="flex shrink-0 items-center gap-1 text-xs capitalize"
+                      style={result ? S.primary : S.muted}
+                    >
+                      {human(result) || NA}
+                      <ChevronRight
+                        className="h-3.5 w-3.5 transition-transform"
+                        style={{
+                          color: 'var(--text-muted)',
+                          transform: open ? 'rotate(90deg)' : undefined,
+                        }}
+                      />
+                    </span>
+                  </div>
+                  <div className="mt-2">
+                    <DetailGrid rows={summary} />
+                  </div>
+                  {open && (
+                    <div
+                      className="mt-3 flex flex-col gap-3 border-t pt-3"
+                      style={{ borderColor: 'var(--border)' }}
+                    >
+                      <DetailGrid
+                        rows={[
+                          ['Second mating', fmt(m.second_mating_date)],
+                          ['Semen doses', fmtQty(m.semen_dose_qty)],
+                          ['Check method', fmt(m.preg_check_method)],
+                          ['Pregnancy check date', fmt(m.preg_check_date)],
+                          [
+                            'Expected farrowing',
+                            fmt(m.expected_farrowing_date),
+                          ],
+                          ['Boar parity', fmt(m.boar_parity_number)],
+                          ['Notes', fmt(m.notes)],
+                        ]}
+                      />
+                      {f && (
+                        <DetailGrid
+                          rows={[
+                            ['Farrowing date', fmt(f.farrowing_date)],
+                            ['Farrowing status', fmt(f.farrowing_status)],
+                            ['Born live', fmt(f.piglets_born_live)],
+                            ['Stillborn', fmt(f.piglets_stillborn)],
+                            ['Mummified', fmt(f.piglets_mummified)],
+                            ['Avg birth weight', fmtQty(f.avg_birth_weight_kg)],
+                            [
+                              Number(f.piglets_weaned) > 0
+                                ? 'Weaning date'
+                                : 'Planned weaning',
+                              fmt(f.weaning_date),
+                            ],
+                            [
+                              'Avg weaning weight',
+                              fmtQty(f.avg_weaning_weight_kg),
+                            ],
+                            [
+                              'Litter mass weaned',
+                              Number(f.piglets_weaned) > 0 &&
+                              Number(f.avg_weaning_weight_kg) > 0
+                                ? `${(Number(f.piglets_weaned) * Number(f.avg_weaning_weight_kg)).toFixed(1)} kg`
+                                : '',
+                            ],
+                          ]}
+                        />
+                      )}
+                    </div>
+                  )}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
 
       {unlinked.length > 0 && (
@@ -620,6 +584,8 @@ export default function AnimalDetailPanel({
 }) {
   const [tab, setTab] = useState<TabKey>('details');
   const [breeding, setBreeding] = useState<Row | null>(null);
+  // The card's worked-out facts (amortisation window, litter lot and colour, birth and current weight) come with `/animal/:id`; the list row has none of them.
+  const [facts, setFacts] = useState<Row | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [openEvent, setOpenEvent] = useState<string | null>(null);
@@ -644,6 +610,23 @@ export default function AnimalDetailPanel({
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [animalId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFacts(null);
+    if (!animalId) return;
+    api
+      .get(`/animal/${animalId}`)
+      .then((res) => {
+        if (!cancelled) setFacts(unwrap<Row>(res));
+      })
+      .catch(() => {
+        // The card still shows the register row; only these fields stay empty.
       });
     return () => {
       cancelled = true;
@@ -814,9 +797,15 @@ export default function AnimalDetailPanel({
           ['Pen', labels.locations?.[createdValues.current_location_id] || ''],
           ['Dam', fmt(lineage.dam_code)],
           ['Sire', fmt(lineage.sire_code)],
-          // The API resolves the internal source_receipt_id to the business-facing GRN number.
-          ['Source GRN', fmt(row.source_grn_no)],
-          ['Born from batch', fmt(row.source_batch_id)],
+          // The API resolves the internal source_receipt_id to the business-facing GRN number; the names behind it come from source_labels.
+          [
+            'Source GRN',
+            fmt(row.source_grn_no ?? breeding?.source_labels?.receipt_no),
+          ],
+          [
+            'Born from batch',
+            fmt(breeding?.source_labels?.batch_label ?? row.source_batch_id),
+          ],
           ['Acquisition cost', fmtAmount(row.acquisition_cost)],
         ],
       });
@@ -922,14 +911,14 @@ export default function AnimalDetailPanel({
 
   return (
     <aside
-      className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-[var(--radius-md)] border"
+      className="flex min-h-0 w-full flex-1 flex-col overflow-hidden rounded-[var(--radius-md)] border"
       style={S.surface}
       aria-label={`Detail for ${fmt(row.animal_code)}`}
     >
       {/* The code only: it is the one fact that has to hold on every tab, so
           it says whose history you are reading on Breeding or Traceability. */}
       <header
-        className="flex items-center justify-between gap-3 border-b p-4"
+        className="flex shrink-0 items-center justify-between gap-3 border-b p-4"
         style={{ borderColor: 'var(--border)' }}
       >
         <p
@@ -950,7 +939,7 @@ export default function AnimalDetailPanel({
       </header>
 
       <nav
-        className="flex gap-1 overflow-x-auto border-b px-2 pt-2"
+        className="flex shrink-0 gap-1 overflow-x-auto border-b px-2 pt-2 [scrollbar-width:none]"
         style={{ borderColor: 'var(--border)' }}
         aria-label="Animal detail sections"
       >
@@ -963,7 +952,7 @@ export default function AnimalDetailPanel({
               setOpenEvent(null);
             }}
             aria-current={tab === tb.key ? 'page' : undefined}
-            className="whitespace-nowrap px-3 py-2 text-xs font-semibold"
+            className="shrink-0 whitespace-nowrap px-3 py-2 text-xs font-semibold"
             style={
               tab === tb.key
                 ? {
@@ -986,6 +975,10 @@ export default function AnimalDetailPanel({
 
         {tab === 'details' && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {/* Her QR code and barcode, to print for a card or an ear-tag sheet and scan on Livestock › Scan Animal. */}
+            <div className="sm:col-span-2">
+              <AnimalCodeLabel animal={row} breedName={current.breed} />
+            </div>
             <ReadField label="Type" value={fmt(row.animal_type)} />
             <ReadField label="Gender" value={fmt(row.gender)} />
             <ReadField label="Status" value={fmt(row.status)} />
@@ -1150,6 +1143,56 @@ export default function AnimalDetailPanel({
               />
             )}
             <ReadField label="Book value" value={fmtAmount(row.book_value)} />
+            <ReadField
+              label="Amortization start date"
+              value={fmtDate(facts?.amortization_start_date)}
+            />
+            <ReadField
+              label="Amortization end date"
+              value={fmtDate(facts?.amortization_end_date)}
+            />
+            <ReadField
+              label="Out of production date"
+              value={fmtDate(
+                facts?.out_of_production_date ?? row.out_of_production_date,
+              )}
+            />
+            <ReadField
+              label="Colour code"
+              value={
+                facts?.colour_code ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span
+                      aria-hidden
+                      className="inline-block h-2.5 w-2.5 rounded-full border border-(--border)"
+                      style={{
+                        background: String(facts.colour_code).toLowerCase(),
+                      }}
+                    />
+                    {facts.colour_code}
+                  </span>
+                ) : (
+                  ''
+                )
+              }
+            />
+            <ReadField label="Lot no." mono value={fmt(facts?.lot_no)} />
+            <ReadField
+              label="Birth weight"
+              value={
+                facts?.birth_weight_kg != null
+                  ? `${Number(facts.birth_weight_kg).toFixed(2)} kg (litter average)`
+                  : ''
+              }
+            />
+            <ReadField
+              label="Current weight"
+              value={
+                facts?.current_weight_kg != null
+                  ? `${Number(facts.current_weight_kg).toFixed(1)} kg${facts.current_weight_date ? ` · ${formatDate(facts.current_weight_date)}` : ''}`
+                  : ''
+              }
+            />
             <ReadField
               label="Expected cull date"
               value={fmt(row.expected_cull_date)}

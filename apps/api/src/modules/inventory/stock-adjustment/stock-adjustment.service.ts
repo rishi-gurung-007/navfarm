@@ -36,34 +36,38 @@ export class StockAdjustmentService {
     return tenantDb;
   }
 
-  // `executor` must be the active transaction when called from inside one (see
-  // `create()`) — `.for('update')` locks the counted rows so a second concurrent
-  // call blocks until the first commits its insert, instead of both reading the
-  // same count and generating the same adjustment number.
+  /**
+   * The readable adjustment number (ADJ-000001), from the company's Stock Adjustment series: the one configured on
+   * the Number Series master, else a built-in default made the first time an adjustment is saved and carrying on
+   * after the highest number the company already holds. `executor` must be the active transaction when called from
+   * inside one (see `create()`), so the number is given back if the save fails.
+   */
   private async generateAdjustmentNo(tenantId: string, companyId: string, executor: MySql2Database<typeof schema> = this.db): Promise<string> {
-    const [row] = await executor
-      .select({
-        maxSeq: sql<number>`COALESCE(MAX(CAST(SUBSTRING(${schema.stockAdjustment.adjustment_no}, 5) AS UNSIGNED)), 0)`,
-      })
-      .from(schema.stockAdjustment)
-      .where(and(eq(schema.stockAdjustment.tenant_id, tenantId), eq(schema.stockAdjustment.company_id, companyId)))
-      .for('update');
-    const seq = Number(row?.maxSeq || 0) + 1;
-    return `ADJ-${String(seq).padStart(6, '0')}`;
+    const seriesCode = await this.numberSeriesService.seriesCodeForDocument(
+      tenantId,
+      companyId,
+      { seriesCode: 'STOCK_ADJUSTMENT', seriesName: 'Stock Adjustment Number', documentType: 'STOCK_ADJUSTMENT', prefix: 'ADJ', separator: '-', seqLength: 6 },
+      async () => (await this.db.select({ no: schema.stockAdjustment.adjustment_no }).from(schema.stockAdjustment)
+        .where(and(eq(schema.stockAdjustment.tenant_id, tenantId), eq(schema.stockAdjustment.company_id, companyId)))).map((r) => r.no),
+    );
+    return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, executor);
   }
 
+  /**
+   * Creates a DRAFT Stock Adjustment for a warehouse on the user's farm. Stock changes only when it is posted.
+   */
   async create(dto: CreateStockAdjustmentDto, tenantId: string, userPayload?: any) {
     assertCompanyInScope(farmScope(this.cls), dto.company_id);
     await assertLocationOnActiveFarm(this.db, farmScope(this.cls), dto.warehouse_id, 'Location');
     return withTenantTransaction(this.cls, async () => {
       const adjustmentId = randomUUID();
       const adjustmentNo = await this.db.transaction(async (tx) => {
-        const no = await this.generateAdjustmentNo(tenantId, dto.company_id, tx);
+        const newAdjustmentNo = await this.generateAdjustmentNo(tenantId, dto.company_id, tx);
         await tx.insert(schema.stockAdjustment).values({
           adjustment_id: adjustmentId,
           tenant_id: tenantId,
           company_id: dto.company_id,
-          adjustment_no: no,
+          adjustment_no: newAdjustmentNo,
           posting_date: dto.posting_date,
           warehouse_id: dto.warehouse_id,
           reason: dto.reason || null,
@@ -72,7 +76,7 @@ export class StockAdjustmentService {
           created_by: userPayload?.userId || null,
           updated_by: userPayload?.userId || null,
         });
-        return no;
+        return newAdjustmentNo;
       });
 
       await this.insertLines(adjustmentId, dto.lines, tenantId);
@@ -91,6 +95,10 @@ export class StockAdjustmentService {
     });
   }
 
+  /**
+   * Inserts a draft's lines. Biological assets are refused. A lot-tracked line adding stock takes its lot number from
+   * the item's series when none is given; one removing stock must name the lot. Serial-tracked items work the same way.
+   */
   private async insertLines(adjustmentId: string, lines: CreateStockAdjustmentDto['lines'], tenantId: string) {
     if (!lines || lines.length === 0) return;
 
@@ -101,32 +109,32 @@ export class StockAdjustmentService {
       .where(inArray(schema.itemMaster.item_id, itemIds));
     const itemMap = new Map(items.map((i) => [i.item_id, i]));
     // Biological assets are not stock (Rishi, 14 Oct): there is nothing in stock to adjust.
-    const bio = items.find((i) => i.is_biological_asset);
-    if (bio) {
-      throw new BadRequestException(`${bio.item_code} — ${bio.item_name} is a biological asset. Biological assets are not held in stock, so they cannot be on a stock adjustment; animals are registered from their GRN in the Animal Register.`);
+    const bioAssetItem = items.find((i) => i.is_biological_asset);
+    if (bioAssetItem) {
+      throw new BadRequestException(`${bioAssetItem.item_code} — ${bioAssetItem.item_name} is a biological asset. Biological assets are not held in stock, so they cannot be on a stock adjustment; animals are registered from their GRN in the Animal Register.`);
     }
 
     const values: Array<typeof schema.stockAdjustmentLine.$inferInsert> = [];
 
-    for (let idx = 0; idx < lines.length; idx++) {
-      const line = lines[idx];
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      const line = lines[lineIndex];
       const item = itemMap.get(line.item_id);
       let lotNo = line.lot_no || null;
       let serialNo = line.serial_no || null;
-      const qty = Number(line.quantity);
+      const quantityChange = Number(line.quantity);
 
       if (item?.is_lot_tracked) {
-        if (qty < 0) {
+        if (quantityChange < 0) {
           if (!lotNo) {
             throw new BadRequestException(
               `Lot number is required for negative adjustment of lot-tracked item "${item.item_code} — ${item.item_name}".`
             );
           }
-        } else if (qty > 0) {
+        } else if (quantityChange > 0) {
           if (!lotNo) {
             if (item.tracking_series_id) {
-              const gen = await this.numberSeriesService.generateNextNumberById(item.tracking_series_id, tenantId);
-              lotNo = gen.next_number;
+              const generatedNumber = await this.numberSeriesService.generateNextNumberById(item.tracking_series_id, tenantId);
+              lotNo = generatedNumber.next_number;
             } else {
               throw new BadRequestException(
                 `Lot number is required for positive adjustment of lot-tracked item "${item.item_code} — ${item.item_name}".`
@@ -137,17 +145,17 @@ export class StockAdjustmentService {
       }
 
       if (item?.is_serial_tracked) {
-        if (qty < 0) {
+        if (quantityChange < 0) {
           if (!serialNo) {
             throw new BadRequestException(
               `Serial number is required for negative adjustment of serial-tracked item "${item.item_code} — ${item.item_name}".`
             );
           }
-        } else if (qty > 0) {
+        } else if (quantityChange > 0) {
           if (!serialNo) {
             if (item.tracking_series_id) {
-              const gen = await this.numberSeriesService.generateNextNumberById(item.tracking_series_id, tenantId);
-              serialNo = gen.next_number;
+              const generatedNumber = await this.numberSeriesService.generateNextNumberById(item.tracking_series_id, tenantId);
+              serialNo = generatedNumber.next_number;
             } else {
               throw new BadRequestException(
                 `Serial number is required for positive adjustment of serial-tracked item "${item.item_code} — ${item.item_name}".`
@@ -160,7 +168,7 @@ export class StockAdjustmentService {
       values.push({
         line_id: randomUUID(),
         adjustment_id: adjustmentId,
-        line_no: idx + 1,
+        line_no: lineIndex + 1,
         item_id: line.item_id,
         quantity: line.quantity.toString(),
         uom: line.uom,
@@ -174,6 +182,9 @@ export class StockAdjustmentService {
     await this.db.insert(schema.stockAdjustmentLine).values(values);
   }
 
+  /**
+   * One adjustment with its lines, if its warehouse and company are inside the user's scope; NotFound otherwise.
+   */
   async findOne(id: string) {
     const scope = farmScope(this.cls);
     const conditions = [eq(schema.stockAdjustment.adjustment_id, id), isNull(schema.stockAdjustment.deleted_at)];
@@ -198,6 +209,9 @@ export class StockAdjustmentService {
     return { ...adjustment, lines };
   }
 
+  /**
+   * A page of adjustments in the user's scope, filtered by company, status, warehouse and number.
+   */
   async findAll(query: QueryStockAdjustmentDto, tenantId: string) {
     const conditions: any[] = [eq(schema.stockAdjustment.tenant_id, tenantId), isNull(schema.stockAdjustment.deleted_at)];
 
@@ -221,12 +235,18 @@ export class StockAdjustmentService {
       .offset(offset);
   }
 
+  /**
+   * Refuses a change to an adjustment that is no longer DRAFT.
+   */
   private assertDraft(adjustment: { status: string }) {
     if (adjustment.status !== 'DRAFT') {
       throw new BadRequestException(`Stock Adjustment cannot be modified — it is already ${adjustment.status}.`);
     }
   }
 
+  /**
+   * Edits a DRAFT adjustment's header; when lines are sent, they replace the existing lines.
+   */
   async update(id: string, dto: UpdateStockAdjustmentDto, tenantId: string, userPayload?: any) {
     const adjustment = await this.findOne(id);
     this.assertDraft(adjustment);
@@ -264,6 +284,9 @@ export class StockAdjustmentService {
     return this.findOne(id);
   }
 
+  /**
+   * Cancels (soft-deletes) a DRAFT adjustment and records it in the audit log.
+   */
   async remove(id: string, tenantId: string, userPayload?: any) {
     const adjustment = await this.findOne(id);
     this.assertDraft(adjustment);
@@ -288,6 +311,10 @@ export class StockAdjustmentService {
     return { success: true, message: `Stock Adjustment '${adjustment.adjustment_no}' has been cancelled.` };
   }
 
+  /**
+   * Posts an adjustment: claims the DRAFT to POSTED change first so it cannot post twice, then writes a ledger row per line —
+   * VARIANCE_POSITIVE for added stock, VARIANCE_NEGATIVE for removed — each with its journal.
+   */
   async post(id: string, tenantId: string, userPayload?: any) {
     const posted = await withTenantTransaction(this.cls, async () => {
       const adjustment = await this.findOne(id);

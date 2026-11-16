@@ -1,4 +1,4 @@
-import { groupConsumption, latestPerDate, summariseWeights } from './animal-activity';
+import { amortisationEndDate, groupConsumption, latestPerDate, summariseWeights } from './animal-activity';
 
 describe('animal card activity arithmetic', () => {
   it('has no weight, and no gain, before anything is recorded', () => {
@@ -36,5 +36,25 @@ describe('animal card activity arithmetic', () => {
       ['IV', 5, 20, '2026-10-01'],
       ['FD', 5, 10.5, '2026-10-02'],
     ]);
+  });
+});
+
+describe('animal card amortisation end date', () => {
+  const sow = { bio_costing_method: 'AMORTIZATION', bio_useful_life_months: 36 };
+
+  it('ends the day before birth + useful life in 365-day years: born 5 Jan 2026, 36 months, last day 3 Jan 2029', () => {
+    expect(amortisationEndDate({ dob: '2026-01-05', entry_date: '2026-01-05' }, sow)).toBe('2029-01-03');
+  });
+
+  it('counts from the birth her age at entry implies when she has no birth date', () => {
+    // Entered 1 Mar 2026 at 8 weeks: born 4 Jan 2026.
+    expect(amortisationEndDate({ dob: null, entry_date: '2026-03-01', age_at_entry_weeks: 8 }, sow)).toBe('2029-01-02');
+  });
+
+  it('has no end for an item that does not amortise, has no useful life, or an animal with no age', () => {
+    expect(amortisationEndDate({ dob: '2026-01-05', entry_date: '2026-01-05' }, { bio_costing_method: 'FAIR_VALUE', bio_useful_life_months: 36 })).toBeNull();
+    expect(amortisationEndDate({ dob: '2026-01-05', entry_date: '2026-01-05' }, { bio_costing_method: 'AMORTIZATION', bio_useful_life_months: null })).toBeNull();
+    expect(amortisationEndDate({ dob: null, entry_date: '2026-03-01' }, sow)).toBeNull();
+    expect(amortisationEndDate({ dob: '2026-01-05', entry_date: '2026-01-05' }, null)).toBeNull();
   });
 });

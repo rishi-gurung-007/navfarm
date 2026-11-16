@@ -161,9 +161,9 @@ async function run() {
         await db.query(
           `INSERT INTO bio_asset_ledger
              (entry_id, document_type, warehouse_id, uom, remaining_quantity, document_line_id, tenant_id,
-              company_id, bio_asset_item_id, entry_type, document_no, posting_date, status, quantity,
+              company_id, bio_asset_item_id, entry_type, transaction_type, document_no, posting_date, status, quantity,
               cost_amount, cost_amount_each_unit, costing_method, nob_id, lob_id, created_by)
-           VALUES (?, 'GOODS_RECEIPT', ?, 'HEAD', 0, ?, ?, ?, ?, 'PURCHASE', ?, ?, 'ACTIVE', ?, ?, ?,
+           VALUES (?, 'GOODS_RECEIPT', ?, 'HEAD', 0, ?, ?, ?, ?, 'POSITIVE', 'PURCHASE', ?, ?, 'ACTIVE', ?, ?, ?,
                    'COST_ACCUMULATION', ?, ?, ?)`,
           [randomUUID(), locationIds.get('LOC-001/STORE-001'), lineId, scope.tenant_id, scope.company_id,
             itemIds.get(receipt.item), receipt.no, receipt.date, receipt.quantity, receipt.rate, receipt.rate,
@@ -230,9 +230,9 @@ async function run() {
         await db.query(
           `INSERT INTO bio_asset_ledger
              (entry_id, document_type, warehouse_id, uom, source_entry_id, tenant_id, company_id, bio_asset_item_id,
-              entry_type, document_no, posting_date, stage, status, quantity, cost_amount, cost_amount_each_unit,
+              entry_type, transaction_type, document_no, posting_date, stage, status, quantity, cost_amount, cost_amount_each_unit,
               costing_method, nob_id, lob_id, created_by, animal_id, batch_id)
-           VALUES (?, 'ANIMAL_REGISTRATION', ?, 'HEAD', ?, ?, ?, ?, 'ACQUISITION', ?, ?, ?, 'ACTIVE', 1, ?, ?,
+           VALUES (?, 'ANIMAL_REGISTRATION', ?, 'HEAD', ?, ?, ?, ?, 'TRANSFER', 'TRANSFER_RECEIPT', ?, ?, ?, 'ACTIVE', 1, ?, ?,
                    'COST_ACCUMULATION', ?, ?, ?, ?, ?)`,
           [randomUUID(), locationIds.get(animal.location), receiptLineIds.get(animal.receipt), scope.tenant_id, scope.company_id,
             itemIds.get(animal.item), animal.code, animal.entryDate, stageIds.get(animal.stage), animal.cost, animal.cost,
@@ -438,10 +438,10 @@ async function run() {
           // 5. Bio Asset Ledger (Cost accumulation)
           await db.query(
             `INSERT INTO bio_asset_ledger
-               (entry_id, tenant_id, company_id, bio_asset_item_id, entry_type, document_type, document_no,
+               (entry_id, tenant_id, company_id, bio_asset_item_id, entry_type, transaction_type, document_type, document_no,
                 batch_id, animal_id, stage, posting_date, status, quantity, cost_amount,
                 cost_amount_each_unit, costing_method, uom, warehouse_id, nob_id, lob_id, created_by)
-             VALUES (?, ?, ?, ?, 'CONSUMPTION', 'BATCH_CONSUMPTION', ?,
+             VALUES (?, ?, ?, ?, 'OVERHEAD', 'CONSUMPTION', 'BATCH', ?,
                      ?, ?, ?, ?, 'ACTIVE', ?, ?,
                      ?, 'COST_ACCUMULATION', 'KG', ?, ?, ?, ?)`,
             [randomUUID(), scope.tenant_id, scope.company_id, fItemId, planItem.batchNo,

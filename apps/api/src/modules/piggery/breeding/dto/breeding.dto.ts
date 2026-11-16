@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsNumber, IsInt, IsDateString, IsBoolean, IsArray, ArrayMaxSize, Min, Max, IsUUID } from 'class-validator';
+import { IsString, IsOptional, IsEnum, IsNumber, IsInt, IsDateString, IsBoolean, IsArray, ArrayMaxSize, Min, Max, IsUUID, IsNotEmpty, MaxLength, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export enum MatingType {
@@ -170,6 +170,13 @@ export class CreateFarrowingDto {
   @Type(() => Number)
   piglets_stillborn?: number;
 
+  /** TDD row 12: when the farm enters Total Born, it must equal born alive + born dead + mummified, or the farrowing is refused. */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  piglets_total_born?: number;
+
   @IsOptional()
   @IsInt()
   @Min(0)
@@ -217,6 +224,41 @@ export class CreateFarrowingDto {
   notes?: string;
 }
 
+export class CreateLitterFosterDto {
+  /** The farrowing whose litter receives the piglets. */
+  @IsUUID()
+  to_farrow_id: string;
+
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  quantity: number;
+
+  @IsDateString()
+  foster_date: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+/** A gilt picked at weaning: the operator types her RFID and teat count (15 or more); her birth date defaults to the farrowing date. */
+export class WeaningGiltDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(50)
+  rfid_tag: string;
+
+  @IsInt()
+  @Min(1)
+  @Type(() => Number)
+  no_of_teats: number;
+
+  @IsOptional()
+  @IsDateString()
+  dob?: string;
+}
+
 export class UpdateWeaningDto {
   @IsDateString()
   weaning_date: string;
@@ -246,9 +288,100 @@ export class UpdateWeaningDto {
   @IsString()
   move_to_stage_code?: string;
 
+  /**
+   * Create a new weaner batch for the weaned piglets instead of naming an existing one: it copies the lot's item, company, line of business,
+   * farm and shed, starts in this stage, and receives the weaned head. Not together with move_to_batch_id or move_to_stage_code.
+   */
+  @IsOptional()
+  @IsString()
+  new_batch_stage_code?: string;
+
+  /** The pen the new weaner batch is placed in; one of the piglet lot's own shed's pens. Only with new_batch_stage_code. */
+  @IsOptional()
+  @IsUUID()
+  new_batch_pen_id?: string;
+
+  /** Reason Master row (category MORTALITY) for the piglets lost before weaning. */
+  @IsOptional()
+  @IsUUID()
+  loss_reason_id?: string;
+
+  /** Gilts selected from this litter at the weaning, taken from the weaned piglets before the rest are moved on. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => WeaningGiltDto)
+  gilts?: WeaningGiltDto[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  gilt_colour_code?: string;
+
+  /** The fixed-asset (Bio Asset) item the gilts are registered under; the piglet item when left out. */
+  @IsOptional()
+  @IsUUID()
+  gilt_item_id?: string;
+
+  /** An Animal Wise batch the gilts join. */
+  @IsOptional()
+  @IsUUID()
+  gilt_animal_batch_id?: string;
+
   @IsOptional()
   @IsString()
   notes?: string;
+}
+
+export class SemenBoarResultDto {
+  @IsUUID()
+  boar_animal_id: string;
+
+  @IsOptional()
+  @IsUUID()
+  collector_id?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  volume_ml?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Type(() => Number)
+  doses?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  morphology_pct?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @Type(() => Number)
+  motility_pct?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Type(() => Number)
+  concentration_m_per_ml?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  accepted?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  reject_reason?: string;
 }
 
 export class CreateSemenCollectionDto {
@@ -269,6 +402,11 @@ export class CreateSemenCollectionDto {
   @IsOptional()
   @IsUUID()
   boar_batch_id?: string;
+
+  // The planned collection this carries out (Phase 4): the lot's boars, tapped or rejected, are marked done on it.
+  @IsOptional()
+  @IsUUID()
+  plan_id?: string;
 
   @IsDateString()
   collection_date: string;
@@ -305,10 +443,21 @@ export class CreateSemenCollectionDto {
   @Type(() => Number)
   overhead_cost_period?: number;
 
+  // The lot's doses. Left out when `boar_results` is given: the lot then has the doses its accepted boars gave, added up.
+  @IsOptional()
   @IsInt()
   @Min(0.01)
   @Type(() => Number)
-  doses_collected: number;
+  doses_collected?: number;
+
+  // What each boar gave (Phase 2). One entry per boar of the lot; a boar tapped whose ejaculate was rejected may be named
+  // here too (accepted false, with a reason), outside the lot's boars.
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(21)
+  @ValidateNested({ each: true })
+  @Type(() => SemenBoarResultDto)
+  boar_results?: SemenBoarResultDto[];
 
   @IsOptional()
   @IsUUID()

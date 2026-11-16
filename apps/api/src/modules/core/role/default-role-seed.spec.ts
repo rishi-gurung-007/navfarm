@@ -151,7 +151,7 @@ describe('seedDefaultCompanyRoles', () => {
       company_id: companyId, role_code: 'MILL_MANAGER', role_name: 'Feed Mill Manager', is_system_role: true,
     });
     // the existing four are still seeded
-    expect(insertedRoles.map((r) => r.role_code)).toEqual(['SUPER_ADMIN', 'MANAGER', 'ACCOUNTANT', 'OPERATOR', 'MILL_MANAGER']);
+    expect(insertedRoles.map((r) => r.role_code)).toEqual(['SUPER_ADMIN', 'MANAGER', 'ACCOUNTANT', 'OPERATOR', 'MILL_MANAGER', 'SEMEN_COLLECTOR']);
 
     const perms = insertedPermissions.filter((p) => p.role_id === roleIds.millManagerRoleId);
     const find = (m: string, r: string) => perms.find((p) => p.module_code === m && p.resource === r);
@@ -162,5 +162,18 @@ describe('seedDefaultCompanyRoles', () => {
     expect(find('MASTER_DATA', 'BIN_DIET_ASSIGNMENT')).toMatchObject({ can_view: true, can_create: true, can_edit: true, can_delete: false });
     expect(perms.filter((p) => p.can_delete)).toEqual([]);
     expect(perms.some((p) => p.module_code === 'FINANCE' || p.module_code === 'ALL' || p.module_code === 'PRODUCTION')).toBe(false);
+  });
+
+  it('seeds SEMEN_COLLECTOR to record a collection and read the line rules, with nothing destructive or financial', async () => {
+    const roleIds = await seedDefaultCompanyRoles(fakeTx as any, companyId);
+    const role = insertedRoles.find((r) => r.role_code === 'SEMEN_COLLECTOR');
+    expect(role).toMatchObject({ company_id: companyId, role_name: 'Semen Collector', is_system_role: false });
+    const perms = insertedPermissions.filter((p) => p.role_id === role!.role_id);
+    const find = (m: string, r: string) => perms.find((p) => p.module_code === m && p.resource === r);
+    expect(find('PIGGERY', 'ANIMAL')).toMatchObject({ can_view: true, can_create: true, can_edit: true, can_delete: false });
+    expect(find('MASTER_DATA', 'BREEDING_LINE_SETUP')).toMatchObject({ can_view: true, can_create: false, can_edit: false });
+    expect(perms.filter((p) => p.can_delete || p.can_approve)).toEqual([]);
+    expect(perms.some((p) => p.module_code === 'FINANCE' || p.module_code === 'ALL' || p.module_code === 'RBAC')).toBe(false);
+    expect(roleIds).not.toHaveProperty('semenCollectorRoleId');
   });
 });

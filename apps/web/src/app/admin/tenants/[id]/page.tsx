@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
@@ -527,11 +528,7 @@ export default function TenantDetailPage() {
             label={t('admCreatedAt')}
             value={
               tenant.created_at
-                ? new Date(tenant.created_at).toLocaleDateString(undefined, {
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric',
-                  })
+                ? formatDate(tenant.created_at)
                 : NA
             }
           />

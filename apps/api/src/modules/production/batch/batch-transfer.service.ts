@@ -28,6 +28,13 @@ import { farmScope } from '../../../common/farm-scope';
 import { AnimalMovementLogService } from '../../piggery/animal-movement-log/animal-movement-log.service';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { assertStageFitsAnimal } from '../stage/stage-gender';
+import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
+import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { herdCarryingAccount } from './herd-account';
+import { transferValueOf } from './batch-transfer-value.rules';
+import { planTransferPens } from '../../piggery/animal/animal-placement.rules';
+import { loadPlaces } from '../../piggery/animal/animal-placement.places';
+import { bioCodes } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 
 // Local time, not UTC. MySQL's own DEFAULT (now()) on created_at is local, so
 // formatting through toISOString() (as some older services here do) stamps
@@ -52,10 +59,13 @@ const toMysqlTimestamp = (date: Date = new Date()) => {
  *    destination batch from the moment the transfer posts.
  *  - A transfer is a reclassification, not income. Value moves from the source
  *    batch's carrying amount to the destination's; the two sides net to zero,
- *    so no journal is raised (a same-account Dr/Cr would post a meaningless
- *    zero-value entry). What DOES move is the per-batch carrying value in
- *    `batch_bio_asset_state` and `batch_header.closing_quantity`, which is what
- *    the bio-asset roll-forward and WIP-by-batch reports actually read.
+ *    so between herds carried in one account no journal is raised (a
+ *    same-account Dr/Cr would post a meaningless zero-value entry). What DOES
+ *    move is the per-batch carrying value in `batch_bio_asset_state` and
+ *    `batch_header.closing_quantity`, which is what the bio-asset roll-forward
+ *    and WIP-by-batch reports actually read. Head moved between herds carried
+ *    in different accounts (a piglet lot weaned into a weaner batch) move their
+ *    value between the accounts too: see postHeadcount and herd-account.ts.
  */
 /**
  * Scales `values` so they sum to exactly `total` (4dp), in proportion to each one — evenly when they are all
@@ -85,6 +95,8 @@ export class BatchTransferService {
     private readonly numberSeriesService: NumberSeriesService,
     private readonly schedulerHeaderService: SchedulerHeaderService,
     private readonly movementLog: AnimalMovementLogService,
+    private readonly animalBookValue: AnimalBookValueService,
+    private readonly glPostingService: GlPostingService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -95,32 +107,44 @@ export class BatchTransferService {
   }
 
   /**
-   * Tenants provisioned before this feature have no BATCH_TRANSFER series, and
-   * generateNext() throws on a missing one. Rather than make every existing
-   * tenant fail at the first transfer, fall back to a self-derived number.
+   * The transfer number (BTR-0001), from the company's Batch Transfer series. A company with none gets one made the
+   * first time a transfer is saved — there is no other numbering to fall back to, so a missing or blocked series
+   * is reported, never papered over with a self-derived number. Transfers made before the series existed were
+   * numbered BTR-<year>-nnnn; the series carries on after the highest of them, so none is reused.
    */
   private async generateTransferNo(
     tenantId: string,
     companyId: string,
   ): Promise<string> {
-    try {
-      return await this.numberSeriesService.generateNext(
-        'BATCH_TRANSFER',
-        tenantId,
-        companyId,
-      );
-    } catch {
-      const [{ n }] = await this.db
-        .select({ n: sql<number>`COUNT(*)` })
-        .from(schema.batchTransfer)
-        .where(
-          and(
-            eq(schema.batchTransfer.tenant_id, tenantId),
-            eq(schema.batchTransfer.company_id, companyId),
-          ),
-        );
-      return `BTR-${new Date().getFullYear()}-${String(Number(n) + 1).padStart(4, '0')}`;
-    }
+    const seriesCode = await this.numberSeriesService.seriesCodeForDocument(
+      tenantId,
+      companyId,
+      {
+        seriesCode: 'BATCH_TRANSFER',
+        seriesName: 'Batch Transfer Number',
+        documentType: 'BATCH_TRANSFER',
+        prefix: 'BTR',
+        separator: '-',
+        seqLength: 4,
+      },
+      async () =>
+        (
+          await this.db
+            .select({ no: schema.batchTransfer.transfer_no })
+            .from(schema.batchTransfer)
+            .where(
+              and(
+                eq(schema.batchTransfer.tenant_id, tenantId),
+                eq(schema.batchTransfer.company_id, companyId),
+              ),
+            )
+        ).map((r) => r.no?.replace(/^BTR-\d{4}-/, 'BTR-')),
+    );
+    return this.numberSeriesService.generateNext(
+      seriesCode,
+      tenantId,
+      companyId,
+    );
   }
 
   private async loadBatch(batchId: string, tenantId: string, label: string) {
@@ -171,7 +195,7 @@ export class BatchTransferService {
           eq(schema.animalRegister.tenant_id, tenantId),
           eq(schema.animalRegister.current_batch_id, batchId),
           eq(schema.animalRegister.is_active, true),
-          sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED')`,
+          sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED','CONVERTED_INV')`,
         ),
       )
       .orderBy(schema.animalRegister.animal_code);
@@ -183,7 +207,22 @@ export class BatchTransferService {
     fromBatchId: string,
     userPayload?: { userId?: string },
     // Internal (reverse()): the stage each animal returns to. Never part of a request.
-    options: { returnStages?: Record<string, string>; value?: number } = {},
+    options: { returnStages?: Record<string, string>; returnLocations?: Record<string, string>; value?: number } = {},
+  ) {
+    // The number is drawn from the series inside this transaction, so a failure after it (a ledger or GL write, a bad
+    // reference) rolls the counter back instead of burning the number. Joins the caller's transaction when one is open.
+    return withTenantTransaction(this.cls, () =>
+      this.createRecord(dto, tenantId, fromBatchId, userPayload, options),
+    );
+  }
+
+  private async createRecord(
+    dto: CreateBatchTransferDto,
+    tenantId: string,
+    fromBatchId: string,
+    userPayload?: { userId?: string },
+    // Internal (reverse()): the stage each animal returns to. Never part of a request.
+    options: { returnStages?: Record<string, string>; returnLocations?: Record<string, string>; value?: number } = {},
   ) {
     const source = await this.loadBatch(fromBatchId, tenantId, 'Source');
     const destination = await this.loadBatch(
@@ -346,8 +385,12 @@ export class BatchTransferService {
       for (const animal of selected) assertStageFitsAnimal(landing, animal);
     }
 
-    // Per-head carrying value: the animal's own book value when it has one,
-    // otherwise the batch's carrying amount spread across its live head count.
+    // Where each animal ends up: the location named, else the destination batch's own, else (a reversal) the one it
+    // came from, else its own — and never on another farm than the destination batch (animal-placement.rules.ts).
+    const pens = await this.planPens(dto.to_location_id ?? null, destination, selected, options.returnLocations);
+
+    // Per-head carrying value: the animal's own book value from its ledger (0 is a value: an animal amortised to nothing
+    // moves at nothing), otherwise the batch's carrying amount spread across its live head count. See batch-transfer-value.rules.ts.
     const [sourceState] = await this.db
       .select()
       .from(schema.batchBioAssetState)
@@ -359,12 +402,14 @@ export class BatchTransferService {
         ? Number(sourceState.nca_book_value) / stateQty
         : 0;
 
-    const valueOf = (a: (typeof pool)[number]) =>
-      Number(a.book_value) ||
-      Number(a.total_opening_asset_value) ||
-      Number(a.acquisition_cost) ||
-      perHeadFromState ||
-      0;
+    const ledger = await this.animalBookValue.valuesFor(selected.map((a) => a.animal_id));
+    const valueOf = (a: (typeof pool)[number]) => {
+      const fromLedger = ledger.get(a.animal_id);
+      return transferValueOf(
+        { ...a, ledger_book_value: fromLedger?.hasRows ? fromLedger.bookValue : null },
+        perHeadFromState,
+      );
+    };
 
     const lines = selected.map((a, idx) => ({
       line_id: randomUUID(),
@@ -376,11 +421,7 @@ export class BatchTransferService {
         source.sub_location_id ||
         source.location_id ||
         null,
-      to_location_id:
-        dto.to_location_id ||
-        destination.sub_location_id ||
-        destination.location_id ||
-        null,
+      to_location_id: pens.get(a.animal_id) ?? null,
       book_value: valueOf(a).toFixed(4),
       remarks: null as string | null,
     }));
@@ -628,7 +669,7 @@ export class BatchTransferService {
         tenant_id: tenantId,
         company_id: transfer.company_id,
         bio_asset_item_id: sourceItem,
-        entry_type: 'TRANSFER_OUT',
+        ...bioCodes.batchTransfer({ out: true }),
         document_no: transfer.transfer_no,
         posting_date: transfer.transfer_date,
         lot_no: lotNo,
@@ -651,7 +692,7 @@ export class BatchTransferService {
         tenant_id: tenantId,
         company_id: transfer.company_id,
         bio_asset_item_id: destItem,
-        entry_type: 'TRANSFER_IN',
+        ...bioCodes.batchTransfer({ out: false }),
         document_no: transfer.transfer_no,
         posting_date: transfer.transfer_date,
         lot_no: lotNo,
@@ -667,6 +708,28 @@ export class BatchTransferService {
       });
     }
     if (rows.length) await this.db.insert(schema.bioAssetLedger).values(rows);
+
+    // Head moved between herds carried in different accounts (a piglet lot, in Weaners Inventory, weaned into a weaner batch in the
+    // pre-mature account) take their value from one account to the other: Dr the destination's / Cr the source's. Between herds in one
+    // account, or where either has no one account (a mature herd), nothing is posted, as before 11 Nov 2026, when no transfer posted.
+    const fromAccount = await this.carryingAccount(source, tenantId);
+    const toAccount = await this.carryingAccount(destination, tenantId);
+    if (fromAccount && toAccount && fromAccount !== toAccount) {
+      await this.glPostingService.postAccountTransfer({
+        tenantId,
+        companyId: transfer.company_id,
+        postingDate: transfer.transfer_date,
+        sourceDocumentType: 'BATCH_TRANSFER',
+        documentNo: transfer.transfer_no,
+        description: `Transfer ${transfer.transfer_no} — ${quantity} head, ${source.batch_no} to ${destination.batch_no}`,
+        debitAccountId: toAccount,
+        creditAccountId: fromAccount,
+        amount: value,
+        nobId: source.nob_id || undefined,
+        lobId: source.lob_id || undefined,
+        userId: userPayload?.userId,
+      });
+    }
 
     // A batch-wise batch's current-stage scheduler counts its head, which just changed.
     await this.syncBatchWiseCount(transfer.from_batch_id);
@@ -699,6 +762,19 @@ export class BatchTransferService {
       },
     });
     return this.findOne(transfer.transfer_id, tenantId);
+  }
+
+  /** The account a batch's carrying value sits in (herd-account.ts). A batch with no bio-asset state yet is opened PREMATURE by shiftBioAssetState. */
+  private async carryingAccount(
+    batch: typeof schema.batchHeader.$inferSelect,
+    tenantId: string,
+  ): Promise<string | undefined> {
+    const [state] = await this.db
+      .select({ stage: schema.batchBioAssetState.stage })
+      .from(schema.batchBioAssetState)
+      .where(eq(schema.batchBioAssetState.batch_id, batch.batch_id))
+      .limit(1);
+    return herdCarryingAccount(this.db, this.glPostingService, batch, state?.stage ?? 'PREMATURE', tenantId);
   }
 
   /** A batch-wise batch has one live stage; its scheduler's count is the batch's head on hand. */
@@ -785,7 +861,6 @@ export class BatchTransferService {
       (sum, l) => sum + Number(l.book_value),
       0,
     );
-    const toLocationId = transfer.lines[0]?.to_location_id || null;
 
     // The destination batch's stage. Animals carry their own current_stage_id
     // (read by the herd and bio-asset-by-stage reports), so moving them into a
@@ -832,7 +907,7 @@ export class BatchTransferService {
             inArray(schema.animalRegister.animal_id, animalIds),
             eq(schema.animalRegister.current_batch_id, transfer.from_batch_id),
             eq(schema.animalRegister.is_active, true),
-            sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED')`,
+            sql`${schema.animalRegister.status} NOT IN ('DEAD','SOLD','CULLED','SLAUGHTERED','CONVERTED_INV')`,
           ),
         )
         .for('update');
@@ -848,12 +923,19 @@ export class BatchTransferService {
         .update(schema.animalRegister)
         .set({
           current_batch_id: transfer.to_batch_id,
-          ...(toLocationId ? { current_location_id: toLocationId } : {}),
           ...(targetStageId ? { current_stage_id: targetStageId } : {}),
           updated_by: userPayload?.userId || null,
           updated_at: toMysqlTimestamp(),
         })
         .where(inArray(schema.animalRegister.animal_id, animalIds));
+      // Each animal goes to its own line's location (none: it keeps its own). It used to be the first line's for all.
+      for (const line of transfer.lines) {
+        if (!line.to_location_id || !animalIds.includes(line.animal_id)) continue;
+        await tx
+          .update(schema.animalRegister)
+          .set({ current_location_id: line.to_location_id })
+          .where(eq(schema.animalRegister.animal_id, line.animal_id));
+      }
       // A reversal puts each animal back at the stage she left from — the transfer it undoes may have named another.
       for (const [animalId, stageId] of Object.entries(returnStages ?? {})) {
         if (!animalIds.includes(animalId)) continue;
@@ -910,7 +992,7 @@ export class BatchTransferService {
             pre?.current_stage_id ??
             null,
           fromLocationId: pre?.current_location_id || null,
-          toLocationId: line.to_location_id || toLocationId,
+          toLocationId: line.to_location_id || pre?.current_location_id || null,
           entryNo: transfer.transfer_no,
           reason: transfer.reason,
           remarks: transfer.remarks,
@@ -1031,6 +1113,44 @@ export class BatchTransferService {
     return swept.total;
   }
 
+  /** The location each animal of a transfer ends in (null: it keeps its own); refuses a placement on the wrong farm. */
+  private async planPens(
+    namedId: string | null,
+    destination: typeof schema.batchHeader.$inferSelect,
+    animals: Array<{ animal_id: string; animal_code: string; current_location_id: string | null }>,
+    returnLocations?: Record<string, string>,
+  ): Promise<Map<string, string | null>> {
+    const defaultId = destination.sub_location_id || destination.location_id || null;
+    const places = await loadPlaces(this.db, [
+      namedId,
+      defaultId,
+      destination.farm_id,
+      ...animals.map((a) => a.current_location_id),
+      ...Object.values(returnLocations ?? {}),
+    ]);
+    if (namedId && !places.has(namedId)) {
+      throw new BadRequestException('The destination location was not found.');
+    }
+    const plan = planTransferPens({
+      destination: {
+        batch_no: destination.batch_no,
+        farm_id: destination.farm_id ?? null,
+        farm_code: destination.farm_id ? (places.get(destination.farm_id)?.location_code ?? null) : null,
+        company_id: destination.company_id,
+      },
+      named: namedId ? (places.get(namedId) ?? null) : null,
+      batchDefault: defaultId ? (places.get(defaultId) ?? null) : null,
+      animals: animals.map((a) => ({
+        animal_id: a.animal_id,
+        animal_code: a.animal_code,
+        current: a.current_location_id ? (places.get(a.current_location_id) ?? null) : null,
+        returnTo: returnLocations?.[a.animal_id] ? (places.get(returnLocations[a.animal_id]) ?? null) : null,
+      })),
+    });
+    if (plan.problems.length) throw new BadRequestException(plan.problems.join(' '));
+    return plan.pens;
+  }
+
   /** Adds (or subtracts) head count and carrying value on one batch's bio-asset state row. */
   private async shiftBioAssetState(
     batchId: string,
@@ -1149,7 +1269,7 @@ export class BatchTransferService {
           tenant_id: tenantId,
           company_id: transfer.company_id,
           bio_asset_item_id: itemFor(l.animal_id)!,
-          entry_type: 'TRANSFER_OUT',
+          ...bioCodes.batchTransfer({ out: true }),
           document_no: transfer.transfer_no,
           posting_date: transfer.transfer_date,
           batch_no: source?.batch_no || null,
@@ -1168,7 +1288,7 @@ export class BatchTransferService {
           tenant_id: tenantId,
           company_id: transfer.company_id,
           bio_asset_item_id: itemFor(l.animal_id)!,
-          entry_type: 'TRANSFER_IN',
+          ...bioCodes.batchTransfer({ out: false }),
           document_no: transfer.transfer_no,
           posting_date: transfer.transfer_date,
           batch_no: destination?.batch_no || null,
@@ -1288,6 +1408,12 @@ export class BatchTransferService {
         userPayload,
         {
           returnStages,
+          // Each animal goes back to the location it left from, as it goes back to its stage.
+          returnLocations: Object.fromEntries(
+            original.lines
+              .filter((l) => l.animal_id && l.from_location_id)
+              .map((l) => [l.animal_id as string, l.from_location_id as string]),
+          ),
           ...(original.transfer_basis === 'HEADCOUNT'
             ? { value: Number(original.transfer_value) }
             : {}),
@@ -1444,9 +1570,13 @@ export class BatchTransferService {
       : [];
     const toMap = new Map(toBatches.map((b) => [b.batch_id, b.batch_no]));
 
+    // A transfer whose source batch is of this area, or has no area recorded — the Batches page's rule. Strict
+    // equality hid every transfer in an area workspace, since no batch carries an area (11 Nov 2026).
     const scoped = query.operational_area_id
       ? rows.filter(
-          (r) => r.from_operational_area_id === query.operational_area_id,
+          (r) =>
+            !r.from_operational_area_id ||
+            r.from_operational_area_id === query.operational_area_id,
         )
       : rows;
 
