@@ -4952,3 +4952,52 @@ order, for the mill manager to see on the Mill Consolidation sheet.
   from the submit date; otherwise MEDIUM. It is never shown or stored as a line field.
 - Feed alerts keep their own priority levels (Alerts and Notifications Master r49); this ruling is about the
   requisition line only. Common (Item, Fixed Asset, Service) requisitions never used the line priority.
+
+## 12 Nov 2026 — Logistics costing and truck capacity (Rishi)
+
+- The USD 500 approval threshold applies to **logistics costs only**, not every Expense Voucher. The approval is
+  handled by the Finance module, for the user/role that has the relevant Finance permission.
+- A vehicle's own recorded capacity is the authoritative truck capacity for logistics checks. The Feed Planning
+  **Bulk Truck Target** is a planning/compartment target within that truck capacity; it is not a replacement for the
+  truck's capacity and is not itself a hard cap.
+- In the current animal model, **SOLD is an animal disposal type**: it records the animal's exit from the herd as sold.
+  There is no separate normal-sales workflow currently implemented. The Logistics design must therefore keep the
+  distinction between a SOLD disposal and a transfer/slaughter event explicit; the open question of what source creates
+  a slaughter trip remains unresolved.
+
+## 12 Nov 2026 — Every physical Transfer Order may carry a Logistics trip (Rishi)
+
+- A Logistics trip belongs to the **Transfer Order**, not only to feed or slaughter movements. The design must support
+  attaching a trip to every physical TO type: feed, store/common requisition, livestock/farm transfer and the future
+  slaughter TO.
+- The existing company setting `trip_required_to_ship` remains the rollout control. It may stay off while the workflow is
+  being introduced; when enabled, a TO cannot ship without a valid attached trip.
+- The trip carries the vehicle, driver, route, delivery zone, capacity checks and transport costs for the TO. The TO's
+  own business type remains separate from the trip's logistics data.
+- A TO created from a requisition follows the same rule as every other TO. The trip is attached when the requisition is
+  released into a TO, and the requisition document shows the linked TO and its trip status/details. A requisition that
+  has not yet produced a TO does not require a trip by itself.
+
+## 12 Nov 2026 — Inventory TO and requisition shipment/receipt use the same trip (Rishi clarification)
+
+- This applies specifically to the Inventory → Transfer Orders flow and to the requisition's **Transfer Shipment and
+  Transfer Receipt** actions. A requisition-created stock Transfer Order is the same execution document as the
+  inventory TO, not a separate transport implementation.
+- The Logistics trip is linked to the stock Transfer Order header. Transfer Shipment uses that trip for dispatch and
+  records the vehicle/driver/route against the TO; Transfer Receipt displays and references the same trip and records
+  arrival/receipt against that movement. Receipt does not create a second trip.
+- Feed and common requisitions use the same stock-transfer linkage. Loading instructions may display the same trip, but
+  must not invent a separate logistics record for the loading sheet.
+- Direct Transfer, where shipment and receipt happen together, follows the same TO/trip linkage when the trip-required
+  setting is enabled.
+
+## 12 Nov 2026 — Requisition must contain the full Inventory TO experience (Rishi clarification)
+
+- The requisition's linked Transfer Order must **not** be presented only as a transfer number/link that opens
+  Inventory → Transfer Orders. The requisition document itself must contain the Transfer Order view/dialog.
+- Inside the requisition, users must be able to see the same TO information and controls as the Inventory TO flow:
+  source and destination, posting date and purpose, transport/trip details, TO lines, quantities, shipment dispatch,
+  and Transfer Receipt.
+- Feed and common requisitions keep their existing requisition fields and approval controls, but their fulfilment area
+  embeds the shared Inventory TO document/experience. Inventory remains the source of the shared implementation, not a
+  second page the user must navigate to.

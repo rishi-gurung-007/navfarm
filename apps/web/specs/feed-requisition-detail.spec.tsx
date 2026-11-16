@@ -25,6 +25,30 @@ beforeEach(() => {
   for (const fn of Object.values(showToast)) (fn as jest.Mock).mockClear();
 });
 
+// The embedded Transfer Order dialog is its own large screen; here it stands in as a stub that shows what the
+// requisition hands it and lets a test play a post or a close.
+const embeddedProps: Array<Record<string, any>> = [];
+let embeddedResult: unknown = null;
+jest.mock('../src/components/console/inventory/stock-transfer-panel', () => ({
+  __esModule: true,
+  default: (props: Record<string, any>) => {
+    embeddedProps.push(props);
+    return (
+      <div data-testid="embedded-to" data-transfer={props.embeddedTransferId}>
+        <button
+          type="button"
+          onClick={() => props.onEmbeddedPosted?.(embeddedResult, 'RECEIPT')}
+        >
+          stub-posted
+        </button>
+        <button type="button" onClick={() => props.onEmbeddedClose?.()}>
+          stub-close
+        </button>
+      </div>
+    );
+  },
+}));
+
 jest.mock('../src/services/api-client', () => ({
   api: { get: jest.fn(), post: jest.fn(), put: jest.fn() },
 }));
@@ -162,6 +186,8 @@ function renderDetail(view: RequisitionView, onView = jest.fn()) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  embeddedProps.length = 0;
+  embeddedResult = null;
   get.mockResolvedValue({ data: { destinations: [], items: [] } });
   post.mockResolvedValue({ data: base() });
   put.mockResolvedValue({ data: draftView });
@@ -315,485 +341,180 @@ describe('FeedRequisitionDetail workflow actions', () => {
     expect(showToast.success).toHaveBeenCalledWith('rqReleased');
   });
 
-  it('selects one linked transfer and posts only bounded shipment quantities', async () => {
-    const second = transfer({
+  // Rishi, 12 Nov: the requisition holds the shared Transfer Order dialog; Ship and Receive open it instead of a
+  // posting form of their own. The feed receipt checks live in that dialog (feed-receipt-checks.spec.ts).
+  describe('the embedded Transfer Order dialog', () => {
+    const bagged = [
+      {
+        line_id: 'rl-1',
+        line_seq: 1,
+        feed_type: 'BAGGED',
+        item_id: 'feed-1',
+        item_code: 'FEED-1',
+        quantity: '1000.0000',
+        destination_location_id: 'silo-1',
+        destination_code: 'S1',
+        required_item_id: 'feed-1',
+        is_next_diet: false,
+        days_before_diet_change: null,
+        lifecycle_ref_label: null,
+        system_balance_kg: null,
+        daily_requirement_kg: null,
+        days_remaining: null,
+        first_shortage_date: null,
+        unrounded_need_kg: null,
+        recommended_qty_kg: null,
+        bag_count: null,
+        proposed_delivery_date: null,
+        exceeds_silo_capacity: false,
+        exception_reason: null,
+        breakdown: [],
+      },
+      {
+        line_id: 'rl-2',
+        line_seq: 2,
+        feed_type: 'BULK',
+        item_id: 'feed-2',
+        item_code: 'FEED-2',
+        quantity: '600.0000',
+        destination_location_id: 'silo-1',
+        destination_code: 'S1',
+        required_item_id: 'feed-2',
+        is_next_diet: false,
+        days_before_diet_change: null,
+        lifecycle_ref_label: null,
+        system_balance_kg: null,
+        daily_requirement_kg: null,
+        days_remaining: null,
+        first_shortage_date: null,
+        unrounded_need_kg: null,
+        recommended_qty_kg: null,
+        bag_count: null,
+        proposed_delivery_date: null,
+        exceeds_silo_capacity: false,
+        exception_reason: null,
+        breakdown: [],
+      },
+    ] as unknown as RequisitionView['lines'];
+    const shipped = transfer({
       transfer_id: 'tr-2',
       transfer_no: 'TR-00002',
-      lines: [
-        {
-          transfer_line_id: 'tl-2',
-          requisition_line_id: 'rl-2',
-          item_id: 'feed-2',
-          item_code: 'FEED-2',
-          item_name: 'Finisher Feed',
-          quantity: 600,
-          uom: 'KG',
-          qty_shipped: 100,
-          qty_received: 0,
-          balance_to_ship: 500,
-          remaining_to_receive: 100,
-        },
-      ],
+      open_shipments: [{ shipment_id: 'sh-9', shipment_no: 'SH-9', lines: [] }],
     });
-    const view = base({
-      document_status: 'RELEASED',
-      actions: {
-        release: action(false),
-        shipment: action(true),
-        receipt: action(false),
-      },
-      transfers: [transfer(), second],
-    });
-    renderDetail(view);
-
-    fireEvent.click(screen.getByRole('button', { name: 'crqShip' }));
-    fireEvent.change(screen.getByLabelText('rqTransfer'), {
-      target: { value: 'tr-2' },
-    });
-    const qty = screen.getByLabelText(
-      'crqShipQtyFor:{"line":1}',
-    ) as HTMLInputElement;
-    expect(qty.max).toBe('500');
-    fireEvent.change(qty, { target: { value: '501' } });
-    expect(
-      (
-        screen.getByRole('button', {
-          name: 'crqPostShipment',
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
-    fireEvent.change(qty, { target: { value: '400' } });
-    fireEvent.click(screen.getByRole('button', { name: 'crqPostShipment' }));
-
-    await waitFor(() =>
-      expect(post).toHaveBeenCalledWith('/feed-requisition/req-1/shipments', {
-        transfer_id: 'tr-2',
-        posting_date: expect.any(String),
-        lines: [{ requisition_line_id: 'rl-2', quantity: 400 }],
-      }),
-    );
-  });
-
-  it('auto-selects a single transfer and can fill the remaining shipment quantity', async () => {
-    const view = base({
-      document_status: 'RELEASED',
-      actions: {
-        release: action(false),
-        shipment: action(true),
-        receipt: action(false),
-      },
-      transfers: [transfer()],
-    });
-    renderDetail(view);
-    fireEvent.click(screen.getByRole('button', { name: 'crqShip' }));
-    await waitFor(() =>
-      expect(screen.getByLabelText('crqShipQtyFor:{"line":1}')).toBeTruthy(),
-    );
-    expect(
-      within(screen.getByRole('dialog', { name: 'crqShip' })).queryByRole(
-        'table',
-      ),
-    ).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'crqFillRemaining' }));
-    expect(
-      (screen.getByLabelText('crqShipQtyFor:{"line":1}') as HTMLInputElement)
-        .value,
-    ).toBe('1000');
-  });
-
-  it('selects an open shipment and posts a bounded receipt', async () => {
-    const linked = transfer({
-      status: 'IN_TRANSIT',
-      lines: [
-        {
-          transfer_line_id: 'tl-1',
-          requisition_line_id: 'rl-1',
-          item_id: 'feed-1',
-          item_code: 'FEED-1',
-          item_name: 'Grower Feed',
-          quantity: 1000,
-          uom: 'KG',
-          qty_shipped: 700,
-          qty_received: 200,
-          balance_to_ship: 300,
-          remaining_to_receive: 500,
-        },
-      ],
-      open_shipments: [
-        {
-          shipment_id: 'sh-1',
-          shipment_no: 'SH-00001',
-          shipment_date: '2026-10-09',
-          lines: [
-            {
-              line_id: 'tl-1',
-              requisition_line_id: 'rl-1',
-              quantity: 700,
-              qty_received: 200,
-              remaining_to_receive: 500,
-            },
-          ],
-        },
-      ],
-    });
-    const view = base({
-      document_status: 'RELEASED',
-      actions: {
-        release: action(false),
-        shipment: action(true),
-        receipt: action(true),
-      },
-      transfers: [linked],
-    });
-    renderDetail(view);
-
-    fireEvent.click(screen.getByRole('button', { name: 'crqReceive' }));
-    fireEvent.change(screen.getByLabelText('rqTransfer'), {
-      target: { value: 'tr-1' },
-    });
-    fireEvent.change(screen.getByLabelText('crqShipment'), {
-      target: { value: 'sh-1' },
-    });
-    const qty = screen.getByLabelText(
-      'crqReceiveQtyFor:{"line":1}',
-    ) as HTMLInputElement;
-    expect(qty.max).toBe('500');
-    fireEvent.change(qty, { target: { value: '500' } });
-    // Rishi, 11 Oct: the delivery note no. is optional; it is sent when given.
-    expect(
-      (
-        screen.getByRole('button', {
-          name: 'crqPostReceipt',
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(false);
-    fireEvent.change(screen.getByLabelText('w2tDeliveryNoteFor:{"line":1}'), {
-      target: { value: 'MILL-DN-0042' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'crqPostReceipt' }));
-
-    await waitFor(() =>
-      expect(post).toHaveBeenCalledWith('/feed-requisition/req-1/receipts', {
-        transfer_id: 'tr-1',
-        shipment_id: 'sh-1',
-        posting_date: expect.any(String),
-        lines: [
-          {
-            requisition_line_id: 'rl-1',
-            quantity: 500,
-            delivery_note_no: 'MILL-DN-0042',
-          },
-        ],
-      }),
-    );
-  });
-
-  describe('W2T — the feed receipt panel per line (Requisition rows 139-150)', () => {
-    const reqLine = (feedType: string) => ({
-      line_id: 'rl-1',
-      line_seq: 1,
-      destination_location_id: 'silo-1',
-      destination_code: 'GRS-H3-SILO1',
-      item_id: 'feed-1',
-      item_code: 'FEED-R1',
-      item_description: 'Weaner Diet R1',
-      required_item_id: 'feed-1',
-      feed_type: feedType,
-      is_next_diet: false,
-      days_before_diet_change: null,
-      lifecycle_ref_label: null,
-      system_balance_kg: null,
-      daily_requirement_kg: null,
-      days_remaining: null,
-      first_shortage_date: null,
-      unrounded_need_kg: null,
-      recommended_qty_kg: null,
-      quantity: '6050.0000',
-      bag_count: null,
-      proposed_delivery_date: null,
-      exceeds_silo_capacity: false,
-      exception_reason: null,
-      breakdown: [],
-      requested_qty_kg: 6050,
-      mill_approved_qty_kg: 6000,
-    });
-    const receivingView = (feedType: string) =>
+    const view = (over: Partial<RequisitionView> = {}) =>
       base({
         document_status: 'RELEASED',
         actions: {
           release: action(false),
-          shipment: action(false),
+          shipment: action(true),
           receipt: action(true),
         },
-        header: { ...base().header!, bag_size_kg: 50 },
-        lines: [reqLine(feedType)] as any,
-        transfers: [
-          transfer({
-            status: 'IN_TRANSIT',
-            lines: [
-              {
-                transfer_line_id: 'tl-1',
-                requisition_line_id: 'rl-1',
-                item_id: 'feed-1',
-                item_code: 'FEED-R1',
-                item_name: 'Weaner Diet R1',
-                quantity: 6000,
-                uom: 'KG',
-                qty_shipped: 6000,
-                qty_received: 0,
-                balance_to_ship: 0,
-                remaining_to_receive: 6000,
-              },
-            ],
-            open_shipments: [
-              {
-                shipment_id: 'sh-1',
-                shipment_no: 'SH-00001',
-                shipment_date: '2026-10-09',
-                lines: [
-                  {
-                    line_id: 'tl-1',
-                    requisition_line_id: 'rl-1',
-                    quantity: 6000,
-                    qty_received: 0,
-                    remaining_to_receive: 6000,
-                    loading_sheet_id: 'ls-1',
-                    loading_sheet_no: 'LOAD-REQ-1',
-                    compartment_no: '1 and 2',
-                    compartments: [
-                      {
-                        compartment_no: 'C1',
-                        kg_loaded: 3000,
-                        loaded_by: 'Loader One',
-                      },
-                      {
-                        compartment_no: 'C2',
-                        kg_loaded: 3000,
-                        loaded_by: 'Loader One',
-                      },
-                    ],
-                    loading_total_kg: 6000,
-                  },
-                ],
-              },
-            ],
-          }),
-        ] as any,
+        transfers: [shipped],
+        lines: bagged,
+        header: {
+          ...base().header,
+          bag_size_kg: 25,
+        } as RequisitionView['header'],
+        ...over,
       });
-    const open = (view: RequisitionView) => {
-      renderDetail(view);
+
+    it('Transfer Shipment opens the dialog on the transfer that still has a balance to ship, not a form of its own', () => {
+      const done = transfer({
+        transfer_id: 'tr-0',
+        transfer_no: 'TR-00000',
+        lines: [{ ...transfer().lines[0], balance_to_ship: 0 }],
+      });
+      renderDetail(view({ transfers: [done, transfer()] }));
+      expect(screen.queryByTestId('embedded-to')).toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'crqShip' }));
+      expect(
+        screen.getByTestId('embedded-to').getAttribute('data-transfer'),
+      ).toBe('tr-1');
+      expect(screen.queryByLabelText('rqTransfer')).toBeNull();
+      expect(embeddedProps.at(-1)).toMatchObject({
+        embeddedRequisition: { id: 'req-1', kind: 'FEED' },
+      });
+    });
+
+    it('Transfer Receipt opens the transfer with an open shipment, naming it, with the feed checks the receipt needs', () => {
+      renderDetail(view({ transfers: [transfer(), shipped] }));
       fireEvent.click(screen.getByRole('button', { name: 'crqReceive' }));
-      fireEvent.change(screen.getByLabelText('rqTransfer'), {
-        target: { value: 'tr-1' },
+      expect(
+        screen.getByTestId('embedded-to').getAttribute('data-transfer'),
+      ).toBe('tr-2');
+      expect(embeddedProps.at(-1)).toMatchObject({
+        embeddedShipmentId: 'sh-9',
+        // Only the BAGGED line asks for a bag count, against the farm's bag size.
+        embeddedFeed: { bagSizeKg: 25, baggedRequisitionLineIds: ['rl-1'] },
       });
-      fireEvent.change(screen.getByLabelText('crqShipment'), {
-        target: { value: 'sh-1' },
-      });
-    };
+    });
 
-    it('auto-selects the only transfer and shipment and uses a responsive line card', async () => {
-      renderDetail(receivingView('BULK'));
+    it('falls back to a 50 kg bag when the farm states none', () => {
+      renderDetail(
+        view({
+          transfers: [shipped],
+          header: { ...base().header } as RequisitionView['header'],
+        }),
+      );
       fireEvent.click(screen.getByRole('button', { name: 'crqReceive' }));
-      const dialog = screen.getByRole('dialog', { name: 'crqReceive' });
-      await waitFor(() =>
-        expect(
-          within(dialog).getByLabelText('crqReceiveQtyFor:{"line":1}'),
-        ).toBeTruthy(),
-      );
-      expect(within(dialog).queryByRole('table')).toBeNull();
-      expect(dialog.textContent).toContain('C1');
-      expect(dialog.textContent).toContain('C2');
+      expect(embeddedProps.at(-1)?.embeddedFeed.bagSizeKg).toBe(50);
     });
 
-    it('shows item, feed type, requested, mill approved, shipped, previously received, outstanding and compartment', () => {
-      open(receivingView('BULK'));
-      const dialog = within(screen.getByRole('dialog', { name: 'crqReceive' }));
-      for (const text of [
-        'FEED-R1',
-        'Weaner Diet R1',
-        '6,050',
-        '6,000',
-        'C1',
-        'C2',
-        '3,000 KG',
-      ])
-        expect(
-          screen.getByRole('dialog', { name: 'crqReceive' }).textContent,
-        ).toContain(text);
-      expect(dialog.getByText(/LOAD-REQ-1/)).toBeTruthy();
-      expect(screen.queryByLabelText('w2tBagCountFor:{"line":1}')).toBeNull();
-      expect(
-        screen
-          .getByText('w2tOpenTransfer:{"no":"TR-00001"}')
-          .getAttribute('href'),
-      ).toBe('/inventory/transfers?id=tr-1');
-      expect(
-        screen
-          .getByText('w2tOpenShipment:{"no":"SH-00001"}')
-          .getAttribute('href'),
-      ).toBe('/inventory/transfers?id=tr-1');
-    });
-
-    it('W5B (Req r139, Silo r18, r20): the item and the loading sheet in the receipt table are links', () => {
-      open(receivingView('BULK'));
-      const dialog = within(screen.getByRole('dialog', { name: 'crqReceive' }));
-      expect(
-        dialog.getByRole('link', { name: 'FEED-R1' }).getAttribute('href'),
-      ).toBe('/master-data/item?recordId=feed-1');
-      expect(
-        dialog.getByRole('link', { name: 'LOAD-REQ-1' }).getAttribute('href'),
-      ).toBe('/inventory/feed-forecast?tab=loading-instructions&id=ls-1');
-    });
-
-    it('a part receipt with more still to come is short and needs a variance reason; a full one hides the field', () => {
-      open(receivingView('BULK'));
-      fireEvent.change(screen.getByLabelText('crqReceiveQtyFor:{"line":1}'), {
-        target: { value: '4000' },
-      });
-      expect(
-        (
-          screen.getByRole('button', {
-            name: 'crqPostReceipt',
-          }) as HTMLButtonElement
-        ).disabled,
-      ).toBe(true);
-      expect(
-        screen.getByLabelText('w2tVarianceReasonFor:{"line":1}'),
-      ).toBeTruthy();
-      fireEvent.change(screen.getByLabelText('crqReceiveQtyFor:{"line":1}'), {
-        target: { value: '6000' },
-      });
-      expect(
-        screen.queryByLabelText('w2tVarianceReasonFor:{"line":1}'),
-      ).toBeNull();
-      expect(
-        (
-          screen.getByRole('button', {
-            name: 'crqPostReceipt',
-          }) as HTMLButtonElement
-        ).disabled,
-      ).toBe(false);
-    });
-
-    it('checkpoint 26: a shortfall needs a variance reason before Post receipt is enabled', async () => {
-      open(receivingView('BULK'));
-      fireEvent.change(screen.getByLabelText('crqReceiveQtyFor:{"line":1}'), {
-        target: { value: '5900' },
-      });
-      fireEvent.change(screen.getByLabelText('w2tDeliveryNoteFor:{"line":1}'), {
-        target: { value: 'DN-1' },
-      });
-      const postButton = screen.getByRole('button', {
-        name: 'crqPostReceipt',
-      }) as HTMLButtonElement;
-      expect(postButton.disabled).toBe(true);
-      expect(screen.getByText('w2tVarianceReasonRequired')).toBeTruthy();
-      fireEvent.change(
-        screen.getByLabelText('w2tVarianceReasonFor:{"line":1}'),
-        { target: { value: 'Spillage' } },
-      );
-      expect(postButton.disabled).toBe(false);
-      post.mockResolvedValue({
-        data: {
-          ...receivingView('BULK'),
-          receipt: {
-            receipt_id: 'rc-1',
-            receipt_no: 'RC-2026-0007',
-            transfer_id: 'tr-1',
-            shipment_id: 'sh-1',
-            lines: [
-              {
-                line_id: 'tl-1',
-                requisition_line_id: 'rl-1',
-                qty_received: 5900,
-                variance_qty: 100,
-                silo_balance_after: 7400,
-              },
+    it('opens the same dialog from a linked transfer number in the document', () => {
+      renderDetail(
+        view({
+          transfers: [shipped],
+          header: {
+            ...base().header,
+            linked_transfers: [
+              { transfer_id: 'tr-2', transfer_no: 'TR-00002' },
             ],
+          } as RequisitionView['header'],
+        }),
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'TR-00002' }));
+      expect(
+        screen.getByTestId('embedded-to').getAttribute('data-transfer'),
+      ).toBe('tr-2');
+    });
+
+    it('a post in the dialog refreshes the requisition and shows the receipt it made', () => {
+      const result = base({
+        document_status: 'RELEASED',
+      }) as RequisitionView & { receipt: unknown };
+      result.receipt = {
+        receipt_no: 'RCT-1',
+        transfer_id: 'tr-2',
+        lines: [
+          {
+            line_id: 'x',
+            requisition_line_id: 'rl-1',
+            qty_received: 1000,
+            variance_qty: 0,
+            silo_balance_after: 4200,
           },
-        },
-      });
-      fireEvent.click(postButton);
-      await waitFor(() =>
-        expect(post).toHaveBeenCalledWith(
-          '/feed-requisition/req-1/receipts',
-          expect.objectContaining({
-            lines: [
-              {
-                requisition_line_id: 'rl-1',
-                quantity: 5900,
-                delivery_note_no: 'DN-1',
-                variance_reason: 'Spillage',
-              },
-            ],
-          }),
-        ),
-      );
-      const status = await screen.findByRole('status', {
-        name: 'w2tLastReceipt',
-      });
+        ],
+      };
+      const onView = renderDetail(view({ transfers: [shipped] }));
+      fireEvent.click(screen.getByRole('button', { name: 'crqReceive' }));
+      embeddedResult = result;
+      fireEvent.click(screen.getByRole('button', { name: 'stub-posted' }));
+      expect(onView).toHaveBeenCalledWith(result);
       expect(
-        within(status).getByText('w2tReceiptPosted:{"receipt":"RC-2026-0007"}'),
-      ).toBeTruthy();
-      expect(within(status).getByText(/"balance":"7,400"/)).toBeTruthy();
+        screen.getByRole('status', { name: 'w2tLastReceipt' }).textContent,
+      ).toContain('RCT-1');
     });
 
-    it('checkpoint 27: a BAGGED line needs a bag count within 1 percent of the KG received', () => {
-      open(receivingView('BAGGED'));
-      fireEvent.change(screen.getByLabelText('crqReceiveQtyFor:{"line":1}'), {
-        target: { value: '6000' },
-      });
-      fireEvent.change(screen.getByLabelText('w2tDeliveryNoteFor:{"line":1}'), {
-        target: { value: 'DN-1' },
-      });
-      const postButton = screen.getByRole('button', {
-        name: 'crqPostReceipt',
-      }) as HTMLButtonElement;
-      expect(postButton.disabled).toBe(true);
-      fireEvent.change(screen.getByLabelText('w2tBagCountFor:{"line":1}'), {
-        target: { value: '100' },
-      });
-      expect(postButton.disabled).toBe(true);
-      fireEvent.change(screen.getByLabelText('w2tBagCountFor:{"line":1}'), {
-        target: { value: '120' },
-      });
-      expect(postButton.disabled).toBe(false);
+    it('closing the dialog leaves the requisition as it was', () => {
+      renderDetail(view({ transfers: [shipped] }));
+      fireEvent.click(screen.getByRole('button', { name: 'crqReceive' }));
+      fireEvent.click(screen.getByRole('button', { name: 'stub-close' }));
+      expect(screen.queryByTestId('embedded-to')).toBeNull();
+      expect(screen.getByRole('dialog')).toBeTruthy();
     });
   });
 
-  it('keeps entered shipment quantities after an API refusal', async () => {
-    post.mockRejectedValue({
-      message: 'Sender department does not match the mill bin.',
-    });
-    const view = base({
-      document_status: 'RELEASED',
-      actions: {
-        release: action(false),
-        shipment: action(true),
-        receipt: action(false),
-      },
-      transfers: [transfer()],
-    });
-    renderDetail(view);
-    fireEvent.click(screen.getByRole('button', { name: 'crqShip' }));
-    fireEvent.change(screen.getByLabelText('rqTransfer'), {
-      target: { value: 'tr-1' },
-    });
-    const qty = screen.getByLabelText(
-      'crqShipQtyFor:{"line":1}',
-    ) as HTMLInputElement;
-    fireEvent.change(qty, { target: { value: '250' } });
-    fireEvent.click(screen.getByRole('button', { name: 'crqPostShipment' }));
-
-    await waitFor(() =>
-      expect(showToast.error).toHaveBeenCalledWith(
-        'Sender department does not match the mill bin.',
-      ),
-    );
-    expect(qty.value).toBe('250');
-  });
-
-  describe('stacked posting dialogs and the workflow notice (Rishi, 11 Oct)', () => {
+  describe('the workflow notice (Rishi, 11 Oct)', () => {
     const releasedView = (over: Partial<RequisitionView> = {}) =>
       base({
         document_status: 'RELEASED',
@@ -805,60 +526,6 @@ describe('FeedRequisitionDetail workflow actions', () => {
         transfers: [transfer({ open_shipments: [] })],
         ...over,
       });
-
-    it('Transfer Shipment opens a second dialog over the requisition, which stays mounted', () => {
-      renderDetail(releasedView());
-      expect(screen.getAllByRole('dialog')).toHaveLength(1);
-      fireEvent.click(screen.getByRole('button', { name: 'crqShip' }));
-      const dialogs = screen.getAllByRole('dialog');
-      expect(dialogs).toHaveLength(2);
-      expect(
-        within(dialogs[0]).queryByRole('button', { name: 'crqPostShipment' }),
-      ).toBeNull();
-      expect(
-        within(dialogs[1]).getByRole('button', { name: 'crqPostShipment' }),
-      ).toBeTruthy();
-      expect(within(dialogs[1]).getByLabelText('rqTransfer')).toBeTruthy();
-      expect(
-        within(dialogs[0]).getByRole('button', { name: 'crqRelease' }),
-      ).toBeTruthy();
-    });
-
-    it('Escape closes only the top dialog; the requisition remains', () => {
-      renderDetail(releasedView());
-      fireEvent.click(screen.getByRole('button', { name: 'crqShip' }));
-      fireEvent.keyDown(window, { key: 'Escape' });
-      expect(screen.getAllByRole('dialog')).toHaveLength(1);
-      expect(screen.getByRole('button', { name: 'crqShip' })).toBeTruthy();
-    });
-
-    it('a successful post closes the top dialog and refreshes the requisition', async () => {
-      const refreshed = releasedView({ fulfilment_status: 'SHIPPED' as any });
-      post.mockResolvedValue({ data: refreshed });
-      const onView = renderDetail(releasedView());
-      fireEvent.click(screen.getByRole('button', { name: 'crqShip' }));
-      fireEvent.change(screen.getByLabelText('rqTransfer'), {
-        target: { value: 'tr-1' },
-      });
-      fireEvent.change(screen.getByLabelText('crqShipQtyFor:{"line":1}'), {
-        target: { value: '250' },
-      });
-      fireEvent.click(screen.getByRole('button', { name: 'crqPostShipment' }));
-      await waitFor(() => expect(onView).toHaveBeenCalledWith(refreshed));
-      await waitFor(() =>
-        expect(screen.getAllByRole('dialog')).toHaveLength(1),
-      );
-    });
-
-    it('Transfer Receipt opens its own stacked dialog too', () => {
-      renderDetail(releasedView());
-      fireEvent.click(screen.getByRole('button', { name: 'crqReceive' }));
-      const dialogs = screen.getAllByRole('dialog');
-      expect(dialogs).toHaveLength(2);
-      expect(
-        within(dialogs[1]).getByRole('button', { name: 'crqPostReceipt' }),
-      ).toBeTruthy();
-    });
 
     it("shows 'Release completed' as a success alert with spacing, not an error", () => {
       renderDetail(

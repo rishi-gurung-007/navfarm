@@ -1,6 +1,7 @@
 'use client';
 
 import { DateInput } from '@/components/ui/date-input';
+import { feedReceiptExtras, feedReceiptRows } from './feed-receipt-checks';
 import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -122,6 +123,7 @@ interface TransferHeaderState {
 
 interface TransferLineState {
   line_id?: string;
+  requisition_line_id?: string;
   item_id: string;
   item_code?: string;
   quantity: string;
@@ -185,14 +187,38 @@ const TRANSPORT_MODE_OPTIONS = [
   { value: 'DIRECT_HANDOVER', label: 'Direct Handover / Forklift' },
 ];
 
-export default function StockTransferPanel() {
+export interface StockTransferPanelProps {
+  /** Render one existing TO's full document without the Inventory list. */
+  embeddedTransferId?: string;
+  /** When present, shipment/receipt are posted through the owning requisition. */
+  embeddedRequisition?: { id: string; kind: 'COMMON' | 'FEED' };
+  /** Open shipment used by the requisition receipt endpoint. */
+  embeddedShipmentId?: string;
+  /**
+   * A feed requisition's receipt checks (Silo TO Receipt rows 24-27; the API decides): which of its lines are BAGGED
+   * and the farm's bag size. Without it a feed receipt asks for no bag count and no reason.
+   */
+  embeddedFeed?: { bagSizeKg: number; baggedRequisitionLineIds: string[] };
+  /** Called with the requisition as it is after a shipment or receipt posted through it, so the requisition can refresh. */
+  onEmbeddedPosted?: (result: unknown, kind: 'SHIPMENT' | 'RECEIPT') => void;
+  onEmbeddedClose?: () => void;
+}
+
+export default function StockTransferPanel({
+  embeddedTransferId,
+  embeddedRequisition,
+  embeddedShipmentId,
+  embeddedFeed,
+  onEmbeddedPosted,
+  onEmbeddedClose,
+}: StockTransferPanelProps = {}) {
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<'transfers' | 'receive'>(
     'transfers',
   );
 
   const searchParams = useSearchParams();
-  const deepLinkId = searchParams?.get('id') ?? '';
+  const deepLinkId = embeddedTransferId || searchParams?.get('id') || '';
   const deepLinkOpened = useRef('');
   const notAvailable = t('stpNotAvailable') || 'Not available';
   const statusLabel = (status: string | null | undefined) =>
@@ -265,6 +291,11 @@ export default function StockTransferPanel() {
   const [receiveRemarks, setReceiveRemarks] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  const closeModal = () => {
+    setModalOpen(false);
+    if (embeddedTransferId) onEmbeddedClose?.();
+  };
+
   // Item tracking inspection search filter & copy state
   const [trackingSearch, setTrackingSearch] = useState('');
   const [copiedTracking, setCopiedTracking] = useState(false);
@@ -304,8 +335,8 @@ export default function StockTransferPanel() {
   };
 
   useEffect(() => {
-    load();
-  }, [search, statusFilter, directionFilter]);
+    if (!embeddedTransferId) load();
+  }, [embeddedTransferId, search, statusFilter, directionFilter]);
 
   useEffect(() => {
     setPage(1);
@@ -857,7 +888,7 @@ export default function StockTransferPanel() {
       setSuccessMsg(msg);
       setTimeout(() => setSuccessMsg(''), 5000);
 
-      setModalOpen(false);
+      closeModal();
       load();
     } catch (err: any) {
       setFormError(err?.message || t('stpFailedToSave'));
@@ -938,8 +969,9 @@ export default function StockTransferPanel() {
               : 0;
         const remainingToShip = Math.max(0, orderedQty - shippedQty);
 
-        return {
-          line_id: l.line_id,
+          return {
+            line_id: l.line_id,
+            requisition_line_id: l.requisition_line_id,
           item_id: l.item_id,
           item_code: l.item_code ?? undefined,
           quantity: String(orderedQty),
@@ -1044,15 +1076,35 @@ export default function StockTransferPanel() {
         lines: shipLinesPayload,
       };
 
-      await api.post(
-        `/stock-transfer/${editingTransfer.transfer_id}/ship`,
-        payload,
-      );
+      if (embeddedRequisition) {
+        const requisitionLines = shipLinesPayload.map((line) => {
+          const source = lines.find((candidate) => candidate.line_id === line.line_id);
+          const requisitionLineId = source?.requisition_line_id;
+          if (!requisitionLineId) throw new Error('This Transfer Order line is not linked to a requisition line.');
+          return embeddedRequisition.kind === 'FEED'
+            ? { requisition_line_id: requisitionLineId, quantity: line.quantity }
+            : { line_id: requisitionLineId, quantity: line.quantity };
+        });
+        const posted = await api.post(
+          embeddedRequisition.kind === 'FEED'
+            ? `/feed-requisition/${embeddedRequisition.id}/shipments`
+            : `/requisition/${embeddedRequisition.id}/shipment`,
+          embeddedRequisition.kind === 'FEED'
+            ? { transfer_id: editingTransfer.transfer_id, posting_date: payload.posting_date, lines: requisitionLines }
+            : { posting_date: payload.posting_date, lines: requisitionLines },
+        );
+        onEmbeddedPosted?.(posted?.data ?? posted, 'SHIPMENT');
+      } else {
+        await api.post(
+          `/stock-transfer/${editingTransfer.transfer_id}/ship`,
+          payload,
+        );
+      }
       const shipMsg = `Transfer Order ${editingTransfer.transfer_no || ''} dispatched successfully. Goods are now in transit.`;
       showToast.success(shipMsg);
       setSuccessMsg(shipMsg);
       setTimeout(() => setSuccessMsg(''), 5000);
-      setModalOpen(false);
+      closeModal();
       setEditingTransfer(null);
       load();
     } catch (err: any) {
@@ -1061,6 +1113,32 @@ export default function StockTransferPanel() {
       setShipping(false);
     }
   };
+
+  // A feed requisition's receipt checks, per Transfer Order line being received (Requisition rows 139-150): every
+  // short receipt needs a reason (Rishi, 11 Oct), a BAGGED line a whole bag count within 1 percent of the KG
+  // received (checkpoint 27), and the delivery note is optional. The API decides; these keep the form honest.
+  const [feedInputs, setFeedInputs] = useState<
+    Record<string, { bags: string; reason: string; note: string }>
+  >({});
+  const setFeedInput = (
+    lineId: string,
+    field: 'bags' | 'reason' | 'note',
+    value: string,
+  ) =>
+    setFeedInputs((prev) => ({
+      ...prev,
+      [lineId]: {
+        bags: prev[lineId]?.bags ?? '',
+        reason: prev[lineId]?.reason ?? '',
+        note: prev[lineId]?.note ?? '',
+        [field]: value,
+      },
+    }));
+  const feedReceiptRowsOf =
+    embeddedRequisition?.kind === 'FEED' && embeddedFeed
+      ? feedReceiptRows(lines, feedInputs, embeddedFeed)
+      : [];
+  const feedReceiptValid = feedReceiptRowsOf.every((r) => r.bagsOk && r.reasonOk);
 
   const handleReceiveOrder = async () => {
     if (!editingTransfer) return;
@@ -1100,6 +1178,13 @@ export default function StockTransferPanel() {
           'Please enter a quantity to receive or DOA loss greater than 0 for at least one item.',
         );
       }
+      const feedBad = feedReceiptRowsOf.find((r) => !r.bagsOk || !r.reasonOk);
+      if (feedBad)
+        throw new Error(
+          !feedBad.bagsOk
+            ? `${itemCodeOf(items, feedBad.line.item_id, feedBad.line.item_code, notAvailable)}: enter a whole bag count within 1% of the kilograms received.`
+            : `${itemCodeOf(items, feedBad.line.item_id, feedBad.line.item_code, notAvailable)}: a short receipt needs a variance reason.`,
+        );
 
       const payload = {
         posting_date: receivePostingDate || header.posting_date || undefined,
@@ -1107,15 +1192,43 @@ export default function StockTransferPanel() {
         lines: receiveLinesPayload,
       };
 
-      await api.post(
-        `/stock-transfer/${editingTransfer.transfer_id}/receive`,
-        payload,
-      );
+      if (embeddedRequisition) {
+        if (!embeddedShipmentId) {
+          throw new Error('Select an open Transfer Shipment before posting the Transfer Receipt.');
+        }
+        const requisitionLines = receiveLinesPayload.map((line) => {
+          const source = lines.find((candidate) => candidate.line_id === line.line_id);
+          const requisitionLineId = source?.requisition_line_id;
+          if (!requisitionLineId) throw new Error('This Transfer Order line is not linked to a requisition line.');
+          const feed = feedReceiptRowsOf.find((r) => r.line.line_id === line.line_id);
+          return embeddedRequisition.kind === 'FEED'
+            ? {
+                requisition_line_id: requisitionLineId,
+                quantity: line.received_quantity,
+                ...feedReceiptExtras(feed, line.doa_remarks, line.doa_quantity),
+              }
+            : { line_id: requisitionLineId, quantity: line.received_quantity };
+        });
+        const posted = await api.post(
+          embeddedRequisition.kind === 'FEED'
+            ? `/feed-requisition/${embeddedRequisition.id}/receipts`
+            : `/requisition/${embeddedRequisition.id}/receipt`,
+          embeddedRequisition.kind === 'FEED'
+            ? { transfer_id: editingTransfer.transfer_id, shipment_id: embeddedShipmentId, posting_date: payload.posting_date, lines: requisitionLines }
+            : { shipment_id: embeddedShipmentId, posting_date: payload.posting_date, lines: requisitionLines },
+        );
+        onEmbeddedPosted?.(posted?.data ?? posted, 'RECEIPT');
+      } else {
+        await api.post(
+          `/stock-transfer/${editingTransfer.transfer_id}/receive`,
+          payload,
+        );
+      }
       const recMsg = `Transfer Order ${editingTransfer.transfer_no || ''} received successfully into destination location.`;
       showToast.success(recMsg);
       setSuccessMsg(recMsg);
       setTimeout(() => setSuccessMsg(''), 5000);
-      setModalOpen(false);
+      closeModal();
       setEditingTransfer(null);
       load();
     } catch (err: any) {
@@ -1140,7 +1253,7 @@ export default function StockTransferPanel() {
       await api.post(`/stock-transfer/${transferId}/close`, {});
       setSuccessMsg('Transfer Order closed successfully.');
       setTimeout(() => setSuccessMsg(''), 5000);
-      setModalOpen(false);
+      closeModal();
       setEditingTransfer(null);
       load();
     } catch (err: any) {
@@ -1167,7 +1280,7 @@ export default function StockTransferPanel() {
       );
       setTimeout(() => setSuccessMsg(''), 5000);
       setDiscrepancyModalOpen(false);
-      setModalOpen(false);
+      closeModal();
       setEditingTransfer(null);
       load();
     } catch (err: any) {
@@ -1185,7 +1298,7 @@ export default function StockTransferPanel() {
       await api.post(`/stock-transfer/${editingTransfer.transfer_id}/post`, {});
       setSuccessMsg('Transfer Order posted directly.');
       setTimeout(() => setSuccessMsg(''), 5000);
-      setModalOpen(false);
+      closeModal();
       setEditingTransfer(null);
       load();
     } catch (err: any) {
@@ -1349,23 +1462,40 @@ export default function StockTransferPanel() {
   };
 
   // Warehouse options
+  // A requisition's Transfer Order runs mill -> farm (or store -> farm), and a mill or a farm
+  // is not a STORE-type location. An existing order must always show its own two locations,
+  // so they are added to the pick list whatever their type.
+  const pickableWarehouses = useMemo(() => {
+    if (!editingTransfer) return storeWarehouses;
+    const own = [
+      editingTransfer.from_warehouse_id,
+      editingTransfer.to_warehouse_id,
+    ].filter(Boolean);
+    const extra = warehouses.filter(
+      (w) =>
+        own.includes(w.warehouse_id) &&
+        !storeWarehouses.some((s) => s.warehouse_id === w.warehouse_id),
+    );
+    return [...storeWarehouses, ...extra];
+  }, [editingTransfer, warehouses, storeWarehouses]);
+
   const sourceWarehouseOptions = useMemo(() => {
-    return storeWarehouses.map((w) => ({
+    return pickableWarehouses.map((w) => ({
       value: w.warehouse_id,
       label: `${w.warehouse_code} — ${w.warehouse_name}`,
       shortLabel: w.warehouse_name ?? '',
     }));
-  }, [storeWarehouses]);
+  }, [pickableWarehouses]);
 
   const destinationWarehouseOptions = useMemo(() => {
-    return storeWarehouses
+    return pickableWarehouses
       .filter((w) => w.warehouse_id !== header.from_warehouse_id)
       .map((w) => ({
         value: w.warehouse_id,
         label: `${w.warehouse_code} — ${w.warehouse_name}`,
         shortLabel: w.warehouse_name ?? '',
       }));
-  }, [storeWarehouses, header.from_warehouse_id]);
+  }, [pickableWarehouses, header.from_warehouse_id]);
 
   // Number of items available at the selected location
   const availableItemsCount = useMemo(() => {
@@ -1441,10 +1571,11 @@ export default function StockTransferPanel() {
   );
 
   return (
-    <div className="flex flex-col gap-4">
+    <>
+      <div className="flex flex-col gap-4">
       {/* Sub-navigation tabs */}
       <div
-        className="flex items-center gap-2 border-b pb-3"
+        className={`items-center gap-2 border-b pb-3 ${embeddedTransferId ? 'hidden' : 'flex'}`}
         style={{ borderColor: 'var(--border)' }}
       >
         <button
@@ -1482,6 +1613,8 @@ export default function StockTransferPanel() {
         />
       ) : (
         <>
+          {/* Embedded in a requisition: the Inventory list is hidden, only the TO dialog shows. */}
+          <div className={embeddedTransferId ? 'hidden' : 'contents'}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold" style={S.primary}>
@@ -1801,6 +1934,7 @@ export default function StockTransferPanel() {
               </div>
             )}
           </div>
+          </div>
 
           {/* ========================================================================= */}
           {/* Create Modal: Enterprise-Grade Standard Transfer Order Form               */}
@@ -1811,7 +1945,7 @@ export default function StockTransferPanel() {
           <Dialog
             open={modalOpen}
             onClose={() =>
-              !saving && !shipping && !receiving && setModalOpen(false)
+              !saving && !shipping && !receiving && closeModal()
             }
             title={
               editingTransfer
@@ -1830,7 +1964,7 @@ export default function StockTransferPanel() {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => setModalOpen(false)}
+                    onClick={closeModal}
                     disabled={saving || shipping || receiving}
                     className="text-xs"
                   >
@@ -1939,7 +2073,7 @@ export default function StockTransferPanel() {
                       {editingTransfer.status === 'DRAFT' &&
                         canUserShip(editingTransfer) && (
                           <>
-                            <Button
+                            {!embeddedRequisition && <Button
                               size="sm"
                               variant="outline"
                               onClick={handleDirectPost}
@@ -1950,7 +2084,7 @@ export default function StockTransferPanel() {
                               {posting
                                 ? 'Posting…'
                                 : 'Direct Transfer (1-Step)'}
-                            </Button>
+                            </Button>}
                             <Button
                               size="sm"
                               onClick={handleShipOrder}
@@ -1977,6 +2111,7 @@ export default function StockTransferPanel() {
                               onClick={handleReceiveOrder}
                               disabled={
                                 receiving ||
+                                !feedReceiptValid ||
                                 !lines.some(
                                   (l) =>
                                     Number(l.qty_to_receive || 0) +
@@ -2512,6 +2647,66 @@ export default function StockTransferPanel() {
                         />
                       </div>
                     </div>
+
+                    {feedReceiptRowsOf.length > 0 && (
+                      <div
+                        className="mt-3 rounded-lg border border-emerald-500/30 bg-white/60 p-3 dark:bg-black/20"
+                        data-testid="feed-receipt-checks"
+                      >
+                        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                          Feed receipt checks
+                        </p>
+                        <div className="flex flex-col gap-2">
+                          {feedReceiptRowsOf.map((r) => (
+                            <div
+                              key={r.line.line_id}
+                              className="grid grid-cols-1 items-start gap-2 sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1.4fr)_minmax(0,1fr)]"
+                            >
+                              <span className="pt-2 text-xs font-medium">
+                                {itemCodeOf(items, r.line.item_id, r.line.item_code, notAvailable)}
+                              </span>
+                              {r.bagged ? (
+                                <input
+                                  type="number"
+                                  min="1"
+                                  step="1"
+                                  aria-label={`Bag count for ${itemCodeOf(items, r.line.item_id, r.line.item_code, notAvailable)}`}
+                                  placeholder={`Bags × ${embeddedFeed?.bagSizeKg} kg`}
+                                  value={r.input.bags}
+                                  onChange={(e) => setFeedInput(r.line.line_id!, 'bags', e.target.value)}
+                                  className={`${inputCls} font-mono text-xs ${r.bagsOk ? '' : 'border-red-500'}`}
+                                  style={S.input}
+                                />
+                              ) : (
+                                <span />
+                              )}
+                              {r.short ? (
+                                <input
+                                  type="text"
+                                  aria-label={`Variance reason for ${itemCodeOf(items, r.line.item_id, r.line.item_code, notAvailable)}`}
+                                  placeholder="Variance reason (short receipt)"
+                                  value={r.input.reason}
+                                  onChange={(e) => setFeedInput(r.line.line_id!, 'reason', e.target.value)}
+                                  className={`${inputCls} text-xs ${r.reasonOk ? '' : 'border-red-500'}`}
+                                  style={S.input}
+                                />
+                              ) : (
+                                <span />
+                              )}
+                              <input
+                                type="text"
+                                aria-label={`Delivery note for ${itemCodeOf(items, r.line.item_id, r.line.item_code, notAvailable)}`}
+                                placeholder="Delivery note (optional)"
+                                value={r.input.note}
+                                onChange={(e) => setFeedInput(r.line.line_id!, 'note', e.target.value)}
+                                className={`${inputCls} text-xs`}
+                                style={S.input}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Real-time Accounted and DOA Loss summary */}
                     {(() => {
@@ -3081,6 +3276,38 @@ export default function StockTransferPanel() {
                                   : line.qty_to_ship !== undefined
                                     ? line.qty_to_ship
                                     : String(remainingToShip);
+
+                                // Inside a requisition (Rishi, 16 Nov) the quantity to ship is the planner's to set: a load comes out
+                                // different from the order (truck, stock, spillage), and the old requisition shipment form let it. It
+                                // starts at what is left to ship, can be lowered, never raised past it; the rest ships later. An Inventory
+                                // Transfer Order keeps shipping everything entered, as before.
+                                const canSetShipQty =
+                                  !!embeddedRequisition &&
+                                  !!editingTransfer &&
+                                  canUserShip(editingTransfer) &&
+                                  remainingToShip > 0;
+                                if (canSetShipQty)
+                                  return (
+                                    <div className="flex flex-col gap-1">
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        max={remainingToShip}
+                                        step="any"
+                                        placeholder="0"
+                                        aria-label={`Quantity to ship for ${itemCodeOf(items, line.item_id, line.item_code, notAvailable)}`}
+                                        value={shipVal}
+                                        onChange={(e) =>
+                                          setLineField(idx, 'qty_to_ship', e.target.value)
+                                        }
+                                        className={`${inputCls} w-full px-2.5 font-mono text-xs text-right [appearance:textfield]`}
+                                        style={S.input}
+                                      />
+                                      <span className="text-[10px] text-(--text-muted) text-right">
+                                        of {formatQuantity(remainingToShip)} left
+                                      </span>
+                                    </div>
+                                  );
 
                                 return (
                                   <div className="flex flex-col gap-1">
@@ -4608,6 +4835,7 @@ export default function StockTransferPanel() {
           </Dialog>
         </>
       )}
-    </div>
+      </div>
+    </>
   );
 }

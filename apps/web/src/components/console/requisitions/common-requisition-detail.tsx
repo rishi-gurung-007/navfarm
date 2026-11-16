@@ -16,27 +16,24 @@
  * The draft is local state; the caller owns the last server view and is told
  * about each new one (`onView`), which also resets the draft to it.
  */
-import { DateInput } from '@/components/ui/date-input';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { showToast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
-import { Select } from '@/components/ui/select';
 import {
-  Dialog,
   DialogFooterActions,
   DialogHeaderActions,
 } from '@/components/ui/dialog';
 import { Field } from '@/components/ui/field';
 import { getStoredUser, hasPermission } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
-import { todayIso, unwrap } from '../inventory/feed-format';
+import { unwrap } from '../inventory/feed-format';
 import {
   CommonRequisitionDocument,
   type TrackingAssignment,
 } from './common-requisition-document';
-import { RecordLink } from '../inventory/feed-requisition-header';
+import StockTransferPanel from '../inventory/stock-transfer-panel';
 import {
   commonActions,
   isCommonEditable,
@@ -50,15 +47,6 @@ const inputStyle = {
   backgroundColor: 'var(--input-bg)',
   color: 'var(--input-text)',
   borderColor: 'var(--input-border)',
-};
-
-/** A quantity box's text as a number; blank is "nothing entered". */
-const entered = (raw: string | undefined) =>
-  raw === undefined || raw.trim() === '' ? null : Number(raw);
-/** Valid when blank, or a positive number no larger than the cap. */
-const withinCap = (raw: string | undefined, cap: number) => {
-  const v = entered(raw);
-  return v === null || (Number.isFinite(v) && v > 0 && v <= cap + 1e-9);
 };
 
 export function CommonRequisitionDetail({
@@ -85,19 +73,11 @@ export function CommonRequisitionDetail({
   const [options, setOptions] = useState<CommonRequisitionOptions | null>(null);
   const [busy, setBusy] = useState(false);
   const [poNo, setPoNo] = useState('');
-  const [panel, setPanel] = useState<'ship' | 'receive' | null>(null);
-  const [postingDate, setPostingDate] = useState(todayIso());
-  const [shipQty, setShipQty] = useState<Record<string, string>>({});
-  const [shipmentId, setShipmentId] = useState('');
-  const [recvQty, setRecvQty] = useState<Record<string, string>>({});
+  const [showTransferOrder, setShowTransferOrder] = useState(false);
 
   // A new server view replaces the draft and closes whatever was half-entered against the old one.
   useEffect(() => {
     setDraft(initial);
-    setPanel(null);
-    setShipQty({});
-    setRecvQty({});
-    setShipmentId('');
     setPoNo('');
   }, [initial]);
 
@@ -159,7 +139,6 @@ export function CommonRequisitionDetail({
     }
   };
   const emit = (res: unknown, message: string) => {
-    setPanel(null); // a posting dialog stacked on the requisition closes once the post lands
     showToast.success(message);
     onView(unwrap<CommonRequisitionView>(res), message);
   };
@@ -233,88 +212,11 @@ export function CommonRequisitionDetail({
       ),
     );
 
-  const lineNo = (lineId: string) => {
-    const i = draft.lines.findIndex((l) => l.line_id === lineId);
-    return i < 0 ? 0 : (draft.lines[i].line_seq ?? i + 1);
-  };
-
-  // Ship: every line with a balance, capped at that balance.
-  const shipLines = draft.lines.filter(
-    (l) => !!l.line_id && (l.balance_to_ship ?? 0) > 1e-9,
-  );
-  const shipBody = shipLines
-    .map((l) => ({
-      line_id: l.line_id as string,
-      quantity: entered(shipQty[l.line_id as string]),
-    }))
-    .filter((l) => l.quantity !== null && l.quantity > 0) as {
-    line_id: string;
-    quantity: number;
-  }[];
-  const shipValid =
-    shipLines.every((l) =>
-      withinCap(shipQty[l.line_id as string], l.balance_to_ship ?? 0),
-    ) && shipBody.length > 0;
-  const ship = () =>
-    run(async () =>
-      emit(
-        await api.post(`/requisition/${id}/shipment`, {
-          posting_date: postingDate,
-          lines: shipBody,
-        }),
-        tRef.current('crqShipped'),
-      ),
-    );
-
   // Receive: shipments with something left, then that shipment's lines with something left.
   const openShipments = (draft.shipments ?? []).filter((s) =>
     s.lines.some((l) => l.remaining > 1e-9),
   );
-  const chosen =
-    openShipments.find((s) => s.shipment_id === shipmentId) ?? null;
-  const recvLines = (chosen?.lines ?? []).filter((l) => l.remaining > 1e-9);
-  const recvBody = recvLines
-    .map((l) => ({
-      line_id: l.requisition_line_id,
-      quantity: entered(recvQty[l.requisition_line_id]),
-    }))
-    .filter((l) => l.quantity !== null && l.quantity > 0) as {
-    line_id: string;
-    quantity: number;
-  }[];
-  const recvValid =
-    !!chosen &&
-    recvLines.every((l) =>
-      withinCap(recvQty[l.requisition_line_id], l.remaining),
-    ) &&
-    recvBody.length > 0;
-  const receive = () =>
-    run(async () =>
-      emit(
-        await api.post(`/requisition/${id}/receipt`, {
-          posting_date: postingDate,
-          shipment_id: shipmentId,
-          lines: recvBody,
-        }),
-        tRef.current('crqReceived'),
-      ),
-    );
 
-  const dateField = (
-    <Field
-      className="w-40"
-      label={t('crqPostingDate')}
-      htmlFor="crq-posting-date"
-    >
-      <DateInput
-        id="crq-posting-date"
-        className="nf-input-sm"
-        style={inputStyle}
-        value={postingDate}
-        onChange={(e) => setPostingDate(e.target.value)}
-      />
-    </Field>
-  );
   const actionBar = (
     <div className="flex flex-wrap items-end gap-2">
       {actions.includes('reopen') && (
@@ -355,16 +257,20 @@ export function CommonRequisitionDetail({
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setPanel('ship')}
-            disabled={busy || !actions.includes('ship')}
+            onClick={() => setShowTransferOrder(true)}
+            disabled={
+              busy || !actions.includes('ship') || !draft.linked_transfer_id
+            }
           >
             {t('crqShip')}
           </Button>
           <Button
             size="sm"
             variant="outline"
-            onClick={() => setPanel('receive')}
-            disabled={busy || !actions.includes('receive')}
+            onClick={() => setShowTransferOrder(true)}
+            disabled={
+              busy || !actions.includes('receive') || !draft.linked_transfer_id
+            }
           >
             {t('crqReceive')}
           </Button>
@@ -399,14 +305,23 @@ export function CommonRequisitionDetail({
             <span className="inline-flex gap-1.5">
               <span>{t('crqLinkedTransfer')}</span>
               {draft.linked_transfer_no ? (
-                <RecordLink
-                  code={draft.linked_transfer_no}
-                  href={
-                    draft.linked_transfer_id
-                      ? `/inventory/transfers?id=${encodeURIComponent(draft.linked_transfer_id)}`
-                      : null
-                  }
-                />
+                <>
+                  <span
+                    className="font-mono"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    {draft.linked_transfer_no}
+                  </span>
+                  {draft.linked_transfer_id && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setShowTransferOrder(true)}
+                    >
+                      View Transfer Order
+                    </Button>
+                  )}
+                </>
               ) : (
                 t('crqNoLinkedTransfer')
               )}
@@ -440,112 +355,6 @@ export function CommonRequisitionDetail({
             view; drafting controls live in the dialog footer and later
             workflow controls live in the dialog header. */}
         {/* Review p1f, concern 5: a refusal goes in the same place, for the same reason. */}
-        {/* Rishi, 11 Oct: Ship and Receive open in their own dialog stacked on the requisition. */}
-        <Dialog
-          open={panel === 'ship' && actions.includes('ship')}
-          onClose={() => setPanel(null)}
-          title={t('crqShip')}
-          presentation="compact"
-          maxWidth="xl"
-          footer={
-            <Button size="sm" onClick={ship} disabled={busy || !shipValid}>
-              {t('crqPostShipment')}
-            </Button>
-          }
-        >
-          <div className="flex flex-wrap items-end gap-3">
-            {dateField}
-            {shipLines.map((l) => {
-              const no = lineNo(l.line_id as string);
-              const key = l.line_id as string;
-              return (
-                <Field
-                  key={key}
-                  className="w-40"
-                  label={t('crqShipQtyFor', { line: no })}
-                  htmlFor={`crq-ship-${key}`}
-                >
-                  <input
-                    id={`crq-ship-${key}`}
-                    type="number"
-                    min={0}
-                    max={l.balance_to_ship}
-                    className="nf-input-sm text-right"
-                    style={inputStyle}
-                    value={shipQty[key] ?? ''}
-                    onChange={(e) =>
-                      setShipQty((cur) => ({ ...cur, [key]: e.target.value }))
-                    }
-                  />
-                </Field>
-              );
-            })}
-          </div>
-        </Dialog>
-
-        <Dialog
-          open={panel === 'receive' && actions.includes('receive')}
-          onClose={() => setPanel(null)}
-          title={t('crqReceive')}
-          presentation="compact"
-          maxWidth="xl"
-          footer={
-            <Button size="sm" onClick={receive} disabled={busy || !recvValid}>
-              {t('crqPostReceipt')}
-            </Button>
-          }
-        >
-          <div className="flex flex-wrap items-end gap-3">
-            {dateField}
-            <Field
-              className="w-48"
-              label={t('crqShipment')}
-              htmlFor="crq-shipment"
-            >
-              <Select
-                id="crq-shipment"
-                className="nf-input-sm nf-select w-full"
-                style={inputStyle}
-                value={shipmentId}
-                onChange={(e) => {
-                  setShipmentId(e.target.value);
-                  setRecvQty({});
-                }}
-              >
-                <option value="">{t('crqChoose')}</option>
-                {openShipments.map((s) => (
-                  <option key={s.shipment_id} value={s.shipment_id}>
-                    {s.shipment_no}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            {recvLines.map((l) => {
-              const key = l.requisition_line_id;
-              return (
-                <Field
-                  key={key}
-                  className="w-40"
-                  label={t('crqReceiveQtyFor', { line: lineNo(key) })}
-                  htmlFor={`crq-recv-${key}`}
-                >
-                  <input
-                    id={`crq-recv-${key}`}
-                    type="number"
-                    min={0}
-                    max={l.remaining}
-                    className="nf-input-sm text-right"
-                    style={inputStyle}
-                    value={recvQty[key] ?? ''}
-                    onChange={(e) =>
-                      setRecvQty((cur) => ({ ...cur, [key]: e.target.value }))
-                    }
-                  />
-                </Field>
-              );
-            })}
-          </div>
-        </Dialog>
       </div>
       {(actions.includes('save') || actions.includes('submit')) && (
         <DialogFooterActions>
@@ -565,6 +374,20 @@ export function CommonRequisitionDetail({
             </Button>
           )}
         </DialogFooterActions>
+      )}
+      {showTransferOrder && draft.linked_transfer_id && (
+        <StockTransferPanel
+          embeddedTransferId={draft.linked_transfer_id}
+          embeddedRequisition={{ id: id!, kind: 'COMMON' }}
+          embeddedShipmentId={openShipments[0]?.shipment_id}
+          onEmbeddedPosted={(result, kind) =>
+            emit(
+              result,
+              tRef.current(kind === 'RECEIPT' ? 'crqReceived' : 'crqShipped'),
+            )
+          }
+          onEmbeddedClose={() => setShowTransferOrder(false)}
+        />
       )}
     </>
   );
