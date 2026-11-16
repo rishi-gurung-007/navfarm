@@ -597,6 +597,7 @@ export default function PiggeryGmDashboard() {
                 title={t('gmdFinancialMatrix')}
                 rows={farmFinancial}
                 t={t}
+                budgeted
                 note={salesMonth ? period.period_code : t('gmdNoDataYet')}
               />
             </div>
@@ -627,6 +628,7 @@ export default function PiggeryGmDashboard() {
                 rows={financial}
                 farms={farms}
                 t={t}
+                budgeted
                 note={
                   data?.financial?.month.all
                     ? period.period_code

@@ -5,7 +5,8 @@ import type { MasterDataConfig } from './types';
  * and metric. The API serves it at /piggery/budget; it is listed in Farm Master.
  *
  * Period, farm and metric identify a line, so they are asked for on create and fixed afterwards (`createOnly`); only
- * the amount, tolerance and notes change. The metric list is read from the API's catalogue, so a metric added there
+ * the amount, tolerance and notes change. Every field key is the API's body and row field name, so create posts what
+ * the service reads and edit prefills from the row. Access is the role matrix's PIGGERY/BUDGET grant, not admins-only. The metric list is read from the API's catalogue, so a metric added there
  * appears here without a change to this file.
  */
 
@@ -17,7 +18,6 @@ const budget: MasterDataConfig = {
   idKey: 'budget_id',
   group: 'Budget',
   isPrimary: true,
-  businessAdminOnly: true,
   supportsRestore: true,
   description: 'The budget each farm is measured against on the GM Dashboard, by reporting period and metric.',
   columns: [
@@ -40,7 +40,8 @@ const budget: MasterDataConfig = {
       entityLabelKeys: ['period_code'],
     },
     {
-      key: 'location_id',
+      // The API's create body and the list row both name it farm_id; the option's value is the farm's location_id.
+      key: 'farm_id',
       label: 'Farm',
       type: 'select-entity',
       required: true,

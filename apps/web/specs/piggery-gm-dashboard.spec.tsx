@@ -475,7 +475,31 @@ describe('GM Dashboard — budgets', () => {
     const card = screen.getByRole('region', { name: 'gmdCostOfSales' });
     expect(card.textContent).toContain('-2,000');
     expect(
-      within(card).getByLabelText('on or better than budget'),
+      within(card).getByLabelText('gmdOnOrBetterThanBudget'),
+    ).toBeTruthy();
+  });
+
+  it('the arrow says worse than budget, or within tolerance, from the dictionary', async () => {
+    await load({
+      financial: {
+        month: { all: sales(1, 12000, 0) },
+        ytd: { all: null },
+        heads_by_period: [],
+      },
+      budget: {
+        ...empty,
+        month: {
+          all: { cost_of_sales: cell(10000, 12000, 2000, 20, 'RED') },
+        },
+        ytd: {
+          all: { cost_of_sales: cell(10000, 10300, 300, 3, 'AMBER') },
+        },
+      },
+    });
+    const card = screen.getByRole('region', { name: 'gmdCostOfSales' });
+    expect(within(card).getByLabelText('gmdWorseThanBudget')).toBeTruthy();
+    expect(
+      within(card).getByLabelText('gmdWithinToleranceOfBudget'),
     ).toBeTruthy();
   });
 
@@ -540,7 +564,9 @@ describe('GM Dashboard — budgets', () => {
     expect(
       cells[2].querySelector('[data-status]')?.getAttribute('data-status'),
     ).toBe('GREEN');
-    expect(cells[1].getAttribute('title')).toContain('gmdTarget 120');
+    // Financial rows are measured against a budget, so the hover says Budget (production rows keep Target).
+    expect(cells[1].getAttribute('title')).toContain('gmdBudget 120');
+    expect(cells[1].getAttribute('title')).not.toContain('gmdTarget');
   });
 
   it('the Pigs to Slaughter chart draws the budget line from budget.by_period', async () => {
@@ -624,7 +650,7 @@ describe('GM Dashboard — budgets', () => {
       expect(
         row.querySelector('[data-status]')?.getAttribute('data-status'),
       ).toBe('RED');
-      expect(row.innerHTML).toContain('gmdTarget 120');
+      expect(row.innerHTML).toContain('gmdBudget 120');
     });
 
     it('without financial_rows the financial table has no target and no dot colour', async () => {
@@ -632,7 +658,7 @@ describe('GM Dashboard — budgets', () => {
       expect(
         row.querySelector('[data-status]')?.getAttribute('data-status'),
       ).toBe('NONE');
-      expect(row.innerHTML).toContain('gmdNoTarget');
+      expect(row.innerHTML).toContain('gmdNoBudget');
     });
   });
 });

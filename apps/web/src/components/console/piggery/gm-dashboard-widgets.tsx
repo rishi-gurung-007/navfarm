@@ -147,7 +147,7 @@ export function StatusDot({
 const toneOf = (v: NonNullable<ReturnType<typeof variance>>) =>
   v.warn ? 'var(--warning)' : v.good ? 'var(--success)' : 'var(--danger)';
 
-function TrendArrow({ v }: { v: ReturnType<typeof variance> }) {
+function TrendArrow({ v, t }: { v: ReturnType<typeof variance>; t: T }) {
   if (!v) return null;
   const Icon = v.up ? ArrowUp : ArrowDown;
   return (
@@ -156,10 +156,10 @@ function TrendArrow({ v }: { v: ReturnType<typeof variance> }) {
       style={{ backgroundColor: toneOf(v) }}
       aria-label={
         v.warn
-          ? 'within tolerance of budget'
+          ? t('gmdWithinToleranceOfBudget')
           : v.good
-            ? 'on or better than budget'
-            : 'worse than budget'
+            ? t('gmdOnOrBetterThanBudget')
+            : t('gmdWorseThanBudget')
       }
     >
       <Icon className="h-3.5 w-3.5" strokeWidth={3} />
@@ -219,7 +219,7 @@ function FigureBlock({
             {fig(figure.actual, unit)}
           </p>
         </div>
-        <TrendArrow v={v} />
+        <TrendArrow v={v} t={t} />
       </div>
       <div className="mt-1 grid grid-cols-2 gap-1 text-xs">
         <div>
@@ -374,6 +374,7 @@ export function Matrix({
   farms,
   t,
   note,
+  budgeted = false,
 }: {
   icon: ElementType;
   title: string;
@@ -381,7 +382,12 @@ export function Matrix({
   farms: Farm[];
   t: T;
   note?: ReactNode;
+  /** The rows' figures are budgets (Slaughter & Financial), so the hover says Budget, not Target. */
+  budgeted?: boolean;
 }) {
+  const [targetKey, noTargetKey] = budgeted
+    ? (['gmdBudget', 'gmdNoBudget'] as const)
+    : (['gmdTarget', 'gmdNoTarget'] as const);
   return (
     <section
       className="flex min-w-0 flex-col rounded-md border border-(--border) bg-(--surface)"
@@ -434,8 +440,8 @@ export function Matrix({
                   const c = row.cells[f.farm_id];
                   const tip = `${f.farm_name} — ${row.label}: ${fmt(c?.value, row.unit)} · ${
                     c?.target != null
-                      ? `${t('gmdTarget')} ${fmt(c.target, row.unit)}`
-                      : t('gmdNoTarget')
+                      ? `${t(targetKey)} ${fmt(c.target, row.unit)}`
+                      : t(noTargetKey)
                   }`;
                   return (
                     <td
@@ -675,7 +681,7 @@ export function KgMeatCard({
             >
               {fmt(main.actual)}
             </span>
-            <TrendArrow v={v} />
+            <TrendArrow v={v} t={t} />
             <span className="text-xs text-(--text-secondary)">
               {t('gmdBudget')} <BudgetValue figure={main} unit="" />
             </span>
@@ -779,13 +785,19 @@ export function FarmMatrix({
   rows,
   t,
   note,
+  budgeted = false,
 }: {
   icon: ElementType;
   title: string;
   rows: FarmRow[];
   t: T;
   note?: ReactNode;
+  /** The rows' figures are budgets (Slaughter & Financial), so the hover says Budget, not Target. */
+  budgeted?: boolean;
 }) {
+  const [targetKey, noTargetKey] = budgeted
+    ? (['gmdBudget', 'gmdNoBudget'] as const)
+    : (['gmdTarget', 'gmdNoTarget'] as const);
   return (
     <section
       className="flex min-w-0 flex-col rounded-md border border-(--border) bg-(--surface)"
@@ -824,8 +836,8 @@ export function FarmMatrix({
             {rows.map((row) => {
               const tip =
                 row.target != null
-                  ? `${t('gmdTarget')} ${fmt(row.target, row.unit)}`
-                  : t('gmdNoTarget');
+                  ? `${t(targetKey)} ${fmt(row.target, row.unit)}`
+                  : t(noTargetKey);
               return (
                 <tr key={row.key} className="border-t border-(--border)">
                   <td className="px-2 py-1.5 leading-tight">
