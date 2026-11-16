@@ -125,14 +125,37 @@ describe('budgetSection (GM Dashboard Budget master, Task 5)', () => {
     expect(budget.ytd.all.pigs_to_slaughter.budget).toBe(budget.month.all.pigs_to_slaughter.budget);
   });
 
-  it('by_period carries the farms\' Pigs to Slaughter and PBT month budget for every period of the year', () => {
+  it("by_period carries the farms' running Pigs to Slaughter and PBT budget for every period of the year", () => {
+    // All farms: p1 90 + 40, p2 adds 120 + 45, p3 has no F2 line; PBT has no line in p1, so it never starts.
     expect(section().budget.by_period).toEqual([
       { period_code: '2026-07', pigs_to_slaughter: 130, pbt: null },
-      { period_code: '2026-08', pigs_to_slaughter: 165, pbt: 300 },
+      { period_code: '2026-08', pigs_to_slaughter: 295, pbt: null },
       { period_code: '2026-09', pigs_to_slaughter: null, pbt: null },
     ]);
     const one = section({ farms: [farms[0]] }).budget.by_period;
-    expect(one.map((p) => p.pigs_to_slaughter)).toEqual([90, 120, 130]);
+    expect(one.map((p) => p.pigs_to_slaughter)).toEqual([90, 210, 340]);
+  });
+
+  it('by_period sums cumulatively, and a gap in period 2 makes period 2 onward null', () => {
+    const full = [
+      line('f1', 'p1', 'PIGS_TO_SLAUGHTER', 10),
+      line('f1', 'p2', 'PIGS_TO_SLAUGHTER', 20),
+      line('f1', 'p3', 'PIGS_TO_SLAUGHTER', 30),
+      line('f1', 'p1', 'PBT', 5),
+      line('f1', 'p3', 'PBT', 7),
+    ];
+    expect(section({ lines: full, farms: [farms[0]] }).budget.by_period).toEqual([
+      { period_code: '2026-07', pigs_to_slaughter: 10, pbt: 5 },
+      { period_code: '2026-08', pigs_to_slaughter: 30, pbt: null },
+      { period_code: '2026-09', pigs_to_slaughter: 60, pbt: null },
+    ]);
+    // All farms: F2 has a line in p1 and p3 but not p2.
+    const gap = [
+      ...full,
+      line('f2', 'p1', 'PIGS_TO_SLAUGHTER', 1),
+      line('f2', 'p3', 'PIGS_TO_SLAUGHTER', 3),
+    ];
+    expect(section({ lines: gap }).budget.by_period.map((p) => p.pigs_to_slaughter)).toEqual([11, null, null]);
   });
 
   it('builds the eight Slaughter & Financial rows from the Month cells, one cell per farm', () => {

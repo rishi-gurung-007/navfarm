@@ -18,7 +18,10 @@ export interface BudgetCell extends BudgetFigure {
 export interface GmBudgetSection {
   month: Record<string, Record<string, BudgetCell>>;
   ytd: Record<string, Record<string, BudgetCell>>;
-  /** The farms' (one chosen farm, or All farms) month budget of each period of the business year; null when partial. */
+  /**
+   * The farms' (one chosen farm, or All farms) running budget over the business year: each period's value sums the
+   * month budgets of the periods up to and including it; null from the first period missing a line for any farm.
+   */
   by_period: Array<{ period_code: string; pigs_to_slaughter: number | null; pbt: number | null }>;
 }
 
@@ -95,11 +98,15 @@ export function budgetSection(args: {
 
   const pigs = BUDGET_METRICS.find((m) => m.code === 'PIGS_TO_SLAUGHTER')!;
   const pbt = BUDGET_METRICS.find((m) => m.code === 'PBT')!;
-  const by_period = yearPeriods.map((p) => ({
-    period_code: p.period_code,
-    pigs_to_slaughter: monthBudget(lines, pigs, p.period_id, farms).budget,
-    pbt: monthBudget(lines, pbt, p.period_id, farms).budget,
-  }));
+  // A running total, like the chart's actual: once a period lacks a line for a farm, it and every later period are null.
+  const running = { pigs: 0 as number | null, pbt: 0 as number | null };
+  const add = (sum: number | null, month: number | null) =>
+    sum === null || month === null ? null : Number((sum + month).toFixed(4));
+  const by_period = yearPeriods.map((p) => {
+    running.pigs = add(running.pigs, monthBudget(lines, pigs, p.period_id, farms).budget);
+    running.pbt = add(running.pbt, monthBudget(lines, pbt, p.period_id, farms).budget);
+    return { period_code: p.period_code, pigs_to_slaughter: running.pigs, pbt: running.pbt };
+  });
 
   const financialRows: MetricRow[] = FINANCIAL_ROWS.map((row) => ({
     ...row,
