@@ -39,6 +39,7 @@ import {
   meanTarget,
   MetricRow,
   SaleRow,
+  SalesFigures,
   salesFigures,
   StageBatch,
   stageExit,
@@ -47,6 +48,9 @@ import {
   stageFigures,
   stageSegments,
 } from './gm-dashboard.metrics';
+import { budgetMetric } from '../budget/budget-metrics';
+import { BudgetLine } from './gm-budget.metrics';
+import { budgetActuals, budgetSection } from './gm-budget.dashboard';
 
 type Farm = { farm_id: string; farm_code: string; farm_name: string };
 
@@ -277,8 +281,10 @@ export class PiggeryAnalyticsService {
       farms,
       kg_sold_per_sow_year: { month: {}, ytd: {}, cells: {} },
       financial: { month: {}, ytd: {}, heads_by_period: [] },
+      budget: { month: {}, ytd: {}, by_period: [] },
       breeding: [],
       weaner_grower: [],
+      financial_rows: [],
       alerts: [],
       farm_view: null,
     };
@@ -477,15 +483,46 @@ export class PiggeryAnalyticsService {
       ),
     }));
 
+    const yearPeriods = periods.filter(
+      (p) => p.business_year === chosen.business_year,
+    );
+    const budgetLines = await this.budgetLines(
+      tenantId,
+      farms.map((f) => f.farm_id),
+      yearPeriods.map((p) => p.period_id),
+    );
+    const actualsOf = (
+      sales: Record<string, SalesFigures | null>,
+      kg: Record<string, number | null>,
+    ) =>
+      Object.fromEntries(
+        keys.map(([k]) => [k, budgetActuals(sales[k] ?? null, kg[k] ?? null)]),
+      );
+    const { budget, financialRows } = budgetSection({
+      lines: budgetLines,
+      farms,
+      yearPeriods,
+      periodId: chosen.period_id,
+      actuals: {
+        month: actualsOf(financial.month, kgMonth),
+        ytd: actualsOf(financial.ytd, kgYtd),
+      },
+    });
+
     return {
       period,
       periods,
       farms,
       kg_sold_per_sow_year: { month: kgMonth, ytd: kgYtd, cells: kgRow.cells },
       financial,
+      budget,
       breeding,
       weaner_grower: weanerGrower,
-      alerts: alertsFrom([...breeding, kgRow, ...weanerGrower], farms),
+      financial_rows: financialRows,
+      alerts: alertsFrom(
+        [...breeding, kgRow, ...weanerGrower, ...financialRows],
+        farms,
+      ),
       farm_view:
         query.farmId && farms.length === 1
           ? await this.farmView(
@@ -613,6 +650,43 @@ export class PiggeryAnalyticsService {
       weaner_grower: weanerGrower,
       alerts: farmAlerts([...breeding, ...weanerGrower]),
     };
+  }
+
+  /** The live budget lines of the farms and periods, in one query (GM Dashboard Budget master, 16 Nov). */
+  private async budgetLines(
+    tenantId: string,
+    farmIds: string[],
+    periodIds: string[],
+  ): Promise<BudgetLine[]> {
+    if (!farmIds.length || !periodIds.length) return [];
+    const B = schema.gmBudget;
+    const rows = await this.db
+      .select({
+        period_id: B.period_id,
+        farm_id: B.farm_id,
+        metric_code: B.metric_code,
+        amount: B.amount,
+        tolerance_pct: B.tolerance_pct,
+      })
+      .from(B)
+      .where(
+        and(
+          eq(B.tenant_id, tenantId),
+          inArray(B.farm_id, farmIds),
+          inArray(B.period_id, periodIds),
+          eq(B.is_active, true),
+          isNull(B.deleted_at),
+        ),
+      );
+    return rows
+      .filter((r) => budgetMetric(r.metric_code))
+      .map((r) => ({
+        period_id: r.period_id,
+        farm_id: r.farm_id,
+        metric_code: r.metric_code as BudgetLine['metric_code'],
+        amount: Number(r.amount),
+        tolerance_pct: r.tolerance_pct == null ? null : Number(r.tolerance_pct),
+      }));
   }
 
   /** The stage ids of WEANER and GROWER, the company's own row first, as stage masters are overridden. */

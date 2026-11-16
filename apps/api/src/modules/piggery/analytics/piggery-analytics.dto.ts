@@ -5,6 +5,9 @@ import type {
   MetricRow,
   SalesFigures,
 } from './gm-dashboard.metrics';
+import type { GmBudgetSection } from './gm-budget.dashboard';
+
+export type { BudgetCell, GmBudgetSection } from './gm-budget.dashboard';
 
 export interface QueryPiggeryGmDashboardDto {
   companyId?: string;
@@ -41,8 +44,12 @@ export interface PiggeryGmDashboardData {
     /** The business year's running total of pigs sold by period, for the chosen farm or all farms. */
     heads_by_period: Array<{ period_code: string; heads: number | null }>;
   };
+  /** Month and YTD budget, actual, Var and colour of each budget metric, per farm and for all ("all"), by dashboardKey. */
+  budget: GmBudgetSection;
   breeding: MetricRow[];
   weaner_grower: MetricRow[];
+  /** The Slaughter & Financial rows: each farm's Month actual against its Month budget. */
+  financial_rows: MetricRow[];
   alerts: Alert[];
   /** With one farm chosen: its figures over This Week, the 4-week average, This Month, Prev. Month and 3 Months. */
   farm_view: GmFarmView | null;
