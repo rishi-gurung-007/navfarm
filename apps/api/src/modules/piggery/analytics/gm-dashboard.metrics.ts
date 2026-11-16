@@ -1,5 +1,6 @@
 import type { OpsMetrics } from '../reports/monthly-ops.metrics';
 import type { Target } from '../reports/farrowing-report.metrics';
+import type { KpiBands } from '../../production/lifecycle/kpi-limits';
 
 /**
  * The arithmetic of the GM Dashboard (Rishi, 2 Nov; docs/superpowers/specs/2026-11-02-gm-dashboard-phase-1-design.md),
@@ -30,7 +31,26 @@ const ratio = (num: number, den: number, scale = 1) =>
   den > 0 ? round((num / den) * scale) : null;
 
 /**
- * Green at or better than the target's Average Value; amber when worse but within its tolerance band on that side
+ * The sheet's cut-offs (Rishi, 16 Nov): the number under each colour is where that colour is reached, so a value
+ * that has reached green is green, one that has reached yellow but not green is amber, anything short of yellow is
+ * red. A triple that runs against the metric's direction is a data-entry slip, so it gives no verdict.
+ */
+export function bandStatus(
+  value: number,
+  bands: KpiBands,
+  lowerIsBetter: boolean,
+): Status | undefined {
+  const { red, yellow, green } = bands;
+  if (lowerIsBetter) {
+    if (!(red >= yellow && yellow >= green)) return undefined;
+    return value <= green ? 'GREEN' : value <= yellow ? 'AMBER' : 'RED';
+  }
+  if (!(red <= yellow && yellow <= green)) return undefined;
+  return value >= green ? 'GREEN' : value >= yellow ? 'AMBER' : 'RED';
+}
+
+/**
+ * The farm's red / yellow / green cut-offs when it has them; otherwise green at or better than the target's Average Value; amber when worse but within its tolerance band on that side
  * (or 10 % of the average when it has none); red beyond. No value or no target: no status.
  */
 export function ragStatus(
@@ -39,6 +59,10 @@ export function ragStatus(
   lowerIsBetter: boolean,
 ): Status {
   if (value == null || !target) return null;
+  if (target.bands) {
+    const banded = bandStatus(value, target.bands, lowerIsBetter);
+    if (banded) return banded;
+  }
   const { average, lower, upper } = target;
   if (average == null) {
     if (lower == null && upper == null) return null;
@@ -66,10 +90,25 @@ export function meanTarget(
       ? round(values.reduce((a, v) => a + v, 0) / values.length, 4)
       : null;
   };
+  const banded = present.filter((t) => t.bands);
+  const meanBand = (pick: (b: KpiBands) => number) =>
+    round(
+      banded.reduce((a, t) => a + pick(t.bands as KpiBands), 0) / banded.length,
+      4,
+    );
   return {
     average: mean((t) => t.average),
     lower: mean((t) => t.lower),
     upper: mean((t) => t.upper),
+    ...(banded.length
+      ? {
+          bands: {
+            red: meanBand((b) => b.red),
+            yellow: meanBand((b) => b.yellow),
+            green: meanBand((b) => b.green),
+          },
+        }
+      : {}),
   };
 }
 
@@ -80,7 +119,7 @@ export function cell(
 ): Cell {
   return {
     value,
-    target: target?.average ?? null,
+    target: target?.bands?.green ?? target?.average ?? null,
     status: ragStatus(value, target, lowerIsBetter),
   };
 }
@@ -209,6 +248,7 @@ export interface StageExit {
   target_weight: Target | null;
   target_fcr: Target | null;
   target_mortality: Target | null;
+  target_gain: Target | null;
 }
 
 /**
@@ -231,6 +271,7 @@ export function stageExit(args: {
     weight: Target | null;
     fcr: Target | null;
     mortality: Target | null;
+    gain?: Target | null;
   };
 }): StageExit {
   const {
@@ -276,6 +317,7 @@ export function stageExit(args: {
     target_weight: targets.weight,
     target_fcr: targets.fcr,
     target_mortality: targets.mortality,
+    target_gain: targets.gain ?? null,
   };
 }
 
@@ -461,7 +503,7 @@ export function farmRow(
     label: def.label,
     unit: def.unit,
     lower_is_better: def.lower,
-    target: target?.average ?? null,
+    target: target?.bands?.green ?? target?.average ?? null,
     status: ragStatus(values.this_week, target, def.lower),
     values,
     trend: Array.from({ length: TREND_WEEKS }, (_, i) =>

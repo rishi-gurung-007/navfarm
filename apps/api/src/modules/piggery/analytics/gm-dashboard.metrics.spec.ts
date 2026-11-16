@@ -430,3 +430,113 @@ describe('farmRow and farmAlerts', () => {
     ]);
   });
 });
+
+// Rishi, 16 Nov: the sheet's red / yellow / green cut-offs; the number under a colour is where that colour is reached.
+describe('ragStatus with the sheet cut-offs', () => {
+  const farrow = {
+    average: null,
+    lower: null,
+    upper: null,
+    bands: { red: 87, yellow: 89, green: 92 },
+  };
+  const preWean = {
+    average: null,
+    lower: null,
+    upper: null,
+    bands: { red: 10, yellow: 8, green: 7.5 },
+  };
+
+  it('is green from the green number, amber from the yellow one, red short of it', () => {
+    expect(ragStatus(92, farrow, false)).toBe('GREEN');
+    expect(ragStatus(95, farrow, false)).toBe('GREEN');
+    expect(ragStatus(91.9, farrow, false)).toBe('AMBER');
+    expect(ragStatus(89, farrow, false)).toBe('AMBER');
+    expect(ragStatus(88, farrow, false)).toBe('RED');
+    expect(ragStatus(87, farrow, false)).toBe('RED');
+    expect(ragStatus(80, farrow, false)).toBe('RED');
+  });
+
+  it('runs the other way when lower is better', () => {
+    expect(ragStatus(7.5, preWean, true)).toBe('GREEN');
+    expect(ragStatus(7.8, preWean, true)).toBe('AMBER');
+    expect(ragStatus(8, preWean, true)).toBe('AMBER');
+    expect(ragStatus(9, preWean, true)).toBe('RED');
+    expect(ragStatus(12, preWean, true)).toBe('RED');
+  });
+
+  it('wins over the average and tolerance when both are there', () => {
+    expect(
+      ragStatus(88, { ...farrow, average: 80, lower: 70, upper: 90 }, false),
+    ).toBe('RED');
+  });
+
+  it('falls back to the average when the cut-offs run against the metric (a sheet slip)', () => {
+    const slip = {
+      average: 5,
+      lower: null,
+      upper: null,
+      bands: { red: 4.75, yellow: 4.88, green: 5 },
+    };
+    expect(ragStatus(5, slip, true)).toBe('GREEN');
+    expect(ragStatus(7, slip, true)).toBe('RED');
+    expect(ragStatus(5, { ...slip, average: null }, true)).toBeNull();
+  });
+
+  it('shows the green number as the target when there is no average', () => {
+    expect(
+      farmRow(
+        { key: 'k', label: 'K', unit: '', lower: false },
+        () => 90,
+        farrow,
+        () => true,
+      ).target,
+    ).toBe(92);
+  });
+
+  it("averages the cut-offs of a farm's breeds", () => {
+    const a = {
+      average: null,
+      lower: null,
+      upper: null,
+      bands: { red: 80, yellow: 85, green: 90 },
+    };
+    const b = {
+      average: null,
+      lower: null,
+      upper: null,
+      bands: { red: 84, yellow: 87, green: 92 },
+    };
+    expect(meanTarget([a, b])?.bands).toEqual({
+      red: 82,
+      yellow: 86,
+      green: 91,
+    });
+  });
+});
+
+describe('the target a cell shows', () => {
+  it("is the sheet's green number when the farm has cut-offs, else the average", () => {
+    const withBands = {
+      average: 90,
+      lower: null,
+      upper: null,
+      bands: { red: 87, yellow: 89, green: 92 },
+    };
+    expect(
+      farmRow(
+        { key: 'k', label: 'K', unit: '', lower: false },
+        () => 91,
+        withBands,
+        () => true,
+      ).target,
+    ).toBe(92);
+    expect(
+      farmRow(
+        { key: 'k', label: 'K', unit: '', lower: false },
+        () => 91,
+        { average: 90, lower: null, upper: null },
+        () => true,
+      ).target,
+    ).toBe(90);
+  });
+});

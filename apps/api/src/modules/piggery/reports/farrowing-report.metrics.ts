@@ -1,4 +1,6 @@
 import {
+  KpiBands,
+  kpiBands,
   kpiLimits,
   KpiLimitsInput,
 } from '../../production/lifecycle/kpi-limits';
@@ -281,11 +283,16 @@ export interface Target {
   average: number | null;
   lower: number | null;
   upper: number | null;
+  /** The farm's red / yellow / green cut-offs, when its lifecycle row carries them (GM Dashboard). */
+  bands?: KpiBands;
 }
 export type Targets = Record<TargetKey, Target | null>;
 
 interface ThresholdRow extends KpiLimitsInput {
   metric?: string;
+  red_at?: unknown;
+  yellow_at?: unknown;
+  green_at?: unknown;
 }
 
 /**
@@ -308,14 +315,16 @@ export function targetsFromLifecycle(
     if (!Array.isArray(list)) continue;
     for (const t of list as ThresholdRow[]) {
       if (!t?.metric || found.has(t.metric)) continue;
-      const target = kpiLimits(t);
+      const limits = kpiLimits(t);
+      const bands = kpiBands(t);
       if (
-        target.average === null &&
-        target.lower === null &&
-        target.upper === null
+        limits.average === null &&
+        limits.lower === null &&
+        limits.upper === null &&
+        !bands
       )
         continue;
-      found.set(t.metric, target);
+      found.set(t.metric, bands ? { ...limits, bands } : limits);
     }
   }
   const out = {} as Targets;

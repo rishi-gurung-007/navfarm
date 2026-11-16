@@ -9,7 +9,7 @@ import {
   batchScopeConditions,
 } from '../../../common/farm-scope';
 import { loadBatchDeaths, loadHeadMoves } from '../../production/batch-heads';
-import { kpiLimits } from '../../production/lifecycle/kpi-limits';
+import { kpiBands, kpiLimits } from '../../production/lifecycle/kpi-limits';
 import { MonthlyOpsService } from '../reports/monthly-ops.service';
 import {
   targetsFromLifecycle,
@@ -134,7 +134,7 @@ const STAGE_ROWS: Array<{
     unit: 'kg',
     lower: false,
     pick: (s) => s.weaner.gain_kg,
-    target: null,
+    target: (e) => target(e.weaner, (x) => x.target_gain),
   },
   {
     key: 'fce_weaner',
@@ -176,6 +176,8 @@ const STAGE_METRICS = {
   weight: 'BODY_WEIGHT',
   fcr: 'FCR',
   mortality: 'MORTALITY_PCT',
+  /** The weaner stage's 70-day gain in kg: carried only by the sheet's red / yellow / green cut-offs (16 Nov). */
+  gain: 'GAIN_70_DAY',
 } as const;
 
 const day = (v: unknown) => String(v).slice(0, 10);
@@ -631,12 +633,14 @@ export class PiggeryAnalyticsService {
       const found = list.find((t: any) => t?.metric === metric);
       if (!found) continue;
       const limits = kpiLimits(found);
+      const bands = kpiBands(found);
       if (
         limits.average !== null ||
         limits.lower !== null ||
-        limits.upper !== null
+        limits.upper !== null ||
+        bands
       )
-        return limits;
+        return bands ? { ...limits, bands } : limits;
     }
     return null;
   }
@@ -843,6 +847,7 @@ export class PiggeryAnalyticsService {
                 farmId,
                 STAGE_METRICS.mortality,
               ),
+              gain: this.metricTarget(own, farmId, STAGE_METRICS.gain),
             },
           ];
         }),
@@ -850,7 +855,7 @@ export class PiggeryAnalyticsService {
     };
     const weanerTargets = await targetsFor(WEANER);
     const growerTargets = await targetsFor(GROWER);
-    const none = { weight: null, fcr: null, mortality: null };
+    const none = { weight: null, fcr: null, mortality: null, gain: null };
 
     const exitOf = (
       spell: {
@@ -859,7 +864,12 @@ export class PiggeryAnalyticsService {
       },
       targets: Map<
         string,
-        { weight: Target | null; fcr: Target | null; mortality: Target | null }
+        {
+          weight: Target | null;
+          fcr: Target | null;
+          mortality: Target | null;
+          gain: Target | null;
+        }
       >,
       entryWeight: number | null,
     ) =>
