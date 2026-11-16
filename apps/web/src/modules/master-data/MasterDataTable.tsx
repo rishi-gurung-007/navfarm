@@ -86,6 +86,7 @@ import FairValueRatesDialog from './FairValueRatesDialog';
 import QcSpecDialog, { toApiLines, type QcSpecRow } from './QcSpecDialog';
 import { exportMasterRowsToCsv } from './utils/master-csv';
 import MasterDataImportModal from './MasterDataImportModal';
+import { LabelTemplateField } from './LabelTemplateField';
 
 const PAGE_SIZE = 25;
 
@@ -3830,6 +3831,21 @@ export function MasterDataTable({
         </div>
       );
     }
+    if (f.labelTemplate) {
+      return (
+        <LabelTemplateField
+          id={accessibility.id}
+          ariaLabel={accessibility['aria-label']}
+          ariaRequired={accessibility['aria-required']}
+          value={value ?? ''}
+          onChange={(v) => setField(f.key, v)}
+          placeholder={f.placeholder}
+          disabled={fieldDisabled}
+          inputClassName={inputCls}
+          inputStyle={S.input}
+        />
+      );
+    }
     if (f.type === 'textarea' || f.type === 'json') {
       return (
         <textarea
@@ -5635,7 +5651,8 @@ export function MasterDataTable({
                         className={
                           f.type === 'textarea' ||
                           f.type === 'json' ||
-                          f.type === 'string-list'
+                          f.type === 'string-list' ||
+                          f.labelTemplate
                             ? 'sm:col-span-2'
                             : undefined
                         }
@@ -5749,7 +5766,8 @@ export function MasterDataTable({
                       className={
                         f.type === 'textarea' ||
                         f.type === 'json' ||
-                        f.type === 'string-list'
+                        f.type === 'string-list' ||
+                        f.labelTemplate
                           ? 'sm:col-span-2'
                           : undefined
                       }

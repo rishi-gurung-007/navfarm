@@ -6380,48 +6380,55 @@ export class BatchService {
 
     // Determine if the entire stage should be locked:
     // If posting for all animals, always lock.
-    // If posting for a single animal, lock only if ALL stage animals now have mandatory entries posted.
+    // If posting for a single animal, lock once every animal of the stage is posted - by the rule the data entry
+    // screen marks an animal "Posted" with (a posted row for the day and no draft left) - and, where the schedule
+    // has mandatory lines, every animal has each of them posted. Before 16 Nov a schedule with no mandatory line
+    // never locked on the last animal's post, and the user had to press "Lock Stage Day" to move the date on.
     let shouldLockStage = !animalId;
-    if (animalId && header) {
-      const activePairs = await this.loadScheduleLinesForHeader(
-        header,
-        dateStr,
+    if (animalId) {
+      const activePairs = header
+        ? await this.loadScheduleLinesForHeader(header, dateStr)
+        : [];
+      const dayRows = await this.db
+        .select({
+          line_id: schema.batchDailyData.line_id,
+          animal_id: schema.batchDailyData.animal_id,
+          posted: schema.batchDailyData.posted,
+        })
+        .from(schema.batchDailyData)
+        .where(
+          and(
+            eq(schema.batchDailyData.batch_id, batchId),
+            eq(schema.batchDailyData.entry_date, dateStr),
+            inArray(
+              schema.batchDailyData.animal_id,
+              allStageAnimals.map((a) => a.animal_id),
+            ),
+          ),
+        );
+      const withDraft = new Set(
+        dayRows.filter((e) => !e.posted).map((e) => e.animal_id),
+      );
+      const withPosted = new Set(
+        dayRows.filter((e) => Boolean(e.posted)).map((e) => e.animal_id),
+      );
+      const everyAnimalPosted = allStageAnimals.every(
+        (a) => withPosted.has(a.animal_id) && !withDraft.has(a.animal_id),
       );
       const mandatoryLineIds = activePairs
         .filter(({ line }) => line.is_mandatory)
         .map(({ line }) => line.line_id);
-      if (mandatoryLineIds.length) {
-        const allEntries = await this.db
-          .select({
-            line_id: schema.batchDailyData.line_id,
-            animal_id: schema.batchDailyData.animal_id,
-            posted: schema.batchDailyData.posted,
-          })
-          .from(schema.batchDailyData)
-          .where(
-            and(
-              inArray(schema.batchDailyData.line_id, mandatoryLineIds),
-              eq(schema.batchDailyData.entry_date, dateStr),
-              inArray(
-                schema.batchDailyData.animal_id,
-                allStageAnimals.map((a) => a.animal_id),
-              ),
-            ),
-          );
-        const postedSet = new Set(
-          allEntries
-            .filter((e) => e.posted)
-            .map((e) => `${e.line_id}:${e.animal_id}`),
-        );
-        const allComplete = allStageAnimals.every((animal) =>
-          mandatoryLineIds.every((lineId) =>
-            postedSet.has(`${lineId}:${animal.animal_id}`),
-          ),
-        );
-        if (allComplete) {
-          shouldLockStage = true;
-        }
-      }
+      const postedSet = new Set(
+        dayRows
+          .filter((e) => Boolean(e.posted))
+          .map((e) => `${e.line_id}:${e.animal_id}`),
+      );
+      const mandatoryComplete = allStageAnimals.every((animal) =>
+        mandatoryLineIds.every((lineId) =>
+          postedSet.has(`${lineId}:${animal.animal_id}`),
+        ),
+      );
+      shouldLockStage = everyAnimalPosted && mandatoryComplete;
     }
 
     if (shouldLockStage) {

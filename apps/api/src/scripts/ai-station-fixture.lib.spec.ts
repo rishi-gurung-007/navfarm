@@ -14,17 +14,9 @@ describe('the AI Station fixture', () => {
     expect(z.body).toMatchObject({ collection_mode: 'ON_REQUEST', pooling_allowed: false, max_boars_per_lot: 1, colorant_name: 'Red', label_template: '{BOAR_TAG}-{WEEK}', reference_required: true, destination_rule: 'ONE', destination_farm_ids: ['fm'], restrict_to_destination: 'BLOCK' });
   });
 
-  it('puts no colorant item, no rest days, no motility floor and no genetic-level band anywhere: the documents give none', () => {
-    for (const f of fixtures(farms)) {
-      expect(f.body.colorant_item_id).toBeUndefined();
-      expect(f.body.min_rest_days).toBeUndefined();
-      expect(f.body.min_motility_pct).toBeUndefined();
-    }
-  });
-
   it('uses the sheets\' grading (genetic and morphology rank equally) for Tempo and L-Line, and none for Z-Line, whose sheet has none', () => {
     const [tempo, l, z] = fixtures(farms);
-    for (const f of [tempo, l]) expect(f.body).toMatchObject({ grading_genetic_weight: 1, grading_dose_weight: 0, grading_morphology_weight: 1 });
+    for (const f of [tempo, l]) expect(f.body).toMatchObject({ grading_genetic_weight: 1, grading_morphology_weight: 1 });
     expect(z.body.grading_genetic_weight).toBeUndefined();
   });
 
@@ -81,10 +73,10 @@ describe('the AI Station fixture', () => {
   });
 
   it('grades a line with no sheet of its own like Tempo and L-Line, by filling the blank weights of an existing company default', () => {
-    expect(COMPANY_DEFAULT_SETUP).toMatchObject({ grading_genetic_weight: 1, grading_dose_weight: 0, grading_morphology_weight: 1 });
+    expect(COMPANY_DEFAULT_SETUP).toMatchObject({ grading_genetic_weight: 1, grading_morphology_weight: 1 });
     const plan = planFixture({ ...none, setupBreedIds: new Set(['']), defaultSetup: { id: 'd1', hasWeights: false } }, farms);
     const def = plan.find((a) => a.kind === 'default-setup')!;
-    expect(def).toMatchObject({ do: 'update', path: '/breeding-line-setup/d1', body: { grading_genetic_weight: 1, grading_dose_weight: 0, grading_morphology_weight: 1 } });
+    expect(def).toMatchObject({ do: 'update', path: '/breeding-line-setup/d1', body: { grading_genetic_weight: 1, grading_morphology_weight: 1 } });
     // a default that already has weights is left alone
     expect(planFixture({ ...none, setupBreedIds: new Set(['']), defaultSetup: { id: 'd1', hasWeights: true } }, farms).find((a) => a.kind === 'default-setup')).toMatchObject({ do: 'exists' });
   });

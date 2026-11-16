@@ -21,19 +21,15 @@ type Row = typeof table.$inferSelect;
 /** A stored row as the plain values the rules read (decimals come back from MySQL as strings). */
 const valuesOf = (row: Row): LineSetupValues => ({
   ...row,
-  colorant_qty_per_lot: row.colorant_qty_per_lot == null ? null : Number(row.colorant_qty_per_lot),
-  min_motility_pct: row.min_motility_pct == null ? null : Number(row.min_motility_pct),
   grading_genetic_weight: row.grading_genetic_weight == null ? null : Number(row.grading_genetic_weight),
-  grading_dose_weight: row.grading_dose_weight == null ? null : Number(row.grading_dose_weight),
   grading_morphology_weight: row.grading_morphology_weight == null ? null : Number(row.grading_morphology_weight),
 });
 
 /** The weights go to MySQL as decimals; undefined stays untouched on an edit and null clears. */
-const weightsOf = (v: { grading_genetic_weight?: number | null; grading_dose_weight?: number | null; grading_morphology_weight?: number | null }) => {
+const weightsOf = (v: { grading_genetic_weight?: number | null; grading_morphology_weight?: number | null }) => {
   const dec = (n: number | null | undefined) => (n === undefined ? undefined : n == null ? null : String(n));
   return {
     grading_genetic_weight: dec(v.grading_genetic_weight),
-    grading_dose_weight: dec(v.grading_dose_weight),
     grading_morphology_weight: dec(v.grading_morphology_weight),
   };
 };
@@ -154,8 +150,6 @@ export class BreedingLineSetupService {
     const setup_id = randomUUID();
     await this.db.insert(table).values({
       ...dto,
-      colorant_qty_per_lot: dto.colorant_qty_per_lot == null ? null : String(dto.colorant_qty_per_lot),
-      min_motility_pct: dto.min_motility_pct == null ? null : String(dto.min_motility_pct),
       ...weightsOf(dto),
       collection_weekdays: dto.collection_weekdays?.length ? dto.collection_weekdays : null,
       destination_farm_ids: dto.destination_farm_ids?.length ? dto.destination_farm_ids : null,
@@ -181,8 +175,6 @@ export class BreedingLineSetupService {
       .update(table)
       .set({
         ...changes,
-        colorant_qty_per_lot: changes.colorant_qty_per_lot === undefined ? undefined : changes.colorant_qty_per_lot == null ? null : String(changes.colorant_qty_per_lot),
-        min_motility_pct: changes.min_motility_pct === undefined ? undefined : changes.min_motility_pct == null ? null : String(changes.min_motility_pct),
         ...weightsOf(changes),
         collection_weekdays: changes.collection_weekdays === undefined ? undefined : changes.collection_weekdays?.length ? changes.collection_weekdays : null,
         destination_farm_ids: changes.destination_farm_ids === undefined ? undefined : changes.destination_farm_ids?.length ? changes.destination_farm_ids : null,

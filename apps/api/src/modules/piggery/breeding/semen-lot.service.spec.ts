@@ -78,7 +78,7 @@ describe('SemenLotService', () => {
         'tenant-1',
         { userId: 'u1' },
       );
-      expect(lot).toEqual({ lot_no: 'LOT-00011', expiry_date: '2026-10-14', warehouse_id: 'store-1', qr_id: 'qr-1', pack_no: 'PACK-000007', colorant_cost: 0, qc_inspection_no: null });
+      expect(lot).toEqual({ lot_no: 'LOT-00011', expiry_date: '2026-10-14', warehouse_id: 'store-1', qr_id: 'qr-1', pack_no: 'PACK-000007', qc_inspection_no: null });
     });
 
     it('QC required: raises an inspection for the doses instead of writing the ledger or the journal', async () => {
@@ -130,11 +130,9 @@ describe('SemenLotService', () => {
 
   // What the line's setup puts on the lot (plan 2026-11-02, Phase 5).
   describe('the label, colorant and destination on the lot', () => {
-    const dye = { item_id: 'item-dye', item_name: 'Semen colorant', is_active: true, uom_primary: 'ML' };
-
     it('prints the label, the week and the colorant on the lot\'s QR', async () => {
       queue.push([item], [boarBatch], [{ location_id: 'store-1' }]);
-      await collect({ label: 'BLXA9988-45', week: { no: 45, year: 2026 }, colorant: { name: 'Red', itemId: null, quantity: null }, destinationFarmId: 'farm-m' });
+      await collect({ label: 'BLXA9988-45', week: { no: 45, year: 2026 }, colorantName: 'Red', destinationFarmId: 'farm-m' });
       expect(qr.createForSemenLot).toHaveBeenCalledWith(
         expect.objectContaining({ label: 'BLXA9988-45', week: { no: 45, year: 2026 }, colorantName: 'Red', destinationFarmId: 'farm-m' }),
         'tenant-1',
@@ -142,38 +140,11 @@ describe('SemenLotService', () => {
       );
     });
 
-    it('issues a colorant held as stock from the same store, and folds its cost into what each dose cost', async () => {
-      queue.push([item], [boarBatch], [{ location_id: 'store-1' }], [dye]);
-      ledger.writeNegativeEntry.mockResolvedValue({ ledger_id: 'led-dye', amount: '-20.0000' });
-      const lot = await collect({ unitCost: 2.5, colorant: { name: 'Green', itemId: 'item-dye', quantity: 2 } });
-      expect(ledger.writeNegativeEntry).toHaveBeenCalledWith(
-        expect.objectContaining({ itemId: 'item-dye', quantity: 2, uom: 'ML', transactionType: 'CONSUMPTION', documentType: 'BREEDING', documentNo: 'LOT-00011', documentLineId: 'sb-1', warehouseId: 'store-1', postingDate: '2026-10-09', batchNo: 'BATCH-000001' }),
-      );
-      expect(gl.postInventoryLedgerEntry).toHaveBeenCalledWith({ ledger_id: 'led-dye', amount: '-20.0000' }, 'u1');
-      // 2.5 a dose from the boar's cost, plus 20 of colorant over 40 doses
-      expect(ledger.writePositiveEntry).toHaveBeenCalledWith(expect.objectContaining({ quantity: 40, rate: 3 }));
-      expect(lot.colorant_cost).toBe(20);
-    });
-
-    it('issues nothing for a colorant that is only a name, or an item with no quantity', async () => {
+    it('issues nothing from stock for the colorant: the doses enter at the boar\'s cost per dose', async () => {
       queue.push([item], [boarBatch], [{ location_id: 'store-1' }]);
-      await collect({ unitCost: 2.5, colorant: { name: 'Red', itemId: null, quantity: null } });
-      queue.push([item], [boarBatch], [{ location_id: 'store-1' }]);
-      await collect({ unitCost: 2.5, colorant: { name: 'Red', itemId: 'item-dye', quantity: null } });
+      await collect({ unitCost: 2.5, colorantName: 'Red' });
       expect(ledger.writeNegativeEntry).not.toHaveBeenCalled();
       expect(ledger.writePositiveEntry).toHaveBeenLastCalledWith(expect.objectContaining({ rate: 2.5 }));
-    });
-
-    it('refuses the whole collection, writing no doses, when the colorant item is unknown, inactive or out of stock', async () => {
-      queue.push([item], [boarBatch], [{ location_id: 'store-1' }], []);
-      await expect(collect({ colorant: { name: 'G', itemId: 'item-dye', quantity: 2 } })).rejects.toThrow(NotFoundException);
-      queue.push([item], [boarBatch], [{ location_id: 'store-1' }], [{ ...dye, is_active: false }]);
-      await expect(collect({ colorant: { name: 'G', itemId: 'item-dye', quantity: 2 } })).rejects.toThrow('is not active');
-      queue.push([item], [boarBatch], [{ location_id: 'store-1' }], [dye]);
-      ledger.writeNegativeEntry.mockRejectedValue(new BadRequestException('Insufficient stock of Semen colorant.'));
-      await expect(collect({ colorant: { name: 'G', itemId: 'item-dye', quantity: 2 } })).rejects.toThrow('Insufficient stock');
-      expect(ledger.writePositiveEntry).not.toHaveBeenCalled();
-      expect(qr.createForSemenLot).not.toHaveBeenCalled();
     });
   });
 

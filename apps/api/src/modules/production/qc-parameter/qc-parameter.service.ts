@@ -140,7 +140,7 @@ export class QcParameterService {
       param_id: paramId,
       tenant_id: tenantId,
       company_id: companyId,
-      lob_id: null,
+      lob_id: dto.lob_id ?? null,
       param_code: code,
       param_name: dto.param_name.trim(),
       param_type: dto.param_type,

@@ -226,39 +226,31 @@ describe("checkSemen", () => {
   });
 
   describe("with the rules of the boar's line", () => {
-    const rules = { pooling_allowed: true, min_boars_per_lot: null, max_boars_per_lot: null, min_rest_days: 3, min_motility_pct: "70.00", rule_enforcement: "WARN" };
+    const rules = { pooling_allowed: true, min_boars_per_lot: null, max_boars_per_lot: null };
     const lots = [{ boar_id: "b1", collection_date: "2026-10-13" }];
-    const lowMotility = { results: { b1: given({ motility_pct: "60" }) } };
     const runWith = (r: object, over: object = {}) => checkSemen({ form: form(over), boars: [boar], lots, rules: { ...rules, ...r } });
 
-    it("warns, without blocking, about a boar collected inside the line's rest days and low motility", () => {
-      const issues = runWith({}, lowMotility);
-      expect(errorsOf(issues)).toEqual([]);
-      expect(fields(issues, "warn").sort()).toEqual(["boar_animal_ids", "results.b1.motility_pct"]);
+    it("no longer judges rest days or motility: a boar collected the day before with low motility raises nothing", () => {
+      expect(runWith({}, { results: { b1: given({ motility_pct: "10" }) } })).toEqual([]);
     });
 
-    it("stops the collection instead when the line blocks", () => {
-      expect(fields(runWith({ rule_enforcement: "BLOCK" }, lowMotility)).sort()).toEqual(["boar_animal_ids", "results.b1.motility_pct"]);
-    });
-
-    it("reads the rest days and the motility floor from the line, not from a constant", () => {
-      expect(runWith({ min_rest_days: 1, min_motility_pct: "50" }, lowMotility)).toEqual([]);
-      expect(fields(runWith({ min_rest_days: 2 }), "warn")).toEqual(["boar_animal_ids"]);
+    it("still refuses a motility that is not a percentage", () => {
+      expect(fields(runWith({}, { results: { b1: given({ motility_pct: "120" }) } }))).toEqual(["results.b1.motility_pct"]);
     });
 
     it("counts only the accepted boars against the line's pooling limits", () => {
       const two = { boar_animal_ids: ["b1", "b2"], results: { b1: given(), b2: given({ accepted: false, reject_reason: "bad" }) } };
-      expect(fields(runWith({ pooling_allowed: false, min_rest_days: null }, two))).toEqual([]);
+      expect(fields(runWith({ pooling_allowed: false }, two))).toEqual([]);
       const both = { boar_animal_ids: ["b1", "b2"], results: { b1: given(), b2: given() } };
-      expect(fields(runWith({ pooling_allowed: false, min_rest_days: null }, both))).toEqual(["boar_animal_ids"]);
-      expect(fields(runWith({ max_boars_per_lot: 1, min_rest_days: null }, both))).toEqual(["boar_animal_ids"]);
-      expect(fields(runWith({ min_boars_per_lot: 2, min_rest_days: null }))).toEqual(["boar_animal_ids"]);
-      expect(runWith({ min_boars_per_lot: 2, max_boars_per_lot: 2, min_rest_days: null }, both)).toEqual([]);
+      expect(fields(runWith({ pooling_allowed: false }, both))).toEqual(["boar_animal_ids"]);
+      expect(fields(runWith({ max_boars_per_lot: 1 }, both))).toEqual(["boar_animal_ids"]);
+      expect(fields(runWith({ min_boars_per_lot: 2 }))).toEqual(["boar_animal_ids"]);
+      expect(runWith({ min_boars_per_lot: 2, max_boars_per_lot: 2 }, both)).toEqual([]);
     });
   });
 
   describe("the line's own collection rules (its Breeding Line Setup)", () => {
-    const base = { pooling_allowed: true, min_boars_per_lot: null, max_boars_per_lot: null, min_rest_days: null, min_motility_pct: null, rule_enforcement: "WARN" };
+    const base = { pooling_allowed: true, min_boars_per_lot: null, max_boars_per_lot: null };
     const check = (r: object, over: object = {}, lots: object[] = [], lineBoarIds?: string[]) =>
       checkSemen({ form: form(over), boars: [boar], lots, rules: { ...base, ...r }, lineBoarIds });
     // 2026-10-14 is a Wednesday, 2026-10-13 a Tuesday.
@@ -274,13 +266,12 @@ describe("checkSemen", () => {
       expect(check({ reference_required: false })).toEqual([]);
     });
 
-    it("says when the day is not one of the line's collection days, as a warning or a stop as the line enforces", () => {
+    it("refuses a day that is not one of the line's collection days", () => {
       expect(check(sunWed)).toEqual([]);
       const tuesday = check(sunWed, { collection_date: "2026-10-13" });
-      expect(tuesday).toEqual([expect.objectContaining({ level: "warn", field: "collection_date" })]);
+      expect(tuesday).toEqual([expect.objectContaining({ level: "error", field: "collection_date" })]);
       expect(tuesday[0].text).toContain("Sunday and Wednesday");
       expect(tuesday[0].text).toContain("Tuesday");
-      expect(check({ ...sunWed, rule_enforcement: "BLOCK" }, { collection_date: "2026-10-13" })).toEqual([expect.objectContaining({ level: "error", field: "collection_date" })]);
     });
 
     it("does not ask a line that is collected on request, or a collection from a plan made for that day, about the weekday", () => {

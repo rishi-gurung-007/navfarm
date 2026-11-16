@@ -17,9 +17,8 @@
 export type TieBreak = 'GENETIC_RANK' | 'SHARED';
 
 export interface GradingFormula {
-  /** Relative weights of the ranks in the overall grading. Null or 0 = that rank is not used. */
+  /** Relative weights of the ranks in the overall grading. Null or 0 = that rank is not used. The dose rank is shown, never graded. */
   genetic_weight: number | null;
-  dose_weight: number | null;
   morphology_weight: number | null;
   tie_break: TieBreak;
 }
@@ -119,7 +118,6 @@ export function rankBoars(inputs: RankInput[], formula: GradingFormula, bands: G
 
   const parts = [
     [formula.genetic_weight, geneticRank],
-    [formula.dose_weight, doseRank],
     [formula.morphology_weight, morphologyRank],
   ] as const;
   const grading = new Map<string, number>();

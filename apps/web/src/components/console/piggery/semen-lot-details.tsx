@@ -96,7 +96,6 @@ export function SemenLotDetails({
         ['Feed', lot.feed_cost_period],
         ['Medicine', lot.drug_cost_period],
         ['Overheads', lot.overhead_cost_period],
-        ['Colorant', lot.colorant_cost],
       ]
     : [];
 
@@ -160,8 +159,6 @@ export function SemenLotDetails({
                 ['Label', lot.label],
                 ['Week', lot.week_no ? `${lot.week_no}${lot.week_year ? ` / ${lot.week_year}` : ''}` : null],
                 ['Colorant', lot.colorant_name],
-                ['Colorant stock item', named(lot.colorant_item)],
-                ['Colorant quantity', num(lot.colorant_qty, 3)],
                 ['For farm', named(lot.destination_farm)],
                 ['Collection plan', lot.plan?.plan_no],
                 ['Plan reference', lot.plan?.reference],

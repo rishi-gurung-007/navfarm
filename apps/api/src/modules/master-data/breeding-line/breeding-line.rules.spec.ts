@@ -30,10 +30,7 @@ describe('lineSetupIssues', () => {
     expect(lineSetupIssues({ ...base, pooling_allowed: false, max_boars_per_lot: 1 })).toEqual([]);
   });
 
-  it('ties a colorant quantity to a stock item and an item to a name', () => {
-    expect(lineSetupIssues({ ...base, colorant_qty_per_lot: 5 })).toContain('A colorant quantity is issued from stock, so it needs a colorant item.');
-    expect(lineSetupIssues({ ...base, colorant_item_id: 'i1' })).toContain('Name the colorant (for example its colour) as well as its item.');
-    expect(lineSetupIssues({ ...base, colorant_name: 'Green', colorant_item_id: 'i1', colorant_qty_per_lot: 5 })).toEqual([]);
+  it('takes a colorant by name', () => {
     expect(lineSetupIssues({ ...base, colorant_name: 'Green' })).toEqual([]);
   });
 
@@ -56,22 +53,16 @@ describe('lineSetupIssues', () => {
     expect(lineSetupIssues({ ...base, restrict_to_destination: 'BLOCK' })).toContain('Restricting use to the destination needs a destination farm (a list or one).');
     expect(lineSetupIssues({ ...base, restrict_to_destination: 'BLOCK', destination_rule: 'ONE', destination_farm_ids: ['f1'] })).toEqual([]);
   });
-
-  it('bounds the rest days and the motility percentage', () => {
-    expect(lineSetupIssues({ ...base, min_rest_days: -1 })).toContain('Rest days cannot be negative.');
-    expect(lineSetupIssues({ ...base, min_motility_pct: 101 })).toContain('Minimum motility is a percentage, 0 to 100.');
-    expect(lineSetupIssues({ ...base, min_rest_days: 0, min_motility_pct: 0 })).toEqual([]);
-  });
 });
 
 describe('lineSetupIssues: the overall grading weights', () => {
   it('accepts weights, including 0 and none', () => {
-    expect(lineSetupIssues({ ...base, grading_genetic_weight: 1, grading_dose_weight: 0, grading_morphology_weight: 1 })).toEqual([]);
+    expect(lineSetupIssues({ ...base, grading_genetic_weight: 1, grading_morphology_weight: 0 })).toEqual([]);
     expect(lineSetupIssues({ ...base })).toEqual([]);
   });
 
   it('refuses a negative weight', () => {
-    expect(lineSetupIssues({ ...base, grading_dose_weight: -1 })).toContain('The dose rank weight cannot be negative.');
+    expect(lineSetupIssues({ ...base, grading_morphology_weight: -1 })).toContain('The morphology rank weight cannot be negative.');
   });
 });
 
@@ -99,46 +90,23 @@ describe('collectionRuleResult', () => {
     pooling_allowed: true,
     min_boars_per_lot: null,
     max_boars_per_lot: null,
-    min_rest_days: null,
-    min_motility_pct: null,
-    rule_enforcement: 'WARN',
   };
 
   it('checks nothing when there is no rule row', () => {
-    expect(collectionRuleResult({ rules: null, boarCount: 9, restDays: [{ boar: 'A', days: 0 }], motilityPct: 1 })).toEqual({ errors: [], warnings: [] });
+    expect(collectionRuleResult({ rules: null, boarCount: 9 })).toEqual({ errors: [], warnings: [] });
   });
 
   it('stops a pooled lot on a line that is never pooled', () => {
-    const r = collectionRuleResult({ rules: { ...rules, pooling_allowed: false }, boarCount: 2, restDays: [], motilityPct: null });
+    const r = collectionRuleResult({ rules: { ...rules, pooling_allowed: false }, boarCount: 2 });
     expect(r.errors).toEqual(['This line is never pooled: collect one boar per lot.']);
-    expect(collectionRuleResult({ rules: { ...rules, pooling_allowed: false }, boarCount: 1, restDays: [], motilityPct: null }).errors).toEqual([]);
+    expect(collectionRuleResult({ rules: { ...rules, pooling_allowed: false }, boarCount: 1 }).errors).toEqual([]);
   });
 
-  it('stops a lot with too many or too few boars, whatever the enforcement', () => {
+  it('stops a lot with too many or too few boars', () => {
     const r = { ...rules, min_boars_per_lot: 2, max_boars_per_lot: 2 };
-    expect(collectionRuleResult({ rules: r, boarCount: 3, restDays: [], motilityPct: null }).errors).toEqual(['This line allows at most 2 boars in a lot; 3 were chosen.']);
-    expect(collectionRuleResult({ rules: r, boarCount: 1, restDays: [], motilityPct: null }).errors).toEqual(['This line needs at least 2 boars in a lot; 1 was chosen.']);
-    expect(collectionRuleResult({ rules: r, boarCount: 2, restDays: [], motilityPct: null })).toEqual({ errors: [], warnings: [] });
-  });
-
-  it('warns on a rest rule or a motility floor when the line warns, and stops when it blocks', () => {
-    const input = { boarCount: 1, restDays: [{ boar: 'LA0499', days: 2 }, { boar: 'LA0752', days: null }, { boar: 'LA1342', days: 4 }], motilityPct: 65 };
-    const warn = collectionRuleResult({ rules: { ...rules, min_rest_days: 3, min_motility_pct: 70 }, ...input });
-    expect(warn.errors).toEqual([]);
-    expect(warn.warnings).toEqual(['LA0499 was collected 2 days ago; this line rests a boar 3 days or more.', "Motility 65% is under the line's minimum of 70%."]);
-    const block = collectionRuleResult({ rules: { ...rules, min_rest_days: 3, min_motility_pct: 70, rule_enforcement: 'BLOCK' }, ...input });
-    expect(block.warnings).toEqual([]);
-    expect(block.errors).toHaveLength(2);
-  });
-
-  it('judges each boar\'s own motility against the line floor, and skips one that was not measured', () => {
-    const input = { boarCount: 2, restDays: [], motilityPct: null, boarMotilities: [{ boar: 'A', pct: 62 }, { boar: 'B', pct: null }, { boar: 'C', pct: 75 }] };
-    expect(collectionRuleResult({ rules: { ...rules, min_motility_pct: 70 }, ...input }).warnings).toEqual(["A's motility 62% is under the line's minimum of 70%."]);
-    expect(collectionRuleResult({ rules: { ...rules, min_motility_pct: 70, rule_enforcement: 'BLOCK' }, ...input }).errors).toHaveLength(1);
-  });
-
-  it('does not judge a motility that was not measured, nor a rest rule that is not set', () => {
-    expect(collectionRuleResult({ rules: { ...rules, min_motility_pct: 70 }, boarCount: 1, restDays: [{ boar: 'A', days: 0 }], motilityPct: null })).toEqual({ errors: [], warnings: [] });
+    expect(collectionRuleResult({ rules: r, boarCount: 3 }).errors).toEqual(['This line allows at most 2 boars in a lot; 3 were chosen.']);
+    expect(collectionRuleResult({ rules: r, boarCount: 1 }).errors).toEqual(['This line needs at least 2 boars in a lot; 1 was chosen.']);
+    expect(collectionRuleResult({ rules: r, boarCount: 2 })).toEqual({ errors: [], warnings: [] });
   });
 });
 
@@ -165,7 +133,7 @@ describe('genetic level bands', () => {
 
 // A validated DTO in the bundled API carries every declared field as an own property that is `undefined` when the request omitted it.
 describe('setup values as the bundled API builds them', () => {
-  const omitted = { restrict_to_destination: undefined, pooling_allowed: undefined, collection_mode: undefined, min_rest_days: undefined };
+  const omitted = { restrict_to_destination: undefined, pooling_allowed: undefined, collection_mode: undefined, label_template: undefined };
 
   it('drops undefined values', () => {
     expect(definedOnly({ a: 1, b: undefined, c: null, d: false })).toEqual({ a: 1, c: null, d: false });

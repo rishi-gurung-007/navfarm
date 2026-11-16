@@ -87,7 +87,7 @@ export function BoarConditionPanel({ version = 0, onSummary }: { version?: numbe
           Only boars that need scoring
         </label>
         <div className="ml-auto flex flex-wrap gap-3 text-xs pb-2" style={S.sub}>
-          {(['OVERDUE', 'DUE', 'NEVER', 'DUE_SOON'] as ConditionStatus[]).map((s) => (
+          {(['OVERDUE', 'DUE', 'NEVER'] as ConditionStatus[]).map((s) => (
             <span key={s}>
               <span className="font-bold" style={{ color: STATUS_COLOUR[s] }}>{count(s)}</span> {STATUS_LABEL[s].toLowerCase()}
             </span>

@@ -16,5 +16,5 @@ export class AssessBoarConditionDto {
 export class BoarConditionListQueryDto {
   @IsOptional() @IsUUID() breed_id?: string;
   @IsOptional() @IsUUID() company_id?: string;
-  @IsOptional() @IsIn(['NEVER', 'NOT_SCHEDULED', 'OK', 'DUE_SOON', 'DUE', 'OVERDUE']) status?: string;
+  @IsOptional() @IsIn(['NEVER', 'NOT_SCHEDULED', 'OK', 'DUE', 'OVERDUE']) status?: string;
 }

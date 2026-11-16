@@ -1,6 +1,5 @@
 "use client";
 
-import { formatDate } from "@/utils/date-short";
 import { createContext, useContext, useState, type CSSProperties, type ReactNode } from "react";
 import { AlertTriangle, CheckCircle2, Circle, Layers, X, XCircle } from "lucide-react";
 import type { RemoteOptions } from "@/modules/master-data/SearchableEntitySelect";
@@ -284,41 +283,5 @@ export function BatchPicker({
         </p>
       )}
     </Field>
-  );
-}
-
-/**
- * What a form that carries out a collection plan was told by it, so the technician sees what was decided in planning and does
- * not have to retype it: the day, who asked, the outside reference, the farm it is for, and which boar goes to which collector.
- */
-export function PlanSummary({ plan, referenceLabel, destination }: { plan: Row; referenceLabel?: string | null; destination?: string | null }) {
-  const facts: Array<[string, string | null]> = [
-    ["Planned for", `${plan.weekday ?? ""} ${formatDate(plan.collection_date)}`.trim()],
-    ["Breeding line", plan.breed_code ?? null],
-    ["For farm", destination ?? null],
-    [referenceLabel?.trim() || "Reference", plan.reference ?? null],
-    ["Requested by", plan.requested_by ?? null],
-  ];
-  const boars: Row[] = (plan.lines ?? []).filter((l: Row) => l.status === "PLANNED");
-  return (
-    <div className="rounded-[var(--radius-md)] border p-3 space-y-2 text-xs" style={{ backgroundColor: "var(--accent-muted)", borderColor: "var(--accent)" }}>
-      <p className="font-bold" style={{ color: "var(--text-primary)" }}>
-        Recording plan <span className="font-mono" style={{ color: "var(--accent)" }}>{plan.plan_no}</span> — filled in from the plan
-      </p>
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-1">
-        {facts.filter(([, v]) => v).map(([k, v]) => (
-          <div key={k} className="flex gap-2">
-            <dt style={{ color: "var(--text-muted)" }}>{k}</dt>
-            <dd className="font-semibold" style={{ color: "var(--text-primary)" }}>{v}</dd>
-          </div>
-        ))}
-      </dl>
-      {boars.length > 0 && (
-        <p style={{ color: "var(--text-secondary)" }}>
-          To collect: {boars.map((l) => `${l.boar_code}${l.collector_code ? ` (${l.collector_code})` : ""}`).join(", ")}
-        </p>
-      )}
-      {plan.notes && <p style={{ color: "var(--text-muted)" }}>{plan.notes}</p>}
-    </div>
   );
 }

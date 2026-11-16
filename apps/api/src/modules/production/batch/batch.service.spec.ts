@@ -1205,6 +1205,110 @@ describe('BatchService', () => {
       expect(feedIssued).toBeLessThan(outputPosted);
     });
 
+    // 16 Nov: a schedule with no mandatory line never locked on the last animal's post, so the screen showed every
+    // animal posted and offered "Lock Stage Day". The last animal now locks the day by the screen's own rule.
+    describe('single-animal post with no mandatory line', () => {
+      const optionalLine = {
+        line_id: 'line-feed',
+        is_mandatory: false,
+        activity_name: 'Feed',
+      };
+      const arrange = (dayRowsAfterPost: Array<Record<string, unknown>>) => {
+        jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+          ...animalWiseBatch,
+          farm_id: 'farm-1',
+        } as any);
+        jest
+          .spyOn(service as any, 'loadScheduleLinesForHeader')
+          .mockResolvedValue([{ header: {}, line: optionalLine }]);
+        mockDbSelect
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue([
+                { animal_id: 'a-1', animal_code: 'PIG-0001' },
+                { animal_id: 'a-2', animal_code: 'PIG-0002' },
+              ]),
+            }),
+          }) // animals of the stage on the date
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest
+                .fn()
+                .mockResolvedValue(
+                  dayRowsAfterPost.filter((r) => r.animal_id === 'a-1'),
+                ),
+            }),
+          }) // what was already posted before this call
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                limit: jest
+                  .fn()
+                  .mockResolvedValue([{ scheduler_id: 'sched-1' }]),
+              }),
+            }),
+          }) // scheduler header
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue([
+                {
+                  line_id: 'line-feed',
+                  animal_id: 'a-2',
+                  entered_value: '2.0000',
+                },
+              ]),
+            }),
+          }) // a-2's draft row
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue(dayRowsAfterPost),
+            }),
+          }); // the day's rows once a-2 is posted
+        const onDuplicateKeyUpdate = jest.fn().mockResolvedValue({});
+        mockDbInsert.mockReturnValue({
+          values: jest.fn().mockReturnValue({ onDuplicateKeyUpdate }),
+        });
+      };
+
+      it('locks the stage day when the last animal is posted', async () => {
+        arrange([
+          { line_id: 'line-feed', animal_id: 'a-1', posted: true },
+          { line_id: 'line-feed', animal_id: 'a-2', posted: true },
+        ]);
+        const result = await service.postStageDay(
+          'batch-1',
+          'stage-flush',
+          '2026-09-11',
+          'tenant-123',
+          { userId: 'user-1' },
+          'a-2',
+        );
+        expect(result.status).toBe('LOCKED');
+        expect(result.stage_locked).toBe(true);
+        expect(mockDbInsert).toHaveBeenCalledWith(schema.batchDataEntryLock);
+      });
+
+      it('does not lock while another animal still has a draft', async () => {
+        arrange([
+          { line_id: 'line-feed', animal_id: 'a-1', posted: false },
+          { line_id: 'line-feed', animal_id: 'a-2', posted: true },
+        ]);
+        const result = await service.postStageDay(
+          'batch-1',
+          'stage-flush',
+          '2026-09-11',
+          'tenant-123',
+          { userId: 'user-1' },
+          'a-2',
+        );
+        expect(result.status).toBe('POSTED');
+        expect(result.stage_locked).toBe(false);
+        expect(mockDbInsert).not.toHaveBeenCalledWith(
+          schema.batchDataEntryLock,
+        );
+      });
+    });
+
     it('posts data for a single animal without requiring other animals to be entered', async () => {
       jest
         .spyOn(service, 'findOne')

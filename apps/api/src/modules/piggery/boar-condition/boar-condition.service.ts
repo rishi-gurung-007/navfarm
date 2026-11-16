@@ -16,7 +16,7 @@ type Record_ = typeof schema.boarConditionRecord.$inferSelect;
 const today = () => new Date().toISOString().slice(0, 10);
 const num = (v: string | number | null | undefined) => (v == null ? null : Number(v));
 /** Boars needing attention come first. */
-const ORDER: Record<ConditionStatus, number> = { OVERDUE: 0, DUE: 1, NEVER: 2, DUE_SOON: 3, OK: 4, NOT_SCHEDULED: 5 };
+const ORDER: Record<ConditionStatus, number> = { OVERDUE: 0, DUE: 1, NEVER: 2, OK: 3, NOT_SCHEDULED: 4 };
 
 /** A boar's body condition assessments (plan 2026-11-02-ai-station-semen-collection, Phase 6; SOP 21). */
 @Injectable()
@@ -91,8 +91,6 @@ export class BoarConditionService {
     return setup
       ? {
           bcs_frequency_days: setup.bcs_frequency_days ?? null,
-          bcs_grace_days: setup.bcs_grace_days ?? null,
-          bcs_reminder_days: setup.bcs_reminder_days ?? null,
           bcs_allow_feed_override: !!setup.bcs_allow_feed_override,
           bcs_override_reason_required: !!setup.bcs_override_reason_required,
         }

@@ -7939,15 +7939,12 @@ export const semenBatch = mysqlTable('semen_batch', {
   // The plan this collection carries out (migration 0236), null for one made without a plan.
   plan_id: varchar('plan_id', { length: 36 }),
   // What the line's setup put on the lot when it was posted (migration 0237, Phase 5): its line, the physical label (from the
-  // template) and the ISO week it carries, the colorant added (and what it cost, when issued from stock) and where it is for.
+  // template) and the ISO week it carries, the colorant added (by name) and where it is for.
   breed_id: varchar('breed_id', { length: 36 }),
   label: varchar('label', { length: 100 }),
   week_no: int('week_no'),
   week_year: int('week_year'),
   colorant_name: varchar('colorant_name', { length: 50 }),
-  colorant_item_id: varchar('colorant_item_id', { length: 36 }),
-  colorant_qty: decimal('colorant_qty', { precision: 10, scale: 3 }),
-  colorant_cost: decimal('colorant_cost', { precision: 18, scale: 4 }),
   destination_farm_id: varchar('destination_farm_id', { length: 36 }),
   // Quality on the collection (migration 0150, audit G8): carried on the lot's QR.
   volume_ml: decimal('volume_ml', { precision: 10, scale: 2 }),
@@ -8032,16 +8029,8 @@ export const breedingLineSetup = mysqlTable(
     pooling_allowed: boolean('pooling_allowed').default(true).notNull(),
     min_boars_per_lot: int('min_boars_per_lot'),
     max_boars_per_lot: int('max_boars_per_lot'),
-    // A colorant is recorded by name, and optionally issued from stock as an item.
+    // A colorant is recorded on the lot by name (migration 0256 removed the stock item and quantity).
     colorant_name: varchar('colorant_name', { length: 50 }),
-    colorant_item_id: varchar('colorant_item_id', { length: 36 }).references(
-      () => itemMaster.item_id,
-      { onDelete: 'restrict' },
-    ),
-    colorant_qty_per_lot: decimal('colorant_qty_per_lot', {
-      precision: 10,
-      scale: 3,
-    }),
     // Tokens such as {PREFIX} {LINE} {BOAR_TAG} {WEEK} {YEAR} {DATE}; read when the lot is labelled (Phase 5).
     label_template: varchar('label_template', { length: 100 }),
     week_basis: varchar('week_basis', { length: 10 }).default('ISO').notNull(),
@@ -8055,18 +8044,11 @@ export const breedingLineSetup = mysqlTable(
     restrict_to_destination: varchar('restrict_to_destination', { length: 10 })
       .default('NONE')
       .notNull(), // NONE | WARN | BLOCK
-    // Rest between two collections of one boar, and the motility a collection must reach. Null = no rule.
-    min_rest_days: int('min_rest_days'),
-    min_motility_pct: decimal('min_motility_pct', { precision: 5, scale: 2 }),
-    // Whether a broken rest or motility rule only warns or stops the collection.
-    rule_enforcement: varchar('rule_enforcement', { length: 10 })
-      .default('WARN')
-      .notNull(), // WARN | BLOCK
-    // The boar selection table (migration 0235, Phase 3): the relative weights of the genetic, dose and morphology ranks in a
-    // boar's overall grading (null or 0 = not used; all null = no grading), how tied boars are ranked, and which columns the
-    // table shows, in order, as [{ key, label, visible }] (null = every column in its default order).
+    // The boar selection table (migration 0235, Phase 3): the relative weights of the genetic and morphology ranks in a
+    // boar's overall grading (null or 0 = not used; both null = no grading; the dose rank is shown, not graded, since 0256),
+    // how tied boars are ranked, and which columns the table shows, in order, as [{ key, label, visible }] (null = every
+    // column in its default order).
     grading_genetic_weight: decimal('grading_genetic_weight', { precision: 6, scale: 2 }),
-    grading_dose_weight: decimal('grading_dose_weight', { precision: 6, scale: 2 }),
     grading_morphology_weight: decimal('grading_morphology_weight', { precision: 6, scale: 2 }),
     rank_tie_break: varchar('rank_tie_break', { length: 15 })
       .default('GENETIC_RANK')
@@ -8074,12 +8056,9 @@ export const breedingLineSetup = mysqlTable(
     selection_columns: json('selection_columns').$type<
       { key: string; label: string; visible: boolean }[] | null
     >(),
-    // Boar body condition (migration 0238, Phase 6): how often a boar is scored, how long past due before it is overdue, how many
-    // days ahead a boar shows as due soon, and whether the feed level the scale gives can be overridden (and then needs a reason).
+    // Boar body condition (migration 0238, Phase 6): how often a boar is scored (due on the day, overdue after it), and whether the feed level the scale gives can be overridden (and then needs a reason).
     // Blank frequency = no schedule.
     bcs_frequency_days: int('bcs_frequency_days'),
-    bcs_grace_days: int('bcs_grace_days'),
-    bcs_reminder_days: int('bcs_reminder_days'),
     bcs_allow_feed_override: boolean('bcs_allow_feed_override').default(false).notNull(),
     bcs_override_reason_required: boolean('bcs_override_reason_required').default(true).notNull(),
     is_active: boolean('is_active').default(true).notNull(),

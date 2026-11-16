@@ -28,11 +28,19 @@ describe('what the setup form no longer takes', () => {
     ['the tie rule', { rank_tie_break: 'SHARED' }],
     ['the week basis', { week_basis: 'ISO' }],
     ['add-the-year', { include_year: true }],
+    ['the colorant stock item', { colorant_item_id: '00000000-0000-4000-8000-000000000001' }],
+    ['the colorant quantity per lot', { colorant_qty_per_lot: 1 }],
+    ['the minimum rest days', { min_rest_days: 3 }],
+    ['the motility floor', { min_motility_pct: 70 }],
+    ['the rule enforcement', { rule_enforcement: 'BLOCK' }],
+    ['the dose rank weight', { grading_dose_weight: 1 }],
+    ['the body condition days of grace', { bcs_grace_days: 3 }],
+    ['the body condition days of notice', { bcs_reminder_days: 5 }],
   ])('refuses %s, which was taken out', async (_name, body) => {
     expect(await refused(body)).toBeGreaterThan(0);
   });
 
   it('still takes the grading weights', async () => {
-    expect(await refused({ grading_genetic_weight: 1, grading_dose_weight: 0, grading_morphology_weight: 1 })).toBe(0);
+    expect(await refused({ grading_genetic_weight: 1, grading_morphology_weight: 1 })).toBe(0);
   });
 });

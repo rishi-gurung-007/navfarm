@@ -29,7 +29,7 @@ export interface FarmChoices {
 }
 
 /** The sheets' own overall grading: genetic rank and morphology rank equally, dose rank not used (checked against every row of both sheets). */
-const SHEET_GRADING = { grading_genetic_weight: 1, grading_dose_weight: 0, grading_morphology_weight: 1 };
+const SHEET_GRADING = { grading_genetic_weight: 1, grading_morphology_weight: 1 };
 /** SOP 21 asks for a monthly assessment: read here as every 30 days. */
 const MONTHLY = { bcs_frequency_days: 30 };
 
