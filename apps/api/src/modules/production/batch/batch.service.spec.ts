@@ -1205,6 +1205,110 @@ describe('BatchService', () => {
       expect(feedIssued).toBeLessThan(outputPosted);
     });
 
+    // 16 Nov: a schedule with no mandatory line never locked on the last animal's post, so the screen showed every
+    // animal posted and offered "Lock Stage Day". The last animal now locks the day by the screen's own rule.
+    describe('single-animal post with no mandatory line', () => {
+      const optionalLine = {
+        line_id: 'line-feed',
+        is_mandatory: false,
+        activity_name: 'Feed',
+      };
+      const arrange = (dayRowsAfterPost: Array<Record<string, unknown>>) => {
+        jest.spyOn(service, 'findOne').mockResolvedValueOnce({
+          ...animalWiseBatch,
+          farm_id: 'farm-1',
+        } as any);
+        jest
+          .spyOn(service as any, 'loadScheduleLinesForHeader')
+          .mockResolvedValue([{ header: {}, line: optionalLine }]);
+        mockDbSelect
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue([
+                { animal_id: 'a-1', animal_code: 'PIG-0001' },
+                { animal_id: 'a-2', animal_code: 'PIG-0002' },
+              ]),
+            }),
+          }) // animals of the stage on the date
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest
+                .fn()
+                .mockResolvedValue(
+                  dayRowsAfterPost.filter((r) => r.animal_id === 'a-1'),
+                ),
+            }),
+          }) // what was already posted before this call
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockReturnValue({
+                limit: jest
+                  .fn()
+                  .mockResolvedValue([{ scheduler_id: 'sched-1' }]),
+              }),
+            }),
+          }) // scheduler header
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue([
+                {
+                  line_id: 'line-feed',
+                  animal_id: 'a-2',
+                  entered_value: '2.0000',
+                },
+              ]),
+            }),
+          }) // a-2's draft row
+          .mockReturnValueOnce({
+            from: jest.fn().mockReturnValue({
+              where: jest.fn().mockResolvedValue(dayRowsAfterPost),
+            }),
+          }); // the day's rows once a-2 is posted
+        const onDuplicateKeyUpdate = jest.fn().mockResolvedValue({});
+        mockDbInsert.mockReturnValue({
+          values: jest.fn().mockReturnValue({ onDuplicateKeyUpdate }),
+        });
+      };
+
+      it('locks the stage day when the last animal is posted', async () => {
+        arrange([
+          { line_id: 'line-feed', animal_id: 'a-1', posted: true },
+          { line_id: 'line-feed', animal_id: 'a-2', posted: true },
+        ]);
+        const result = await service.postStageDay(
+          'batch-1',
+          'stage-flush',
+          '2026-09-11',
+          'tenant-123',
+          { userId: 'user-1' },
+          'a-2',
+        );
+        expect(result.status).toBe('LOCKED');
+        expect(result.stage_locked).toBe(true);
+        expect(mockDbInsert).toHaveBeenCalledWith(schema.batchDataEntryLock);
+      });
+
+      it('does not lock while another animal still has a draft', async () => {
+        arrange([
+          { line_id: 'line-feed', animal_id: 'a-1', posted: false },
+          { line_id: 'line-feed', animal_id: 'a-2', posted: true },
+        ]);
+        const result = await service.postStageDay(
+          'batch-1',
+          'stage-flush',
+          '2026-09-11',
+          'tenant-123',
+          { userId: 'user-1' },
+          'a-2',
+        );
+        expect(result.status).toBe('POSTED');
+        expect(result.stage_locked).toBe(false);
+        expect(mockDbInsert).not.toHaveBeenCalledWith(
+          schema.batchDataEntryLock,
+        );
+      });
+    });
+
     it('posts data for a single animal without requiring other animals to be entered', async () => {
       jest
         .spyOn(service, 'findOne')
@@ -3789,6 +3893,44 @@ describe('BatchService', () => {
       expect(mockDbUpdate).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['a litter lot', { is_litter_lot: true }],
+      ['a head-count batch in the Weaner stage', { current_stage_code: 'WEANER' }],
+      ['a head-count batch in the Grower stage', { current_stage_code: 'GROWER' }],
+      ['a head-count batch in the Finisher stage', { current_stage_code: 'FINISHER' }],
+    ])('refuses to mature %s: a current biological asset is never amortised (BBP-2 S.NO.6)', async (_label, extra) => {
+      jest.spyOn(service, 'findOne').mockResolvedValue({
+        ...bioBatch,
+        tracking_mode: 'BATCH_WISE',
+        ...extra,
+      } as any);
+      await expect(
+        service.matureBioAsset(
+          'batch-1',
+          { residual_value_per_unit: 500, productive_life_months: 24 },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/never matured or amortised/);
+      expect(mockDbSelect).not.toHaveBeenCalled();
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses to amortise a litter lot even if it was matured before this rule', async () => {
+      jest.spyOn(service, 'findOne').mockResolvedValue({
+        ...bioBatch,
+        tracking_mode: 'BATCH_WISE',
+        is_litter_lot: true,
+      } as any);
+      await expect(
+        service.amortizeBioAsset(
+          'batch-1',
+          { posting_date: '2026-02-28' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(/never amortised/);
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
     it('rejects maturing a batch that is already MATURE', async () => {
       jest.spyOn(service, 'findOne').mockResolvedValue(bioBatch as any);
 
@@ -4262,7 +4404,8 @@ describe('BatchService', () => {
       return { gl, inserted };
     };
 
-    it("posts a pre-mature herd's revaluation to the pre-mature account type, not the mature one", async () => {
+    it("posts a pre-mature herd's revaluation to the pre-mature account type, not the mature one, moving the herd's own account (a piglet lot's, since 11 Nov)", async () => {
+      jest.spyOn(service as any, 'prematureAssetAccount').mockResolvedValue('acc-lot');
       const { gl } = prime({
         state_id: 's',
         batch_id: 'batch-1',
@@ -4279,8 +4422,32 @@ describe('BatchService', () => {
         expect.objectContaining({
           transactionType: 'BIO_FAIR_VALUE_PREMATURE',
           amount: 500,
+          debitAccountId: 'acc-lot',
         }),
       );
+    });
+
+    it("recognises a gain in the gain account and a loss in the loss account the herd's item names (FV Gain / FV Loss - Weaners)", async () => {
+      jest.spyOn(service as any, 'prematureAssetAccount').mockResolvedValue('acc-lot');
+      const state = { state_id: 's', batch_id: 'batch-1', stage: 'PREMATURE', current_quantity: '10.0000', nca_book_value: '1000.0000' };
+      let { gl } = prime(state);
+      await service.recordFairValue('batch-1', { fair_value_per_unit: 150, posting_date: '2026-03-01' }, 'tenant-123', undefined, { gainAccountId: 'acc-gain', lossAccountId: 'acc-loss' });
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(expect.objectContaining({ amount: 500, debitAccountId: 'acc-lot', creditAccountId: 'acc-gain', reverseDirection: false }));
+      ({ gl } = prime(state));
+      await service.recordFairValue('batch-1', { fair_value_per_unit: 50, posting_date: '2026-03-01' }, 'tenant-123', undefined, { gainAccountId: 'acc-gain', lossAccountId: 'acc-loss' });
+      // A loss swaps the sides: Dr the loss account / Cr the lot's account.
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(expect.objectContaining({ amount: 500, debitAccountId: 'acc-lot', creditAccountId: 'acc-loss', reverseDirection: true }));
+    });
+
+    it('keeps the mapping\'s account when the item names none, and a loss uses the gain account when the item names only that one', async () => {
+      jest.spyOn(service as any, 'prematureAssetAccount').mockResolvedValue('acc-lot');
+      const state = { state_id: 's', batch_id: 'batch-1', stage: 'PREMATURE', current_quantity: '10.0000', nca_book_value: '1000.0000' };
+      let { gl } = prime(state);
+      await service.recordFairValue('batch-1', { fair_value_per_unit: 150, posting_date: '2026-03-01' }, 'tenant-123');
+      expect(gl.postBatchCostEntry.mock.calls[0][0].creditAccountId).toBeUndefined();
+      ({ gl } = prime(state));
+      await service.recordFairValue('batch-1', { fair_value_per_unit: 50, posting_date: '2026-03-01' }, 'tenant-123', undefined, { gainAccountId: 'acc-gain', lossAccountId: null });
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(expect.objectContaining({ creditAccountId: 'acc-gain', reverseDirection: true }));
     });
 
     it("re-spreads a mature herd's charge over the runs that remain, from the new carrying value", async () => {

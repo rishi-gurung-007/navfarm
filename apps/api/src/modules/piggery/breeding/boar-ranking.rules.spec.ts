@@ -6,7 +6,7 @@ import { GeneticBand, GradingFormula, geneticLevelOf, rankBoars, RankInput } fro
  * shows for him. The formula is the one the sheets follow: genetic and morphology rank equally, dose rank unused. The bands are
  * NOT the client's (the sheets give no thresholds): they are chosen here only so the sheet's levels come out.
  */
-const sheetFormula: GradingFormula = { genetic_weight: 1, dose_weight: 0, morphology_weight: 1, tie_break: 'GENETIC_RANK' };
+const sheetFormula: GradingFormula = { genetic_weight: 1, morphology_weight: 1, tie_break: 'GENETIC_RANK' };
 const bands: GeneticBand[] = [
   { level_name: 'Average', tsi_from: 105, tsi_to: null },
   { level_name: 'Below average', tsi_from: 99, tsi_to: 104.99 },
@@ -106,15 +106,16 @@ describe('rankBoars beyond the sheets', () => {
     expect(out.map((o) => o.dose_rank)).toEqual([1, 1, 3]);
   });
 
-  it('weights the ranks as the formula says, and uses only the ones with a weight', () => {
-    const inputs = [b('A', { tsi: 2, last_doses: 10, last_morphology_pct: 90 }), b('B', { tsi: 1, last_doses: 20, last_morphology_pct: 80 })];
-    // genetic A1 B2, dose A2 B1, morphology A1 B2
-    expect(rankBoars(inputs, { ...sheetFormula, genetic_weight: 2, dose_weight: 1, morphology_weight: 1 }, []).map((o) => o.overall_grading)).toEqual([1.25, 1.75]);
-    expect(rankBoars(inputs, { ...sheetFormula, genetic_weight: null, dose_weight: 1, morphology_weight: null }, []).map((o) => o.overall_grading)).toEqual([2, 1]);
+  it('weights the ranks as the formula says, uses only the ones with a weight, and never grades on the dose rank', () => {
+    const inputs = [b('A', { tsi: 2, last_doses: 10, last_morphology_pct: 80 }), b('B', { tsi: 1, last_doses: 20, last_morphology_pct: 90 })];
+    // genetic A1 B2, dose A2 B1 (shown, not graded), morphology A2 B1
+    expect(rankBoars(inputs, { ...sheetFormula, genetic_weight: 3, morphology_weight: 1 }, []).map((o) => o.overall_grading)).toEqual([1.25, 1.75]);
+    expect(rankBoars(inputs, { ...sheetFormula, genetic_weight: null, morphology_weight: 1 }, []).map((o) => o.overall_grading)).toEqual([2, 1]);
+    expect(rankBoars(inputs, sheetFormula, []).map((o) => o.dose_rank)).toEqual([2, 1]);
   });
 
   it('gives no grading at all when the line weights no rank', () => {
-    const out = rankBoars([b('A', { tsi: 1, last_doses: 1, last_morphology_pct: 1 })], { ...sheetFormula, genetic_weight: null, dose_weight: null, morphology_weight: null }, []);
+    const out = rankBoars([b('A', { tsi: 1, last_doses: 1, last_morphology_pct: 1 })], { ...sheetFormula, genetic_weight: null, morphology_weight: null }, []);
     expect(out[0].overall_grading).toBeNull();
     expect(out[0].overall_rank).toBeNull();
   });

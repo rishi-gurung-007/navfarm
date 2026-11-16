@@ -156,7 +156,7 @@ export class GlPostingService {
   }
 
   /** The account one side of a mapping names, or undefined where there is no mapping: for a posting that needs another stage's account (a pre-mature herd's asset). */
-  async mappedAccount(tenantId: string, companyId: string, transactionType: string, side: 'debit' | 'credit', context: { nobId?: string | null; lobId?: string | null } = {}): Promise<string | undefined> {
+  async mappedAccount(tenantId: string, companyId: string, transactionType: string, side: 'debit' | 'credit', context: { nobId?: string | null; lobId?: string | null; stageId?: string | null } = {}): Promise<string | undefined> {
     try {
       const mapping = await this.resolveMapping(tenantId, companyId, transactionType, context);
       return (side === 'debit' ? mapping.debit_gl_account_id : mapping.credit_gl_account_id) ?? undefined;
@@ -373,6 +373,8 @@ export class GlPostingService {
     /** The animal's own asset account, in place of the mapping's, where the posting is of an animal (see `animalAssetAccountId`). Applied before `reverseDirection`. */
     debitAccountId?: string;
     creditAccountId?: string;
+    /** The cost centre both lines carry (a farm's, for revenue the BBP posts to the supplying farm). */
+    costCenterId?: string;
     userId?: string;
     // Swaps the mapping's debit/credit accounts — used for favorable variances,
     // where the normal "Dr Variance / Cr Inventory-WIP" posting reverses.
@@ -403,6 +405,7 @@ export class GlPostingService {
           creditAmount: 0,
           nobId: params.nobId,
           lobId: params.lobId,
+          ...(params.costCenterId ? { costCenterId: params.costCenterId } : {}),
         },
         {
           glAccountId: creditAccountId,
@@ -410,6 +413,7 @@ export class GlPostingService {
           creditAmount: amount,
           nobId: params.nobId,
           lobId: params.lobId,
+          ...(params.costCenterId ? { costCenterId: params.costCenterId } : {}),
         },
       ],
       userId: params.userId,

@@ -35,6 +35,7 @@ import {
   MatureBioAssetDto,
   AmortizeBioAssetDto,
   RecordFairValueDto,
+  LotFairValueRunDto,
   DisposeBioAssetDto,
   RenewBatchDto,
   TransferStageDto,
@@ -48,6 +49,7 @@ import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { FarmScoped } from '../../../common/farm-scope';
+import { LotFairValueService } from './lot-fair-value.service';
 
 @ApiTags('Production Batches')
 @ApiBearerAuth()
@@ -55,7 +57,10 @@ import { FarmScoped } from '../../../common/farm-scope';
 @FarmScoped()
 @Controller('batch')
 export class BatchController {
-  constructor(private readonly batchService: BatchService) {}
+  constructor(
+    private readonly batchService: BatchService,
+    private readonly lotFairValue: LotFairValueService,
+  ) {}
 
   @Post()
   @RequirePermission('PRODUCTION', 'BATCH', 'create')
@@ -423,6 +428,28 @@ export class BatchController {
       message: 'Amortization posted successfully.',
       data: result,
     };
+  }
+
+  @Post('lot-fair-value/preview')
+  @RequirePermission('PRODUCTION', 'BATCH', 'view')
+  @ApiOperation({
+    summary:
+      'What each weaner or grower lot would be revalued by for a month, from its item\'s Fair Value Rates (BBP-2 S.NO.6). Changes nothing.',
+  })
+  async lotFairValuePreview(@Body() dto: LotFairValueRunDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    return { success: true, data: await this.lotFairValue.preview(dto, tenantId) };
+  }
+
+  @Post('lot-fair-value/post')
+  @RequirePermission('PRODUCTION', 'BATCH', 'edit')
+  @ApiOperation({
+    summary:
+      'Revalues every eligible weaner or grower lot for a month, one posting each; a lot already revalued in the month is skipped.',
+  })
+  async lotFairValuePost(@Body() dto: LotFairValueRunDto, @Req() req: any) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    return { success: true, data: await this.lotFairValue.post(dto, tenantId, req.user) };
   }
 
   @Post(':id/fair-value')

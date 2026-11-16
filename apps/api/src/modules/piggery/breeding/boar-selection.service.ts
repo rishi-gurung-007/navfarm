@@ -192,7 +192,6 @@ export class BoarSelectionService {
 
     const formula: GradingFormula = {
       genetic_weight: num(setup?.grading_genetic_weight),
-      dose_weight: num(setup?.grading_dose_weight),
       morphology_weight: num(setup?.grading_morphology_weight),
       // Boars with the same figure are ranked apart, the better genetic rank first (the client's sheets).
       tie_break: 'GENETIC_RANK' as TieBreak,
@@ -242,7 +241,7 @@ export class BoarSelectionService {
           ...(() => {
             const c = conditionStatus({
               lastAssessedOn: conditionOf.get(b.animal_id)?.assessed_on ?? null,
-              setup: setup ? { bcs_frequency_days: setup.bcs_frequency_days ?? null, bcs_grace_days: setup.bcs_grace_days ?? null, bcs_reminder_days: setup.bcs_reminder_days ?? null } : null,
+              setup: setup ? { bcs_frequency_days: setup.bcs_frequency_days ?? null } : null,
               today: asOf,
             });
             return { bcs_status: c.status, bcs_due: c.due };
@@ -259,7 +258,7 @@ export class BoarSelectionService {
       as_of: asOf,
       setup_id: setup?.setup_id ?? null,
       plan_rules: planRules,
-      grading: { ...formula, used: formula.genetic_weight || formula.dose_weight || formula.morphology_weight ? true : false },
+      grading: { ...formula, used: formula.genetic_weight || formula.morphology_weight ? true : false },
       // The genetic level bands that apply to this line (its own, else the company default's).
       bands,
       columns,

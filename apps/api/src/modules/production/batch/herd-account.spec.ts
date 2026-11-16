@@ -1,4 +1,4 @@
-import { herdCarryingAccount, pigletLotAccount } from './herd-account';
+import { herdCarryingAccount, lotWipAccount, pigletLotAccount } from './herd-account';
 
 describe('the account a herd is carried in', () => {
   const herd = {
@@ -68,5 +68,19 @@ describe('the account a herd is carried in', () => {
     const gl = glWith(both);
     await expect(pigletLotAccount(dbWith([]), gl, herd, 't-1')).resolves.toBeUndefined();
     expect(gl.mappedAccount).not.toHaveBeenCalled();
+  });
+
+  describe("a weaner or grower lot's WIP account (BIO_LOT_WIP, 13 Nov)", () => {
+    const wip = { 'BIO_LOT_WIP:debit': 'acct-wip-weaners' };
+    it('is the mapping\'s debit for a litter lot or a Weaner, Grower or Finisher head-count batch, resolved with the lot\'s stage', async () => {
+      const gl = glWith(wip);
+      expect(await lotWipAccount(gl as any, { ...herd, is_litter_lot: true, stage_id: 'st-weaner' }, 't')).toBe('acct-wip-weaners');
+      expect(gl.mappedAccount).toHaveBeenCalledWith('t', 'comp-1', 'BIO_LOT_WIP', 'debit', { nobId: 'nob-1', lobId: 'lob-1', stageId: 'st-weaner' });
+      expect(await lotWipAccount(glWith(wip) as any, { ...herd, tracking_mode: 'BATCH_WISE', current_stage_code: 'GROWER' }, 't')).toBe('acct-wip-weaners');
+    });
+    it('is nothing for any other batch, and nothing where the company has no such mapping', async () => {
+      expect(await lotWipAccount(glWith(wip) as any, { ...herd, tracking_mode: 'ANIMAL_WISE', current_stage_code: 'GESTATION' }, 't')).toBeUndefined();
+      expect(await lotWipAccount(glWith({}) as any, { ...herd, is_litter_lot: true }, 't')).toBeUndefined();
+    });
   });
 });

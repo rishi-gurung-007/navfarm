@@ -5,13 +5,12 @@ import { formatDate } from "@/utils/date-short";
  * themselves (which scores exist, whether the feed may be overridden, the dates) are the API's, which refuses a breach in words.
  */
 
-export type ConditionStatus = "NEVER" | "NOT_SCHEDULED" | "OK" | "DUE_SOON" | "DUE" | "OVERDUE";
+export type ConditionStatus = "NEVER" | "NOT_SCHEDULED" | "OK" | "DUE" | "OVERDUE";
 
 export const STATUS_LABEL: Record<ConditionStatus, string> = {
   NEVER: "Never assessed",
   NOT_SCHEDULED: "No schedule",
   OK: "On schedule",
-  DUE_SOON: "Due soon",
   DUE: "Due",
   OVERDUE: "Overdue",
 };
@@ -21,7 +20,6 @@ export const STATUS_COLOUR: Record<ConditionStatus, string> = {
   NEVER: "var(--warning)",
   NOT_SCHEDULED: "var(--text-muted)",
   OK: "var(--success)",
-  DUE_SOON: "var(--accent)",
   DUE: "var(--warning)",
   OVERDUE: "var(--danger)",
 };

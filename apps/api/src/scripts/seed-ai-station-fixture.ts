@@ -58,7 +58,7 @@ async function run() {
     scaleScores: new Set((await rows('/bcs-scale?limit=200')).filter((r) => !r.breed_id).map((r) => Number(r.score))),
     defaultSetup: (() => {
       const d = setups.find((x) => !x.breed_id);
-      return d ? { id: String(d.setup_id), hasWeights: [d.grading_genetic_weight, d.grading_dose_weight, d.grading_morphology_weight].some((w) => w != null && Number(w) > 0) } : null;
+      return d ? { id: String(d.setup_id), hasWeights: [d.grading_genetic_weight, d.grading_morphology_weight].some((w) => w != null && Number(w) > 0) } : null;
     })(),
     defaultBandLevels: new Set((await rows('/genetic-level-band?limit=200')).filter((b) => !b.breed_id).map((b) => String(b.level_name))),
   };

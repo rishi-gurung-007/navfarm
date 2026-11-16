@@ -232,7 +232,16 @@ async function main() {
 
   // ---- the litters' cost -----------------------------------------------------------------------------------------------------------
   const sowIds = new Map(animals.filter((a) => a.animal_type === 'SOW').map((a) => [a.animal_id, a]));
-  const allocation = await q(`select l.batch_id, l.cost_amount amt, l.document_type, l.posting_date from bio_asset_ledger l where l.document_type in ('LITTER_BIRTH_COST','LITTER_COST') and l.cost_amount > 0`);
+  const allocation = await q(`select l.batch_id, l.cost_amount amt, l.document_type, l.posting_date from bio_asset_ledger l
+     where l.document_type in ('LITTER_BIRTH_COST','LITTER_COST','LITTER_BIRTH_EXP_FEED','LITTER_BIRTH_EXP_OH','LITTER_COST_EXP_FEED','LITTER_COST_EXP_OH') and l.cost_amount > 0`);
+  // What each sow was charged and expensed (13 Nov, Phase F): her own feed and overhead batch transactions dated on or after her costing start.
+  const sowTx = await q(`select t.animal_id, t.transaction_type, t.transaction_date, t.amount from batch_transaction t join animal_register a on a.animal_id = t.animal_id
+     where a.rfid_tag like 'PF-SOW-%' and t.transaction_type in ('CONSUMPTION','OVERHEAD') and t.reversed_at is null`);
+  const expensed = (animalId: string, start: string, from: string, to: string) => {
+    const lo = start > from ? start : from;
+    return sowTx.filter((t) => t.animal_id === animalId && d(t.transaction_date) >= lo && d(t.transaction_date) <= to).reduce((n, t) => n + Math.abs(num(t.amount)), 0);
+  };
+  const sumOf = (batchId: string, docs: string[]) => allocation.filter((x) => x.batch_id === batchId && docs.includes(x.document_type)).reduce((n, x) => n + num(x.amt), 0);
   let badLitter = 0; let litterWithCost = 0; let litterTotal = 0;
   const facts: Array<Record<string, unknown>> = [];
   for (const f of farrows) {
@@ -240,18 +249,32 @@ async function main() {
     const from = d((breeding.find((b) => b.breeding_id === f.breeding_id) ?? { mating_date: addDays(d(f.farrowing_date), -116) }).mating_date);
     const to = addDays(d(f.farrowing_date), -1);
     const held = ledgerOf(sow.animal_id).filter((l) => ['CONSUMPTION', 'OVERHEAD_COST'].includes(l.event) && d(l.posting_date) >= from && d(l.posting_date) <= to).reduce((n, l) => n + num(l.amt), 0);
-    const moved = allocation.filter((x) => x.batch_id === f.piglet_batch_id && x.document_type === 'LITTER_BIRTH_COST').reduce((n, x) => n + num(x.amt), 0);
-    const lactation = allocation.filter((x) => x.batch_id === f.piglet_batch_id && x.document_type === 'LITTER_COST').reduce((n, x) => n + num(x.amt), 0);
-    const okPer = moved > 0 ? near(num(f.cost_per_piglet), moved / num(f.piglets_weaned), 0.0001) : !(num(f.cost_per_piglet) > 0);
-    if (!near(moved, Math.max(0, held), 0.005) || !okPer || lactation > 0.005) { badLitter++; console.log(`  litter of ${f.tag} ${d(f.farrowing_date)}: moved ${moved}, held ${held.toFixed(4)}, per piglet ${f.cost_per_piglet}`); }
-    if (moved > 0) litterWithCost++;
-    litterTotal += moved;
-    facts.push({ sow: f.tag, item: sow.item_code, parity: f.parity_number, mating: d(from), farrowing: d(f.farrowing_date), start: d(sow.start), live: f.piglets_born_live, capitalised_in_window: r4(held), moved_to_litter: r4(moved), per_piglet: f.cost_per_piglet });
+    const moved = sumOf(f.piglet_batch_id, ['LITTER_BIRTH_COST']);
+    const lactation = sumOf(f.piglet_batch_id, ['LITTER_COST']);
+    const birthExp = sumOf(f.piglet_batch_id, ['LITTER_BIRTH_EXP_FEED', 'LITTER_BIRTH_EXP_OH']);
+    const lactExp = sumOf(f.piglet_batch_id, ['LITTER_COST_EXP_FEED', 'LITTER_COST_EXP_OH']);
+    const wantBirthExp = expensed(sow.animal_id, d(sow.start), from, to);
+    const wantLactExp = f.weaning_date ? expensed(sow.animal_id, d(sow.start), d(f.farrowing_date), d(f.weaning_date)) : 0;
+    const total = moved + lactation + birthExp + lactExp;
+    const okPer = total > 0 ? near(num(f.cost_per_piglet), total / num(f.piglets_weaned), 0.0001) : !(num(f.cost_per_piglet) > 0);
+    if (!near(moved, Math.max(0, held), 0.005) || lactation > 0.005 || !near(birthExp, wantBirthExp, 0.01) || !near(lactExp, wantLactExp, 0.01) || !okPer) {
+      badLitter++;
+      console.log(`  litter of ${f.tag} ${d(f.farrowing_date)}: capitalised ${moved} (held ${held.toFixed(4)}), expensed at birth ${birthExp} (want ${wantBirthExp.toFixed(4)}), at weaning ${lactExp} (want ${wantLactExp.toFixed(4)}), per piglet ${f.cost_per_piglet}`);
+    }
+    if (total > 0) litterWithCost++;
+    litterTotal += total;
+    facts.push({ sow: f.tag, item: sow.item_code, parity: f.parity_number, mating: d(from), farrowing: d(f.farrowing_date), start: d(sow.start), live: f.piglets_born_live,
+      capitalised_in_window: r4(held), moved_to_litter: r4(moved), expensed_to_litter_at_birth: r4(birthExp), expensed_to_litter_at_weaning: r4(lactExp), weaned: f.piglets_weaned, cost_per_piglet: f.cost_per_piglet });
   }
-  check('L1', 'each litter\'s cost at birth = the sow\'s own capitalised feed, overhead and semen from her mating to the day before farrowing (nothing else can move: cost after her start was expensed); cost per piglet (rewritten at weaning, so over the piglets weaned) = that cost / weaned; no lactation cost moved',
+  check('L1', 'each litter\'s cost = the sow\'s own capitalised feed, overhead and semen from mating to the day before farrowing, plus (13 Nov, Phase F) her expensed feed and overhead from mating to the day before farrowing at birth and from farrowing to weaning at weaning, never her amortisation; cost per piglet (rewritten at weaning) = all of it / weaned',
     badLitter === 0, `${badLitter} wrong`);
-  check('L2', 'the pattern is the rule: group A sows (served before their start) carry cost into parity 1 litters, group B (served after it) and every parity 2 litter carry none',
-    farrows.every((f) => { const g = herd.find((h) => h.tag === f.tag)!.group; const moved = allocation.filter((x) => x.batch_id === f.piglet_batch_id).reduce((n, x) => n + num(x.amt), 0); return (g === 'A' && f.parity_number === 1) === (moved > 0); }), `${litterWithCost} litters carry cost, ${r2(litterTotal)} in all`);
+  check('L2', 'the pattern is the rule: only group A parity 1 litters carry capitalised cost (the sow was served before her start); every litter of a sow past her start carries her expensed feed and overhead (Phase F)',
+    farrows.every((f) => {
+      const g = herd.find((h) => h.tag === f.tag)!.group;
+      const cap = sumOf(f.piglet_batch_id, ['LITTER_BIRTH_COST', 'LITTER_COST']);
+      const exp = sumOf(f.piglet_batch_id, ['LITTER_BIRTH_EXP_FEED', 'LITTER_BIRTH_EXP_OH', 'LITTER_COST_EXP_FEED', 'LITTER_COST_EXP_OH']);
+      return (g === 'A' && f.parity_number === 1) === (cap > 0) && exp > 0;
+    }), `${litterWithCost} litters carry cost, ${r2(litterTotal)} in all`);
 
   // ---- the gilts -------------------------------------------------------------------------------------------------------------------------
   const gilts = await q(`select a.*, i.item_code, i.bio_costing_method method from animal_register a join item_master i on i.item_id = a.item_id where a.rfid_tag like 'PF-GILT-%' order by a.rfid_tag`);

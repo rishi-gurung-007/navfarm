@@ -56,7 +56,6 @@ export const CONDITION_STATUS_TEXT: Record<string, string> = {
   NEVER: "Never assessed",
   NOT_SCHEDULED: "No schedule",
   OK: "On schedule",
-  DUE_SOON: "Due soon",
   DUE: "Due",
   OVERDUE: "Overdue",
 };
@@ -65,7 +64,7 @@ export const CONDITION_STATUS_TEXT: Record<string, string> = {
 export function cellText(key: string, value: unknown, row?: Record<string, any>): string {
   if (key === "bcs_status") {
     const text = CONDITION_STATUS_TEXT[String(value)] ?? "—";
-    return row?.bcs_due && ["OK", "DUE_SOON", "DUE", "OVERDUE"].includes(String(value)) ? `${text} · ${formatDate(row.bcs_due)}` : text;
+    return row?.bcs_due && ["OK", "DUE", "OVERDUE"].includes(String(value)) ? `${text} · ${formatDate(row.bcs_due)}` : text;
   }
   if (value === null || value === undefined || value === "") return "—";
   // Dates (the date of birth, a planned day) read in the app's one date style.
