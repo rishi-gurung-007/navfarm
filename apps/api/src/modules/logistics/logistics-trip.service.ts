@@ -171,6 +171,60 @@ export class LogisticsTripService {
     return { data, total: Number(total), limit, offset };
   }
 
+  /**
+   * The Dispatch Board (Phase 3): the trips still to run or running — Planned, Confirmed, In transit, Arrived — whose
+   * departure falls inside the next `days` days (a trip already on the road or arrived stays on the board whatever its
+   * date), and the Transfer Orders still in DRAFT with no trip. Read-only; the caller's farm scope applies to both.
+   */
+  async dispatchBoard(query: { days?: string | number }, tenantId: string) {
+    const days = Math.min(Math.max(Number(query.days) || 7, 1), 31);
+    const today = localNow().slice(0, 10);
+    const until = fromDate(new Date(asDate(`${today}T00:00:00`).getTime() + days * 86400000)).slice(0, 10);
+    const T = schema.logisticsTrip;
+    const trips = await this.db
+      .select({
+        trip_id: T.trip_id, trip_no: T.trip_no, status: T.status, planned_departure: T.planned_departure,
+        estimated_arrival: T.estimated_arrival, capacity_pct: T.capacity_pct, estimated_cost: T.estimated_cost,
+        vehicle_no: schema.logisticsVehicle.registration_no, driver_name: schema.logisticsDriver.driver_name,
+        route_code: schema.logisticsRoute.route_code,
+      })
+      .from(T)
+      .leftJoin(schema.logisticsVehicle, eq(schema.logisticsVehicle.vehicle_id, T.vehicle_id))
+      .leftJoin(schema.logisticsDriver, eq(schema.logisticsDriver.driver_id, T.driver_id))
+      .leftJoin(schema.logisticsRoute, eq(schema.logisticsRoute.route_id, T.route_id))
+      .where(and(
+        eq(T.tenant_id, tenantId), isNull(T.deleted_at), ...this.scope(),
+        inArray(T.status, ['PLANNED', 'CONFIRMED', 'IN_TRANSIT', 'ARRIVED']),
+        or(
+          inArray(T.status, ['IN_TRANSIT', 'ARRIVED']),
+          sql`${T.planned_departure} < ${`${until} 23:59:59`}`,
+        ),
+      ))
+      .orderBy(asc(T.planned_departure));
+
+    const S = schema.stockTransfer;
+    const waiting = await this.db
+      .select({
+        kind: sql<string>`'STOCK_TRANSFER'`, id: S.transfer_id, document_no: S.transfer_no, posting_date: S.posting_date,
+        from_name: sql<string>`(select lm.location_name from location_master lm where lm.location_id = ${S.from_warehouse_id})`,
+        to_name: sql<string>`(select lm.location_name from location_master lm where lm.location_id = ${S.to_warehouse_id})`,
+      })
+      .from(S)
+      .where(and(
+        eq(S.tenant_id, tenantId), isNull(S.deleted_at), isNull(S.trip_id), eq(S.status, 'DRAFT'),
+        ...restrictedScopeConditions(farmScope(this.cls), { companyId: S.company_id }), ...this.transferScope(),
+      ))
+      .orderBy(asc(S.posting_date), asc(S.transfer_no))
+      .limit(200);
+
+    const status = (s: string) => trips.filter((t) => t.status === s);
+    return {
+      from: today, until,
+      columns: { PLANNED: status('PLANNED'), CONFIRMED: status('CONFIRMED'), IN_TRANSIT: status('IN_TRANSIT'), ARRIVED: status('ARRIVED') },
+      waiting,
+    };
+  }
+
   /** The trip with its lines, estimate rows, truck, driver, route, and the estimate split by destination farm. */
   async findOne(id: string, tenantId: string) {
     const trip = await this.loadTrip(id, tenantId);

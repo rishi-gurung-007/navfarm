@@ -7,6 +7,10 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import { FarmScoped } from '../../common/farm-scope';
 import { LogisticsTripService } from './logistics-trip.service';
 
+class DispatchQueryDto {
+  @IsOptional() @IsString() days?: string;
+}
+
 class TripListQueryDto {
   @IsOptional() @IsString() status?: string;
   @IsOptional() @IsString() limit?: string;
@@ -28,6 +32,12 @@ export class LogisticsTripController {
   @Get() @RequirePermission('LOGISTICS', 'TRIP', 'view')
   list(@Query() query: TripListQueryDto, @Req() req: any) {
     return this.trips.findAll(query, req.user.tenantId);
+  }
+
+  /** Declared before ':id' so "dispatch" is not read as a trip id. */
+  @Get('dispatch') @RequirePermission('LOGISTICS', 'TRIP', 'view')
+  async dispatch(@Query() query: DispatchQueryDto, @Req() req: any) {
+    return { data: await this.trips.dispatchBoard(query, req.user.tenantId) };
   }
 
   @Post('plan') @RequirePermission('LOGISTICS', 'TRIP', 'create')

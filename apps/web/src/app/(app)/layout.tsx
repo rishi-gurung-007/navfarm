@@ -420,6 +420,7 @@ export default function ConsoleLayout({
     { label: t('invTransfers'), href: '/inventory/transfers' },
     // Logistics Phase 2: the trips Transfer Orders travel on, beside them.
     { label: t('trpNavTrips'), href: '/logistics/trips' },
+    { label: t('dspNavBoard'), href: '/logistics/dispatch' },
     { label: t('invStockAdjustment'), href: '/inventory/stock-adjustment' },
     { label: t('invLedger'), href: '/inventory/ledger' },
     { label: t('invBioAssetLedger'), href: '/inventory/bio-asset-ledger' },

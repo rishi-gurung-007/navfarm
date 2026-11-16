@@ -606,4 +606,34 @@ describe('LogisticsTripService', () => {
       });
     });
   });
+  describe('the Dispatch Board (Phase 3)', () => {
+    it('groups the running and coming trips by status and lists the TOs with no trip', async () => {
+      rows.set(schema.logisticsTrip, [
+        trip({ trip_id: 'a', trip_no: 'TRP-000001', status: 'PLANNED' }),
+        trip({ trip_id: 'b', trip_no: 'TRP-000002', status: 'IN_TRANSIT' }),
+        trip({ trip_id: 'c', trip_no: 'TRP-000003', status: 'IN_TRANSIT' }),
+      ]);
+      rows.set(schema.stockTransfer, [to({ transfer_id: 'to-9', transfer_no: 'TR-000009', status: 'DRAFT' })]);
+      const board = await service.dispatchBoard({ days: '7' }, 't1');
+      expect(board.columns.PLANNED.map((t) => t.trip_no)).toEqual(['TRP-000001']);
+      expect(board.columns.IN_TRANSIT.map((t) => t.trip_no)).toEqual(['TRP-000002', 'TRP-000003']);
+      expect(board.columns.CONFIRMED).toEqual([]);
+      expect(board.columns.ARRIVED).toEqual([]);
+      // The double returns whole rows rather than the selected columns, so only the count is read here.
+      expect(board.waiting).toHaveLength(1);
+      // Only unshipped TOs with no trip are read, and only trips still to run or running.
+      const waitingWhere = lastWhere.get(schema.stockTransfer)!;
+      expect(waitingWhere.sql).toContain('`trip_id` is null');
+      expect(waitingWhere.params).toContain('DRAFT');
+      expect(lastWhere.get(schema.logisticsTrip)!.params).toEqual(expect.arrayContaining(['PLANNED', 'CONFIRMED', 'IN_TRANSIT', 'ARRIVED']));
+    });
+
+    it('keeps the window between 1 and 31 days', async () => {
+      const wide = await service.dispatchBoard({ days: '500' }, 't1');
+      const narrow = await service.dispatchBoard({ days: '0' }, 't1');
+      const span = (b: { from: string; until: string }) => Math.round((Date.parse(b.until) - Date.parse(b.from)) / 86400000);
+      expect(span(wide)).toBe(31);
+      expect(span(narrow)).toBe(7);
+    });
+  });
 });
