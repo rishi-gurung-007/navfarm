@@ -183,6 +183,46 @@ describe('BudgetService', () => {
     expect((await service.findOne('b-1', 't1')).budget_id).toBe('b-1');
   });
 
+  it('creates from the exact body the Budget screen posts', async () => {
+    // MasterDataTable sends each form field under its key, plus company_id on create (budget-configs.ts).
+    const sent = { company_id: 'co-1', period_id: 'p-1', farm_id: 'farm-1', metric_code: 'PIGS_TO_SLAUGHTER', amount: 1000, tolerance_pct: 5, notes: 'Plan' };
+    await service.create(sent, 't1', user);
+    const ins = inserts.find((i) => i.table === schema.gmBudget)!;
+    expect(ins.values).toMatchObject({ company_id: 'co-1', period_id: 'p-1', farm_id: 'farm-1', metric_code: 'PIGS_TO_SLAUGHTER', amount: '1000', tolerance_pct: '5', notes: 'Plan' });
+  });
+
+  it('list narrows by the active company, the all-zero company standing for none', async () => {
+    rows.set(schema.gmBudget, [line()]);
+    await service.findAll({ companyId: 'co-1' }, 't1');
+    let w = lastWhere.get(schema.gmBudget)!;
+    expect(w.sql).toContain('`gm_budget`.`company_id` = ?');
+    expect(w.params).toContain('co-1');
+    await service.findAll({ companyId: '00000000-0000-0000-0000-000000000000' }, 't1');
+    w = lastWhere.get(schema.gmBudget)!;
+    expect(w.sql).toContain('`gm_budget`.`company_id` is null');
+    await service.findAll({}, 't1');
+    expect(lastWhere.get(schema.gmBudget)!.sql).not.toContain('`gm_budget`.`company_id`');
+  });
+
+  it('list honours search, sort and column filters as the table sends them', async () => {
+    rows.set(schema.gmBudget, [
+      line(),
+      line({ budget_id: 'b-2', farm_id: 'farm-2', farm_code: 'F2', farm_name: 'Hill Farm', metric_code: 'PBT', amount: '50.0000' }),
+      line({ budget_id: 'b-3', period_code: '2026-P02', metric_code: 'GROSS_MARGIN' }),
+    ]);
+    const ids = (page: any) => page.data.map((r: any) => r.budget_id);
+    expect(ids(await service.findAll({ search: 'hill' }, 't1'))).toEqual(['b-2']);
+    expect(ids(await service.findAll({ search: '2026-p02' }, 't1'))).toEqual(['b-3']);
+    expect(ids(await service.findAll({ search: 'gross margin' }, 't1'))).toEqual(['b-3']);
+    expect(ids(await service.findAll({ sort: 'farm_name', dir: 'desc' }, 't1'))[0]).toBe('b-2');
+    expect(ids(await service.findAll({ sort: 'period_code', dir: 'desc' }, 't1'))[0]).toBe('b-3');
+    expect(ids(await service.findAll({ filter: { farm_name: 'Hill*' } }, 't1'))).toEqual(['b-2']);
+    expect(ids(await service.findAll({ filter: { period_code: '2026-P02' } }, 't1'))).toEqual(['b-3']);
+    expect((await service.findAll({ filter: { farm_name: 'Hill*' }, limit: 1 }, 't1')).total).toBe(1);
+    await expect(service.findAll({ filter: { nope: 'x' } }, 't1')).rejects.toThrow("Cannot filter by 'nope'");
+    await expect(service.findAll({ sort: 'nope' }, 't1')).rejects.toThrow("Cannot sort by 'nope'");
+  });
+
   it('deactivate then restore', async () => {
     rows.set(schema.gmBudget, [line()]);
     await service.deactivate('b-1', 't1', user);

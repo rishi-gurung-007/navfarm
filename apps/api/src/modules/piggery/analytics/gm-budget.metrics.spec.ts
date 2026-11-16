@@ -102,6 +102,12 @@ describe('variance', () => {
     expect(variance(-1, 0, m('GROSS_MARGIN'), 10).status).toBe('RED');
   });
 
+  it('a LOWER metric with budget 0: actual 0 is GREEN with var_pct null, any spend is RED', () => {
+    const o = m('OTHER_OVERHEADS');
+    expect(variance(0, 0, o, 10)).toEqual({ var: 0, var_pct: null, status: 'GREEN' });
+    expect(variance(5, 0, o, 10)).toEqual({ var: 5, var_pct: null, status: 'RED' });
+  });
+
   it('negative GROSS_MARGIN budget uses |budget| for tolerance', () => {
     const r = variance(-105, -100, m('GROSS_MARGIN'), 10);
     expect(r.var).toBe(-5);

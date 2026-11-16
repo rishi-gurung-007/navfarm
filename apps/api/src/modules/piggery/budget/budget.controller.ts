@@ -1,19 +1,25 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, IsUUID } from 'class-validator';
+import { MasterListQueryDto } from '../../../common/master-list-query';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { FarmScoped } from '../../../common/farm-scope';
 import { BudgetService } from './budget.service';
 
-class BudgetListQueryDto {
+/**
+ * Everything the master table sends (MasterDataTable.tsx load()): companyId when a company is active, search,
+ * sort/dir, filter[col], limit and offset from MasterListQueryDto, isActive from pickers. The global pipe refuses an
+ * undeclared parameter, so a missing one here 400s the whole list.
+ */
+export class BudgetListQueryDto extends MasterListQueryDto {
+  @IsOptional() @IsUUID() companyId?: string;
+  @IsOptional() @IsString() search?: string;
   @IsOptional() @IsString() periodId?: string;
   @IsOptional() @IsString() farmId?: string;
   @IsOptional() @IsString() metricCode?: string;
   @IsOptional() @IsString() isActive?: string;
-  @IsOptional() @IsString() limit?: string;
-  @IsOptional() @IsString() offset?: string;
 }
 
 /**

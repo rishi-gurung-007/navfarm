@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, eq, getTableColumns, isNull, ne, SQL } from 'drizzle-orm';
+import { and, asc, eq, getTableColumns, isNull, ne, or, SQL } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
@@ -19,12 +19,46 @@ const LOCKED = ['period_id', 'farm_id', 'metric_code'] as const;
 const B = schema.gmBudget;
 
 export interface BudgetListQuery {
+  companyId?: string;
   periodId?: string;
   farmId?: string;
   metricCode?: string;
   isActive?: string;
-  limit?: string;
-  offset?: string;
+  search?: string;
+  sort?: string;
+  dir?: 'asc' | 'desc';
+  filter?: Record<string, string | string[]>;
+  limit?: string | number;
+  offset?: string | number;
+}
+
+/** Row fields the list may be sorted and filtered by (the screen's columns and the line's own fields). */
+const LIST_KEYS = [
+  'period_code', 'farm_code', 'farm_name', 'metric_code', 'metric_label', 'unit', 'amount', 'amount_type', 'tolerance_pct',
+  'notes', 'is_active', 'period_id', 'farm_id', 'created_at', 'updated_at',
+];
+const NUMERIC_KEYS = ['amount', 'tolerance_pct'];
+/** What the search box looks through. */
+const SEARCH_KEYS = ['period_code', 'farm_code', 'farm_name', 'metric_label'];
+const text = (v: unknown) => (v === null || v === undefined ? '' : String(v)).toLowerCase();
+
+/** One `filter[column]=value` against a row, read the way master-list-query.ts reads it: `*` is a wildcard, else exact. */
+function matchesFilter(row: Row, key: string, raw: string | string[]): boolean {
+  if (Array.isArray(raw)) {
+    const values = raw.filter((v) => v !== '');
+    return !values.length || values.some((v) => matchesFilter(row, key, v));
+  }
+  const value = String(raw);
+  if (value === '') return true;
+  if (value === 'true' || value === 'false') return Boolean(row[key]) === (value === 'true');
+  if (value.includes('*')) {
+    const pattern = value.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*');
+    return new RegExp(`^${pattern}$`, 'i').test(String(row[key] ?? ''));
+  }
+  if (NUMERIC_KEYS.includes(key) && row[key] !== null && row[key] !== undefined && value.trim() !== '' && !Number.isNaN(Number(value))) {
+    return Number(row[key]) === Number(value);
+  }
+  return text(row[key]) === value.toLowerCase();
 }
 
 /**
@@ -80,15 +114,43 @@ export class BudgetService {
   }
 
   async findAll(query: BudgetListQuery, tenantId: string) {
+    for (const key of Object.keys(query.filter ?? {})) {
+      if (key === 'tenant_id' || key === 'company_id') throw new BadRequestException(`Cannot filter by '${key}' — it is set by the active workspace.`);
+      if (!LIST_KEYS.includes(key)) throw new BadRequestException(`Cannot filter by '${key}' — it is not a column on this master.`);
+    }
+    if (query.sort && !LIST_KEYS.includes(query.sort)) {
+      throw new BadRequestException(`Cannot sort by '${query.sort}' — it is not a column on this master.`);
+    }
     const conditions: SQL[] = [eq(B.tenant_id, tenantId), isNull(B.deleted_at), ...this.scopeConditions()];
+    if (query.companyId) {
+      // A missing company and the all-zero company are the same "no company" (companyKey).
+      const company = companyKey(query.companyId);
+      conditions.push(company ? eq(B.company_id, company) : or(isNull(B.company_id), eq(B.company_id, ZERO_COMPANY))!);
+    }
     if (query.periodId) conditions.push(eq(B.period_id, query.periodId));
     if (query.farmId) conditions.push(eq(B.farm_id, query.farmId));
     if (query.metricCode) conditions.push(eq(B.metric_code, query.metricCode));
-    if (query.isActive !== undefined && query.isActive !== '') conditions.push(eq(B.is_active, query.isActive === 'true'));
-    const all = await this.baseSelect().where(and(...conditions)).orderBy(asc(B.period_id), asc(B.farm_id), asc(B.metric_code));
+    if (query.isActive !== undefined && query.isActive !== '') conditions.push(eq(B.is_active, String(query.isActive) === 'true'));
+    const fetched = await this.baseSelect().where(and(...conditions)).orderBy(asc(B.period_id), asc(B.farm_id), asc(B.metric_code));
+    let all = fetched.map((r: Row) => this.decorate(r));
+    const search = text(query.search).trim();
+    if (search) all = all.filter((r) => SEARCH_KEYS.some((k) => text(r[k]).includes(search)));
+    for (const [key, raw] of Object.entries(query.filter ?? {})) all = all.filter((r) => matchesFilter(r, key, raw));
+    if (query.sort) {
+      const key = query.sort;
+      const sign = query.dir === 'desc' ? -1 : 1;
+      const numeric = NUMERIC_KEYS.includes(key);
+      all = [...all].sort((a, b) => {
+        const av = a[key], bv = b[key];
+        const aBlank = av === null || av === undefined, bBlank = bv === null || bv === undefined;
+        if (aBlank || bBlank) return aBlank === bBlank ? 0 : aBlank ? 1 : -1; // blanks last either way
+        const c = numeric ? Number(av) - Number(bv) : String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' });
+        return c * sign;
+      });
+    }
     const limit = Math.min(Math.max(Number(query.limit) || 100, 1), 500);
     const offset = Math.max(Number(query.offset) || 0, 0);
-    return { data: all.slice(offset, offset + limit).map((r: Row) => this.decorate(r)), total: all.length, limit, offset };
+    return { data: all.slice(offset, offset + limit), total: all.length, limit, offset };
   }
 
   /** Amount, tolerance and notes as the table stores them, or the plain-words problems with the request. */
