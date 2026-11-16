@@ -62,16 +62,32 @@ export function ytdBudget(
 ): BudgetFigure {
   const included: BudgetLine[] = [];
   const missing: string[] = [];
-  for (const p of periodIds) {
-    for (const f of farms) {
+  const ratio = metric.aggregation === 'MEAN';
+  let unbudgetedFarm = false;
+  for (const f of farms) {
+    const farmLines: BudgetLine[] = [];
+    const farmMissing: string[] = [];
+    for (const p of periodIds) {
       const l = lines.find(
         (x) => x.metric_code === metric.code && x.period_id === p.period_id && x.farm_id === f.farm_id,
       );
-      if (l) included.push(l);
-      else missing.push(`${f.farm_code} ${p.period_code}`);
+      if (l) farmLines.push(l);
+      else farmMissing.push(`${f.farm_code} ${p.period_code}`);
     }
+    if (ratio && !farmLines.length) {
+      // A farm with no line in any period: the budget would cover fewer farms than the actual.
+      unbudgetedFarm = true;
+      missing.push(f.farm_code);
+    } else {
+      missing.push(...farmMissing);
+    }
+    included.push(...farmLines);
   }
-  return figure(included, metric, missing, metric.aggregation === 'MEAN');
+  if (unbudgetedFarm) {
+    const tolerance_pct = round(included.length ? mean(included.map(tol)) : DEFAULT_TOLERANCE_PCT);
+    return { budget: null, tolerance_pct, missing };
+  }
+  return figure(included, metric, missing, ratio);
 }
 
 export function variance(

@@ -65,6 +65,24 @@ describe('ytdBudget', () => {
     expect(ytdBudget([], m('GROSS_MARGIN_PCT'), periods, [farms[0]]).budget).toBeNull();
   });
 
+  it('ratio YTD is null when a farm has no line in any period, and names it', () => {
+    const ls = [line('f1', 'p1', 'GROSS_MARGIN_PCT', 30), line('f1', 'p2', 'GROSS_MARGIN_PCT', 40)];
+    const r = ytdBudget(ls, m('GROSS_MARGIN_PCT'), periods, farms);
+    expect(r.budget).toBeNull();
+    expect(r.missing).toEqual(['F2']);
+  });
+
+  it('ratio YTD with every farm budgeted but a period missing stays non-null and names the period', () => {
+    const ls = [
+      line('f1', 'p1', 'GROSS_MARGIN_PCT', 30),
+      line('f1', 'p2', 'GROSS_MARGIN_PCT', 40),
+      line('f2', 'p1', 'GROSS_MARGIN_PCT', 20),
+    ];
+    const r = ytdBudget(ls, m('GROSS_MARGIN_PCT'), periods, farms);
+    expect(r.budget).toBe(30);
+    expect(r.missing).toEqual(['F2 2026-02']);
+  });
+
   it('YTD of the first period equals its Month', () => {
     const ls = [line('f1', 'p1', 'GROSS_MARGIN', 100), line('f2', 'p1', 'GROSS_MARGIN', 50)];
     expect(ytdBudget(ls, m('GROSS_MARGIN'), [periods[0]], farms)).toEqual(
