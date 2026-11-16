@@ -7,8 +7,8 @@
  *   DEV_TENANT_DATABASE=nf_ccc pnpm exec ts-node apps/api/src/scripts/apply-gm-dashboard-bands.ts --apply
  *
  * Farms are matched by a word in the location name; a farm the tenant does not have is reported and skipped. Safe
- * to run twice. 70 Day Gain has no KPI entry of its own, so it is added (metric GAIN_70_DAY) beside the weaner
- * stage's other KPIs.
+ * to run twice. 70 Day Gain (GAIN_70_DAY, weaner stage) and Kgs sold / sow / year (KG_SOLD_PER_SOW_YEAR, farrowing stage) have no KPI
+ * entry of their own, so each is added beside the stage's other KPIs.
  */
 import mysql, { RowDataPacket } from 'mysql2/promise';
 
@@ -68,6 +68,13 @@ const METRICS: Array<{ label: string; stage: string; metric: string; lowerIsBett
     cells: [[88, 96.5, 104], [92, 96, 103], [97.85, 100, 103], [116.67, 119.74, 122.81], [104, 106, 110], [88, 95, 104], null, null],
   },
   {
+    label: 'Kgs sold / sow / year',
+    stage: 'FARROWING',
+    metric: 'KG_SOLD_PER_SOW_YEAR',
+    lowerIsBetter: false,
+    cells: [[2910, 2940, 3095], [2766, 2851, 3053], [2868, 2944, 3019], [3219, 3303, 3388], [3186, 3190, 3354], [2734, 2792, 2878], null, null],
+  },
+  {
     label: 'Avg 70 Day Weight',
     stage: 'WEANER',
     metric: 'BODY_WEIGHT',
@@ -111,6 +118,9 @@ const METRICS: Array<{ label: string; stage: string; metric: string; lowerIsBett
   },
 ];
 
+/** Metrics the lifecycle KPI list does not hold yet: the script adds an entry for them beside the stage's other KPIs. */
+const ADDED_BY_SCRIPT = ['GAIN_70_DAY', 'KG_SOLD_PER_SOW_YEAR'];
+
 const host = process.env.DATABASE_HOST || '127.0.0.1';
 const port = Number(process.env.DATABASE_PORT || 3306);
 const user = process.env.DATABASE_USERNAME || 'root';
@@ -153,7 +163,7 @@ async function run() {
             const list: any[] = typeof row.kpi === 'string' ? JSON.parse(row.kpi) : row.kpi;
             let entry = list.find((e) => e?.metric === m.metric);
             if (!entry) {
-              if (m.metric !== 'GAIN_70_DAY') continue;
+              if (!ADDED_BY_SCRIPT.includes(m.metric)) continue;
               entry = { metric: m.metric, uom: 'KG', kpi_period: 'WEEKLY', severity: 'INFO' };
               list.push(entry);
             }

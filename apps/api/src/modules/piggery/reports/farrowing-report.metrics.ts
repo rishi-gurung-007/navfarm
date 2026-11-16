@@ -272,6 +272,7 @@ export const TARGET_METRICS = {
   weaning_weight: 'WEANING_WEIGHT',
   total_litter_mass: 'TOTAL_LITTER_MASS', // the batch's weaned litters together, not one litter (Rishi, 21 Oct)
   wean_per_sow: 'WEAN_PER_SOW',
+  kg_sold_per_sow_year: 'KG_SOLD_PER_SOW_YEAR', // GM Dashboard only: the sheet's Kgs sold / sow / year row
   gilt_body_loss: 'GILT_BODY_LOSS',
   gilt_service_target: 'GILT_SERVICE_TARGET',
   second_parity_service_target: 'SECOND_PARITY_SERVICE_TARGET',

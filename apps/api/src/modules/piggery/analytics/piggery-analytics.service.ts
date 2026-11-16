@@ -275,7 +275,7 @@ export class PiggeryAnalyticsService {
       period: null,
       periods,
       farms,
-      kg_sold_per_sow_year: { month: {}, ytd: {} },
+      kg_sold_per_sow_year: { month: {}, ytd: {}, cells: {} },
       financial: { month: {}, ytd: {}, heads_by_period: [] },
       breeding: [],
       weaner_grower: [],
@@ -293,11 +293,21 @@ export class PiggeryAnalyticsService {
 
     const month = { name: 'month', startDate: chosen.start_date, endDate: to };
     const ytd = { name: 'ytd', startDate: ytdFrom, endDate: to };
-    const stageIds = await this.stageIds(tenantId, companyId);
+    // With no company chosen, each farm answers for the company it belongs to: its colour levels and stages are
+    // that company's, so an empty company must not mean "rows with no company".
+    const farmCompany = new Map(allFarms.map((f) => [f.farm_id, f.company_id]));
+    const companyOf = (farmId: string): string =>
+      companyId || farmCompany.get(farmId) || '';
+    const stageIdCache = new Map<string, Record<string, string[]>>();
+    const stageIdsFor = async (cid: string) => {
+      if (!stageIdCache.has(cid))
+        stageIdCache.set(cid, await this.stageIds(tenantId, cid));
+      return stageIdCache.get(cid)!;
+    };
 
     const breedingByFarm = new Map<
       string,
-      { figures: BreedingFigures; targets: Targets }
+      { figures: BreedingFigures; targets: Targets; kgTarget: Target | null }
     >();
     const kgMonth: Record<string, number | null> = {};
     const kgYtd: Record<string, number | null> = {};
@@ -329,9 +339,10 @@ export class PiggeryAnalyticsService {
       );
 
       const breedIds = [...new Set(rows.map((r) => r.breed_id))];
+      const farmCid = companyOf(farm.farm_id);
       const lifecycle = await this.lifecycleRows(
         tenantId,
-        companyId,
+        farmCid,
         farm.farm_id,
         month.startDate,
         month.endDate,
@@ -349,17 +360,18 @@ export class PiggeryAnalyticsService {
       breedingByFarm.set(farm.farm_id, {
         figures: breedingFigures(inMonth),
         targets,
+        kgTarget: meanTarget(perBreed.map((t) => t.kg_sold_per_sow_year)),
       });
 
       stageByFarm.set(
         farm.farm_id,
         await this.stageExits(
           tenantId,
-          companyId,
+          farmCid,
           farm.farm_id,
           month.startDate,
           month.endDate,
-          stageIds,
+          await stageIdsFor(farmCid),
           scope,
         ),
       );
@@ -418,6 +430,20 @@ export class PiggeryAnalyticsService {
       ),
     }));
 
+    // Kg Meat Sold / Sow / Year closes the Breeding & Farrowing matrix; its red / yellow / green come from the sheet.
+    const kgRow: MetricRow = {
+      key: 'kg_sold_per_sow_year',
+      label: 'Kg Meat Sold / Sow / Year',
+      unit: 'kg',
+      lower_is_better: false,
+      cells: Object.fromEntries(
+        farms.map((f) => [
+          f.farm_id,
+          cell(kgMonth[f.farm_id] ?? null, breedingByFarm.get(f.farm_id)!.kgTarget, false),
+        ]),
+      ),
+    };
+
     const figures = new Map(
       farms.map((f) => {
         const s = stageByFarm.get(f.farm_id)!;
@@ -455,20 +481,20 @@ export class PiggeryAnalyticsService {
       period,
       periods,
       farms,
-      kg_sold_per_sow_year: { month: kgMonth, ytd: kgYtd },
+      kg_sold_per_sow_year: { month: kgMonth, ytd: kgYtd, cells: kgRow.cells },
       financial,
       breeding,
       weaner_grower: weanerGrower,
-      alerts: alertsFrom([...breeding, ...weanerGrower], farms),
+      alerts: alertsFrom([...breeding, kgRow, ...weanerGrower], farms),
       farm_view:
         query.farmId && farms.length === 1
           ? await this.farmView(
               tenantId,
-              companyId,
+              companyOf(farms[0].farm_id),
               farms[0],
               period,
               periods,
-              stageIds,
+              await stageIdsFor(companyOf(farms[0].farm_id)),
               scope,
               kgYtd[farms[0].farm_id] ?? null,
             )

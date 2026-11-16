@@ -14,6 +14,8 @@ import {
   stageSegments,
 } from './gm-dashboard.metrics';
 import type { OpsMetrics } from '../reports/monthly-ops.metrics';
+import { targetsFromLifecycle } from '../reports/farrowing-report.metrics';
+import { cell } from './gm-dashboard.metrics';
 
 const target = (
   average: number | null,
@@ -616,5 +618,45 @@ describe('headsByPeriod', () => {
       { period_code: '2026-11', heads: 66 },
       { period_code: '2026-12', heads: null },
     ]);
+  });
+});
+
+// Rishi, 16 Nov: the sheet's Kgs sold / sow / year row has its own red, yellow and green per farm (Grasmere 2910 / 2940 / 3095).
+describe('Kg Meat Sold / Sow / Year bands', () => {
+  const lifecycle = [
+    {
+      farm_id: 'g',
+      kpi_thresholds: [
+        { metric: 'KG_SOLD_PER_SOW_YEAR', red_at: 2910, yellow_at: 2940, green_at: 3095 },
+      ],
+    },
+  ];
+
+  it('is read from the farrowing KPI entry of the farm', () => {
+    const t = targetsFromLifecycle(lifecycle, 'g').kg_sold_per_sow_year;
+    expect(t?.bands).toEqual({ red: 2910, yellow: 2940, green: 3095 });
+  });
+
+  it('a farm with no such entry has no target and no colour', () => {
+    const t = targetsFromLifecycle([{ farm_id: 'g', kpi_thresholds: [] }], 'g').kg_sold_per_sow_year;
+    expect(t).toBeNull();
+    expect(cell(3000, t, false).status).toBeNull();
+  });
+
+  it.each([
+    [3200, 'GREEN'],
+    [3095, 'GREEN'],
+    [3000, 'AMBER'],
+    [2940, 'AMBER'],
+    [2900, 'RED'],
+    [1200, 'RED'],
+  ])('colours %s as %s, higher being better', (kg, status) => {
+    const t = targetsFromLifecycle(lifecycle, 'g').kg_sold_per_sow_year;
+    expect(cell(kg, t, false)).toEqual({ value: kg, target: 3095, status });
+  });
+
+  it('gives no colour for a farm with no sows', () => {
+    const t = targetsFromLifecycle(lifecycle, 'g').kg_sold_per_sow_year;
+    expect(cell(null, t, false).status).toBeNull();
   });
 });

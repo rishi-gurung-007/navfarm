@@ -21,6 +21,7 @@ import { EmptyState, ErrorState, Skeleton } from '@/components/ui/states';
 import {
   Alert,
   AlertsPanel,
+  Cell,
   Farm,
   FarmAlert,
   FarmAlertsPanel,
@@ -65,6 +66,8 @@ export interface GmDashboardData {
   kg_sold_per_sow_year: {
     month: Record<string, number | null>;
     ytd: Record<string, number | null>;
+    /** Each farm's month figure with its target and colour. */
+    cells?: Record<string, Cell>;
   };
   breeding: MetricRow[];
   weaner_grower: MetricRow[];
@@ -244,7 +247,7 @@ export default function PiggeryGmDashboard() {
     pick: (s: SalesFigures) => number | null,
   ): Figure => ({ actual: sales ? pick(sales) : null, budget: null });
 
-  // Kg Meat Sold / Sow / Year closes the Breeding & Farrowing matrix, as in the mockup; it has no lifecycle target.
+  // Kg Meat Sold / Sow / Year closes the Breeding & Farrowing matrix, as in the mockup; its target and colour come from the API (the sheet's red / yellow / green).
   const breeding: MetricRow[] = [
     ...(data?.breeding ?? []),
     {
@@ -255,7 +258,7 @@ export default function PiggeryGmDashboard() {
       cells: Object.fromEntries(
         farms.map((f) => [
           f.farm_id,
-          {
+          data?.kg_sold_per_sow_year.cells?.[f.farm_id] ?? {
             value: data?.kg_sold_per_sow_year.month[f.farm_id] ?? null,
             target: null,
             status: null,
@@ -387,7 +390,7 @@ export default function PiggeryGmDashboard() {
       ) : (
         <>
           <div
-            className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5"
+            className="flex flex-wrap gap-3 *:min-w-0 *:grow *:basis-72"
             data-testid="gmd-kpis"
           >
             <KpiCard
@@ -457,7 +460,7 @@ export default function PiggeryGmDashboard() {
 
           {farmView ? (
             <div
-              className="grid gap-3 xl:grid-cols-3"
+              className="flex flex-wrap gap-3 *:min-w-0 *:grow *:basis-[30rem]"
               data-testid="gmd-matrices"
             >
               <FarmMatrix
@@ -484,7 +487,7 @@ export default function PiggeryGmDashboard() {
             </div>
           ) : (
             <div
-              className="grid gap-3 xl:grid-cols-3"
+              className="flex flex-wrap gap-3 *:min-w-0 *:grow *:basis-[30rem]"
               data-testid="gmd-matrices"
             >
               <Matrix
@@ -518,7 +521,10 @@ export default function PiggeryGmDashboard() {
             </div>
           )}
 
-          <div className="grid gap-3 xl:grid-cols-3" data-testid="gmd-bottom">
+          <div
+            className="flex flex-wrap gap-3 *:min-w-0 *:grow *:basis-[24rem]"
+            data-testid="gmd-bottom"
+          >
             <ProgressChart
               icon={PiggyBank}
               title={t('gmdPigsToSlaughterProgress')}
@@ -578,17 +584,17 @@ export default function PiggeryGmDashboard() {
 function GmDashboardSkeleton() {
   return (
     <div className="space-y-4" role="status" aria-busy="true">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
+      <div className="flex flex-wrap gap-3 *:min-w-0 *:grow *:basis-72">
         {Array.from({ length: 5 }, (_, i) => (
           <Skeleton key={i} className="h-40" />
         ))}
       </div>
-      <div className="grid gap-3 xl:grid-cols-3">
+      <div className="flex flex-wrap gap-3 *:min-w-0 *:grow *:basis-[24rem]">
         {Array.from({ length: 3 }, (_, i) => (
           <Skeleton key={i} className="h-80" />
         ))}
       </div>
-      <div className="grid gap-3 xl:grid-cols-3">
+      <div className="flex flex-wrap gap-3 *:min-w-0 *:grow *:basis-[24rem]">
         {Array.from({ length: 3 }, (_, i) => (
           <Skeleton key={i} className="h-72" />
         ))}

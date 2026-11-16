@@ -31,6 +31,8 @@ export interface PiggeryGmDashboardData {
   kg_sold_per_sow_year: {
     month: Record<string, number | null>;
     ytd: Record<string, number | null>;
+    /** The month figure of each farm with its target and status, as a matrix cell. */
+    cells: Record<string, { value: number | null; target: number | null; status: 'GREEN' | 'AMBER' | 'RED' | null }>;
   };
   /** Pigs sold, cost of sales and gross margin from the ledgers, per farm and for all ("all"); null with no sale in the window. */
   financial: {

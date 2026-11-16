@@ -19,6 +19,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { HoverHint } from '@/components/ui/hover-hint';
 import { NA } from '@/utils/na';
 import type { TranslationKeys } from '@/utils/translations';
 
@@ -349,24 +350,36 @@ export function Matrix({
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-(--surface-raised) text-(--text-secondary)">
-              <th className="px-3 py-2 text-left font-medium">
+              <th className="sticky left-0 z-10 min-w-[5.5rem] bg-(--surface-raised) px-2 py-2 text-left font-medium">
                 {t('gmdMetric')}
               </th>
               {farms.map((f) => (
                 <th
                   key={f.farm_id}
-                  className="px-2 py-2 text-center font-medium"
-                  title={f.farm_name}
+                  className="w-[3.25rem] min-w-[3.25rem] px-0.5 py-2 text-center align-bottom text-[9px] font-semibold uppercase leading-[1.15] tracking-tight"
                 >
-                  {f.farm_name}
+                  {/* The name wraps in its narrow column; the card on hover gives it whole. */}
+                  <HoverHint
+                    hint={f.farm_name}
+                    plain
+                    focusable={false}
+                    className="block break-words"
+                  >
+                    {f.farm_name}
+                  </HoverHint>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.key} className="border-t border-(--border)">
-                <td className="px-3 py-2">{row.label}</td>
+              <tr
+                key={row.key}
+                className="group h-12 border-t border-(--border) hover:bg-(--surface-raised)"
+              >
+                <td className="sticky left-0 z-10 bg-(--surface) px-2 py-2 group-hover:bg-(--surface-raised)">
+                  {row.label}
+                </td>
                 {farms.map((f) => {
                   const c = row.cells[f.farm_id];
                   const tip = `${f.farm_name} — ${row.label}: ${fmt(c?.value, row.unit)} · ${
@@ -377,7 +390,7 @@ export function Matrix({
                   return (
                     <td
                       key={f.farm_id}
-                      className="px-2 py-2 text-center"
+                      className="px-1 py-2 text-center"
                       title={tip}
                       aria-label={tip}
                     >
