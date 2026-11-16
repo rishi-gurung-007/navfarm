@@ -1,5 +1,6 @@
 import type { MasterDataConfig, MasterDataField } from './types';
 import { LOGISTICS_CONFIGS } from './logistics-configs';
+import { BUDGET_CONFIGS } from './budget-configs';
 import { ANIMAL_ACCOUNT_NOTE, GL_MAPPING_TYPE_RULES, mappingDimensions, type MappingDimension, type MappingPath } from './gl-mapping-fields';
 
 const STATUS_OPTIONS = [
@@ -6543,6 +6544,7 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   currency,
   exchangeRate,
   ...LOGISTICS_CONFIGS,
+  ...BUDGET_CONFIGS,
 ];
 
 export const MASTER_DATA_GROUPS = [
@@ -6554,6 +6556,7 @@ export const MASTER_DATA_GROUPS = [
   'Business Partners',
   'Finance',
   'Logistics',
+  'Budget',
 ] as const;
 
 /**

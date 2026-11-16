@@ -456,6 +456,12 @@ const DEFAULT_RESOURCES = [
     name: 'Animal Register & AI Station',
     nameKey: 'rolAnimalAiStation',
   },
+  {
+    module_code: 'PIGGERY',
+    resource: 'BUDGET',
+    name: 'Budget',
+    nameKey: 'rolBudget',
+  },
   // SYSTEM
   {
     module_code: 'SYSTEM',

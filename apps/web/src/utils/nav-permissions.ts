@@ -5,6 +5,7 @@
  */
 import { hasPermission } from '@/hooks/useAuth';
 import { LOGISTICS_GRANTS } from '@/modules/master-data/logistics-configs';
+import { BUDGET_GRANTS } from '@/modules/master-data/budget-configs';
 
 type Grant = readonly [moduleCode: string, resource: string];
 
@@ -86,6 +87,7 @@ const MASTER_DATA_GRANTS: Record<string, Grant> = {
   animal: ['PIGGERY', 'ANIMAL'],
   'alert-rule': ['NOTIFICATION', 'ALERT_RULE'],
   ...LOGISTICS_GRANTS,
+  ...BUDGET_GRANTS,
 };
 
 export function grantsFor(href: string): Grant[] | null {
