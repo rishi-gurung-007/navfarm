@@ -41,7 +41,7 @@ import { masterScopeConditions } from '../../../common/master-data-scope';
 import { assertStageFitsAnimal, stageFitsGender } from '../stage/stage-gender';
 import { farmStoreOf } from '../../../common/farm-store';
 import { isCurrentBioLot } from './current-bio-lot';
-import { herdCarryingAccount, pigletLotAccount } from './herd-account';
+import { herdCarryingAccount, lotWipAccount, pigletLotAccount } from './herd-account';
 import { BatchDayReversalService } from './batch-day-reversal.service';
 import {
   animalOutputEvent,
@@ -2682,11 +2682,22 @@ export class BatchService {
    * to the mapping's pre-mature account, so a piglet's death took out of Weaners Inventory value that had been put into the herd account.
    */
   private async herdAssetAccount(
-    batch: { batch_id: string; company_id: string; nob_id?: string | null; lob_id?: string | null },
+    batch: {
+      batch_id: string;
+      company_id: string;
+      nob_id?: string | null;
+      lob_id?: string | null;
+      stage_id?: string | null;
+      is_litter_lot?: boolean | null;
+      tracking_mode?: string | null;
+      current_stage_code?: string | null;
+    },
     tenantId: string,
   ): Promise<string | undefined> {
     return (
       (await this.batchClassAccount(batch.batch_id)) ??
+      // A weaner or grower lot's cost goes to WIP during the month and is recognised as inventory at month end (13 Nov, BBP-2 S.NO.6), where mapped.
+      (await lotWipAccount(this.glPostingService, batch, tenantId)) ??
       (await this.litterLotAccount(batch, tenantId))
     );
   }
@@ -3382,6 +3393,8 @@ export class BatchService {
       reference: string;
       remarks?: string;
       value_per_head?: number;
+      /** What the release is in the bio-asset ledger: a gilt selection unless said otherwise (a slaughter dispatch). */
+      ledger_codes?: ReturnType<typeof bioCodes.giltSelection>;
     },
     tenantId: string,
     userPayload?: UserContext,
@@ -3471,7 +3484,7 @@ export class BatchService {
           company_id: batch.company_id,
           bio_asset_item_id: itemId,
           lot_no: acquired?.lot_no ?? null,
-          ...bioCodes.giltSelection(),
+          ...(params.ledger_codes ?? bioCodes.giltSelection()),
           document_no: params.reference,
           batch_id: id,
           batch_no: batch.batch_no,
@@ -3508,7 +3521,7 @@ export class BatchService {
         entityName: 'batch_header',
         entityId: id,
         newValues: {
-          gilt_selection: params.reference,
+          [params.ledger_codes ? 'released_by' : 'gilt_selection']: params.reference,
           head_released: params.quantity,
           value_released: releasedValue,
           remaining,
@@ -7683,6 +7696,8 @@ export class BatchService {
     dto: RecordFairValueDto,
     tenantId: string,
     userPayload?: UserContext,
+    // Where the gain and the loss are recognised, where the herd's item names them (its Posting Group / Item Card accounts); the mapping's one account otherwise.
+    accounts?: { gainAccountId?: string | null; lossAccountId?: string | null },
   ) {
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'ACTIVE');
@@ -7732,6 +7747,10 @@ export class BatchService {
       // (11 Nov: a lot is carried in one account). The mapping names the other side.
       ...(bioState.stage === 'PREMATURE'
         ? { debitAccountId: await this.prematureAssetAccount(batch, tenantId) }
+        : {}),
+      // The fair value account swaps sides with a loss, so a gain names the gain account and a loss the loss account.
+      ...((gainLoss >= 0 ? accounts?.gainAccountId : (accounts?.lossAccountId ?? accounts?.gainAccountId))
+        ? { creditAccountId: (gainLoss >= 0 ? accounts?.gainAccountId : (accounts?.lossAccountId ?? accounts?.gainAccountId))! }
         : {}),
       reverseDirection: gainLoss < 0,
     });

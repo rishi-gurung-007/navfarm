@@ -4,6 +4,7 @@ import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { FARM_SCOPED_KEY } from './farm-scope';
 import { RolesGuard } from './guards/roles.guard';
 import { BatchController } from '../modules/production/batch/batch.controller';
+import { SlaughterTransferController } from '../modules/production/slaughter/slaughter-transfer.controller';
 import { BatchDailyDataController } from '../modules/production/batch-daily-data/batch-daily-data.controller';
 import { BatchTransferController } from '../modules/production/batch/batch-transfer.controller';
 import { SchedulerHeaderController } from '../modules/production/scheduler-header/scheduler-header.controller';
@@ -69,6 +70,7 @@ import { FarmController } from '../modules/master-data/farm/farm.controller';
  */
 const SCOPED = {
   BatchController,
+  SlaughterTransferController,
   BatchDailyDataController,
   BatchTransferController,
   SchedulerHeaderController,

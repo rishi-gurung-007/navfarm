@@ -7,6 +7,8 @@ import { batchScopeConditions, farmScope } from '../../../common/farm-scope';
 import { periodOfKey } from '../../finance/bio-costing/bio-costing.engine';
 import { BIO_DOCUMENT_TYPES as D } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 import { BatchService } from './batch.service';
+import { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { herdCarryingAccount, lotWipAccount, LOT_WIP_TYPE } from './herd-account';
 import { isCurrentBioLot } from './current-bio-lot';
 import { lotFairValueLine, type LotFairValueLine } from './lot-fair-value.rules';
 
@@ -17,6 +19,10 @@ export interface LotFairValueResult extends LotFairValueLine {
   head: number;
   posted: boolean;
   message: string | null;
+  /** The lot's WIP still to be recognised as inventory at the period end (nil without a BIO_LOT_WIP mapping). */
+  wip_balance: number;
+  /** Whether this run recognised it (Dr the lot's inventory / Cr its WIP). */
+  wip_recognised: boolean;
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -31,6 +37,7 @@ export class LotFairValueService {
   constructor(
     private readonly cls: ClsService,
     private readonly batches: BatchService,
+    private readonly gl: GlPostingService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -47,6 +54,25 @@ export class LotFairValueService {
   /** Revalues every eligible lot for the month, one posting each. A lot that cannot be valued is reported with its reason and does not stop the others. */
   async post(dto: { period_key: string; batch_id?: string }, tenantId: string, user?: { userId?: string }): Promise<{ period: string; lines: LotFairValueResult[] }> {
     return this.run(dto, true, tenantId, user);
+  }
+
+  /** A lot's WIP balance to a date: what its own postings (journals recorded against its batch number) left on its WIP account. */
+  private async wipBalance(wipAccount: string, batchNo: string, companyId: string, tenantId: string, asOf: string): Promise<number> {
+    const [row] = await this.db
+      .select({ net: sql<string>`COALESCE(SUM(${schema.journalLine.debit_amount} - ${schema.journalLine.credit_amount}), 0)` })
+      .from(schema.journalLine)
+      .innerJoin(schema.journalHeader, eq(schema.journalHeader.journal_id, schema.journalLine.journal_id))
+      .where(
+        and(
+          eq(schema.journalHeader.tenant_id, tenantId),
+          eq(schema.journalHeader.company_id, companyId),
+          eq(schema.journalHeader.status, 'POSTED'),
+          eq(schema.journalHeader.source_document_no, batchNo),
+          sql`${schema.journalHeader.posting_date} <= ${asOf}`,
+          eq(schema.journalLine.gl_account_id, wipAccount),
+        ),
+      );
+    return Math.round((Number(row?.net ?? 0) || 0) * 1e4) / 1e4;
   }
 
   private async run(dto: { period_key: string; batch_id?: string }, post: boolean, tenantId: string, user?: { userId?: string }) {
@@ -100,10 +126,44 @@ export class LotFairValueService {
         rates,
         already_run: Number(done?.n ?? 0) > 0,
       });
-      const result: LotFairValueResult = { ...line, batch_id: batch.batch_id, batch_no: batch.batch_no, item_code: item?.item_code ?? null, head, posted: false, message: null };
+      const result: LotFairValueResult = { ...line, batch_id: batch.batch_id, batch_no: batch.batch_no, item_code: item?.item_code ?? null, head, posted: false, message: null, wip_balance: 0, wip_recognised: false };
+
+      // First the month's WIP is recognised as the lot's inventory (BBP-2 S.NO.6: post to WIP, recognise inventory, then run fair value), whether or not the
+      // lot is valued this month. Its value does not change: it only moves from the WIP account to the account the lot is carried in.
+      const wipAccount = await lotWipAccount(this.gl, batch, tenantId);
+      if (wipAccount) {
+        result.wip_balance = await this.wipBalance(wipAccount, batch.batch_no, batch.company_id, tenantId, period.end);
+        if (post && Math.abs(result.wip_balance) >= 0.005) {
+          const inventory =
+            (await herdCarryingAccount(this.db, this.gl, batch, state.stage, tenantId)) ??
+            (await this.gl.mappedAccount(tenantId, batch.company_id, LOT_WIP_TYPE, 'credit', { nobId: batch.nob_id, lobId: batch.lob_id, stageId: batch.stage_id }));
+          try {
+            await this.gl.postBatchCostEntry({
+              tenantId, companyId: batch.company_id, transactionType: LOT_WIP_TYPE, amount: Math.abs(result.wip_balance), documentNo: batch.batch_no,
+              postingDate: period.end, description: `WIP recognised as inventory ${period.key} - ${batch.batch_no}`,
+              nobId: batch.nob_id ?? undefined, lobId: batch.lob_id ?? undefined, stageId: batch.stage_id ?? undefined, userId: user?.userId,
+              debitAccountId: inventory, creditAccountId: wipAccount,
+              // A credit balance on WIP (more taken out than put in) is put back the other way.
+              reverseDirection: result.wip_balance < 0,
+            });
+            result.wip_recognised = true;
+          } catch (error) {
+            result.message = `WIP not recognised: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        }
+      }
+
       if (post && line.status === 'ADJUST') {
         try {
-          await this.batches.recordFairValue(batch.batch_id, { posting_date: period.end, fair_value_per_unit: line.fair_value_per_head! }, tenantId, user);
+          // The gain and the loss go to the accounts the lot's item names (Item Card: Fair Value Gain / Loss, Fair Value Loss), so a weaner lot's valuation
+          // reaches FV Gain - Weaners and FV Loss - Weaners and a finisher lot's the Finisher ones; with none named, the mapping's single account.
+          await this.batches.recordFairValue(
+            batch.batch_id,
+            { posting_date: period.end, fair_value_per_unit: line.fair_value_per_head! },
+            tenantId,
+            user,
+            { gainAccountId: item?.bio_fv_gain_loss_gl_id ?? null, lossAccountId: item?.bio_fv_loss_gl_id ?? null },
+          );
           result.posted = true;
         } catch (error) {
           result.message = error instanceof Error ? error.message : String(error);

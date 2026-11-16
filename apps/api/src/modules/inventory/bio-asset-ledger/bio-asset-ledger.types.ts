@@ -48,6 +48,7 @@ export const BIO_DOCUMENT_TYPES = {
   LITTER_COST_EXP_FEED: 'LITTER_COST_EXP_FEED',
   LITTER_COST_EXP_OH: 'LITTER_COST_EXP_OH',
   GILT_SELECTION: 'GILT_SELECTION',
+  SLAUGHTER_DISPATCH: 'SLAUGHTER_DISPATCH', // head sent to the abattoir on a slaughter Transfer Order, into Inventory in Transit
   MORTALITY: 'MORTALITY',
   BIO_COSTING_RUN: 'BIO_COSTING_RUN',
   BIO_FAIR_VALUE_RUN: 'BIO_FAIR_VALUE_RUN',
@@ -113,6 +114,8 @@ export const bioCodes = {
   mortality: (): BioCodes => ({ entry_type: 'NEGATIVE', transaction_type: 'VARIANCE_NEGATIVE', document_type: D.MORTALITY }),
   /** Animals selected out of a litter lot as gilts (the animals themselves are registered separately). */
   giltSelection: (): BioCodes => ({ entry_type: 'TRANSFER', transaction_type: 'TRANSFER_SHIPMENT', document_type: D.GILT_SELECTION }),
+  /** Head dispatched to the abattoir on a slaughter Transfer Order: they leave the batch for Inventory in Transit. */
+  slaughterDispatch: (): BioCodes => ({ entry_type: 'TRANSFER', transaction_type: 'TRANSFER_SHIPMENT', document_type: D.SLAUGHTER_DISPATCH }),
   /** The marker a batch leaves when it is made mature: no cost, no heads leaving. */
   maturity: (): BioCodes => ({ entry_type: 'DESCRIPTIVE', transaction_type: 'DESCRIPTIVE', document_type: D.BATCH_MATURITY }),
   /** Animals harvested out of a bio-asset batch as produce. */
@@ -178,7 +181,7 @@ const EVENT_DOCUMENTS: Record<BioEvent, readonly string[]> = {
   AMORTIZATION: [D.BIO_COSTING_RUN, D.BATCH_AMORTIZATION],
   FAIR_VALUE_ADJMT: [D.BIO_FAIR_VALUE_RUN, D.BATCH_FAIR_VALUE],
   MORTALITY: [D.MORTALITY],
-  TRANSFORMATION: [D.GILT_SELECTION, D.BATCH_MATURITY, D.BATCH_HARVEST, D.BATCH_DISPOSAL, D.ANIMAL_DISPOSAL],
+  TRANSFORMATION: [D.GILT_SELECTION, D.BATCH_MATURITY, D.BATCH_HARVEST, D.BATCH_DISPOSAL, D.ANIMAL_DISPOSAL, D.SLAUGHTER_DISPATCH],
 };
 
 /** What a row is, or null for a row this ledger did not write (a manual entry). */
@@ -202,6 +205,7 @@ export function bioEventOf(row: CodedRow): BioEvent | null {
     case D.BATCH_FAIR_VALUE: return 'FAIR_VALUE_ADJMT';
     case D.MORTALITY: return 'MORTALITY';
     case D.GILT_SELECTION:
+    case D.SLAUGHTER_DISPATCH:
     case D.BATCH_MATURITY:
     case D.BATCH_HARVEST:
     case D.BATCH_DISPOSAL:

@@ -69,6 +69,7 @@ import { JournalModule } from './modules/finance/journal/journal.module';
 import { ExpenseModule } from './modules/finance/expense/expense.module';
 import { FinancialReportsModule } from './modules/finance/financial-reports/financial-reports.module';
 import { BatchModule } from './modules/production/batch/batch.module';
+import { SlaughterTransferModule } from './modules/production/slaughter/slaughter-transfer.module';
 import { ParameterModule } from './modules/production/parameter/parameter.module';
 import { StageModule } from './modules/production/stage/stage.module';
 import { SchedulerHeaderModule } from './modules/production/scheduler-header/scheduler-header.module';
@@ -181,6 +182,7 @@ import { SystemController } from './system/system.controller';
     ExpenseModule,
     FinancialReportsModule,
     BatchModule,
+    SlaughterTransferModule,
     ParameterModule,
     StageModule,
     SchedulerHeaderModule,

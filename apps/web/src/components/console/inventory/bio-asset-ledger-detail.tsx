@@ -85,6 +85,7 @@ export const BIO_DOCUMENT_LABEL: Record<string, string> = {
   LITTER_COST_EXP_FEED: "Sow's Feed to Litter (Lactation)",
   LITTER_COST_EXP_OH: "Sow's Overhead to Litter (Lactation)",
   GILT_SELECTION: 'Gilt Selection',
+  SLAUGHTER_DISPATCH: 'Slaughter Dispatch',
   MORTALITY: 'Mortality',
   BIO_COSTING_RUN: 'Costing Run',
   BIO_FAIR_VALUE_RUN: 'Fair Value Run',

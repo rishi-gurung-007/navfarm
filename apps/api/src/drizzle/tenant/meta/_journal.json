@@ -1765,6 +1765,13 @@
       "when": 1792000000122,
       "tag": "0254_gilt_class_rule",
       "breakpoints": true
+    },
+    {
+      "idx": 252,
+      "version": "5",
+      "when": 1792000000123,
+      "tag": "0255_slaughter_transfer_order",
+      "breakpoints": true
     }
   ]
 }

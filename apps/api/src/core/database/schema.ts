@@ -8250,6 +8250,69 @@ export const giltClassRule = mysqlTable(
 );
 
 /**
+ * A Transfer Order of pigs to the abattoir (migration 0255; BBP-1 S.10.1): one per supplying farm and trip, HO approval reference mandatory. DRAFT -> CONFIRMED
+ * (dispatched: the head leave their batches into Inventory in Transit) -> RECEIVED (POD: received head and DOA per line) -> RECONCILED (kill sheet and invoice) ->
+ * CLOSED; a DRAFT may be CANCELLED.
+ */
+export const slaughterTransferOrder = mysqlTable(
+  'slaughter_transfer_order',
+  {
+    to_id: varchar('to_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+    to_no: varchar('to_no', { length: 30 }).notNull(),
+    to_date: date('to_date', { mode: 'string' }).notNull(),
+    farm_id: varchar('farm_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+    destination: varchar('destination', { length: 150 }),
+    customer_id: varchar('customer_id', { length: 36 }).references(() => customerMaster.customer_id, { onDelete: 'restrict' }),
+    ho_approval_ref: varchar('ho_approval_ref', { length: 60 }).notNull(),
+    vehicle_no: varchar('vehicle_no', { length: 30 }),
+    driver_name: varchar('driver_name', { length: 100 }),
+    status: varchar('status', { length: 20 }).default('DRAFT').notNull(),
+    confirmed_at: timestamp('confirmed_at', { mode: 'string' }),
+    confirmed_by: varchar('confirmed_by', { length: 36 }),
+    pod_date: date('pod_date', { mode: 'string' }),
+    pod_received_by: varchar('pod_received_by', { length: 100 }),
+    kill_sheet_ref: varchar('kill_sheet_ref', { length: 60 }),
+    kill_sheet_date: date('kill_sheet_date', { mode: 'string' }),
+    invoice_no: varchar('invoice_no', { length: 30 }),
+    invoice_amount: decimal('invoice_amount', { precision: 18, scale: 4 }),
+    remarks: text('remarks'),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+    deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  },
+  (table) => [uniqueIndex('uq_slaughter_to_company_no').on(table.tenant_id, table.company_id, table.to_no)],
+);
+
+/** One batch from one source house on a slaughter Transfer Order (migration 0255). */
+export const slaughterTransferOrderLine = mysqlTable(
+  'slaughter_transfer_order_line',
+  {
+    line_id: varchar('line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    to_id: varchar('to_id', { length: 36 }).notNull().references(() => slaughterTransferOrder.to_id, { onDelete: 'cascade' }),
+    line_no: int('line_no').notNull(),
+    batch_id: varchar('batch_id', { length: 36 }).notNull().references(() => batchHeader.batch_id, { onDelete: 'restrict' }),
+    source_location_id: varchar('source_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+    category: varchar('category', { length: 30 }).default('COMMERCIAL').notNull(),
+    head_count: int('head_count').notNull(),
+    avg_live_weight_kg: decimal('avg_live_weight_kg', { precision: 10, scale: 3 }),
+    lot_no: varchar('lot_no', { length: 50 }),
+    slap_mark: varchar('slap_mark', { length: 80 }),
+    carrying_value: decimal('carrying_value', { precision: 18, scale: 4 }),
+    received_head: int('received_head'),
+    doa_head: int('doa_head'),
+    carcass_weight_kg: decimal('carcass_weight_kg', { precision: 12, scale: 3 }),
+    price_per_kg: decimal('price_per_kg', { precision: 18, scale: 6 }),
+    line_amount: decimal('line_amount', { precision: 18, scale: 4 }),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex('uq_slaughter_to_line_no').on(table.to_id, table.line_no)],
+);
+
+/**
  * A boar's TSI over time (migration 0235), with the herd-wide genetic rank published beside it when one was given. The latest
  * entry on or before a date is his TSI then; `animal_register.tsi` keeps the newest as before.
  */

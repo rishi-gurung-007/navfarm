@@ -4323,6 +4323,29 @@ describe('BatchService', () => {
       );
     });
 
+    it("recognises a gain in the gain account and a loss in the loss account the herd's item names (FV Gain / FV Loss - Weaners)", async () => {
+      jest.spyOn(service as any, 'prematureAssetAccount').mockResolvedValue('acc-lot');
+      const state = { state_id: 's', batch_id: 'batch-1', stage: 'PREMATURE', current_quantity: '10.0000', nca_book_value: '1000.0000' };
+      let { gl } = prime(state);
+      await service.recordFairValue('batch-1', { fair_value_per_unit: 150, posting_date: '2026-03-01' }, 'tenant-123', undefined, { gainAccountId: 'acc-gain', lossAccountId: 'acc-loss' });
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(expect.objectContaining({ amount: 500, debitAccountId: 'acc-lot', creditAccountId: 'acc-gain', reverseDirection: false }));
+      ({ gl } = prime(state));
+      await service.recordFairValue('batch-1', { fair_value_per_unit: 50, posting_date: '2026-03-01' }, 'tenant-123', undefined, { gainAccountId: 'acc-gain', lossAccountId: 'acc-loss' });
+      // A loss swaps the sides: Dr the loss account / Cr the lot's account.
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(expect.objectContaining({ amount: 500, debitAccountId: 'acc-lot', creditAccountId: 'acc-loss', reverseDirection: true }));
+    });
+
+    it('keeps the mapping\'s account when the item names none, and a loss uses the gain account when the item names only that one', async () => {
+      jest.spyOn(service as any, 'prematureAssetAccount').mockResolvedValue('acc-lot');
+      const state = { state_id: 's', batch_id: 'batch-1', stage: 'PREMATURE', current_quantity: '10.0000', nca_book_value: '1000.0000' };
+      let { gl } = prime(state);
+      await service.recordFairValue('batch-1', { fair_value_per_unit: 150, posting_date: '2026-03-01' }, 'tenant-123');
+      expect(gl.postBatchCostEntry.mock.calls[0][0].creditAccountId).toBeUndefined();
+      ({ gl } = prime(state));
+      await service.recordFairValue('batch-1', { fair_value_per_unit: 50, posting_date: '2026-03-01' }, 'tenant-123', undefined, { gainAccountId: 'acc-gain', lossAccountId: null });
+      expect(gl.postBatchCostEntry).toHaveBeenCalledWith(expect.objectContaining({ creditAccountId: 'acc-gain', reverseDirection: true }));
+    });
+
     it("re-spreads a mature herd's charge over the runs that remain, from the new carrying value", async () => {
       // 10 head, carrying 40 000 -> fair value 3 500 each = 35 000. Residual 500 x 10 = 5 000. 36-month life, 6 runs done.
       const { gl } = prime(

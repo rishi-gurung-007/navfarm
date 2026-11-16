@@ -51,7 +51,7 @@ const POSTED_TRANSACTION_TYPES = [
  * BIO_LITTER_BIRTH and BIO_GILT_ACQUISITION are posted too, but deliberately NOT seeded: the litter's cost at birth moves value out of the pre-mature account (1050,
  * where the sow's WIP sits) into Piglets Inventory (1055), which is not in the starter chart; farrowing and registration post no journal without a mapping.
  */
-const OPT_IN_TYPES = ['BIO_LITTER_BIRTH', 'BIO_GILT_ACQUISITION'];
+const OPT_IN_TYPES = ['BIO_LITTER_BIRTH', 'BIO_GILT_ACQUISITION', 'BIO_LOT_WIP', 'BIO_SLAUGHTER_DISPATCH', 'BIO_SLAUGHTER_DOA', 'BIO_SLAUGHTER_SALE', 'BIO_SLAUGHTER_COGS'];
 
 const read = (relative: string) => readFileSync(join(__dirname, relative), 'utf8');
 const configs = () => read('../../../../../web/src/modules/master-data/configs.ts');

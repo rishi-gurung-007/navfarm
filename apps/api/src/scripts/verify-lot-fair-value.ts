@@ -8,7 +8,7 @@
  * October, and reads the lots, the bio-asset ledger and the journals back. It checks that:
  *   - the preview changes nothing;
  *   - every revalued lot ends at head x expected weight x price per kg, its carrying value and its ledger row agreeing;
- *   - a gain is Dr the lot's account / Cr the fair value account, a loss the reverse, and every journal balances;
+ *   - a gain is Dr the lot's account / Cr the item's fair value gain account, a loss Dr the item's loss account / Cr the lot's, and every journal balances;
  *   - asking for the same month again revalues nothing;
  *   - the lot's account moves by exactly what the lots' carrying values moved by.
  * Exits non-zero if any check fails. The tenant is left exactly as found.
@@ -45,7 +45,13 @@ async function scenario(ctx: DemoContext) {
   // Inside this rehearsal only, that item is given fair value terms (from 17 weeks of age) and two TEST rates.
   const [item] = await db.select().from(schema.itemMaster).where(and(eq(schema.itemMaster.tenant_id, tenantId), eq(schema.itemMaster.item_code, 'ICAT-008-ITM-0001'))).limit(1);
   if (!item) throw new Error('The Suckling Live Piglet item (ICAT-008-ITM-0001) is not on this company.');
-  await db.update(schema.itemMaster).set({ bio_costing_method: 'FAIR_VALUE', bio_start_age_weeks: 17, bio_start_age_days: 0 } as any).where(eq(schema.itemMaster.item_id, item.item_id));
+  // The weaner fair value accounts the PIGLETS item names on its card (FV Gain - Weaners, FV Loss - Weaners) are given to it too, so the run must reach them.
+  const [piglets] = await db.select().from(schema.itemMaster).where(and(eq(schema.itemMaster.tenant_id, tenantId), eq(schema.itemMaster.item_code, 'PIGLETS'))).limit(1);
+  if (!piglets?.bio_fv_gain_loss_gl_id || !piglets?.bio_fv_loss_gl_id) throw new Error('The PIGLETS item names no fair value gain and loss accounts to rehearse with.');
+  await db.update(schema.itemMaster).set({
+    bio_costing_method: 'FAIR_VALUE', bio_start_age_weeks: 17, bio_start_age_days: 0,
+    bio_fv_gain_loss_gl_id: piglets.bio_fv_gain_loss_gl_id, bio_fv_loss_gl_id: piglets.bio_fv_loss_gl_id,
+  } as any).where(eq(schema.itemMaster.item_id, item.item_id));
   console.log(`${item.item_code} given FAIR_VALUE terms from 17 weeks of age, and TEST rates only inside this rehearsal: 30 kg x 2.00 from 1 Jan 2026, then 30 kg x 1.50 from 1 Oct 2026.`);
   await db.insert(schema.itemFairValueRate).values([
     { rate_id: randomUUID(), item_id: item.item_id, farm_id: null, age_week_from: 0, effective_from: '2026-01-01', expected_weight_kg: '30', price_per_kg: '2' },
@@ -61,21 +67,25 @@ async function scenario(ctx: DemoContext) {
     return new Map(rows.map((r) => [r.id, Number(r.v)]));
   };
   const lotAccount = (await gl.mappedAccount(tenantId, ctx.companyId, 'BIO_LITTER_BIRTH', 'debit'))!;
-  const fvAccount = (await gl.mappedAccount(tenantId, ctx.companyId, 'BIO_FAIR_VALUE_PREMATURE', 'credit'))!;
+  const gainAccount = piglets.bio_fv_gain_loss_gl_id;
+  const lossAccount = piglets.bio_fv_loss_gl_id;
+  const herdAccount = (await gl.mappedAccount(tenantId, ctx.companyId, 'BIO_FAIR_VALUE_PREMATURE', 'credit'))!;
   const accountNet = async (nos: string[]) => {
     const heads = await db.select().from(schema.journalHeader).where(and(inArray(schema.journalHeader.source_document_no, nos), like(schema.journalHeader.description, 'Fair value adjustment%')));
-    let lotNet = 0, fvNet = 0, balanced = true;
+    let lotNet = 0, gainNet = 0, lossNet = 0, herdNet = 0, balanced = true;
     for (const h of heads) {
       const lines = await db.select().from(schema.journalLine).where(eq(schema.journalLine.journal_id, h.journal_id));
       let d = 0, c = 0;
       for (const l of lines) {
         d += Number(l.debit_amount); c += Number(l.credit_amount);
         if (l.gl_account_id === lotAccount) lotNet += Number(l.debit_amount) - Number(l.credit_amount);
-        if (l.gl_account_id === fvAccount) fvNet += Number(l.debit_amount) - Number(l.credit_amount);
+        if (l.gl_account_id === gainAccount) gainNet += Number(l.debit_amount) - Number(l.credit_amount);
+        if (l.gl_account_id === lossAccount) lossNet += Number(l.debit_amount) - Number(l.credit_amount);
+        if (l.gl_account_id === herdAccount) herdNet += Number(l.debit_amount) - Number(l.credit_amount);
       }
       if (Math.abs(d - c) > 0.0001) balanced = false;
     }
-    return { journals: heads.length, lotNet: r4(lotNet), fvNet: r4(fvNet), balanced };
+    return { journals: heads.length, lotNet: r4(lotNet), gainNet: r4(gainNet), lossNet: r4(lossNet), herdNet: r4(herdNet), balanced };
   };
 
   console.log('\nPreview September (changes nothing)');
@@ -100,7 +110,7 @@ async function scenario(ctx: DemoContext) {
   check('one ledger row and one journal per lot', [c1.ledger - before.ledger, c1.journals - before.journals], [adjust.length, adjust.length]);
   const j1 = await accountNet(nos);
   const rise = r4(ids.reduce((n, id) => n + (ncaSep.get(id)! - ncaBefore.get(id)!), 0));
-  check('Dr the lot account by the total gain, Cr the fair value account by the same, all balanced', [j1.lotNet, j1.fvNet, j1.balanced], [rise, -rise, true]);
+  check("Dr the lot account by the total gain, Cr the item's gain account (FV Gain - Weaners) by the same, nothing to the herd account, all balanced", [j1.lotNet, j1.gainNet, j1.lossNet, j1.herdNet, j1.balanced], [rise, -rise, 0, 0, true]);
 
   console.log('\nPost September again');
   const again = await service.post({ period_key: '2026-09' }, tenantId);
@@ -115,7 +125,9 @@ async function scenario(ctx: DemoContext) {
   check('each lot now stands at head x 45', ids.every((id, i) => r4(ncaOct.get(id)!) === r4(adjust[i].head * 45)), true);
   const j2 = await accountNet(nos);
   const net = r4(ids.reduce((n, id) => n + (ncaOct.get(id)! - ncaBefore.get(id)!), 0));
-  check("the lot account's net movement over both months equals the lots' carrying value movement, and the fair value account the opposite", [j2.lotNet, j2.fvNet, j2.balanced], [net, -net, true]);
+  const fall = r4(ids.reduce((n, id) => n + (ncaSep.get(id)! - ncaOct.get(id)!), 0));
+  check("October's loss is Dr the item's loss account (FV Loss - Weaners), not the gain account", [r4(j2.lossNet), r4(j2.gainNet - j1.gainNet), j2.herdNet], [fall, 0, 0]);
+  check("the lot account's net movement over both months equals the lots' carrying value movement, all balanced", [j2.lotNet, j2.balanced], [net, true]);
 
   throw ROLLBACK;
 }
