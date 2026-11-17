@@ -67,10 +67,18 @@ export const NO_FIGURE: Figure = { actual: null, budget: null };
 type T = (key: TranslationKeys) => string;
 
 /** The theme's own status colours (Rishi, 2 Nov: the GM Dashboard keeps the current theme). */
+/**
+ * The dashboard's three status colours (Rishi, 17 Nov), kept apart from the app's --success / --warning / --danger.
+ * Amber, green and red are deepened from his yellow sample (#ecb24d) to one muted shade level, so they read as a set.
+ */
+export const AMBER_COLOR = '#d39a2c';
+export const GREEN_COLOR = '#2f9e5f';
+export const RED_COLOR = '#c8402f';
+
 const STATUS_COLOR: Record<Exclude<Status, null>, string> = {
-  GREEN: 'var(--success)',
-  AMBER: 'var(--warning)',
-  RED: 'var(--danger)',
+  GREEN: GREEN_COLOR,
+  AMBER: AMBER_COLOR,
+  RED: RED_COLOR,
 };
 
 export const fmt = (value: number | null | undefined, unit = '') =>
@@ -167,7 +175,7 @@ export function StatusDot({
 }
 
 const toneOf = (v: NonNullable<ReturnType<typeof variance>>) =>
-  v.warn ? 'var(--warning)' : v.good ? 'var(--success)' : 'var(--danger)';
+  v.warn ? AMBER_COLOR : v.good ? GREEN_COLOR : RED_COLOR;
 
 function TrendArrow({ v, t }: { v: ReturnType<typeof variance>; t: T }) {
   if (!v) return null;

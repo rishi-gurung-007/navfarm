@@ -360,7 +360,7 @@ describe('GM Dashboard — one farm', () => {
       '100',
       '91.84',
     ]);
-    expect((cells[1] as HTMLElement).style.color).toBe('var(--success)');
+    expect((cells[1] as HTMLElement).style.color).toBe('rgb(47, 158, 95)'); // #2f9e5f
     expect(within(table).getByTestId('trend').children).toHaveLength(6);
     expect(
       screen.getByRole('region', { name: 'gmdFinancialMatrix' }).textContent,
