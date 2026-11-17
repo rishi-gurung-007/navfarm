@@ -25,8 +25,6 @@ export function scaleFor<T extends ScaleRow>(rows: T[], breedId: string | null |
 
 export interface ConditionSetup {
   bcs_frequency_days: number | null;
-  bcs_grace_days: number | null;
-  bcs_reminder_days: number | null;
   bcs_allow_feed_override: boolean | number;
   bcs_override_reason_required: boolean | number;
 }
@@ -40,25 +38,23 @@ export function nextDueDate(assessedOn: string, frequencyDays: number | null | u
   return frequencyDays && frequencyDays > 0 ? addDays(assessedOn, frequencyDays) : null;
 }
 
-export type ConditionStatus = 'NEVER' | 'NOT_SCHEDULED' | 'OK' | 'DUE_SOON' | 'DUE' | 'OVERDUE';
+export type ConditionStatus = 'NEVER' | 'NOT_SCHEDULED' | 'OK' | 'DUE' | 'OVERDUE';
 
 /**
- * Where a boar stands against his schedule: never assessed; assessed but the line sets no schedule; fine; due soon (within the
- * reminder days); due (the day has come); overdue (past the grace days). Read from the last assessment and the line's CURRENT
+ * Where a boar stands against his schedule: never assessed; assessed but the line sets no schedule; fine; due (the day has come);
+ * overdue (the day has passed). Read from the last assessment and the line's CURRENT
  * frequency, so a changed frequency applies to every boar.
  */
 export function conditionStatus(input: {
   lastAssessedOn: string | null;
-  setup: Pick<ConditionSetup, 'bcs_frequency_days' | 'bcs_grace_days' | 'bcs_reminder_days'> | null;
+  setup: Pick<ConditionSetup, 'bcs_frequency_days'> | null;
   today: string;
 }): { status: ConditionStatus; due: string | null; daysToDue: number | null } {
   if (!input.lastAssessedOn) return { status: 'NEVER', due: null, daysToDue: null };
   const due = nextDueDate(input.lastAssessedOn, input.setup?.bcs_frequency_days);
   if (!due) return { status: 'NOT_SCHEDULED', due: null, daysToDue: null };
   const daysToDue = Math.round((utc(due) - utc(input.today)) / DAY);
-  const grace = input.setup?.bcs_grace_days ?? 0;
-  const reminder = input.setup?.bcs_reminder_days ?? 0;
-  const status: ConditionStatus = daysToDue < -grace ? 'OVERDUE' : daysToDue <= 0 ? 'DUE' : daysToDue <= reminder ? 'DUE_SOON' : 'OK';
+  const status: ConditionStatus = daysToDue < 0 ? 'OVERDUE' : daysToDue === 0 ? 'DUE' : 'OK';
   return { status, due, daysToDue };
 }
 

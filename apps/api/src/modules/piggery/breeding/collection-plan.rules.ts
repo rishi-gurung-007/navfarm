@@ -23,6 +23,24 @@ export function isoWeekOf(date: string): { week: number; year: number } {
   return { week: Math.ceil(((d.getTime() - yearStart) / DAY_MS + 1) / 7), year: d.getUTCFullYear() };
 }
 
+/**
+ * Why a collection may not be recorded on its date: a scheduled line is collected only on its weekdays. A collection made from a
+ * plan for that very day is let through (the plan was checked against the line's weekdays when it was made). Null when the day is
+ * fine, or the line has no schedule.
+ */
+export function offDayIssue(
+  setup: { collection_mode?: string | null; collection_weekdays?: string[] | null } | null | undefined,
+  date: string,
+  planDate?: string | null,
+): string | null {
+  if (setup?.collection_mode !== 'SCHEDULED' || !setup.collection_weekdays?.length) return null;
+  if (planDate && String(planDate).slice(0, 10) === date.slice(0, 10)) return null;
+  const weekday = weekdayOf(date);
+  if (setup.collection_weekdays.includes(weekday)) return null;
+  const days = setup.collection_weekdays.map((d) => WEEKDAY_NAMES[d] ?? d).join(' and ');
+  return `This line is collected on ${days}; ${date.slice(0, 10)} is a ${WEEKDAY_NAMES[weekday]}.`;
+}
+
 /** The first date on or after `from` that falls on one of the weekdays; null when there are none. */
 export function nextCollectionDate(weekdays: string[] | null | undefined, from: string): string | null {
   if (!weekdays?.length) return null;

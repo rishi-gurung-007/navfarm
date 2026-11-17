@@ -449,6 +449,8 @@ export interface MasterDataField {
   section?: string;
   /** Show this optional field in the compact inline lookup creator. */
   showInLookup?: boolean;
+  /** A lot label template (Breeding Line Setup): built with ready formats and part buttons, checked and previewed as typed. */
+  labelTemplate?: boolean;
   /**
    * Renders a single (non-multiple) select-entity field as a searchable combobox — a text
    * filter over the option list — instead of a plain `<select>`. Set on fields whose catalog

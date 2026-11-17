@@ -11,6 +11,14 @@ export class CreateQcParameterDto {
   @IsOptional()
   company_id?: string;
 
+  // Not on the form: in an operational area the master-data scope check writes the area's Line of Business here
+  // on create, as it does for every master whose table has the column. Without it the create was refused with
+  // "Line of Business is not a field this form accepts" (16 Nov).
+  @ApiProperty({ description: 'Line of Business UUID scope, set from the operational area (blank = not LOB-restricted)', required: false })
+  @IsString()
+  @IsOptional()
+  lob_id?: string;
+
   @ApiProperty({ description: 'QC Code: unique identification of the QC parameter, unique per company', example: 'QC-MOISTURE-001' })
   @IsString()
   @IsNotEmpty()

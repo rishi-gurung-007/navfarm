@@ -6,6 +6,7 @@ import * as schema from '../../../core/database/schema';
 import { BatchService } from '../../production/batch/batch.service';
 import { AnimalService } from '../animal/animal.service';
 import { LitterCostService } from '../litter-cost/litter-cost.service';
+import { GiltClassRuleService } from '../../master-data/breeding-line/gilt-class-rule.service';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { GiltSelectionService } from './gilt-selection.service';
 
@@ -51,6 +52,7 @@ describe('GiltSelectionService.createGilts', () => {
         { provide: AnimalService, useValue: animals },
         { provide: AuditLogService, useValue: audit },
         { provide: LitterCostService, useValue: litterCost },
+        { provide: GiltClassRuleService, useValue: { resolve: jest.fn().mockResolvedValue(null) } },
       ],
     }).compile();
     service = moduleRef.get(GiltSelectionService);
@@ -95,6 +97,22 @@ describe('GiltSelectionService.createGilts', () => {
     expect(updated.find((u) => u.table === schema.giltSelection)?.set).toMatchObject({ status: 'POSTED', head_released: '2', value_released: '3.6668' });
     expect(result.created.map((c: any) => c.animal_code)).toEqual(['PIG-1', 'PIG-2']);
     expect(find).toHaveBeenCalled();
+  });
+
+  it("registers each gilt as the class her parents' lines give (BBP-2), over the litter's piglet item", async () => {
+    spyOnSelection(selection());
+    sowRows();
+    (service as any).getProducedPiglets.mockResolvedValue({ head: 20, litters: [{ farrow_id: 'f1', available: 10, gilt_class_item_id: 'item-gp-loc-f' }] });
+    await service.createGilts('gs-1', buffer() as any, 't');
+    expect(animals.create.mock.calls.map((c) => c[0].item_id)).toEqual(['item-gp-loc-f', 'item-gp-loc-f']);
+  });
+
+  it('keeps the item the user named on the selection, whatever the parents give', async () => {
+    spyOnSelection(selection({ gilt_item_id: 'item-user' }));
+    sowRows();
+    (service as any).getProducedPiglets.mockResolvedValue({ head: 20, litters: [{ farrow_id: 'f1', available: 10, gilt_class_item_id: 'item-gp-loc-f' }] });
+    await service.createGilts('gs-1', buffer() as any, 't');
+    expect(animals.create.mock.calls.map((c) => c[0].item_id)).toEqual(['item-user', 'item-user']);
   });
 
   it('refuses when a litter has fewer piglets left than the line selects', async () => {

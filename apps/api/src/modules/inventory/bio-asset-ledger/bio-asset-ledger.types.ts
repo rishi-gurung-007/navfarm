@@ -42,7 +42,13 @@ export const BIO_DOCUMENT_TYPES = {
   ANIMAL_DISPOSAL: 'ANIMAL_DISPOSAL',
   LITTER_BIRTH_COST: 'LITTER_BIRTH_COST',
   LITTER_COST: 'LITTER_COST', // the lactation cost; the name predates the birth-cost document
+  // What a mature sow's expensed feed and overhead cost, handed to her litter by a reclass journal (Dr the piglet lot / Cr the expense it was charged to), per window and per kind of cost
+  LITTER_BIRTH_EXP_FEED: 'LITTER_BIRTH_EXP_FEED',
+  LITTER_BIRTH_EXP_OH: 'LITTER_BIRTH_EXP_OH',
+  LITTER_COST_EXP_FEED: 'LITTER_COST_EXP_FEED',
+  LITTER_COST_EXP_OH: 'LITTER_COST_EXP_OH',
   GILT_SELECTION: 'GILT_SELECTION',
+  SLAUGHTER_DISPATCH: 'SLAUGHTER_DISPATCH', // head sent to the abattoir on a slaughter Transfer Order, into Inventory in Transit
   MORTALITY: 'MORTALITY',
   BIO_COSTING_RUN: 'BIO_COSTING_RUN',
   BIO_FAIR_VALUE_RUN: 'BIO_FAIR_VALUE_RUN',
@@ -108,6 +114,8 @@ export const bioCodes = {
   mortality: (): BioCodes => ({ entry_type: 'NEGATIVE', transaction_type: 'VARIANCE_NEGATIVE', document_type: D.MORTALITY }),
   /** Animals selected out of a litter lot as gilts (the animals themselves are registered separately). */
   giltSelection: (): BioCodes => ({ entry_type: 'TRANSFER', transaction_type: 'TRANSFER_SHIPMENT', document_type: D.GILT_SELECTION }),
+  /** Head dispatched to the abattoir on a slaughter Transfer Order: they leave the batch for Inventory in Transit. */
+  slaughterDispatch: (): BioCodes => ({ entry_type: 'TRANSFER', transaction_type: 'TRANSFER_SHIPMENT', document_type: D.SLAUGHTER_DISPATCH }),
   /** The marker a batch leaves when it is made mature: no cost, no heads leaving. */
   maturity: (): BioCodes => ({ entry_type: 'DESCRIPTIVE', transaction_type: 'DESCRIPTIVE', document_type: D.BATCH_MATURITY }),
   /** Animals harvested out of a bio-asset batch as produce. */
@@ -167,13 +175,13 @@ const EVENT_DOCUMENTS: Record<BioEvent, readonly string[]> = {
   ACQUISITION: [D.ANIMAL_REGISTRATION, D.BATCH],
   CONSUMPTION: [D.BATCH],
   OVERHEAD_COST: [D.BATCH_OVERHEAD, D.BREEDING_SEMEN],
-  COST_ALLOCATION: [D.LITTER_BIRTH_COST, D.LITTER_COST],
+  COST_ALLOCATION: [D.LITTER_BIRTH_COST, D.LITTER_COST, D.LITTER_BIRTH_EXP_FEED, D.LITTER_BIRTH_EXP_OH, D.LITTER_COST_EXP_FEED, D.LITTER_COST_EXP_OH],
   TRANSFER_OUT: [D.BATCH_TRANSFER],
   TRANSFER_IN: [D.BATCH_TRANSFER],
   AMORTIZATION: [D.BIO_COSTING_RUN, D.BATCH_AMORTIZATION],
   FAIR_VALUE_ADJMT: [D.BIO_FAIR_VALUE_RUN, D.BATCH_FAIR_VALUE],
   MORTALITY: [D.MORTALITY],
-  TRANSFORMATION: [D.GILT_SELECTION, D.BATCH_MATURITY, D.BATCH_HARVEST, D.BATCH_DISPOSAL, D.ANIMAL_DISPOSAL],
+  TRANSFORMATION: [D.GILT_SELECTION, D.BATCH_MATURITY, D.BATCH_HARVEST, D.BATCH_DISPOSAL, D.ANIMAL_DISPOSAL, D.SLAUGHTER_DISPATCH],
 };
 
 /** What a row is, or null for a row this ledger did not write (a manual entry). */
@@ -185,7 +193,11 @@ export function bioEventOf(row: CodedRow): BioEvent | null {
     case D.BATCH_OVERHEAD:
     case D.BREEDING_SEMEN: return 'OVERHEAD_COST';
     case D.LITTER_BIRTH_COST:
-    case D.LITTER_COST: return 'COST_ALLOCATION';
+    case D.LITTER_COST:
+    case D.LITTER_BIRTH_EXP_FEED:
+    case D.LITTER_BIRTH_EXP_OH:
+    case D.LITTER_COST_EXP_FEED:
+    case D.LITTER_COST_EXP_OH: return 'COST_ALLOCATION';
     case D.BATCH_TRANSFER: return row.transaction_type === 'TRANSFER_SHIPMENT' ? 'TRANSFER_OUT' : 'TRANSFER_IN';
     case D.BIO_COSTING_RUN:
     case D.BATCH_AMORTIZATION: return 'AMORTIZATION';
@@ -193,6 +205,7 @@ export function bioEventOf(row: CodedRow): BioEvent | null {
     case D.BATCH_FAIR_VALUE: return 'FAIR_VALUE_ADJMT';
     case D.MORTALITY: return 'MORTALITY';
     case D.GILT_SELECTION:
+    case D.SLAUGHTER_DISPATCH:
     case D.BATCH_MATURITY:
     case D.BATCH_HARVEST:
     case D.BATCH_DISPOSAL:

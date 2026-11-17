@@ -1,4 +1,4 @@
-import { isoWeekOf, nextCollectionDate, PlanSetup, planResult, weekdayOf } from './collection-plan.rules';
+import { isoWeekOf, nextCollectionDate, offDayIssue, PlanSetup, planResult, weekdayOf } from './collection-plan.rules';
 
 const lLine: PlanSetup = {
   collection_mode: 'SCHEDULED', collection_weekdays: ['SUN', 'WED'], boars_per_collection_day: 2,
@@ -100,5 +100,24 @@ describe('planResult: what every plan must be', () => {
 
   it('allows today', () => {
     expect(planResult(null, input({ date: '2026-11-02' }), 'X').errors).toEqual([]);
+  });
+});
+
+describe('offDayIssue: a collection recorded on a day the line is not collected', () => {
+  const sunSat = { collection_mode: 'SCHEDULED', collection_weekdays: ['SUN', 'SAT'] };
+  it('refuses a Monday on a Sunday and Saturday line', () => {
+    expect(offDayIssue(sunSat, '2026-11-16')).toBe('This line is collected on Sunday and Saturday; 2026-11-16 is a Monday.');
+  });
+  it('lets the line\'s own days through', () => {
+    expect(offDayIssue(sunSat, '2026-11-21')).toBeNull();
+    expect(offDayIssue(sunSat, '2026-11-22')).toBeNull();
+  });
+  it('lets a collection from a plan for that very day through, not one from a plan for another day', () => {
+    expect(offDayIssue(sunSat, '2026-11-16', '2026-11-16')).toBeNull();
+    expect(offDayIssue(sunSat, '2026-11-16', '2026-11-21')).not.toBeNull();
+  });
+  it('checks nothing for a line collected on request, or with no setup', () => {
+    expect(offDayIssue({ collection_mode: 'ON_REQUEST', collection_weekdays: null }, '2026-11-16')).toBeNull();
+    expect(offDayIssue(null, '2026-11-16')).toBeNull();
   });
 });

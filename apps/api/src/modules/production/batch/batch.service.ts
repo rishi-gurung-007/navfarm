@@ -40,7 +40,8 @@ import { entryBlockedReason } from '../batch-daily-data/entry-blocked';
 import { masterScopeConditions } from '../../../common/master-data-scope';
 import { assertStageFitsAnimal, stageFitsGender } from '../stage/stage-gender';
 import { farmStoreOf } from '../../../common/farm-store';
-import { herdCarryingAccount, pigletLotAccount } from './herd-account';
+import { isCurrentBioLot } from './current-bio-lot';
+import { herdCarryingAccount, lotWipAccount, pigletLotAccount } from './herd-account';
 import { BatchDayReversalService } from './batch-day-reversal.service';
 import {
   animalOutputEvent,
@@ -1658,6 +1659,29 @@ export class BatchService {
       .from(schema.batchStageLog)
       .where(eq(schema.batchStageLog.batch_id, id));
 
+    // A batch of registered animals is worth what its animals are worth: each one's book value, which her ledger derives and the register caches.
+    // The batch's own carrying value (batch_bio_asset_state) counts capitalised cost only, because costing runs and registrations carry no batch
+    // (D8), so it is shown beside this and never in its place.
+    let animalsBook: { head: number; book_value: number } | null = null;
+    if (batch.tracking_mode === 'ANIMAL_WISE') {
+      const [row] = await this.db
+        .select({
+          head: sql<string>`COUNT(*)`,
+          value: sql<string>`COALESCE(SUM(${schema.animalRegister.book_value}), 0)`,
+        })
+        .from(schema.animalRegister)
+        .where(
+          and(
+            eq(schema.animalRegister.current_batch_id, id),
+            eq(schema.animalRegister.is_active, true),
+          ),
+        );
+      animalsBook = {
+        head: Number(row?.head ?? 0),
+        book_value: Math.round(Number(row?.value ?? 0) * 1e4) / 1e4,
+      };
+    }
+
     return {
       ...batch,
       input_lines: inputLines,
@@ -1669,6 +1693,7 @@ export class BatchService {
         : null,
       variances,
       bio_asset_state: bioAssetState || null,
+      animals_book: animalsBook,
       bio_asset_entries: bioAssetEntries,
       scheduler: schedulerHeader
         ? { ...schedulerHeader, lines: schedulerLines }
@@ -2657,11 +2682,22 @@ export class BatchService {
    * to the mapping's pre-mature account, so a piglet's death took out of Weaners Inventory value that had been put into the herd account.
    */
   private async herdAssetAccount(
-    batch: { batch_id: string; company_id: string; nob_id?: string | null; lob_id?: string | null },
+    batch: {
+      batch_id: string;
+      company_id: string;
+      nob_id?: string | null;
+      lob_id?: string | null;
+      stage_id?: string | null;
+      is_litter_lot?: boolean | null;
+      tracking_mode?: string | null;
+      current_stage_code?: string | null;
+    },
     tenantId: string,
   ): Promise<string | undefined> {
     return (
       (await this.batchClassAccount(batch.batch_id)) ??
+      // A weaner or grower lot's cost goes to WIP during the month and is recognised as inventory at month end (13 Nov, BBP-2 S.NO.6), where mapped.
+      (await lotWipAccount(this.glPostingService, batch, tenantId)) ??
       (await this.litterLotAccount(batch, tenantId))
     );
   }
@@ -3357,6 +3393,8 @@ export class BatchService {
       reference: string;
       remarks?: string;
       value_per_head?: number;
+      /** What the release is in the bio-asset ledger: a gilt selection unless said otherwise (a slaughter dispatch). */
+      ledger_codes?: ReturnType<typeof bioCodes.giltSelection>;
     },
     tenantId: string,
     userPayload?: UserContext,
@@ -3446,7 +3484,7 @@ export class BatchService {
           company_id: batch.company_id,
           bio_asset_item_id: itemId,
           lot_no: acquired?.lot_no ?? null,
-          ...bioCodes.giltSelection(),
+          ...(params.ledger_codes ?? bioCodes.giltSelection()),
           document_no: params.reference,
           batch_id: id,
           batch_no: batch.batch_no,
@@ -3483,7 +3521,7 @@ export class BatchService {
         entityName: 'batch_header',
         entityId: id,
         newValues: {
-          gilt_selection: params.reference,
+          [params.ledger_codes ? 'released_by' : 'gilt_selection']: params.reference,
           head_released: params.quantity,
           value_released: releasedValue,
           remaining,
@@ -3945,7 +3983,11 @@ export class BatchService {
           'An output entry needs an item, a quantity and a unit of measure.',
         );
       }
-      if (isBioAsset && bio?.stage !== 'MATURE') {
+      if (
+        isBioAsset &&
+        bio?.stage !== 'MATURE' &&
+        !this.isCurrentBioLot(batch)
+      ) {
         throw new BadRequestException(
           'OUTPUT can only be recorded once the bio-asset batch has matured.',
         );
@@ -6338,48 +6380,55 @@ export class BatchService {
 
     // Determine if the entire stage should be locked:
     // If posting for all animals, always lock.
-    // If posting for a single animal, lock only if ALL stage animals now have mandatory entries posted.
+    // If posting for a single animal, lock once every animal of the stage is posted - by the rule the data entry
+    // screen marks an animal "Posted" with (a posted row for the day and no draft left) - and, where the schedule
+    // has mandatory lines, every animal has each of them posted. Before 16 Nov a schedule with no mandatory line
+    // never locked on the last animal's post, and the user had to press "Lock Stage Day" to move the date on.
     let shouldLockStage = !animalId;
-    if (animalId && header) {
-      const activePairs = await this.loadScheduleLinesForHeader(
-        header,
-        dateStr,
+    if (animalId) {
+      const activePairs = header
+        ? await this.loadScheduleLinesForHeader(header, dateStr)
+        : [];
+      const dayRows = await this.db
+        .select({
+          line_id: schema.batchDailyData.line_id,
+          animal_id: schema.batchDailyData.animal_id,
+          posted: schema.batchDailyData.posted,
+        })
+        .from(schema.batchDailyData)
+        .where(
+          and(
+            eq(schema.batchDailyData.batch_id, batchId),
+            eq(schema.batchDailyData.entry_date, dateStr),
+            inArray(
+              schema.batchDailyData.animal_id,
+              allStageAnimals.map((a) => a.animal_id),
+            ),
+          ),
+        );
+      const withDraft = new Set(
+        dayRows.filter((e) => !e.posted).map((e) => e.animal_id),
+      );
+      const withPosted = new Set(
+        dayRows.filter((e) => Boolean(e.posted)).map((e) => e.animal_id),
+      );
+      const everyAnimalPosted = allStageAnimals.every(
+        (a) => withPosted.has(a.animal_id) && !withDraft.has(a.animal_id),
       );
       const mandatoryLineIds = activePairs
         .filter(({ line }) => line.is_mandatory)
         .map(({ line }) => line.line_id);
-      if (mandatoryLineIds.length) {
-        const allEntries = await this.db
-          .select({
-            line_id: schema.batchDailyData.line_id,
-            animal_id: schema.batchDailyData.animal_id,
-            posted: schema.batchDailyData.posted,
-          })
-          .from(schema.batchDailyData)
-          .where(
-            and(
-              inArray(schema.batchDailyData.line_id, mandatoryLineIds),
-              eq(schema.batchDailyData.entry_date, dateStr),
-              inArray(
-                schema.batchDailyData.animal_id,
-                allStageAnimals.map((a) => a.animal_id),
-              ),
-            ),
-          );
-        const postedSet = new Set(
-          allEntries
-            .filter((e) => e.posted)
-            .map((e) => `${e.line_id}:${e.animal_id}`),
-        );
-        const allComplete = allStageAnimals.every((animal) =>
-          mandatoryLineIds.every((lineId) =>
-            postedSet.has(`${lineId}:${animal.animal_id}`),
-          ),
-        );
-        if (allComplete) {
-          shouldLockStage = true;
-        }
-      }
+      const postedSet = new Set(
+        dayRows
+          .filter((e) => Boolean(e.posted))
+          .map((e) => `${e.line_id}:${e.animal_id}`),
+      );
+      const mandatoryComplete = allStageAnimals.every((animal) =>
+        mandatoryLineIds.every((lineId) =>
+          postedSet.has(`${lineId}:${animal.animal_id}`),
+        ),
+      );
+      shouldLockStage = everyAnimalPosted && mandatoryComplete;
     }
 
     if (shouldLockStage) {
@@ -7310,6 +7359,18 @@ export class BatchService {
   }
 
   /**
+   * A litter's piglet lot, or a head-count batch in the Weaner / Grower / Finisher stage, is a current biological asset (BBP-2 S.NO.6): it
+   * accumulates cost and leaves by sale, harvest or output at its carrying value, and is never matured or amortised.
+   */
+  private isCurrentBioLot(batch: {
+    is_litter_lot?: boolean | null;
+    tracking_mode?: string | null;
+    current_stage_code?: string | null;
+  }): boolean {
+    return isCurrentBioLot(batch);
+  }
+
+  /**
    * Refuses an action that only applies to BIO_ASSET batches.
    */
   private assertBioAsset(batch: { costing_method: string }, action: string) {
@@ -7385,6 +7446,11 @@ export class BatchService {
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'ACTIVE');
     this.assertBioAsset(batch, 'Maturity transition');
+    if (this.isCurrentBioLot(batch)) {
+      throw new BadRequestException(
+        `Batch ${batch.batch_no} is a piglet, weaner or grower lot: a current biological asset that accumulates cost and is never matured or amortised (BBP-2 S.NO.6).`,
+      );
+    }
     // A batch of registered animals is never made mature as a herd: one switch for animals of different ages is wrong for each of them. Each animal
     // is costed from her own start age (her costing start date), by the central costing run (Finance > Bio-Asset Costing Runs).
     if (
@@ -7504,6 +7570,11 @@ export class BatchService {
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'ACTIVE');
     this.assertBioAsset(batch, 'Amortization');
+    if (this.isCurrentBioLot(batch)) {
+      throw new BadRequestException(
+        `Batch ${batch.batch_no} is a piglet, weaner or grower lot: it is never amortised (BBP-2 S.NO.6).`,
+      );
+    }
     await this.assertNotCostedPerAnimal(batch, id, 'Amortization');
     const bioState = await this.getBioAssetState(id);
     if (bioState.stage !== 'MATURE') {
@@ -7632,6 +7703,8 @@ export class BatchService {
     dto: RecordFairValueDto,
     tenantId: string,
     userPayload?: UserContext,
+    // Where the gain and the loss are recognised, where the herd's item names them (its Posting Group / Item Card accounts); the mapping's one account otherwise.
+    accounts?: { gainAccountId?: string | null; lossAccountId?: string | null },
   ) {
     const batch = await this.findOne(id);
     this.assertStatus(batch, 'ACTIVE');
@@ -7677,6 +7750,15 @@ export class BatchService {
       lobId: batch.lob_id,
       stageId: batch.stage_id || undefined,
       userId: userPayload?.userId,
+      // A premature herd is carried in its own account (a piglet lot in the one its birth cost went to), so its revaluation moves that account, as its sale does
+      // (11 Nov: a lot is carried in one account). The mapping names the other side.
+      ...(bioState.stage === 'PREMATURE'
+        ? { debitAccountId: await this.prematureAssetAccount(batch, tenantId) }
+        : {}),
+      // The fair value account swaps sides with a loss, so a gain names the gain account and a loss the loss account.
+      ...((gainLoss >= 0 ? accounts?.gainAccountId : (accounts?.lossAccountId ?? accounts?.gainAccountId))
+        ? { creditAccountId: (gainLoss >= 0 ? accounts?.gainAccountId : (accounts?.lossAccountId ?? accounts?.gainAccountId))! }
+        : {}),
       reverseDirection: gainLoss < 0,
     });
 

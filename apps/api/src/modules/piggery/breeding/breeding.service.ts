@@ -30,7 +30,7 @@ import { LitterCostService } from '../litter-cost/litter-cost.service';
 import { BreedingLineSetupService } from '../../master-data/breeding-line/breeding-line-setup.service';
 import { CollectionPlanService } from './collection-plan.service';
 import { SemenDestinationService } from '../../master-data/breeding-line/semen-destination.service';
-import { isoWeekOf } from './collection-plan.rules';
+import { isoWeekOf, offDayIssue } from './collection-plan.rules';
 import { renderLotLabel } from './semen-lot-label.rules';
 import { collectionRuleResult } from '../../master-data/breeding-line/breeding-line.rules';
 import { boarResultIssues, lotTotals } from './semen-boar-result.rules';
@@ -2054,8 +2054,7 @@ export class BreedingService {
     }
 
     // The boar's breeding line decides how a lot may be made (plan 2026-11-02, Phase 1): the pooling and boar-count rules
-    // always stop the collection; rest and motility stop or only warn as the line says. No setup for the line and none for
-    // the company means nothing is checked.
+    // stop the collection. No setup for the line and none for the company means nothing is checked.
     const lineRules = await this.lineSetups.findEffective(
       boar.breed_id,
       tenantId,
@@ -2064,22 +2063,6 @@ export class BreedingService {
     const ruleResult = collectionRuleResult({
       rules: lineRules as any,
       boarCount: allBoars.length,
-      restDays: lineRules?.min_rest_days != null
-        ? await this.daysSinceLastCollection(
-            [...allBoars, ...rejectedBoars],
-            dto.collection_date,
-            tenantId,
-          )
-        : [],
-      motilityPct: resultInputs.length ? null : (dto.motility_pct ?? null),
-      boarMotilities: resultInputs
-        .filter((r) => r.accepted !== false)
-        .map((r) => ({
-          boar:
-            allBoars.find((b) => b.animal_id === r.boar_animal_id)
-              ?.animal_code ?? r.boar_animal_id,
-          pct: r.motility_pct ?? null,
-        })),
     });
     if (ruleResult.errors.length) {
       throw new BadRequestException(ruleResult.errors.join(' '));
@@ -2100,6 +2083,10 @@ export class BreedingService {
           tenantId,
         )
       : null;
+    // A scheduled line is collected only on its weekdays; a collection from a plan for that day passes (16 Nov: refused, was a
+    // warning on the form only).
+    const offDay = offDayIssue(lineRules as any, dto.collection_date, planCheck?.plan.collection_date);
+    if (offDay) throw new BadRequestException(offDay);
 
     // The period costs: as typed (for the lot as a whole), else worked out from what was posted for each boar over his own
     // period and added up (G7) — a pooled lot carries what every boar in it cost.
@@ -2194,10 +2181,7 @@ export class BreedingService {
     }
     const lineFarms = (lineRules?.destination_farm_ids ?? []) as string[];
     const destinationFarmId = planCheck?.plan.destination_farm_id ?? (lineRules?.destination_rule === 'ONE' ? (lineFarms[0] ?? null) : null);
-    const colorantQty = lineRules?.colorant_qty_per_lot != null ? Number(lineRules.colorant_qty_per_lot) : null;
-    const colorant = lineRules?.colorant_name || lineRules?.colorant_item_id
-      ? { name: lineRules.colorant_name ?? null, itemId: lineRules.colorant_item_id ?? null, quantity: colorantQty }
-      : undefined;
+    const colorantName = lineRules?.colorant_name?.trim() || null;
 
     // Naming an item posts the collection to inventory as a lot of it, with its QR (any item the farm uses for semen).
     const posted = dto.output_item_id
@@ -2218,16 +2202,14 @@ export class BreedingService {
             },
             label,
             week: { no: week.week, year: week.year },
-            colorant,
+            colorantName,
             destinationFarmId,
           },
           tenantId,
           userPayload,
         )
       : null;
-    // The colorant issued from stock is part of what the lot cost, so of each dose.
-    const colorantCost = posted?.colorant_cost ?? 0;
-    const lotRunningCost = runningCost + colorantCost;
+    const lotRunningCost = runningCost;
     const lotUnitCost = dosesCollected > 0 ? lotRunningCost / dosesCollected : 0;
     const newRecord = {
       semen_batch_id: semenBatchId,
@@ -2240,10 +2222,7 @@ export class BreedingService {
       label,
       week_no: week.week,
       week_year: week.year,
-      colorant_name: colorant?.name ?? null,
-      colorant_item_id: posted && colorantCost > 0 ? (colorant?.itemId ?? null) : null,
-      colorant_qty: colorant?.quantity != null ? String(colorant.quantity) : null,
-      colorant_cost: colorantCost > 0 ? colorantCost.toFixed(4) : null,
+      colorant_name: colorantName,
       destination_farm_id: destinationFarmId,
       collection_date: dto.collection_date,
       period_from: period.from,
@@ -2371,70 +2350,6 @@ export class BreedingService {
     tenantId: string,
   ) {
     await assertCollectorList(this.db, ids, tenantId, companyId);
-  }
-
-  /**
-   * Whole days from each boar's most recent collection on or before `onDate` to `onDate` (null when he has none). A boar's
-   * collection is one he was the primary of, or one he was pooled into.
-   */
-  private async daysSinceLastCollection(
-    boars: (typeof schema.animalRegister.$inferSelect)[],
-    onDate: string,
-    tenantId: string,
-  ): Promise<{ boar: string; days: number | null }[]> {
-    const ids = boars.map((b) => b.animal_id);
-    const last = new Map<string, string>();
-    const note = (boarId: string, date: string | null | undefined) => {
-      const d = date ? String(date).slice(0, 10) : null;
-      if (d && d <= onDate && (!last.has(boarId) || d > last.get(boarId)!)) {
-        last.set(boarId, d);
-      }
-    };
-    const primary = await this.db
-      .select({ boar: schema.semenBatch.boar_animal_id, date: schema.semenBatch.collection_date })
-      .from(schema.semenBatch)
-      .where(
-        and(
-          eq(schema.semenBatch.tenant_id, tenantId),
-          inArray(schema.semenBatch.boar_animal_id, ids),
-          lte(schema.semenBatch.collection_date, onDate),
-        ),
-      );
-    for (const r of primary) if (ids.includes(r.boar)) note(r.boar, r.date);
-    const pooled = await this.db
-      .select({ boar: schema.semenBatchBoar.boar_animal_id, lot: schema.semenBatchBoar.semen_batch_id })
-      .from(schema.semenBatchBoar)
-      .where(
-        and(
-          eq(schema.semenBatchBoar.tenant_id, tenantId),
-          inArray(schema.semenBatchBoar.boar_animal_id, ids),
-        ),
-      );
-    // A boar tapped whose ejaculate was rejected was still collected: his results count for his rest, accepted or not.
-    const results = await this.db
-      .select({ boar: schema.semenBoarResult.boar_animal_id, lot: schema.semenBoarResult.semen_batch_id })
-      .from(schema.semenBoarResult)
-      .where(
-        and(
-          eq(schema.semenBoarResult.tenant_id, tenantId),
-          inArray(schema.semenBoarResult.boar_animal_id, ids),
-        ),
-      );
-    const contributions = [...pooled, ...results];
-    const lotIds = [...new Set(contributions.map((r) => r.lot))];
-    if (lotIds.length) {
-      const lots = await this.db
-        .select({ id: schema.semenBatch.semen_batch_id, date: schema.semenBatch.collection_date })
-        .from(schema.semenBatch)
-        .where(and(inArray(schema.semenBatch.semen_batch_id, lotIds), lte(schema.semenBatch.collection_date, onDate)));
-      const dateOf = new Map(lots.map((l) => [l.id, l.date]));
-      for (const r of contributions) note(r.boar, dateOf.get(r.lot));
-    }
-    const day = (d: string) => Date.parse(`${d}T00:00:00Z`);
-    return boars.map((b) => ({
-      boar: b.animal_code,
-      days: last.has(b.animal_id) ? Math.round((day(onDate) - day(last.get(b.animal_id)!)) / 86_400_000) : null,
-    }));
   }
 
   /**
@@ -2630,8 +2545,6 @@ export class BreedingService {
         week_no: schema.semenBatch.week_no,
         week_year: schema.semenBatch.week_year,
         colorant_name: schema.semenBatch.colorant_name,
-        colorant_qty: schema.semenBatch.colorant_qty,
-        colorant_cost: schema.semenBatch.colorant_cost,
         destination_farm_id: schema.semenBatch.destination_farm_id,
         notes: schema.semenBatch.notes,
         created_at: schema.semenBatch.created_at,
@@ -2842,7 +2755,6 @@ export class BreedingService {
       boar_batch_no: row.boar_batch_no,
       breed: breed ?? null,
       item: await itemOf(lot.output_item_id),
-      colorant_item: await itemOf(lot.colorant_item_id),
       warehouse: await place(lot.warehouse_id),
       destination_farm: await place(lot.destination_farm_id),
       plan: plan ?? null,

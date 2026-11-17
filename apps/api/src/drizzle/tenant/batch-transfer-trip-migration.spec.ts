@@ -3,15 +3,15 @@ import { join } from 'node:path';
 
 const dir = __dirname;
 const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')).entries as Array<{ idx: number; when: number; tag: string }>;
-const sql = readFileSync(join(dir, '0257_batch_transfer_trip.sql'), 'utf8');
+const sql = readFileSync(join(dir, '0260_batch_transfer_trip.sql'), 'utf8');
 
-describe('Tenant migration 0257 — a trip for a cross-farm batch transfer', () => {
+describe('Tenant migration 0260 — a trip for a cross-farm batch transfer', () => {
   it('is journalled past every earlier entry and shares its number with nothing', () => {
-    const entry = journal.find((e) => e.tag === '0257_batch_transfer_trip')!;
+    const entry = journal.find((e) => e.tag === '0260_batch_transfer_trip')!;
     expect(entry).toBeDefined();
-    expect(entry.when).toBe(1792000000125);
-    expect(journal.filter((e) => e.tag !== entry.tag).every((e) => e.when < entry.when)).toBe(true);
-    expect(journal.filter((e) => e.tag.startsWith('0257_'))).toHaveLength(1);
+    expect(entry.when).toBe(1792000000128);
+    expect(journal.filter((e) => e.idx < entry.idx).every((e) => e.when < entry.when)).toBe(true);
+    expect(journal.filter((e) => e.tag.startsWith('0260_'))).toHaveLength(1);
     journal.forEach((e, i) => expect(e.idx).toBe(i));
   });
 

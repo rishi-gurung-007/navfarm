@@ -9,7 +9,7 @@ import { LOGISTICS_CONFIGS } from '@/modules/master-data/logistics-configs';
  * a step with s decimals — read from migration 0254 itself, so the form and
  * the table cannot drift apart.
  */
-const sql = readFileSync(resolve(__dirname, '../../api/src/drizzle/tenant/0254_logistics_masters.sql'), 'utf8');
+const sql = readFileSync(resolve(__dirname, '../../api/src/drizzle/tenant/0257_logistics_masters.sql'), 'utf8');
 
 function decimalScales(): Map<string, number> {
   const scales = new Map<string, number>();

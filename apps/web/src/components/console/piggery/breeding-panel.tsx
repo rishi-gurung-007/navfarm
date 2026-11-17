@@ -57,7 +57,6 @@ import {
   EntryModal,
   Field,
   ImpactCard,
-  PlanSummary,
   Step,
   inputStyle,
 } from './breeding-form-parts';
@@ -1157,7 +1156,7 @@ export function BreedingPanel({
       { label: 'Boars', value: conditionRows.length, caption: 'In the list', icon: Activity, tone: 'info' },
       { label: 'Overdue', value: countWhere(conditionRows, (r) => r.status === 'OVERDUE'), caption: 'Scoring is late', icon: XCircle, tone: 'danger' },
       { label: 'Need scoring', value: countWhere(conditionRows, (r) => r.status === 'DUE' || r.status === 'NEVER'), caption: 'Due now or never scored', icon: Clock, tone: 'warning' },
-      { label: 'Up to date', value: countWhere(conditionRows, (r) => r.status === 'OK' || r.status === 'DUE_SOON'), caption: 'Scored within schedule', icon: CheckCircle2, tone: 'success' },
+      { label: 'Up to date', value: countWhere(conditionRows, (r) => r.status === 'OK'), caption: 'Scored within schedule', icon: CheckCircle2, tone: 'success' },
     ],
     gilts: [
       { label: 'Posted selections', value: postedGiltSelections.length, caption: 'Gilts moved to the herd', icon: Sprout, tone: 'success' },
@@ -3565,7 +3564,7 @@ export function BreedingPanel({
                   ? ([
                       [
                         'Colorant',
-                        `${lineRules.colorant_name}${lineRules.colorant_item_id && Number(lineRules.colorant_qty_per_lot) > 0 ? ` · ${Number(lineRules.colorant_qty_per_lot)} issued from stock` : ''}`,
+                        lineRules.colorant_name,
                       ],
                     ] as [string, string][])
                   : []),
@@ -3598,14 +3597,6 @@ export function BreedingPanel({
             />
           }
         >
-          {semenForm.plan_info && (
-            <PlanSummary
-              plan={semenForm.plan_info}
-              referenceLabel={lineRules?.reference_label}
-              destination={semenDestination}
-            />
-          )}
-
           <Step
             n={1}
             title="Batch"

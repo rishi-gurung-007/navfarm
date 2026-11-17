@@ -1617,11 +1617,11 @@ describe('BreedingService', () => {
       describe('the label, colorant and destination the line puts on a lot', () => {
         const rule = (over: object = {}) => ({
           setup_id: 's', breed_id: 'b-line', pooling_allowed: true, min_boars_per_lot: null, max_boars_per_lot: null,
-          min_rest_days: null, min_motility_pct: null, rule_enforcement: 'WARN', reference_required: false, reference_label: null,
-          label_template: null, include_year: false, colorant_name: null, colorant_item_id: null, colorant_qty_per_lot: null,
+          reference_required: false, reference_label: null,
+          label_template: null, include_year: false, colorant_name: null,
           destination_rule: 'ANY', destination_farm_ids: null, ...over,
         });
-        const posted = (over: object = {}) => ({ lot_no: 'LOT-1', expiry_date: null, warehouse_id: 'store-1', qr_id: 'qr', pack_no: 'PACK-1', colorant_cost: 0, ...over });
+        const posted = (over: object = {}) => ({ lot_no: 'LOT-1', expiry_date: null, warehouse_id: 'store-1', qr_id: 'qr', pack_no: 'PACK-1', ...over });
         const lastPost = () => semenLots.postCollection.mock.calls[0][0];
 
         it('labels a single-boar lot from the line\'s template: the boar\'s tag and the ISO week (Z-Line: <boar tag>-<week>)', async () => {
@@ -1658,31 +1658,18 @@ describe('BreedingService', () => {
           semenLots.postCollection.mockResolvedValue(posted());
           const out: any = await service.recordSemenCollection(collection({ output_item_id: 'item-1' }), 'tenant-1');
           expect(out.label).toBeNull();
-          expect(lastPost().colorant).toBeUndefined();
+          expect(lastPost().colorantName).toBeNull();
           expect(out.destination_farm_id).toBeNull();
         });
 
-        it('records the colorant by name, and issues it from stock when the setup names an item and a quantity', async () => {
-          rows.set(schema.animalRegister, [{ ...boar, breed_id: 'b-line' }]);
-          lineSetups.findEffective.mockResolvedValue(rule({ colorant_name: 'Green', colorant_item_id: 'item-dye', colorant_qty_per_lot: '2.000' }));
-          semenLots.postCollection.mockResolvedValue(posted({ colorant_cost: 20 }));
-          const out: any = await service.recordSemenCollection(collection({ output_item_id: 'item-1', feed_cost_period: 100 }), 'tenant-1');
-          expect(lastPost().colorant).toEqual({ name: 'Green', itemId: 'item-dye', quantity: 2 });
-          // the colorant's cost is part of the lot's: 100 of the boar's cost + 20 of colorant over 40 doses
-          expect(out.colorant_name).toBe('Green');
-          expect(out.colorant_cost).toBe('20.0000');
-          expect(out.running_cost_period).toBe('120.0000');
-          expect(out.unit_cost_per_dose).toBe('3.000000');
-        });
-
-        it('records a colorant that is only a name with no stock issued and no cost', async () => {
+        it('records the colorant by name only: nothing is issued from stock and the lot costs no more', async () => {
           rows.set(schema.animalRegister, [{ ...boar, breed_id: 'b-line' }]);
           lineSetups.findEffective.mockResolvedValue(rule({ colorant_name: 'Red' }));
           semenLots.postCollection.mockResolvedValue(posted());
           const out: any = await service.recordSemenCollection(collection({ output_item_id: 'item-1', feed_cost_period: 100 }), 'tenant-1');
-          expect(lastPost().colorant).toEqual({ name: 'Red', itemId: null, quantity: null });
+          expect(lastPost().colorantName).toBe('Red');
           expect(out.colorant_name).toBe('Red');
-          expect(out.colorant_cost).toBeNull();
+          expect(out).not.toHaveProperty('colorant_cost');
           expect(out.unit_cost_per_dose).toBe('2.500000');
         });
 
@@ -1740,7 +1727,7 @@ describe('BreedingService', () => {
         };
         const rule = (over: object = {}) => ({
           setup_id: 's', breed_id: null, pooling_allowed: true, min_boars_per_lot: null, max_boars_per_lot: null,
-          min_rest_days: null, min_motility_pct: null, rule_enforcement: 'WARN', reference_required: false, reference_label: null, ...over,
+          reference_required: false, reference_label: null, ...over,
         });
 
         it('checks every boar tapped (the rejected one too) against the plan, stores the plan on the lot, and marks them collected', async () => {
@@ -1879,25 +1866,21 @@ describe('BreedingService', () => {
           ).rejects.toThrow("has an accepted result but is not one of the lot's boars");
         });
 
-        it('judges each boar\'s own motility against the line, and a rejected boar\'s rest too', async () => {
+        it('no longer judges rest days or motility: a boar collected the day before with low motility is recorded with no warning', async () => {
           rows.set(schema.animalRegister, [boar, boar2]);
           rows.set(schema.semenBoarResult, [{ boar: 'boar-2', lot: 'old-lot' }] as any);
           rows.set(schema.semenBatch, [{ id: 'old-lot', date: '2026-10-08' }] as any);
           lineSetups.findEffective.mockResolvedValue({
             setup_id: 's', breed_id: null, pooling_allowed: true, min_boars_per_lot: null, max_boars_per_lot: null,
-            min_rest_days: 3, min_motility_pct: '70.00', rule_enforcement: 'WARN',
           });
           const out: any = await service.recordSemenCollection(
             noDoses({
               feed_cost_period: 0,
-              boar_results: [result('boar-1', { motility_pct: 60 }), result('boar-2', { accepted: false, reject_reason: 'bad', motility_pct: 10 })],
+              boar_results: [result('boar-1', { motility_pct: 10 }), result('boar-2', { accepted: false, reject_reason: 'bad', motility_pct: 10 })],
             }),
             'tenant-1',
           );
-          expect(out.warnings).toEqual([
-            'BOAR-2 was collected 1 day ago; this line rests a boar 3 days or more.',
-            "BOAR-1's motility 60% is under the line's minimum of 70%.",
-          ]);
+          expect(out.warnings).toEqual([]);
         });
 
         it('gives a single-boar lot recorded without results a result of its own, and a pooled one none', async () => {
@@ -1925,10 +1908,25 @@ describe('BreedingService', () => {
           pooling_allowed: true,
           min_boars_per_lot: null,
           max_boars_per_lot: null,
-          min_rest_days: null,
-          min_motility_pct: null,
-          rule_enforcement: 'WARN',
           ...over,
+        });
+
+        it('refuses a collection on a day a scheduled line is not collected, and writes nothing', async () => {
+          rows.set(schema.animalRegister, [{ ...boar, breed_id: 'b-tempo' }]);
+          lineSetups.findEffective.mockResolvedValue(rule({ collection_mode: 'SCHEDULED', collection_weekdays: ['SUN', 'SAT'] }));
+          // 2026-10-09 is a Friday
+          await expect(service.recordSemenCollection(collection({ output_item_id: 'item-1' }), 'tenant-1')).rejects.toThrow(
+            'This line is collected on Sunday and Saturday; 2026-10-09 is a Friday.',
+          );
+          expect(semenLots.postCollection).not.toHaveBeenCalled();
+          expect(insertedRows()).toHaveLength(0);
+        });
+
+        it('records a collection on one of the line\'s days', async () => {
+          rows.set(schema.animalRegister, [{ ...boar, breed_id: 'b-tempo' }]);
+          lineSetups.findEffective.mockResolvedValue(rule({ collection_mode: 'SCHEDULED', collection_weekdays: ['FRI'] }));
+          await service.recordSemenCollection(collection(), 'tenant-1');
+          expect(insertedRows()).toHaveLength(2);
         });
 
         it('looks the rules up by the primary boar\'s breed and his company', async () => {
@@ -1961,38 +1959,6 @@ describe('BreedingService', () => {
           const result: any = await service.recordSemenCollection(collection(), 'tenant-1');
           expect(result.warnings).toEqual([]);
           expect(insertedRows()).toHaveLength(2);
-        });
-
-        it('warns, and still records, a boar collected inside the line\'s rest days when the line only warns', async () => {
-          rows.set(schema.animalRegister, [boar]);
-          // the mock returns what the aliased select would: the boar and the date of his last collection
-          rows.set(schema.semenBatch, [{ boar: 'boar-1', date: '2026-10-08' }] as any);
-          lineSetups.findEffective.mockResolvedValue(rule({ min_rest_days: 3 }));
-          const result: any = await service.recordSemenCollection(collection({ feed_cost_period: 0 }), 'tenant-1');
-          expect(result.warnings).toEqual(['BOAR-1 was collected 1 day ago; this line rests a boar 3 days or more.']);
-          expect(insertedRows()).toHaveLength(2);
-        });
-
-        it('stops that same collection when the line blocks', async () => {
-          rows.set(schema.animalRegister, [boar]);
-          rows.set(schema.semenBatch, [{ boar: 'boar-1', date: '2026-10-08' }] as any);
-          lineSetups.findEffective.mockResolvedValue(rule({ min_rest_days: 3, rule_enforcement: 'BLOCK' }));
-          await expect(service.recordSemenCollection(collection({ feed_cost_period: 0 }), 'tenant-1')).rejects.toThrow('this line rests a boar 3 days or more');
-          expect(insertedRows()).toHaveLength(0);
-        });
-
-        it('does not worry about a boar rested long enough, or never collected', async () => {
-          rows.set(schema.animalRegister, [boar]);
-          rows.set(schema.semenBatch, [{ boar: 'boar-1', date: '2026-10-05' }] as any);
-          lineSetups.findEffective.mockResolvedValue(rule({ min_rest_days: 3 }));
-          expect(((await service.recordSemenCollection(collection({ feed_cost_period: 0 }), 'tenant-1')) as any).warnings).toEqual([]);
-        });
-
-        it('judges the motility entered against the line\'s own floor', async () => {
-          rows.set(schema.animalRegister, [boar]);
-          lineSetups.findEffective.mockResolvedValue(rule({ min_motility_pct: '70.00' }));
-          const result: any = await service.recordSemenCollection(collection({ motility_pct: 62 }), 'tenant-1');
-          expect(result.warnings).toEqual(["Motility 62% is under the line's minimum of 70%."]);
         });
       });
 

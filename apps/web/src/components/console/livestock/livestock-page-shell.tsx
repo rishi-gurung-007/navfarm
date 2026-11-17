@@ -31,6 +31,8 @@ export const LIVESTOCK_SECTIONS = [
   // batch-and-animal shaped, not register-shaped), so it has no tab key here —
   // it is listed so the sidebar has one list to render from.
   { key: null, href: "/livestock/health", labelKey: "navLivestockHealth" },
+  // Pigs sent to the abattoir: Transfer Order, POD and DOA, kill sheet and invoice (BBP-1 S.10.1).
+  { key: "slaughter", href: "/livestock/slaughter", labelKey: "navSlaughterTransfers" },
   { key: "facility", href: "/livestock/facility", labelKey: "pigFacilityOccupancy" },
   { key: "analytics", href: "/livestock/analytics", labelKey: "pigHerdAnalytics" },
 ] as const;

@@ -21,8 +21,6 @@ export interface PostedSemenLot {
   warehouse_id: string;
   qr_id: string | null;
   pack_no: string | null;
-  /** What the colorant issued from stock cost, 0 when none was. It is part of the lot's cost, so of each dose's. */
-  colorant_cost: number;
   /** Set when the item is QC required: the doses are not stock until this inspection is completed and accepted. */
   qc_inspection_no?: string | null;
 }
@@ -40,10 +38,10 @@ export interface PostCollectionParams {
   unitCost?: number;
   /** Quality on the collection (G8), printed on the lot's QR. */
   quality?: { volume_ml: number | null; motility_pct: number | null; concentration_m_per_ml: number | null };
-  /** What the line's setup puts on the lot (Phase 5): printed on its QR, and the colorant issued from stock when it has an item. */
+  /** What the line's setup puts on the lot (Phase 5), printed on its QR. The colorant is recorded by name only. */
   label?: string | null;
   week?: { no: number; year: number };
-  colorant?: { name: string | null; itemId: string | null; quantity: number | null };
+  colorantName?: string | null;
   destinationFarmId?: string | null;
 }
 
@@ -116,37 +114,7 @@ export class SemenLotService {
     }
 
     const lotNo = await this.numberSeriesService.generateNext('ITEM_LOT', tenantId, boar.company_id);
-    // A colorant held as stock (the line's setup names the item and the quantity) is issued from the boar's farm store for this lot.
-    // It is expensed as consumption and its cost is recovered into the lot, so it is part of what each dose cost.
-    let colorantCost = 0;
-    const colorant = params.colorant;
-    if (colorant?.itemId && colorant.quantity && colorant.quantity > 0) {
-      const [cItem] = await this.db
-        .select()
-        .from(schema.itemMaster)
-        .where(and(eq(schema.itemMaster.item_id, colorant.itemId), eq(schema.itemMaster.tenant_id, tenantId)))
-        .limit(1);
-      if (!cItem) throw new NotFoundException(`The colorant item '${colorant.itemId}' was not found.`);
-      if (!cItem.is_active) throw new BadRequestException(`The colorant '${cItem.item_name}' is not active.`);
-      const issued = await this.ledgerService.writeNegativeEntry({
-        tenantId,
-        companyId: boar.company_id,
-        itemId: cItem.item_id,
-        documentType: 'BREEDING',
-        documentNo: lotNo,
-        documentLineId: params.semenBatchId,
-        postingDate: params.collectionDate,
-        transactionType: 'CONSUMPTION',
-        quantity: colorant.quantity,
-        uom: cItem.uom_primary,
-        batchNo: boarBatch?.batch_no,
-        warehouseId,
-        userId: userPayload?.userId,
-      });
-      await this.glPostingService.postInventoryLedgerEntry(issued, userPayload?.userId);
-      colorantCost = Math.abs(Number(issued.amount ?? 0));
-    }
-    const lotUnitCost = (params.unitCost ?? 0) + colorantCost / params.doses;
+    const lotUnitCost = params.unitCost ?? 0;
     let expiry: string | null = null;
     if (item.shelf_life_days) {
       const d = new Date(params.collectionDate);
@@ -209,14 +177,14 @@ export class SemenLotService {
       ? await this.qrCodeService.createForSemenLot(
           {
             boar, poolBoars: params.poolBoars, boarBatch, item, lotNo, collectionDate: params.collectionDate, doses: params.doses, expiryDate: expiry, warehouseId, quality: params.quality,
-            label: params.label, week: params.week, colorantName: colorant?.name ?? null, destinationFarmId: params.destinationFarmId,
+            label: params.label, week: params.week, colorantName: params.colorantName ?? null, destinationFarmId: params.destinationFarmId,
           },
           tenantId,
           userPayload,
         )
       : null;
 
-    return { lot_no: lotNo, expiry_date: expiry, warehouse_id: warehouseId, qr_id: qr?.qr_id ?? null, pack_no: qr?.pack_no ?? null, colorant_cost: colorantCost, qc_inspection_no: qcInspectionNo };
+    return { lot_no: lotNo, expiry_date: expiry, warehouse_id: warehouseId, qr_id: qr?.qr_id ?? null, pack_no: qr?.pack_no ?? null, qc_inspection_no: qcInspectionNo };
   }
 
   /**

@@ -60,7 +60,7 @@ describe("status helpers", () => {
   it("names every status, and calls the ones that want action", () => {
     expect(STATUS_LABEL.OVERDUE).toBe("Overdue");
     expect(["OVERDUE", "DUE", "NEVER"].every(needsAttention)).toBe(true);
-    expect(["OK", "DUE_SOON", "NOT_SCHEDULED"].some(needsAttention)).toBe(false);
+    expect(["OK", "NOT_SCHEDULED"].some(needsAttention)).toBe(false);
   });
 });
 
@@ -68,7 +68,7 @@ describe("the status and the next assessment are two things", () => {
   it("calls a boar within his schedule 'On schedule', and says in the next column when he is next due", () => {
     expect(STATUS_LABEL.OK).toBe("On schedule");
     expect(nextAssessmentText("OK", "2026-12-02")).toBe("02/12/26");
-    expect(nextAssessmentText("DUE_SOON", "2026-11-30")).toBe("30/11/26");
+    expect(nextAssessmentText("DUE", "2026-11-30")).toBe("30/11/26");
     expect(nextAssessmentText("OVERDUE", "2026-10-30")).toBe("30/10/26");
   });
 

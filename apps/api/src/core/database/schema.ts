@@ -7983,15 +7983,12 @@ export const semenBatch = mysqlTable('semen_batch', {
   // The plan this collection carries out (migration 0236), null for one made without a plan.
   plan_id: varchar('plan_id', { length: 36 }),
   // What the line's setup put on the lot when it was posted (migration 0237, Phase 5): its line, the physical label (from the
-  // template) and the ISO week it carries, the colorant added (and what it cost, when issued from stock) and where it is for.
+  // template) and the ISO week it carries, the colorant added (by name) and where it is for.
   breed_id: varchar('breed_id', { length: 36 }),
   label: varchar('label', { length: 100 }),
   week_no: int('week_no'),
   week_year: int('week_year'),
   colorant_name: varchar('colorant_name', { length: 50 }),
-  colorant_item_id: varchar('colorant_item_id', { length: 36 }),
-  colorant_qty: decimal('colorant_qty', { precision: 10, scale: 3 }),
-  colorant_cost: decimal('colorant_cost', { precision: 18, scale: 4 }),
   destination_farm_id: varchar('destination_farm_id', { length: 36 }),
   // Quality on the collection (migration 0150, audit G8): carried on the lot's QR.
   volume_ml: decimal('volume_ml', { precision: 10, scale: 2 }),
@@ -8076,16 +8073,8 @@ export const breedingLineSetup = mysqlTable(
     pooling_allowed: boolean('pooling_allowed').default(true).notNull(),
     min_boars_per_lot: int('min_boars_per_lot'),
     max_boars_per_lot: int('max_boars_per_lot'),
-    // A colorant is recorded by name, and optionally issued from stock as an item.
+    // A colorant is recorded on the lot by name (migration 0256 removed the stock item and quantity).
     colorant_name: varchar('colorant_name', { length: 50 }),
-    colorant_item_id: varchar('colorant_item_id', { length: 36 }).references(
-      () => itemMaster.item_id,
-      { onDelete: 'restrict' },
-    ),
-    colorant_qty_per_lot: decimal('colorant_qty_per_lot', {
-      precision: 10,
-      scale: 3,
-    }),
     // Tokens such as {PREFIX} {LINE} {BOAR_TAG} {WEEK} {YEAR} {DATE}; read when the lot is labelled (Phase 5).
     label_template: varchar('label_template', { length: 100 }),
     week_basis: varchar('week_basis', { length: 10 }).default('ISO').notNull(),
@@ -8099,18 +8088,11 @@ export const breedingLineSetup = mysqlTable(
     restrict_to_destination: varchar('restrict_to_destination', { length: 10 })
       .default('NONE')
       .notNull(), // NONE | WARN | BLOCK
-    // Rest between two collections of one boar, and the motility a collection must reach. Null = no rule.
-    min_rest_days: int('min_rest_days'),
-    min_motility_pct: decimal('min_motility_pct', { precision: 5, scale: 2 }),
-    // Whether a broken rest or motility rule only warns or stops the collection.
-    rule_enforcement: varchar('rule_enforcement', { length: 10 })
-      .default('WARN')
-      .notNull(), // WARN | BLOCK
-    // The boar selection table (migration 0235, Phase 3): the relative weights of the genetic, dose and morphology ranks in a
-    // boar's overall grading (null or 0 = not used; all null = no grading), how tied boars are ranked, and which columns the
-    // table shows, in order, as [{ key, label, visible }] (null = every column in its default order).
+    // The boar selection table (migration 0235, Phase 3): the relative weights of the genetic and morphology ranks in a
+    // boar's overall grading (null or 0 = not used; both null = no grading; the dose rank is shown, not graded, since 0256),
+    // how tied boars are ranked, and which columns the table shows, in order, as [{ key, label, visible }] (null = every
+    // column in its default order).
     grading_genetic_weight: decimal('grading_genetic_weight', { precision: 6, scale: 2 }),
-    grading_dose_weight: decimal('grading_dose_weight', { precision: 6, scale: 2 }),
     grading_morphology_weight: decimal('grading_morphology_weight', { precision: 6, scale: 2 }),
     rank_tie_break: varchar('rank_tie_break', { length: 15 })
       .default('GENETIC_RANK')
@@ -8118,12 +8100,9 @@ export const breedingLineSetup = mysqlTable(
     selection_columns: json('selection_columns').$type<
       { key: string; label: string; visible: boolean }[] | null
     >(),
-    // Boar body condition (migration 0238, Phase 6): how often a boar is scored, how long past due before it is overdue, how many
-    // days ahead a boar shows as due soon, and whether the feed level the scale gives can be overridden (and then needs a reason).
+    // Boar body condition (migration 0238, Phase 6): how often a boar is scored (due on the day, overdue after it), and whether the feed level the scale gives can be overridden (and then needs a reason).
     // Blank frequency = no schedule.
     bcs_frequency_days: int('bcs_frequency_days'),
-    bcs_grace_days: int('bcs_grace_days'),
-    bcs_reminder_days: int('bcs_reminder_days'),
     bcs_allow_feed_override: boolean('bcs_allow_feed_override').default(false).notNull(),
     bcs_override_reason_required: boolean('bcs_override_reason_required').default(true).notNull(),
     is_active: boolean('is_active').default(true).notNull(),
@@ -8237,6 +8216,123 @@ export const geneticLevelBand = mysqlTable(
       table.level_name,
     ),
   ],
+);
+
+/**
+ * The class a selected gilt takes, by her parentage (migration 0254; BBP-2 "Selection of Gilts for Breeding": Z + Z Local GGP, Z + L Local GP, Z + Tempo Local
+ * Parent). A line is a breed: a rule names the dam's breed, the sire's breed and the item the gilt is registered as. No rule for a pair = the user names the item.
+ */
+export const giltClassRule = mysqlTable(
+  'gilt_class_rule',
+  {
+    rule_id: varchar('rule_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(
+      () => companyMaster.company_id,
+      { onDelete: 'restrict' },
+    ),
+    nob_id: varchar('nob_id', { length: 36 }).references(
+      () => nobMaster.nob_id,
+      { onDelete: 'restrict' },
+    ),
+    lob_id: varchar('lob_id', { length: 36 }).references(
+      () => lobMaster.lob_id,
+      { onDelete: 'restrict' },
+    ),
+    dam_breed_id: varchar('dam_breed_id', { length: 36 })
+      .notNull()
+      .references(() => breedMaster.breed_id, { onDelete: 'restrict' }),
+    sire_breed_id: varchar('sire_breed_id', { length: 36 })
+      .notNull()
+      .references(() => breedMaster.breed_id, { onDelete: 'restrict' }),
+    gilt_item_id: varchar('gilt_item_id', { length: 36 })
+      .notNull()
+      .references(() => itemMaster.item_id, { onDelete: 'restrict' }),
+    is_active: boolean('is_active').default(true).notNull(),
+    status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  },
+  (table) => [
+    uniqueIndex('uq_gilt_class_rule_pair').on(
+      table.tenant_id,
+      sql`(coalesce(${table.company_id}, ''))`,
+      table.dam_breed_id,
+      table.sire_breed_id,
+    ),
+  ],
+);
+
+/**
+ * A Transfer Order of pigs to the abattoir (migration 0255; BBP-1 S.10.1): one per supplying farm and trip, HO approval reference mandatory. DRAFT -> CONFIRMED
+ * (dispatched: the head leave their batches into Inventory in Transit) -> RECEIVED (POD: received head and DOA per line) -> RECONCILED (kill sheet and invoice) ->
+ * CLOSED; a DRAFT may be CANCELLED.
+ */
+export const slaughterTransferOrder = mysqlTable(
+  'slaughter_transfer_order',
+  {
+    to_id: varchar('to_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'restrict' }),
+    to_no: varchar('to_no', { length: 30 }).notNull(),
+    to_date: date('to_date', { mode: 'string' }).notNull(),
+    farm_id: varchar('farm_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+    destination: varchar('destination', { length: 150 }),
+    customer_id: varchar('customer_id', { length: 36 }).references(() => customerMaster.customer_id, { onDelete: 'restrict' }),
+    ho_approval_ref: varchar('ho_approval_ref', { length: 60 }).notNull(),
+    vehicle_no: varchar('vehicle_no', { length: 30 }),
+    driver_name: varchar('driver_name', { length: 100 }),
+    status: varchar('status', { length: 20 }).default('DRAFT').notNull(),
+    confirmed_at: timestamp('confirmed_at', { mode: 'string' }),
+    confirmed_by: varchar('confirmed_by', { length: 36 }),
+    pod_date: date('pod_date', { mode: 'string' }),
+    pod_received_by: varchar('pod_received_by', { length: 100 }),
+    kill_sheet_ref: varchar('kill_sheet_ref', { length: 60 }),
+    kill_sheet_date: date('kill_sheet_date', { mode: 'string' }),
+    invoice_no: varchar('invoice_no', { length: 30 }),
+    invoice_amount: decimal('invoice_amount', { precision: 18, scale: 4 }),
+    remarks: text('remarks'),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+    deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  },
+  (table) => [uniqueIndex('uq_slaughter_to_company_no').on(table.tenant_id, table.company_id, table.to_no)],
+);
+
+/** One batch from one source house on a slaughter Transfer Order (migration 0255). */
+export const slaughterTransferOrderLine = mysqlTable(
+  'slaughter_transfer_order_line',
+  {
+    line_id: varchar('line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    to_id: varchar('to_id', { length: 36 }).notNull().references(() => slaughterTransferOrder.to_id, { onDelete: 'cascade' }),
+    line_no: int('line_no').notNull(),
+    batch_id: varchar('batch_id', { length: 36 }).notNull().references(() => batchHeader.batch_id, { onDelete: 'restrict' }),
+    source_location_id: varchar('source_location_id', { length: 36 }).references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+    category: varchar('category', { length: 30 }).default('COMMERCIAL').notNull(),
+    head_count: int('head_count').notNull(),
+    avg_live_weight_kg: decimal('avg_live_weight_kg', { precision: 10, scale: 3 }),
+    lot_no: varchar('lot_no', { length: 50 }),
+    slap_mark: varchar('slap_mark', { length: 80 }),
+    carrying_value: decimal('carrying_value', { precision: 18, scale: 4 }),
+    received_head: int('received_head'),
+    doa_head: int('doa_head'),
+    carcass_weight_kg: decimal('carcass_weight_kg', { precision: 12, scale: 3 }),
+    price_per_kg: decimal('price_per_kg', { precision: 18, scale: 6 }),
+    line_amount: decimal('line_amount', { precision: 18, scale: 4 }),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex('uq_slaughter_to_line_no').on(table.to_id, table.line_no)],
 );
 
 /**

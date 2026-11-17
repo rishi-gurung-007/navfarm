@@ -9,12 +9,17 @@ import { eq } from 'drizzle-orm';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from '../../../core/database/schema';
 import type { GlPostingService } from '../../finance/journal/gl-posting.service';
+import { isCurrentBioLot } from './current-bio-lot';
 
 type Herd = {
   batch_id: string;
   company_id: string;
   nob_id?: string | null;
   lob_id?: string | null;
+  stage_id?: string | null;
+  is_litter_lot?: boolean | null;
+  tracking_mode?: string | null;
+  current_stage_code?: string | null;
 };
 type Gl = Pick<GlPostingService, 'mappedAccount'>;
 
@@ -55,4 +60,17 @@ export async function herdCarryingAccount(
     nobId: batch.nob_id,
     lobId: batch.lob_id,
   });
+}
+
+/** The transaction type whose mapping names a weaner or grower lot's WIP account (debit) and the inventory it is recognised into (credit). Opt-in. */
+export const LOT_WIP_TYPE = 'BIO_LOT_WIP';
+
+/**
+ * Where a weaner or grower lot's capitalised feed and overhead go during the month (BBP-2 S.NO.6: "Debit: WIP Weaner / WIP Grower, for each batch and cost
+ * centre"): the BIO_LOT_WIP mapping's debit, resolved by the lot's stage so a Grower stage can name its own WIP account. Undefined for any other batch, or
+ * when the company has no such mapping (then the cost goes to the lot's own account, as before 13 Nov). The month-end run recognises it as inventory.
+ */
+export async function lotWipAccount(gl: Gl, batch: Herd, tenantId: string): Promise<string | undefined> {
+  if (!isCurrentBioLot(batch)) return undefined;
+  return gl.mappedAccount(tenantId, batch.company_id, LOT_WIP_TYPE, 'debit', { nobId: batch.nob_id, lobId: batch.lob_id, stageId: batch.stage_id });
 }

@@ -16,7 +16,7 @@ const sop: ScaleRow[] = [
   row(5, 'Obese', 2.3),
 ];
 const setup = (over: Partial<ConditionSetup> = {}): ConditionSetup => ({
-  bcs_frequency_days: 30, bcs_grace_days: 3, bcs_reminder_days: 5, bcs_allow_feed_override: false, bcs_override_reason_required: true, ...over,
+  bcs_frequency_days: 30, bcs_allow_feed_override: false, bcs_override_reason_required: true, ...over,
 });
 const assess = (over: object = {}) => assessmentIssues({ scale: sop, score: 3, setup: setup(), assessedOn: '2026-11-02', today: '2026-11-02', latestOn: null, boarEntryDate: '2025-01-06', ...over });
 
@@ -33,20 +33,18 @@ describe('scaleFor', () => {
   });
 });
 
-describe('conditionStatus: a monthly schedule with 3 days of grace and 5 days of notice', () => {
+describe('conditionStatus: a monthly schedule', () => {
   const at = (lastAssessedOn: string | null, today: string, s = setup()) => conditionStatus({ lastAssessedOn, setup: s, today });
 
   it('is never when a boar has not been assessed', () => {
     expect(at(null, '2026-11-02')).toEqual({ status: 'NEVER', due: null, daysToDue: null });
   });
 
-  it('is fine, then due soon, then due, then overdue as the days pass', () => {
+  it('is fine until the due date, due on it, and overdue the day after', () => {
     expect(at('2026-10-01', '2026-10-10')).toEqual({ status: 'OK', due: '2026-10-31', daysToDue: 21 });
-    expect(at('2026-10-01', '2026-10-26').status).toBe('DUE_SOON'); // 5 days to go
-    expect(at('2026-10-01', '2026-10-25').status).toBe('OK'); // 6 days to go
+    expect(at('2026-10-01', '2026-10-30').status).toBe('OK'); // the day before
     expect(at('2026-10-01', '2026-10-31').status).toBe('DUE'); // the day
-    expect(at('2026-10-01', '2026-11-03').status).toBe('DUE'); // 3 days late: still within the grace
-    expect(at('2026-10-01', '2026-11-04')).toEqual({ status: 'OVERDUE', due: '2026-10-31', daysToDue: -4 });
+    expect(at('2026-10-01', '2026-11-01')).toEqual({ status: 'OVERDUE', due: '2026-10-31', daysToDue: -1 });
   });
 
   it('reads the line\'s current frequency, so a change applies to every boar', () => {
@@ -56,12 +54,6 @@ describe('conditionStatus: a monthly schedule with 3 days of grace and 5 days of
   it('has no schedule, and so no due or overdue, when the line sets no frequency', () => {
     expect(at('2026-10-01', '2027-10-01', setup({ bcs_frequency_days: null }))).toEqual({ status: 'NOT_SCHEDULED', due: null, daysToDue: null });
     expect(conditionStatus({ lastAssessedOn: '2026-10-01', setup: null, today: '2026-11-02' }).status).toBe('NOT_SCHEDULED');
-  });
-
-  it('treats no grace and no reminder as none', () => {
-    const s = setup({ bcs_grace_days: null, bcs_reminder_days: null });
-    expect(at('2026-10-01', '2026-10-30', s).status).toBe('OK');
-    expect(at('2026-10-01', '2026-11-01', s).status).toBe('OVERDUE');
   });
 });
 

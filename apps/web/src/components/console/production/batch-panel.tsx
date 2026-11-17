@@ -3496,12 +3496,24 @@ export default function BatchPanel() {
                             </p>
                           </div>
                         </div>
+                        {viewing.animals_book && (
+                          <div className="mt-3 text-xs">
+                            <p className="font-semibold uppercase tracking-wider" style={S.muted}>
+                              {t('blLabelAnimalsBookValue')}
+                            </p>
+                            <p style={S.primary}>
+                              {formatAmount(viewing.animals_book.book_value)}
+                              <span style={S.muted}> · {formatQuantity(viewing.animals_book.head, 'HEAD')}</span>
+                            </p>
+                            <p className="mt-1" style={S.muted}>{t('blAnimalsBookNote')}</p>
+                          </div>
+                        )}
                         {viewing.status === 'ACTIVE' && viewing.tracking_mode === 'ANIMAL_WISE' && (
                           <p className="mt-3 text-xs" style={S.muted}>{t('blAnimalWiseCostingNote')}</p>
                         )}
                         {viewing.status === 'ACTIVE' && (
                           <div className="mt-3 flex flex-wrap gap-2">
-                            {viewing.bio_asset_state.stage === 'PREMATURE' && viewing.tracking_mode !== 'ANIMAL_WISE' && (
+                            {viewing.bio_asset_state.stage === 'PREMATURE' && viewing.tracking_mode !== 'ANIMAL_WISE' && !(viewing.is_litter_lot || ['WEANER', 'GROWER', 'FINISHER'].includes(String(viewing.current_stage_code ?? '').toUpperCase())) && (
                               <Button
                                 size="sm"
                                 onClick={() => openBioAction('mature')}
@@ -3510,7 +3522,7 @@ export default function BatchPanel() {
                                 {t('blMatureHerd')}
                               </Button>
                             )}
-                            {viewing.bio_asset_state.stage === 'MATURE' && viewing.tracking_mode !== 'ANIMAL_WISE' && (
+                            {viewing.bio_asset_state.stage === 'MATURE' && viewing.tracking_mode !== 'ANIMAL_WISE' && !(viewing.is_litter_lot || ['WEANER', 'GROWER', 'FINISHER'].includes(String(viewing.current_stage_code ?? '').toUpperCase())) && (
                               <>
                                 <Button
                                   size="sm"

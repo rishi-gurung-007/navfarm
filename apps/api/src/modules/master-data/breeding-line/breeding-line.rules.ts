@@ -17,7 +17,6 @@ export const WEEKDAY_OPTIONS = [
 export const COLLECTION_MODES = ['SCHEDULED', 'ON_REQUEST'] as const;
 export const DESTINATION_RULES = ['ANY', 'LIST', 'ONE'] as const;
 export const RESTRICTIONS = ['NONE', 'WARN', 'BLOCK'] as const;
-export const ENFORCEMENTS = ['WARN', 'BLOCK'] as const;
 export const WEEK_BASES = ['ISO'] as const;
 
 /** The columns of the boar selection table, in their default order, with the label each carries until a line renames it. */
@@ -52,22 +51,15 @@ export interface LineSetupValues {
   min_boars_per_lot?: number | null;
   max_boars_per_lot?: number | null;
   colorant_name?: string | null;
-  colorant_item_id?: string | null;
-  colorant_qty_per_lot?: number | null;
   label_template?: string | null;
   destination_rule: string;
   destination_farm_ids?: string[] | null;
   restrict_to_destination: string;
   reference_required?: boolean;
   reference_label?: string | null;
-  min_rest_days?: number | null;
-  min_motility_pct?: number | null;
   grading_genetic_weight?: number | null;
-  grading_dose_weight?: number | null;
   grading_morphology_weight?: number | null;
   bcs_frequency_days?: number | null;
-  bcs_grace_days?: number | null;
-  bcs_reminder_days?: number | null;
 }
 
 const has = (v: unknown) => v !== null && v !== undefined && v !== '';
@@ -103,16 +95,6 @@ export function lineSetupIssues(v: LineSetupValues): string[] {
     out.push('Pooling is off, so a lot has one boar; the minimum cannot be more than 1.');
   }
 
-  if (has(v.colorant_qty_per_lot) && !has(v.colorant_item_id)) {
-    out.push('A colorant quantity is issued from stock, so it needs a colorant item.');
-  }
-  if (has(v.colorant_qty_per_lot) && (v.colorant_qty_per_lot as number) <= 0) {
-    out.push('The colorant quantity must be above 0.');
-  }
-  if (has(v.colorant_item_id) && !has(v.colorant_name)) {
-    out.push('Name the colorant (for example its colour) as well as its item.');
-  }
-
   if (has(v.label_template)) {
     const template = String(v.label_template);
     const opened = (template.match(/{/g) ?? []).length;
@@ -135,18 +117,10 @@ export function lineSetupIssues(v: LineSetupValues): string[] {
     out.push('A reference label is only used when a reference is required.');
   }
 
-  if (has(v.min_rest_days) && (v.min_rest_days as number) < 0) out.push('Rest days cannot be negative.');
-  if (has(v.min_motility_pct) && ((v.min_motility_pct as number) < 0 || (v.min_motility_pct as number) > 100)) {
-    out.push('Minimum motility is a percentage, 0 to 100.');
-  }
-
-  for (const [label, w] of [['genetic', v.grading_genetic_weight], ['dose', v.grading_dose_weight], ['morphology', v.grading_morphology_weight]] as const) {
+  for (const [label, w] of [['genetic', v.grading_genetic_weight], ['morphology', v.grading_morphology_weight]] as const) {
     if (has(w) && (w as number) < 0) out.push(`The ${label} rank weight cannot be negative.`);
   }
   if (has(v.bcs_frequency_days) && (v.bcs_frequency_days as number) < 1) out.push('Body condition frequency must be at least 1 day.');
-  if (has(v.bcs_grace_days) && (v.bcs_grace_days as number) < 0) out.push('Body condition grace days cannot be negative.');
-  if (has(v.bcs_reminder_days) && (v.bcs_reminder_days as number) < 0) out.push('Body condition reminder days cannot be negative.');
-  if (!has(v.bcs_frequency_days) && (has(v.bcs_grace_days) || has(v.bcs_reminder_days))) out.push('Grace and reminder days need a body condition frequency.');
   return out;
 }
 
@@ -176,9 +150,6 @@ export interface EffectiveRules {
   pooling_allowed: boolean;
   min_boars_per_lot: number | null;
   max_boars_per_lot: number | null;
-  min_rest_days: number | null;
-  min_motility_pct: number | null;
-  rule_enforcement: string;
   [key: string]: unknown;
 }
 
@@ -198,12 +169,6 @@ export interface CollectionRuleInput {
   rules: EffectiveRules | null;
   /** Every boar in the lot, the primary included. */
   boarCount: number;
-  /** Days since each boar was last collected before this date; null when he never was. */
-  restDays: { boar: string; days: number | null }[];
-  /** The lot's motility, when it was entered for the lot as a whole. */
-  motilityPct: number | null;
-  /** The motility each accepted boar gave, when it was entered per boar (Phase 2); null where it was not measured. */
-  boarMotilities?: { boar: string; pct: number | null }[];
 }
 
 export interface CollectionRuleResult {
@@ -214,11 +179,10 @@ export interface CollectionRuleResult {
 }
 
 /**
- * The line's rules applied to one collection. How many boars a lot may have is always a stop; the rest and motility rules
- * stop or only warn as the line's own enforcement says. No rules at all (no setup for the line and no company default) means
- * nothing is checked, never a default made up here.
+ * The line's rules applied to one collection: pooling and how many boars a lot may have, each a stop. No rules at all (no setup
+ * for the line and no company default) means nothing is checked, never a default made up here.
  */
-export function collectionRuleResult({ rules, boarCount, restDays, motilityPct, boarMotilities = [] }: CollectionRuleInput): CollectionRuleResult {
+export function collectionRuleResult({ rules, boarCount }: CollectionRuleInput): CollectionRuleResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   if (!rules) return { errors, warnings };
@@ -233,24 +197,6 @@ export function collectionRuleResult({ rules, boarCount, restDays, motilityPct, 
     errors.push(`This line needs at least ${rules.min_boars_per_lot} boars in a lot; ${boarCount} ${boarCount === 1 ? 'was' : 'were'} chosen.`);
   }
 
-  const soft = rules.rule_enforcement === 'BLOCK' ? errors : warnings;
-  if (rules.min_rest_days != null) {
-    for (const { boar, days } of restDays) {
-      if (days != null && days < rules.min_rest_days) {
-        soft.push(`${boar} was collected ${days} day${days === 1 ? '' : 's'} ago; this line rests a boar ${rules.min_rest_days} day${rules.min_rest_days === 1 ? '' : 's'} or more.`);
-      }
-    }
-  }
-  if (rules.min_motility_pct != null && motilityPct != null && motilityPct < Number(rules.min_motility_pct)) {
-    soft.push(`Motility ${motilityPct}% is under the line's minimum of ${Number(rules.min_motility_pct)}%.`);
-  }
-  if (rules.min_motility_pct != null) {
-    for (const { boar, pct } of boarMotilities) {
-      if (pct != null && pct < Number(rules.min_motility_pct)) {
-        soft.push(`${boar}'s motility ${pct}% is under the line's minimum of ${Number(rules.min_motility_pct)}%.`);
-      }
-    }
-  }
   return { errors, warnings };
 }
 

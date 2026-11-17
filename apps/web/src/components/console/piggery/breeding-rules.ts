@@ -216,20 +216,15 @@ export function checkFarrowing({ form, sow, mating }: FarrowingCheck): Issue[] {
 
 /**
  * The rules of the boar's breeding line (a breeding_line_setup row, read from /breeding-line-setup/effective). Null when
- * neither the line nor the company has one: then no pooling, rest or motility rule is checked, and none is made up here.
+ * neither the line nor the company has one: then no pooling rule is checked, and none is made up here.
  */
 export interface LineRules {
   pooling_allowed: boolean;
   min_boars_per_lot: number | null;
   max_boars_per_lot: number | null;
-  min_rest_days: number | null;
-  min_motility_pct: number | string | null;
-  rule_enforcement: string;
   // What the line puts on a lot it posts (Phase 5): shown on the form so the technician knows before saving.
   label_template?: string | null;
   colorant_name?: string | null;
-  colorant_item_id?: string | null;
-  colorant_qty_per_lot?: number | string | null;
   // The line's collection rules (Breeding Line Setup), checked on the form as well as by the API.
   collection_mode?: string;
   collection_weekdays?: string[] | null;
@@ -311,8 +306,6 @@ export function checkSemen({ form, boars, lots, rules, lineBoarIds }: SemenCheck
   if (!form.collection_date) err("collection_date", "Enter the collection date.");
   else if (form.collection_date > today) err("collection_date", "The collection date cannot be in the future.");
 
-  // How a rule the line sets is reported: as a stop or only as a warning, as the line says.
-  const soft = rules?.rule_enforcement === "BLOCK" ? err : warn;
   // A rejected ejaculate is in no lot, so only the accepted boars count towards the line's pooling limits.
   const count = acceptedBoarIds(form).length;
   if (rules && count > 1 && !rules.pooling_allowed) err("boar_animal_ids", "This line is never pooled: choose one boar per lot.");
@@ -331,7 +324,7 @@ export function checkSemen({ form, boars, lots, rules, lineBoarIds }: SemenCheck
   if (rules?.collection_mode === "SCHEDULED" && rules.collection_weekdays?.length && form.collection_date && !plannedForThisDay) {
     const day = weekdayOf(form.collection_date);
     if (!rules.collection_weekdays.includes(day)) {
-      soft("collection_date", `This line is collected on ${weekdayList(rules.collection_weekdays)}; ${formatDate(form.collection_date)} is a ${WEEKDAY_NAMES[day]}.`);
+      err("collection_date", `This line is collected on ${weekdayList(rules.collection_weekdays)}; ${formatDate(form.collection_date)} is a ${WEEKDAY_NAMES[day]}.`);
     }
   }
   if (rules?.boars_per_collection_day != null && form.collection_date && lineBoarIds && form.boar_animal_ids.length) {
@@ -359,10 +352,6 @@ export function checkSemen({ form, boars, lots, rules, lineBoarIds }: SemenCheck
     if (b.entry_date && form.collection_date && form.collection_date < String(b.entry_date).slice(0, 10)) {
       err("collection_date", `${b.animal_code} entered on ${formatDate(b.entry_date)}.`);
     }
-    if (form.collection_date && rules?.min_rest_days != null) {
-      const since = daysSinceCollection(b.animal_id, lots, form.collection_date);
-      if (since != null && since < rules.min_rest_days) soft("boar_animal_ids", `${b.animal_code} was collected ${since} day${since === 1 ? "" : "s"} ago — this line rests a boar ${rules.min_rest_days} day${rules.min_rest_days === 1 ? "" : "s"} or more.`);
-    }
   }
 
   // What each boar gave. Fields are `results.<animal id>.<figure>`, so a message sits beside the figure it is about.
@@ -383,10 +372,7 @@ export function checkSemen({ form, boars, lots, rules, lineBoarIds }: SemenCheck
     const conc = num(r.concentration_m_per_ml);
     if (!Number.isNaN(conc) && conc <= 0) err(at("concentration_m_per_ml"), "Concentration must be above 0.");
     const motility = num(r.motility_pct);
-    if (!Number.isNaN(motility)) {
-      if (motility < 0 || motility > 100) err(at("motility_pct"), "Motility is a percentage, 0–100.");
-      else if (rules?.min_motility_pct != null && motility < Number(rules.min_motility_pct)) soft(at("motility_pct"), `Under this line's minimum of ${Number(rules.min_motility_pct)}%.`);
-    }
+    if (!Number.isNaN(motility) && (motility < 0 || motility > 100)) err(at("motility_pct"), "Motility is a percentage, 0–100.");
   }
   if (!form.output_item_id) {
     err("output_item_id", "Choose the semen item — it is what puts the doses into inventory and makes them usable for AI. Without it the collection is only a note.");

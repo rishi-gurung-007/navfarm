@@ -391,6 +391,22 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/check-bio-asset-reconciliation.ts"
         }
       },
+      "db-enable-slaughter-gl": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/enable-slaughter-gl.ts"
+        }
+      },
+      "db-enable-lot-wip-gl": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/enable-lot-wip-gl.ts"
+        }
+      },
       "db-align-bio-fair-value-premature": {
         "executor": "nx:run-commands",
         "cache": false,
@@ -892,6 +908,14 @@
           "cwd": "apps/api"
         }
       },
+      "db-bbp-alignment-demo": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "DEMO_FARMS=MUL100,POR100 ../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/demo-chapters.ts --apply --chapter=23-bbp-alignment-demo --lean --volume=costing",
+          "cwd": "apps/api"
+        }
+      },
       "db-verify-ledger-types": {
         "executor": "nx:run-commands",
         "cache": false,
@@ -913,6 +937,38 @@
         "cache": false,
         "options": {
           "command": "DEMO_FARMS=${DEMO_FARMS:-MUL100,POR100} ../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/verify-costing-scenarios.ts",
+          "cwd": "apps/api"
+        }
+      },
+      "verify-sow-feed-to-litter": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "DEMO_FARMS=${DEMO_FARMS:-MUL100,POR100} ../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/verify-sow-feed-to-litter.ts",
+          "cwd": "apps/api"
+        }
+      },
+      "verify-lot-fair-value": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "DEMO_FARMS=${DEMO_FARMS:-MUL100,POR100} ../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/verify-lot-fair-value.ts",
+          "cwd": "apps/api"
+        }
+      },
+      "verify-lot-wip": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "DEMO_FARMS=${DEMO_FARMS:-MUL100,POR100} ../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/verify-lot-wip.ts",
+          "cwd": "apps/api"
+        }
+      },
+      "verify-slaughter-transfer": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "DEMO_FARMS=${DEMO_FARMS:-MUL100,POR100} ../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/verify-slaughter-transfer.ts",
           "cwd": "apps/api"
         }
       },

@@ -9,15 +9,15 @@ const journal = JSON.parse(readFileSync(join(dir, 'meta/_journal.json'), 'utf8')
   when: number;
   tag: string;
 }>;
-const sql = readFileSync(join(dir, '0255_route_stop_point.sql'), 'utf8');
+const sql = readFileSync(join(dir, '0258_route_stop_point.sql'), 'utf8');
 
-describe('Tenant migration 0255 — a route stop carries its own name and point', () => {
-  it("is numbered and timed past origin's 0214–0253 (…121)", () => {
-    const entry = journal.find((e) => e.tag === '0255_route_stop_point')!;
-    expect(entry.when).toBe(1792000000123);
+describe('Tenant migration 0258 — a route stop carries its own name and point', () => {
+  it("is numbered and timed past origin's 0214–0256 (…124)", () => {
+    const entry = journal.find((e) => e.tag === '0258_route_stop_point')!;
+    expect(entry.when).toBe(1792000000126);
     expect(journal.filter((e) => e.when === entry.when)).toHaveLength(1);
-    // Not "it is the newest" any more — 0256 follows it. It must sit past origin's …121.
-    expect(entry.when).toBeGreaterThan(1792000000121);
+    // Not "it is the newest" any more — 0259 follows it. It must sit past the migration before the logistics ones (…124).
+    expect(entry.when).toBeGreaterThan(1792000000124);
   });
 
   it('adds the stop name and point, and nothing else', () => {
