@@ -79,13 +79,22 @@ export interface GmBudget {
 }
 
 export interface GmDashboardData {
-  period: (Period & { ytd_from: string; to: string }) | null;
+  period:
+    | (Period & {
+        ytd_from: string;
+        to: string;
+        /** Set when the dashboard stepped back from the current period, which has no records yet. */
+        fallback_from?: string | null;
+      })
+    | null;
   periods: Period[];
   farms: Farm[];
   financial: {
     month: Record<string, SalesFigures | null>;
     ytd: Record<string, SalesFigures | null>;
     heads_by_period: Array<{ period_code: string; heads: number | null }>;
+    /** The business year's running PBT, as heads_by_period is for pigs. */
+    pbt_by_period?: Array<{ period_code: string; pbt: number | null }>;
   };
   kg_sold_per_sow_year: {
     month: Record<string, number | null>;
@@ -99,6 +108,8 @@ export interface GmDashboardData {
   /** The Slaughter & Financial rows with each farm's Month actual, budget and colour. */
   financial_rows?: MetricRow[];
   alerts: Alert[];
+  /** The farms (of those shown) with a farrowing, weaning or sale in the period; the rest have nothing to show. */
+  farms_reporting?: { reporting: number; total: number; farm_ids: string[] };
   /** With one farm chosen: its figures over This Week, the averages and a six-week trend. */
   farm_view: {
     farm: Farm;
@@ -267,10 +278,12 @@ export default function PiggeryGmDashboard() {
   ): Figure => {
     const cell = data?.budget?.[span]?.[kgKey]?.[metric];
     if (!cell) return { actual, budget: null };
+    // The overheads (and PBT) have no figure on the web side: their actual is the API's.
+    const shown = actual ?? cell.actual ?? null;
     // A farm code is named; a period code stays as it is. A budget is absent when null, never by `missing`.
     const names = cell.missing.map(farmName).join(', ');
     return {
-      actual,
+      actual: shown,
       budget: cell.budget,
       var: cell.var,
       var_pct: cell.var_pct,
@@ -293,7 +306,7 @@ export default function PiggeryGmDashboard() {
     'kg_sold_per_sow_year',
   );
 
-  // Pigs to Slaughter, Cost of Sales and Gross Margin are the ledgers' sold disposals; the rest has no data yet.
+  // Pigs to Slaughter, Cost of Sales and Gross Margin are the ledgers' sold disposals; the overheads come from their GL accounts (the API's budget cell carries the actual); Avg CDM and COS per tonne have none yet.
   const salesMonth = data?.financial?.month[kgKey] ?? null;
   const salesYtd = data?.financial?.ytd[kgKey] ?? null;
   const salesFigure = (
@@ -352,6 +365,12 @@ export default function PiggeryGmDashboard() {
   }));
   const financial = data?.financial_rows ?? webFinancial;
   const farmView = farmId ? (data?.farm_view ?? null) : null;
+  // "N of M farms reporting": only worth saying when more than one farm is on show.
+  const coverage =
+    data?.farms_reporting && data.farms_reporting.total > 1
+      ? data.farms_reporting
+      : null;
+  const reportingIds = data?.farms_reporting?.farm_ids;
   // The budget is Month-based, so its colour is the dot's alone and never paints the This Week figure.
   const farmFinancial: FarmRow[] = FINANCIAL_ROWS.map((r) => ({
     ...r,
@@ -389,10 +408,13 @@ export default function PiggeryGmDashboard() {
       )?.heads ?? null,
     budget: byPeriod(p.period_code)?.pigs_to_slaughter ?? null,
   }));
-  // PBT has no actuals yet: its chart draws the budget line alone.
+  // PBT: gross margin less the overheads, a running total like the pigs.
   const pbtPoints: ProgressPoint[] = yearPoints.map((p, i) => ({
     label: p.label,
-    actual: null,
+    actual:
+      data?.financial?.pbt_by_period?.find(
+        (h) => h.period_code === yearCodes[i],
+      )?.pbt ?? null,
     budget: byPeriod(yearCodes[i])?.pbt ?? null,
   }));
 
@@ -417,6 +439,37 @@ export default function PiggeryGmDashboard() {
               {t('gmdMonth')}: {shortDate(period.start_date)} –{' '}
               {shortDate(period.to)} · {t('gmdYtd')}:{' '}
               {shortDate(period.ytd_from)} – {shortDate(period.to)}
+            </p>
+          )}
+          {data && (period?.fallback_from || coverage) && (
+            <p
+              className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]"
+              data-testid="gmd-coverage"
+            >
+              {period?.fallback_from && (
+                <span className="rounded-(--radius-pill) border border-(--border) bg-(--surface-raised) px-2 py-0.5 text-(--text-secondary)">
+                  {t('gmdShowingLatest', {
+                    period: period.period_code,
+                    current: period.fallback_from,
+                  })}
+                </span>
+              )}
+              {coverage && (
+                <span
+                  className="rounded-(--radius-pill) border border-(--border) px-2 py-0.5 font-medium"
+                  style={{
+                    color:
+                      coverage.reporting === coverage.total
+                        ? 'var(--success)'
+                        : 'var(--warning)',
+                  }}
+                >
+                  {t('gmdFarmsReporting', {
+                    n: coverage.reporting,
+                    total: coverage.total,
+                  })}
+                </span>
+              )}
             </p>
           )}
         </div>
@@ -465,7 +518,7 @@ export default function PiggeryGmDashboard() {
       ) : (
         <>
           <div
-            className="flex flex-wrap gap-3 *:min-w-0 *:grow *:basis-72"
+            className="grid grid-cols-1 gap-3 *:min-w-0 sm:max-[1799px]:grid-cols-2 sm:max-xl:*:nth-5:col-span-2 xl:max-[1799px]:grid-cols-6 xl:max-[1799px]:*:col-span-2 xl:max-[1799px]:*:nth-[n+4]:col-span-3 min-[1800px]:grid-cols-5 min-[1800px]:*:col-span-1"
             data-testid="gmd-kpis"
           >
             <KpiCard
@@ -612,6 +665,7 @@ export default function PiggeryGmDashboard() {
                 rows={breeding}
                 farms={farms}
                 t={t}
+                reportingFarmIds={reportingIds}
                 note={period.period_code}
               />
               <Matrix
@@ -620,6 +674,7 @@ export default function PiggeryGmDashboard() {
                 rows={data!.weaner_grower}
                 farms={farms}
                 t={t}
+                reportingFarmIds={reportingIds}
                 note={period.period_code}
               />
               <Matrix
@@ -628,6 +683,7 @@ export default function PiggeryGmDashboard() {
                 rows={financial}
                 farms={farms}
                 t={t}
+                reportingFarmIds={reportingIds}
                 budgeted
                 note={
                   data?.financial?.month.all
@@ -702,7 +758,7 @@ export default function PiggeryGmDashboard() {
 function GmDashboardSkeleton() {
   return (
     <div className="space-y-4" role="status" aria-busy="true">
-      <div className="flex flex-wrap gap-3 *:min-w-0 *:grow *:basis-72">
+      <div className="grid grid-cols-1 gap-3 *:min-w-0 sm:max-[1799px]:grid-cols-2 sm:max-xl:*:nth-5:col-span-2 xl:max-[1799px]:grid-cols-6 xl:max-[1799px]:*:col-span-2 xl:max-[1799px]:*:nth-[n+4]:col-span-3 min-[1800px]:grid-cols-5 min-[1800px]:*:col-span-1">
         {Array.from({ length: 5 }, (_, i) => (
           <Skeleton key={i} className="h-40" />
         ))}

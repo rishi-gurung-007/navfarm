@@ -27,7 +27,14 @@ export interface GmDashboardPeriod {
 
 export interface PiggeryGmDashboardData {
   /** The chosen period, the first day of its business year (YTD), and the last day counted (its end, or today). */
-  period: (GmDashboardPeriod & { ytd_from: string; to: string }) | null;
+  period:
+    | (GmDashboardPeriod & {
+        ytd_from: string;
+        to: string;
+        /** Set when the dashboard stepped back from the current period, which has no records yet: that period's code. */
+        fallback_from?: string | null;
+      })
+    | null;
   periods: GmDashboardPeriod[];
   farms: Array<{ farm_id: string; farm_code: string; farm_name: string }>;
   /** Per farm and for all farms together; null where there are no sows. */
@@ -43,6 +50,8 @@ export interface PiggeryGmDashboardData {
     ytd: Record<string, SalesFigures | null>;
     /** The business year's running total of pigs sold by period, for the chosen farm or all farms. */
     heads_by_period: Array<{ period_code: string; heads: number | null }>;
+    /** The business year's running PBT (gross margin less the overheads), for the PBT chart. */
+    pbt_by_period: Array<{ period_code: string; pbt: number | null }>;
   };
   /** Month and YTD budget, actual, Var and colour of each budget metric, per farm and for all ("all"), by dashboardKey. */
   budget: GmBudgetSection;
@@ -53,6 +62,8 @@ export interface PiggeryGmDashboardData {
   alerts: Alert[];
   /** With one farm chosen: its figures over This Week, the 4-week average, This Month, Prev. Month and 3 Months. */
   farm_view: GmFarmView | null;
+  /** The farms (of those shown) with a farrowing, weaning or sale in the period; the rest have no records to show. */
+  farms_reporting: { reporting: number; total: number; farm_ids: string[] };
 }
 
 export interface GmFarmView {

@@ -5,7 +5,7 @@
  */
 import { BUDGET_METRICS, BudgetMetricCode } from '../budget/budget-metrics';
 import { BudgetFigure, BudgetLine, monthBudget, variance, VarianceStatus, ytdBudget } from './gm-budget.metrics';
-import type { MetricRow, SalesFigures } from './gm-dashboard.metrics';
+import { type MetricRow, type OverheadFigures, pbtOf, type SalesFigures } from './gm-dashboard.metrics';
 
 export interface BudgetCell extends BudgetFigure {
   actual: number | null;
@@ -41,16 +41,24 @@ export const FINANCIAL_ROWS: Array<Pick<MetricRow, 'key' | 'label' | 'unit' | 'l
 ];
 
 /**
- * The actuals there are today: Pigs to Slaughter, Cost of Sales, Gross Margin and its % from the sold disposals, and
- * Kg Meat Sold / Sow / Year. Avg CDM, COS per tonne, the overheads and PBT have none yet.
+ * The actuals there are today: Pigs to Slaughter, Cost of Sales, Gross Margin and its % from the sold disposals, Kg Meat
+ * Sold / Sow / Year, the two overheads from their GL accounts, and PBT (gross margin less the overheads). Avg CDM and
+ * COS per tonne have none yet: they need the sold weight.
  */
-export function budgetActuals(sales: SalesFigures | null, kgSoldPerSowYear: number | null): BudgetActuals {
+export function budgetActuals(
+  sales: SalesFigures | null,
+  kgSoldPerSowYear: number | null,
+  overheads: OverheadFigures | null = null,
+): BudgetActuals {
   return {
     PIGS_TO_SLAUGHTER: sales?.heads ?? null,
     COST_OF_SALES: sales?.cost_of_sales ?? null,
     GROSS_MARGIN: sales?.gross_margin ?? null,
     GROSS_MARGIN_PCT: sales?.gross_margin_pct ?? null,
     KG_SOLD_PER_SOW_YEAR: kgSoldPerSowYear,
+    OTHER_OVERHEADS: overheads?.other ?? null,
+    STAFF_OVERHEADS: overheads?.staff ?? null,
+    PBT: pbtOf(sales, overheads),
   };
 }
 

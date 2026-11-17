@@ -7,6 +7,9 @@ import {
   headsByPeriod,
   kgSoldPerSowYear,
   meanTarget,
+  overheadFigures,
+  pbtByPeriod,
+  pbtOf,
   ragStatus,
   salesFigures,
   stageExit,
@@ -658,5 +661,52 @@ describe('Kg Meat Sold / Sow / Year bands', () => {
   it('gives no colour for a farm with no sows', () => {
     const t = targetsFromLifecycle(lifecycle, 'g').kg_sold_per_sow_year;
     expect(cell(null, t, false).status).toBeNull();
+  });
+});
+
+
+describe('overheads and PBT', () => {
+  const oh = (
+    farm_id: string,
+    date: string,
+    kind: 'OTHER' | 'STAFF',
+    amount: number,
+  ) => ({ farm_id, date, kind, amount });
+  const rows = [
+    oh('f1', '2026-10-05', 'OTHER', 1000),
+    oh('f1', '2026-10-12', 'STAFF', 400),
+    oh('f2', '2026-10-06', 'OTHER', 700),
+    oh('f1', '2026-09-01', 'OTHER', 50),
+  ];
+
+  it('sums a window for one farm or all, and is null when nothing was posted', () => {
+    expect(overheadFigures(rows, '2026-09-27', '2026-10-24', 'f1')).toEqual({ other: 1000, staff: 400 });
+    expect(overheadFigures(rows, '2026-09-27', '2026-10-24', null)).toEqual({ other: 1700, staff: 400 });
+    expect(overheadFigures(rows, '2026-11-01', '2026-11-30', null)).toBeNull();
+  });
+
+  it('PBT is gross margin less both overheads, and a side with no figures counts as 0', () => {
+    const sales = { heads: 10, cost_of_sales: 100, revenue: 3000, gross_margin: 2900, gross_margin_pct: 96.67 };
+    expect(pbtOf(sales, { other: 1000, staff: 400 })).toBe(1500);
+    expect(pbtOf(null, { other: 1000, staff: 400 })).toBe(-1400);
+    expect(pbtOf(sales, null)).toBe(2900);
+    expect(pbtOf(null, null)).toBeNull();
+  });
+
+  it('PBT by period is a running total up to the chosen day', () => {
+    const sales = [
+      { farm_id: 'f1', date: '2026-09-10', heads: 5, cost: 500, revenue: 1500 },
+      { farm_id: 'f1', date: '2026-10-10', heads: 5, cost: 500, revenue: 2500 },
+    ];
+    const periods = [
+      { period_code: '2026-09', start_date: '2026-08-23', end_date: '2026-09-26' },
+      { period_code: '2026-10', start_date: '2026-09-27', end_date: '2026-10-24' },
+      { period_code: '2026-11', start_date: '2026-10-25', end_date: '2026-11-21' },
+    ];
+    expect(pbtByPeriod(sales, rows, periods, 'f1', '2026-10-24')).toEqual([
+      { period_code: '2026-09', pbt: 950 }, // 1000 margin less 50 overhead
+      { period_code: '2026-10', pbt: 950 + 2000 - 1400 },
+      { period_code: '2026-11', pbt: null },
+    ]);
   });
 });

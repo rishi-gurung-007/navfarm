@@ -587,6 +587,78 @@ export function salesFigures(
   };
 }
 
+/** The GL accounts the overhead rows read: Other Overheads is 4600 (Rishi, 17 Nov); Staff Overheads is 4610, made for it. */
+export const OTHER_OVERHEAD_GL = '4600';
+export const STAFF_OVERHEAD_GL = '4610';
+
+/** One posted overhead entry: a farm's cost centre's net debit on the Other or Staff Overheads account. */
+export interface OverheadRow {
+  farm_id: string;
+  date: string;
+  kind: 'OTHER' | 'STAFF';
+  amount: number;
+}
+
+export interface OverheadFigures {
+  other: number;
+  staff: number;
+}
+
+/** The overheads posted in a window, for one farm or all of them; null when nothing was posted. */
+export function overheadFigures(
+  rows: OverheadRow[],
+  from: string,
+  to: string,
+  farmId: string | null,
+): OverheadFigures | null {
+  const inWindow = rows.filter(
+    (r) => r.date >= from && r.date <= to && (!farmId || r.farm_id === farmId),
+  );
+  if (!inWindow.length) return null;
+  const sum = (kind: OverheadRow['kind']) =>
+    round(
+      inWindow.filter((r) => r.kind === kind).reduce((a, r) => a + r.amount, 0),
+      2,
+    );
+  return { other: sum('OTHER'), staff: sum('STAFF') };
+}
+
+/**
+ * Profit before tax: gross margin less both overheads. It exists when either side has figures; a side with none counts
+ * as 0 (a farm with overheads and no sale in the window shows the loss).
+ */
+export function pbtOf(
+  sales: SalesFigures | null,
+  overheads: OverheadFigures | null,
+): number | null {
+  if (!sales && !overheads) return null;
+  return round(
+    (sales?.gross_margin ?? 0) - (overheads?.other ?? 0) - (overheads?.staff ?? 0),
+    2,
+  );
+}
+
+/** The business year's running PBT, one point per period up to the chosen one (the PBT chart's actuals). */
+export function pbtByPeriod(
+  sales: SaleRow[],
+  overheads: OverheadRow[],
+  periods: Array<{ period_code: string; start_date: string; end_date: string }>,
+  farmId: string | null,
+  to: string,
+): Array<{ period_code: string; pbt: number | null }> {
+  let running = 0;
+  return periods.map((p) => {
+    if (p.start_date > to) return { period_code: p.period_code, pbt: null };
+    const end = p.end_date < to ? p.end_date : to;
+    running +=
+      pbtOf(
+        salesFigures(sales, p.start_date, end, farmId),
+        overheadFigures(overheads, p.start_date, end, farmId),
+      ) ?? 0;
+    return { period_code: p.period_code, pbt: round(running, 2) };
+  });
+}
+
 /** The business year's running total of pigs sold, one point per period up to the chosen one (the YTD chart's actuals). */
 export function headsByPeriod(
   rows: SaleRow[],

@@ -78,14 +78,31 @@ export const fmt = (value: number | null | undefined, unit = '') =>
     ? NA
     : `${value.toLocaleString('en-GB', { maximumFractionDigits: 2 })}${unit ? (unit === '%' ? '%' : ` ${unit}`) : ''}`;
 
-const signed = (value: number, unit = '') =>
-  `${value > 0 ? '+' : ''}${fmt(value, unit)}`;
+/**
+ * A figure for a card or a matrix cell: thousands and millions shortened (102.9K, 1.54M) so a narrow card never clips
+ * it. The whole number stays in the element's title.
+ */
+export function fmtShort(value: number): string {
+  const a = Math.abs(value);
+  if (a >= 1_000_000)
+    return `${(value / 1_000_000).toLocaleString('en-GB', { maximumFractionDigits: 2 })}M`;
+  if (a >= 100_000)
+    return `${(value / 1_000).toLocaleString('en-GB', { maximumFractionDigits: 1 })}K`;
+  if (a >= 1_000)
+    return value.toLocaleString('en-GB', { maximumFractionDigits: 0 });
+  return value.toLocaleString('en-GB', { maximumFractionDigits: 2 });
+}
 
-/** A percent metric to one decimal, as the cards read (32.0%); the rest is fmt. */
+const signed = (value: number, unit = '') =>
+  `${value > 0 ? '+' : ''}${unit === '%' || unit === 'pp' ? fmt(value, unit) : `${fmtShort(value)}${unit ? ` ${unit}` : ''}`}`;
+
+/** A percent metric to one decimal, as the cards read (32.0%); any other figure shortened by fmtShort. */
 const fig = (value: number | null | undefined, unit: string) =>
-  unit === '%' && value != null
-    ? `${value.toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
-    : fmt(value);
+  value == null
+    ? NA
+    : unit === '%'
+      ? `${value.toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
+      : fmtShort(value);
 
 /** Actual − budget and its share of the budget, and whether it is good news. */
 export function variance(f: Figure, lowerIsBetter: boolean) {
@@ -125,9 +142,12 @@ export function figureVariance(f: Figure, lowerIsBetter: boolean) {
 export function StatusDot({
   status,
   size = 'md',
+  hasValue = false,
 }: {
   status: Status;
   size?: 'sm' | 'md';
+  /** A figure with no target to judge it by: a light solid dot, so it reads apart from "no data" (the dashed ring). */
+  hasValue?: boolean;
 }) {
   const dim = size === 'sm' ? 'h-2.5 w-2.5' : 'h-3.5 w-3.5';
   return (
@@ -138,7 +158,9 @@ export function StatusDot({
       style={
         status
           ? { backgroundColor: STATUS_COLOR[status] }
-          : { border: '1.5px dashed var(--text-muted)' }
+          : hasValue
+            ? { backgroundColor: 'var(--text-muted)', opacity: 0.35 }
+            : { border: '1.5px dashed var(--text-muted)' }
       }
     />
   );
@@ -215,7 +237,10 @@ function FigureBlock({
       <div className="flex items-start justify-between gap-1">
         <div className="min-w-0">
           <p className="text-xs text-(--text-secondary)">{label}</p>
-          <p className="truncate font-mono text-xl font-semibold tabular-nums">
+          <p
+            className="truncate font-mono text-xl font-semibold tabular-nums"
+            title={figure.actual == null ? undefined : fmt(figure.actual, unit)}
+          >
             {fig(figure.actual, unit)}
           </p>
         </div>
@@ -375,6 +400,7 @@ export function Matrix({
   t,
   note,
   budgeted = false,
+  reportingFarmIds,
 }: {
   icon: ElementType;
   title: string;
@@ -384,7 +410,11 @@ export function Matrix({
   note?: ReactNode;
   /** The rows' figures are budgets (Slaughter & Financial), so the hover says Budget, not Target. */
   budgeted?: boolean;
+  /** The farms with records in the period: any other column is dimmed and shows a dash, not an empty circle. */
+  reportingFarmIds?: string[];
 }) {
+  const silent = (farmId: string) =>
+    !!reportingFarmIds && !reportingFarmIds.includes(farmId);
   const [targetKey, noTargetKey] = budgeted
     ? (['gmdBudget', 'gmdNoBudget'] as const)
     : (['gmdTarget', 'gmdNoTarget'] as const);
@@ -412,11 +442,15 @@ export function Matrix({
               {farms.map((f) => (
                 <th
                   key={f.farm_id}
-                  className="w-[3.25rem] min-w-[3.25rem] px-0.5 py-2 text-center align-bottom text-[9px] font-semibold uppercase leading-[1.15] tracking-tight"
+                  className={`w-[3.25rem] min-w-[3.25rem] px-0.5 py-2 text-center align-bottom text-[9px] font-semibold uppercase leading-[1.15] tracking-tight ${silent(f.farm_id) ? 'opacity-50' : ''}`}
                 >
                   {/* The name wraps in its narrow column; the card on hover gives it whole. */}
                   <HoverHint
-                    hint={f.farm_name}
+                    hint={
+                      silent(f.farm_id)
+                        ? `${f.farm_name} — ${t('gmdNoRecordsThisPeriod')}`
+                        : f.farm_name
+                    }
                     plain
                     focusable={false}
                     className="block break-words"
@@ -438,6 +472,19 @@ export function Matrix({
                 </td>
                 {farms.map((f) => {
                   const c = row.cells[f.farm_id];
+                  if (silent(f.farm_id)) {
+                    const quiet = `${f.farm_name} — ${t('gmdNoRecordsThisPeriod')}`;
+                    return (
+                      <td
+                        key={f.farm_id}
+                        className="px-1 py-2 text-center text-(--text-muted)"
+                        title={quiet}
+                        aria-label={quiet}
+                      >
+                        –
+                      </td>
+                    );
+                  }
                   const tip = `${f.farm_name} — ${row.label}: ${fmt(c?.value, row.unit)} · ${
                     c?.target != null
                       ? `${t(targetKey)} ${fmt(c.target, row.unit)}`
@@ -450,8 +497,16 @@ export function Matrix({
                       title={tip}
                       aria-label={tip}
                     >
-                      <span className="inline-flex justify-center">
-                        <StatusDot status={c?.status ?? null} />
+                      <span className="inline-flex flex-col items-center gap-0.5">
+                        <StatusDot
+                          status={c?.status ?? null}
+                          hasValue={c?.value != null}
+                        />
+                        {c?.value != null && (
+                          <span className="text-[10px] leading-none tabular-nums text-(--text-secondary)">
+                            {fig(c.value, row.unit)}
+                          </span>
+                        )}
                       </span>
                     </td>
                   );

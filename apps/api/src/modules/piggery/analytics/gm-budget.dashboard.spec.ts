@@ -197,6 +197,9 @@ describe('budgetActuals', () => {
       GROSS_MARGIN: 30,
       GROSS_MARGIN_PCT: 23.08,
       KG_SOLD_PER_SOW_YEAR: 1500,
+      OTHER_OVERHEADS: null,
+      STAFF_OVERHEADS: null,
+      PBT: 30, // no overheads posted: PBT is the gross margin
     });
   });
 
@@ -207,6 +210,24 @@ describe('budgetActuals', () => {
       GROSS_MARGIN: null,
       GROSS_MARGIN_PCT: null,
       KG_SOLD_PER_SOW_YEAR: null,
+      OTHER_OVERHEADS: null,
+      STAFF_OVERHEADS: null,
+      PBT: null,
     });
+  });
+});
+
+describe('budgetActuals overheads and PBT', () => {
+  const sales = { heads: 10, cost_of_sales: 100, revenue: 3000, gross_margin: 2900, gross_margin_pct: 96.67 };
+  it('carries both overheads and PBT', () => {
+    const a = budgetActuals(sales, null, { other: 1000, staff: 400 });
+    expect(a.OTHER_OVERHEADS).toBe(1000);
+    expect(a.STAFF_OVERHEADS).toBe(400);
+    expect(a.PBT).toBe(1500);
+  });
+  it('leaves them out when nothing was posted', () => {
+    const a = budgetActuals(null, null);
+    expect(a.OTHER_OVERHEADS).toBeNull();
+    expect(a.PBT).toBeNull();
   });
 });

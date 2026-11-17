@@ -662,3 +662,96 @@ describe('GM Dashboard — budgets', () => {
     });
   });
 });
+
+describe('GM Dashboard — layout and coverage', () => {
+  beforeEach(() => {
+    get.mockReset();
+    chartProps.length = 0;
+  });
+
+  const withCoverage = (extra: Record<string, unknown>) => {
+    const base = response('p10');
+    get.mockResolvedValue({ data: { ...base.data, ...extra } });
+  };
+
+  it('says how many farms have records, and dims and dashes the ones with none', async () => {
+    withCoverage({ farms_reporting: { reporting: 1, total: 2, farm_ids: ['g'] } });
+    render(<PiggeryGmDashboard />);
+    const chip = await screen.findByTestId('gmd-coverage');
+    expect(chip.textContent).toContain('gmdFarmsReporting 1 2');
+    const table = await screen.findByRole('region', { name: 'gmdBreedingMatrix' });
+    const heads = within(table).getAllByRole('columnheader');
+    expect(heads[1].className).not.toContain('opacity-50'); // GRASMERE reports
+    expect(heads[2].className).toContain('opacity-50'); // PORTA has nothing
+    const cells = within(within(table).getAllByRole('row')[1]).getAllByRole('cell');
+    expect(cells[2].textContent).toBe('–');
+    expect(cells[2].getAttribute('title')).toBe('PORTA — gmdNoRecordsThisPeriod');
+    expect(cells[2].querySelector('[data-status]')).toBeNull();
+  });
+
+  it('shows the value under the dot for a farm that reports', async () => {
+    withCoverage({ farms_reporting: { reporting: 2, total: 2, farm_ids: ['g', 'p'] } });
+    render(<PiggeryGmDashboard />);
+    const table = await screen.findByRole('region', { name: 'gmdBreedingMatrix' });
+    const cells = within(within(table).getAllByRole('row')[1]).getAllByRole('cell');
+    expect(cells[1].textContent).toBe('57.1%'); // Farrowing Rate 57.14 under its red dot
+    expect(
+      cells[1].querySelector('[data-status]')?.getAttribute('data-status'),
+    ).toBe('RED');
+  });
+
+  it('names the period it fell back to when the current one has no records yet', async () => {
+    withCoverage({
+      period: { ...response('p10').data.period, fallback_from: '2026-11' },
+      farms_reporting: { reporting: 1, total: 2, farm_ids: ['g'] },
+    });
+    render(<PiggeryGmDashboard />);
+    const chip = await screen.findByTestId('gmd-coverage');
+    expect(chip.textContent).toContain('gmdShowingLatest 2026-10 2026-11');
+  });
+
+  it('says nothing about coverage when one farm is shown or the API sends none', async () => {
+    withCoverage({ farms_reporting: { reporting: 1, total: 1, farm_ids: ['g'] } });
+    const { unmount } = render(<PiggeryGmDashboard />);
+    await screen.findByRole('region', { name: 'gmdBreedingMatrix' });
+    expect(screen.queryByTestId('gmd-coverage')).toBeNull();
+    unmount();
+    const base = response('p10');
+    get.mockResolvedValue({ data: { ...base.data, farms_reporting: undefined } });
+    render(<PiggeryGmDashboard />);
+    await screen.findByRole('region', { name: 'gmdBreedingMatrix' });
+    expect(screen.queryByTestId('gmd-coverage')).toBeNull();
+  });
+});
+
+describe('fmtShort', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { fmtShort } = jest.requireActual('../src/components/console/piggery/gm-dashboard-widgets');
+  it.each([
+    [102937.94, '102.9K'],
+    [1542000, '1.54M'],
+    [-643285.34, '-643.3K'],
+    [20872.04, '20,872'],
+    [4500, '4,500'],
+    [57.14, '57.14'],
+    [0, '0'],
+  ])('shortens %s to %s', (value, text) => {
+    expect(fmtShort(value)).toBe(text);
+  });
+});
+
+describe('StatusDot', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { StatusDot } = jest.requireActual('../src/components/console/piggery/gm-dashboard-widgets');
+
+  it('draws a light solid dot for a figure with no target, and a dashed ring for no data', () => {
+    const { container, rerender } = render(<StatusDot status={null} hasValue />);
+    const dot = container.querySelector('[data-status]') as HTMLElement;
+    expect(dot.style.opacity).toBe('0.35');
+    expect(dot.style.border).toBe('');
+    rerender(<StatusDot status={null} />);
+    const ring = container.querySelector('[data-status]') as HTMLElement;
+    expect(ring.style.border).toContain('dashed');
+    expect(ring.style.opacity).toBe('');
+  });
+});

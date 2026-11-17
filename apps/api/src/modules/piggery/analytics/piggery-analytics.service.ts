@@ -36,6 +36,11 @@ import {
   HeadMoveRow,
   headsByPeriod,
   kgSoldPerSowYear,
+  OTHER_OVERHEAD_GL,
+  OverheadRow,
+  overheadFigures,
+  pbtByPeriod,
+  STAFF_OVERHEAD_GL,
   meanTarget,
   MetricRow,
   SaleRow,
@@ -53,6 +58,9 @@ import { BudgetLine } from './gm-budget.metrics';
 import { budgetActuals, budgetSection } from './gm-budget.dashboard';
 
 type Farm = { farm_id: string; farm_code: string; farm_name: string };
+
+/** How many periods back the dashboard looks for one with records when it opens on a period that has none. */
+const MAX_FALLBACK_PERIODS = 6;
 
 /** The Breeding & Farrowing rows: the figure, its lifecycle target and whether lower is better. */
 const BREEDING_ROWS: Array<{
@@ -256,11 +264,6 @@ export class PiggeryAnalyticsService {
       )
       .orderBy(asc(P.start_date));
     const today = this.today();
-    const chosen = query.periodId
-      ? periods.find((p) => p.period_id === query.periodId)
-      : (periods.find((p) => p.start_date <= today && today <= p.end_date) ??
-        periods[periods.length - 1]);
-
     const allFarms = (await this.ops.listFarms(tenantId, userType)).filter(
       (f) => !companyId || !f.company_id || f.company_id === companyId,
     );
@@ -275,27 +278,73 @@ export class PiggeryAnalyticsService {
         farm_name,
       }));
 
+    // With no period asked for, open on the one holding today; when it has no records yet (a new period, or a
+    // database whose records stop earlier) step back to the latest period that does, so the page opens on figures.
+    let chosen: GmDashboardPeriod | undefined;
+    let fallbackFrom: string | null = null;
+    if (query.periodId) {
+      chosen = periods.find((p) => p.period_id === query.periodId);
+    } else {
+      const current =
+        periods.find((p) => p.start_date <= today && today <= p.end_date) ??
+        periods[periods.length - 1];
+      chosen = current;
+      if (current && current.start_date <= today) {
+        const at = periods.indexOf(current);
+        for (let i = at; i >= 0 && i > at - MAX_FALLBACK_PERIODS; i--) {
+          const p = periods[i];
+          const upTo = p.end_date > today ? today : p.end_date;
+          const reporting = await this.farmsWithRecords(
+            tenantId,
+            companyId,
+            farms.map((f) => f.farm_id),
+            p.start_date,
+            upTo,
+          );
+          if (reporting.size) {
+            chosen = p;
+            break;
+          }
+        }
+        if (chosen && chosen !== current) fallbackFrom = current.period_code;
+      }
+    }
+
     const empty: PiggeryGmDashboardData = {
       period: null,
       periods,
       farms,
       kg_sold_per_sow_year: { month: {}, ytd: {}, cells: {} },
-      financial: { month: {}, ytd: {}, heads_by_period: [] },
+      financial: { month: {}, ytd: {}, heads_by_period: [], pbt_by_period: [] },
       budget: { month: {}, ytd: {}, by_period: [] },
       breeding: [],
       weaner_grower: [],
       financial_rows: [],
       alerts: [],
       farm_view: null,
+      farms_reporting: { reporting: 0, total: farms.length, farm_ids: [] },
     };
     if (!chosen) return empty;
     const ytdFrom =
       periods.find((p) => p.business_year === chosen.business_year)
         ?.start_date ?? chosen.start_date;
     const to = chosen.end_date > today ? today : chosen.end_date;
-    const period = { ...chosen, ytd_from: ytdFrom, to };
+    const period = {
+      ...chosen,
+      ytd_from: ytdFrom,
+      to,
+      fallback_from: fallbackFrom,
+    };
     // A period still to come has no day to count yet.
     if (chosen.start_date > today) return { ...empty, period };
+    // Farms with any farrowing, weaning or sale inside the period: the others have nothing to show yet.
+    const reportingFarms = await this.farmsWithRecords(
+      tenantId,
+      companyId,
+      farms.map((f) => f.farm_id),
+      chosen.start_date,
+      to,
+    );
 
     const month = { name: 'month', startDate: chosen.start_date, endDate: to };
     const ytd = { name: 'ytd', startDate: ytdFrom, endDate: to };
@@ -395,6 +444,13 @@ export class PiggeryAnalyticsService {
       ytd.startDate,
       ytd.endDate,
     );
+    const overheads = await this.overheadRows(
+      tenantId,
+      companyId,
+      farms,
+      ytd.startDate,
+      ytd.endDate,
+    );
     const keys: Array<[string, string | null]> = [
       ['all', null],
       ...farms.map((f): [string, string | null] => [f.farm_id, f.farm_id]),
@@ -414,6 +470,13 @@ export class PiggeryAnalyticsService {
       ),
       heads_by_period: headsByPeriod(
         sales,
+        periods.filter((p) => p.business_year === chosen.business_year),
+        query.farmId ?? null,
+        to,
+      ),
+      pbt_by_period: pbtByPeriod(
+        sales,
+        overheads,
         periods.filter((p) => p.business_year === chosen.business_year),
         query.farmId ?? null,
         to,
@@ -494,9 +557,17 @@ export class PiggeryAnalyticsService {
     const actualsOf = (
       sales: Record<string, SalesFigures | null>,
       kg: Record<string, number | null>,
+      window: { startDate: string; endDate: string },
     ) =>
       Object.fromEntries(
-        keys.map(([k]) => [k, budgetActuals(sales[k] ?? null, kg[k] ?? null)]),
+        keys.map(([k, id]) => [
+          k,
+          budgetActuals(
+            sales[k] ?? null,
+            kg[k] ?? null,
+            overheadFigures(overheads, window.startDate, window.endDate, id),
+          ),
+        ]),
       );
     const { budget, financialRows } = budgetSection({
       lines: budgetLines,
@@ -504,8 +575,8 @@ export class PiggeryAnalyticsService {
       yearPeriods,
       periodId: chosen.period_id,
       actuals: {
-        month: actualsOf(financial.month, kgMonth),
-        ytd: actualsOf(financial.ytd, kgYtd),
+        month: actualsOf(financial.month, kgMonth, month),
+        ytd: actualsOf(financial.ytd, kgYtd, ytd),
       },
     });
 
@@ -536,6 +607,11 @@ export class PiggeryAnalyticsService {
               kgYtd[farms[0].farm_id] ?? null,
             )
           : null,
+      farms_reporting: {
+        reporting: reportingFarms.size,
+        total: farms.length,
+        farm_ids: [...reportingFarms],
+      },
     };
   }
 
@@ -840,6 +916,92 @@ export class PiggeryAnalyticsService {
       cost: Number(r.cost),
       revenue: Number(r.revenue),
     }));
+  }
+
+  /**
+   * The overheads posted between two dates: each posted journal line on the Other Overheads (4600) or Staff Overheads
+   * (4610) account, net debit, to the farm whose cost centre (CC-<farm code>) it carries.
+   */
+  private async overheadRows(
+    tenantId: string,
+    companyId: string,
+    farms: Farm[],
+    from: string,
+    to: string,
+  ): Promise<OverheadRow[]> {
+    if (!farms.length) return [];
+    const byCostCentre = new Map(farms.map((f) => [`CC-${f.farm_code}`, f.farm_id]));
+    const [rows] = (await this.db.execute(sql`
+      SELECT cc.cost_center_code AS cc, a.account_code AS code,
+             DATE_FORMAT(h.posting_date, '%Y-%m-%d') AS d,
+             SUM(l.debit_amount - l.credit_amount) AS amount
+      FROM journal_header h
+      JOIN journal_line l ON l.journal_id = h.journal_id
+      JOIN gl_account_master a ON a.gl_account_id = l.gl_account_id
+      JOIN cost_center_master cc ON cc.cost_center_id = l.cost_center_id
+      WHERE h.tenant_id = ${tenantId}
+        ${companyId ? sql`AND h.company_id = ${companyId}` : sql``}
+        AND h.status = 'POSTED'
+        AND h.posting_date BETWEEN ${from} AND ${to}
+        AND a.account_code IN (${OTHER_OVERHEAD_GL}, ${STAFF_OVERHEAD_GL})
+        AND cc.cost_center_code IN (${sql.join(
+          [...byCostCentre.keys()].map((c) => sql`${c}`),
+          sql`, `,
+        )})
+      GROUP BY cc.cost_center_code, a.account_code, h.posting_date
+    `)) as unknown as [Array<Record<string, unknown>>, unknown];
+    return rows.flatMap((r) => {
+      const farmId = byCostCentre.get(String(r.cc));
+      return farmId
+        ? [
+            {
+              farm_id: farmId,
+              date: String(r.d),
+              kind: String(r.code) === STAFF_OVERHEAD_GL ? ('STAFF' as const) : ('OTHER' as const),
+              amount: Number(r.amount),
+            },
+          ]
+        : [];
+    });
+  }
+
+  /**
+   * The farms, among those given, with a farrowing, an actual weaning (piglets weaned; a planned weaning date alone is
+   * not one) or a disposal dated inside the window. A farm with none has no records to report for it, and the dashboard
+   * says so instead of drawing empty figures.
+   */
+  private async farmsWithRecords(
+    tenantId: string,
+    companyId: string,
+    farmIds: string[],
+    from: string,
+    to: string,
+  ): Promise<Set<string>> {
+    if (!farmIds.length) return new Set();
+    const ids = sql.join(
+      farmIds.map((id) => sql`${id}`),
+      sql`, `,
+    );
+    const [rows] = (await this.db.execute(sql`
+      SELECT b.farm_id AS farm_id
+      FROM farrowing_record f
+      JOIN batch_header b ON b.batch_id = f.batch_id
+      WHERE f.tenant_id = ${tenantId}
+        ${companyId ? sql`AND f.company_id = ${companyId}` : sql``}
+        AND b.farm_id IN (${ids})
+        AND (f.farrowing_date BETWEEN ${from} AND ${to}
+          OR (f.weaning_date BETWEEN ${from} AND ${to} AND f.piglets_weaned > 0))
+      UNION
+      SELECT b.farm_id AS farm_id
+      FROM bio_asset_ledger bal
+      JOIN batch_header b ON b.batch_id = bal.batch_id
+      WHERE bal.tenant_id = ${tenantId}
+        ${companyId ? sql`AND bal.company_id = ${companyId}` : sql``}
+        AND bal.entry_type = 'TRANSFORMATION'
+        AND bal.posting_date BETWEEN ${from} AND ${to}
+        AND b.farm_id IN (${ids})
+    `)) as unknown as [Array<Record<string, unknown>>, unknown];
+    return new Set(rows.map((r) => String(r.farm_id)));
   }
 
   private async stageExits(
