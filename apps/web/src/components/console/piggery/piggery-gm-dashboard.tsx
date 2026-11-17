@@ -78,6 +78,58 @@ export interface GmBudget {
   }>;
 }
 
+export interface GmSlaughterMetrics {
+  total_animals: number;
+  warm_mass_kg: number;
+  cold_mass_kg: number;
+  average_carcass_weight_kg: number | null;
+  reported_product_value: number;
+  grades: Array<{
+    grade: string;
+    count: number;
+    percentage: number;
+    warm_mass_kg: number;
+    cold_mass_kg: number;
+  }>;
+  sexes: Array<{
+    sex: string;
+    count: number;
+    percentage: number;
+  }>;
+  sick_codes: Array<{
+    sick_code: string;
+    count: number;
+  }>;
+  by_company: Array<{
+    company_id: string;
+    company_name: string;
+    animals: number;
+    warm_mass_kg: number;
+    cold_mass_kg: number;
+  }>;
+  by_farm: Array<{
+    farm_id: string;
+    farm_name: string;
+    animals: number;
+    warm_mass_kg: number;
+    cold_mass_kg: number;
+  }>;
+  trends: Array<{
+    date: string;
+    animals: number;
+    warm_mass_kg: number;
+    cold_mass_kg: number;
+  }>;
+  product_categories: Array<{
+    category: string;
+    quantity: number;
+    warm_mass_kg: number;
+    cold_mass_kg: number;
+    average_mass_kg: number;
+    reported_value: number;
+  }>;
+}
+
 export interface GmDashboardData {
   period:
     | (Period & {
@@ -119,17 +171,30 @@ export interface GmDashboardData {
     weaner_grower: FarmRow[];
     alerts: FarmAlert[];
   } | null;
+  slaughter?: GmSlaughterMetrics;
 }
 
 const ALL = '';
 
-const shortDate = (iso: string) =>
-  new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
+const shortDate = (iso: string) => {
+  if (!iso) return '—';
+  const [y, m, d] = iso.split('T')[0].split('-');
+  const mName = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sept',
+    'Oct',
+    'Nov',
+    'Dec',
+  ][parseInt(m, 10) - 1];
+  return mName && d && y ? `${parseInt(d, 10)} ${mName} ${y}` : iso;
+};
 
 const MONTHS = [
   'Jan',
@@ -388,7 +453,8 @@ export default function PiggeryGmDashboard() {
       this_month:
         SALES_PICKS[r.key] && salesMonth
           ? SALES_PICKS[r.key]!(salesMonth)
-          : null,
+          : data?.financial_rows?.find((x) => x.key === r.key)?.cells[farmId]
+              ?.value ?? null,
       prev_month: null,
       three_month: null,
     },
@@ -749,6 +815,7 @@ export default function PiggeryGmDashboard() {
               )}
             </div>
           </div>
+
         </>
       )}
     </div>

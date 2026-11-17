@@ -173,13 +173,17 @@ export function breedingFigures(perBreed: OpsMetrics[]): BreedingFigures {
   };
 }
 
-/** Kg sold per sow per year over the dates the metrics cover: kg sold ÷ average sows × 365 ÷ days. */
+/** Kg sold per sow per year over the dates the metrics cover: kg sold ÷ average sows × 365 ÷ days. Takes cold mass from kill sheets when available. */
 export function kgSoldPerSowYear(
   perBreed: OpsMetrics[],
   days: number,
+  coldMassKg?: number | null,
 ): number | null {
   const sows = perBreed.reduce((a, m) => a + (m.average_sows ?? 0), 0);
-  const kg = perBreed.reduce((a, m) => a + m.kg_sold, 0);
+  const kg =
+    coldMassKg != null && coldMassKg > 0
+      ? coldMassKg
+      : perBreed.reduce((a, m) => a + m.kg_sold, 0);
   return sows > 0 && days > 0 ? round((kg / sows) * (365 / days)) : null;
 }
 

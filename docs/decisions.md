@@ -29,6 +29,19 @@ These apply to all work and are not up for re-litigation.
 | **Leave the dev servers running.** Close them only when memory is actually red — check `top -l 1 -n 0 \| grep PhysMem` and `sysctl vm.swapusage`. | 2026-09-07. Rishi browses the app in Brave while work happens; stopping the server pulls the page out from under him. The 8 GB machine still swaps hard, so check rather than guess.                                    |
 | **Never run `pkill`.** Kill a PID confirmed with `lsof -ti :PORT`.                                                                                | A `pkill` killed an entire working session.                                                                                                                                                                             |
 
+### Kill-sheet file storage stays on the server's local disk
+
+_Decided 2026-11-17._
+
+Kill-sheet workbooks are stored on the local filesystem in development and on the
+single production server's local disk in production. They are private: no static
+or public upload URL is used, and download is through an authenticated backend
+endpoint which verifies tenant and farm scope before streaming the file. The
+server backup runbook must include this storage directory. Do not add Cloudflare
+R2, S3, or another external object-storage service; keep the local storage code
+small and modular so the storage adapter can be revisited only when a real
+multi-server scaling need exists.
+
 ---
 
 ## Master data
@@ -5101,3 +5114,21 @@ Proved by `pnpm nx run api:verify-slaughter-transfer` (rolls back): refusals for
 **Livestock > Slaughter Transfer Orders** (`/livestock/slaughter`, `slaughter-transfer-panel.tsx`): a list with a status filter (Open / Closed / Cancelled / All), the order with its lines, and the next step as the one button: Dispatch, Record POD (a DOA for each line), Enter Kill Sheet (average carcass weight and price per line, with the invoice shown before saving), Close; a draft can be cancelled. The New Transfer Order form picks the farm, then lists that farm's weaner, grower and finisher lots with their head and value per head (`GET /slaughter-transfer-order/eligible-lots`), marks a lot still in a medicine withdrawal and refuses more head than a lot holds. The list and the order now carry the farm's code and name. English labels only (the other languages fall back to English).
 
 Looked at in the browser on nf_devco as the company admin: the closed STO-2026-0001 with its two lines, DOA, carcass weights and amounts; a draft STO-2026-0003 made through the form (20 head refused for a 12-head lot, then 2 head) and cancelled, which posted nothing (it stays as a Cancelled order); the POD form of STO-2026-0002 opened and closed without saving. No console errors. `specs/slaughter-transfer-panel.spec.tsx` covers the filter, the POD and the kill sheet's invoice.
+
+## 17 Nov 2026 — Kill Sheets implementation and GM Dashboard integration
+
+1. **Architecture & Scope:** Multi-tenant isolated database per tenant. Within Tenant A, Company Alpha (Triple C Farm) and Company Beta (Beta Farm Group) operate distinct farms and batches within the same tenant database (`nf_killsheetita`). Tenant B operates with complete database isolation (`nf_killsheetitb`).
+2. **Workbook Parsing & Reconciliation:** Real Colcom abattoir workbooks (Porta Farm Batch 3647102 and Multiplier Batch 3647106) parsed using SheetJS (`xlsx`). Product value is strictly reported product value, not sales revenue, profit, or Cost of Sales.
+3. **Storage & Security:** Private filesystem storage (`apps/api/private-uploads/`) with tenant/company/farm-scoped authenticated download endpoints (`/api/v1/kill-sheets/:id/download/:fileType`). Sha512 duplicate file checking prevents double-importing workbooks.
+4. **User Workflow:**
+   - List view (`/batches/kill-sheets`) with search by farm, batch, report reference, ear tag, status filtering, and pagination.
+   - Upload workflow (`/batches/kill-sheets/new`) with company -> farm -> batch cascade selectors, file dropzones, preview & reconciliation (`POST /kill-sheets/preview`), variance warnings, and transactional import confirmation (`POST /kill-sheets/:id/confirm`).
+   - Detail view (`/batches/kill-sheets/[id]`) with KPI summary cards, paginated carcass records with search, product summary, and grade/sex/defect distributions.
+5. **GM Dashboard Integration (Owner Decision, 17 Nov 2026):**
+   - **No separate "Slaughter & Kill Sheets (Confirmed)" section** on the GM Dashboard (`/dashboard`, `/piggery/analytics/gm-dashboard`).
+   - Instead, confirmed kill sheet data directly feeds the standard GM Dashboard missing metrics:
+     - **Avg CDM (kg):** Populates Month & YTD on the top KPI card (`withBudget`), and each reporting farm's cell in the **Slaughter & Financial Performance** matrix table with status dots (target 88 kg).
+     - **COS $/tonne (USD):** Populates Month & YTD sub-metrics on the **Cost of Sales** top KPI card (`cost_of_sales / (cold_mass_kg / 1000)`), and each farm's cell in the **Slaughter & Financial Performance** matrix table with status dots (target $1,650/tonne).
+     - **Kg Meat Sold / Sow / Year:** Populates using confirmed kill sheet cold mass (`coldMassKg`) as meat sold in `kgSoldPerSowYear` for both per-farm and aggregate ('all') calculations.
+     - **Operational Period Selection:** `farmsWithRecords` checks on-farm operational records (farrowings, weanings, disposals), ensuring the dashboard defaults to the latest complete operating period (`2026-10`) with full multi-farm data, while allowing selection of newer periods like `2026-11` where confirmed kill sheets supply actual slaughtered heads and Avg CDM.
+

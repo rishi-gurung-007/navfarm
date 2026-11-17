@@ -21,6 +21,7 @@ import type { OpsMetrics } from '../reports/monthly-ops.metrics';
 import {
   GmDashboardPeriod,
   GmFarmView,
+  GmSlaughterMetrics,
   PiggeryGmDashboardData,
   QueryPiggeryGmDashboardDto,
 } from './piggery-analytics.dto';
@@ -324,7 +325,10 @@ export class PiggeryAnalyticsService {
       farm_view: null,
       farms_reporting: { reporting: 0, total: farms.length, farm_ids: [] },
     };
-    if (!chosen) return empty;
+    if (!chosen) {
+      const slaughter = await this.slaughterMetrics(tenantId, companyId, query.farmId, null);
+      return { ...empty, slaughter };
+    }
     const ytdFrom =
       periods.find((p) => p.business_year === chosen.business_year)
         ?.start_date ?? chosen.start_date;
@@ -336,7 +340,10 @@ export class PiggeryAnalyticsService {
       fallback_from: fallbackFrom,
     };
     // A period still to come has no day to count yet.
-    if (chosen.start_date > today) return { ...empty, period };
+    if (chosen.start_date > today) {
+      const slaughter = await this.slaughterMetrics(tenantId, companyId, query.farmId, { start_date: chosen.start_date, to });
+      return { ...empty, period, slaughter };
+    }
     // Farms with any farrowing, weaning or sale inside the period: the others have nothing to show yet.
     const reportingFarms = await this.farmsWithRecords(
       tenantId,
@@ -359,83 +366,6 @@ export class PiggeryAnalyticsService {
         stageIdCache.set(cid, await this.stageIds(tenantId, cid));
       return stageIdCache.get(cid)!;
     };
-
-    const breedingByFarm = new Map<
-      string,
-      { figures: BreedingFigures; targets: Targets; kgTarget: Target | null }
-    >();
-    const kgMonth: Record<string, number | null> = {};
-    const kgYtd: Record<string, number | null> = {};
-    const allMonth: OpsMetrics[] = [];
-    const allYtd: OpsMetrics[] = [];
-    const stageByFarm = new Map<
-      string,
-      { weaner: StageExit[]; grower: StageExit[] }
-    >();
-
-    for (const farm of farms) {
-      const rows = await this.ops.farmMetrics(tenantId, farm.farm_id, [
-        month,
-        ytd,
-      ]);
-      const inMonth = rows
-        .filter((r) => r.month === 'month')
-        .map((r) => r.metrics);
-      const inYtd = rows.filter((r) => r.month === 'ytd').map((r) => r.metrics);
-      allMonth.push(...inMonth);
-      allYtd.push(...inYtd);
-      kgMonth[farm.farm_id] = kgSoldPerSowYear(
-        inMonth,
-        daysIn(month.startDate, month.endDate),
-      );
-      kgYtd[farm.farm_id] = kgSoldPerSowYear(
-        inYtd,
-        daysIn(ytd.startDate, ytd.endDate),
-      );
-
-      const breedIds = [...new Set(rows.map((r) => r.breed_id))];
-      const farmCid = companyOf(farm.farm_id);
-      const lifecycle = await this.lifecycleRows(
-        tenantId,
-        farmCid,
-        farm.farm_id,
-        month.startDate,
-        month.endDate,
-        breedIds,
-      );
-      const perBreed = breedIds.map((id) =>
-        targetsFromLifecycle(
-          lifecycle.filter((r) => r.breed_id === id),
-          farm.farm_id,
-        ),
-      );
-      const targets = {} as Targets;
-      for (const row of BREEDING_ROWS)
-        targets[row.target] = meanTarget(perBreed.map((t) => t[row.target]));
-      breedingByFarm.set(farm.farm_id, {
-        figures: breedingFigures(inMonth),
-        targets,
-        kgTarget: meanTarget(perBreed.map((t) => t.kg_sold_per_sow_year)),
-      });
-
-      stageByFarm.set(
-        farm.farm_id,
-        await this.stageExits(
-          tenantId,
-          farmCid,
-          farm.farm_id,
-          month.startDate,
-          month.endDate,
-          await stageIdsFor(farmCid),
-          scope,
-        ),
-      );
-    }
-    kgMonth.all = kgSoldPerSowYear(
-      allMonth,
-      daysIn(month.startDate, month.endDate),
-    );
-    kgYtd.all = kgSoldPerSowYear(allYtd, daysIn(ytd.startDate, ytd.endDate));
 
     const sales = await this.soldDisposals(
       tenantId,
@@ -482,6 +412,107 @@ export class PiggeryAnalyticsService {
         to,
       ),
     };
+
+    const slaughterMonth = await this.slaughterByFarm(
+      tenantId,
+      companyId,
+      farms.map((f) => f.farm_id),
+      month.startDate,
+      month.endDate,
+      financial.month,
+    );
+    const slaughterYtd = await this.slaughterByFarm(
+      tenantId,
+      companyId,
+      farms.map((f) => f.farm_id),
+      ytd.startDate,
+      ytd.endDate,
+      financial.ytd,
+    );
+
+    const breedingByFarm = new Map<
+      string,
+      { figures: BreedingFigures; targets: Targets; kgTarget: Target | null }
+    >();
+    const kgMonth: Record<string, number | null> = {};
+    const kgYtd: Record<string, number | null> = {};
+    const allMonth: OpsMetrics[] = [];
+    const allYtd: OpsMetrics[] = [];
+    const stageByFarm = new Map<
+      string,
+      { weaner: StageExit[]; grower: StageExit[] }
+    >();
+
+    for (const farm of farms) {
+      const rows = await this.ops.farmMetrics(tenantId, farm.farm_id, [
+        month,
+        ytd,
+      ]);
+      const inMonth = rows
+        .filter((r) => r.month === 'month')
+        .map((r) => r.metrics);
+      const inYtd = rows.filter((r) => r.month === 'ytd').map((r) => r.metrics);
+      allMonth.push(...inMonth);
+      allYtd.push(...inYtd);
+      kgMonth[farm.farm_id] = kgSoldPerSowYear(
+        inMonth,
+        daysIn(month.startDate, month.endDate),
+        slaughterMonth.get(farm.farm_id)?.cold_mass_kg,
+      );
+      kgYtd[farm.farm_id] = kgSoldPerSowYear(
+        inYtd,
+        daysIn(ytd.startDate, ytd.endDate),
+        slaughterYtd.get(farm.farm_id)?.cold_mass_kg,
+      );
+
+      const breedIds = [...new Set(rows.map((r) => r.breed_id))];
+      const farmCid = companyOf(farm.farm_id);
+      const lifecycle = await this.lifecycleRows(
+        tenantId,
+        farmCid,
+        farm.farm_id,
+        month.startDate,
+        month.endDate,
+        breedIds,
+      );
+      const perBreed = breedIds.map((id) =>
+        targetsFromLifecycle(
+          lifecycle.filter((r) => r.breed_id === id),
+          farm.farm_id,
+        ),
+      );
+      const targets = {} as Targets;
+      for (const row of BREEDING_ROWS)
+        targets[row.target] = meanTarget(perBreed.map((t) => t[row.target]));
+      breedingByFarm.set(farm.farm_id, {
+        figures: breedingFigures(inMonth),
+        targets,
+        kgTarget: meanTarget(perBreed.map((t) => t.kg_sold_per_sow_year)),
+      });
+
+      stageByFarm.set(
+        farm.farm_id,
+        await this.stageExits(
+          tenantId,
+          farmCid,
+          farm.farm_id,
+          month.startDate,
+          month.endDate,
+          await stageIdsFor(farmCid),
+          scope,
+        ),
+      );
+    }
+    kgMonth.all = kgSoldPerSowYear(
+      allMonth,
+      daysIn(month.startDate, month.endDate),
+      slaughterMonth.get('all')?.cold_mass_kg,
+    );
+    kgYtd.all = kgSoldPerSowYear(
+      allYtd,
+      daysIn(ytd.startDate, ytd.endDate),
+      slaughterYtd.get('all')?.cold_mass_kg,
+    );
 
     const breeding: MetricRow[] = BREEDING_ROWS.map((row) => ({
       key: row.key,
@@ -558,6 +589,7 @@ export class PiggeryAnalyticsService {
       sales: Record<string, SalesFigures | null>,
       kg: Record<string, number | null>,
       window: { startDate: string; endDate: string },
+      slaughterMap: Map<string, { avg_cdm: number | null; cos_per_tonne: number | null }>,
     ) =>
       Object.fromEntries(
         keys.map(([k, id]) => [
@@ -566,6 +598,7 @@ export class PiggeryAnalyticsService {
             sales[k] ?? null,
             kg[k] ?? null,
             overheadFigures(overheads, window.startDate, window.endDate, id),
+            slaughterMap.get(k) ?? null,
           ),
         ]),
       );
@@ -575,10 +608,17 @@ export class PiggeryAnalyticsService {
       yearPeriods,
       periodId: chosen.period_id,
       actuals: {
-        month: actualsOf(financial.month, kgMonth, month),
-        ytd: actualsOf(financial.ytd, kgYtd, ytd),
+        month: actualsOf(financial.month, kgMonth, month, slaughterMonth),
+        ytd: actualsOf(financial.ytd, kgYtd, ytd, slaughterYtd),
       },
     });
+
+    const slaughter = await this.slaughterMetrics(
+      tenantId,
+      companyId,
+      query.farmId,
+      { start_date: chosen.start_date, to },
+    );
 
     return {
       period,
@@ -612,6 +652,7 @@ export class PiggeryAnalyticsService {
         total: farms.length,
         farm_ids: [...reportingFarms],
       },
+      slaughter,
     };
   }
 
@@ -864,6 +905,116 @@ export class PiggeryAnalyticsService {
    * its unreversed CONSUMPTION kg; a weaner spell's entry weight is the weaning weight of the batch's litters, a
    * grower spell's the last weighing on or before it entered.
    */
+  /**
+   * Cold mass, slaughtered heads, Avg CDM and COS per tonne from confirmed kill sheets
+   * for the given farms and period window.
+   */
+  private async slaughterByFarm(
+    tenantId: string,
+    companyId: string,
+    farmIds: string[],
+    from: string,
+    to: string,
+    salesByFarm: Record<string, SalesFigures | null>,
+  ): Promise<
+    Map<
+      string,
+      {
+        cold_mass_kg: number;
+        heads: number;
+        avg_cdm: number | null;
+        cos_per_tonne: number | null;
+      }
+    >
+  > {
+    const map = new Map<
+      string,
+      {
+        cold_mass_kg: number;
+        heads: number;
+        avg_cdm: number | null;
+        cos_per_tonne: number | null;
+      }
+    >();
+    if (!farmIds.length) return map;
+
+    try {
+      const importTable = schema.killSheetImport;
+      const rows = await this.db
+        .select({
+          farm_id: importTable.farm_id,
+          heads: sql<number>`coalesce(sum(${importTable.actual_animal_count}), 0)`,
+          cold_mass_kg: sql<number>`coalesce(sum(${importTable.actual_cold_mass_kg}), 0)`,
+        })
+        .from(importTable)
+        .where(
+          and(
+            eq(importTable.tenant_id, tenantId),
+            eq(importTable.status, 'IMPORTED'),
+            companyId ? eq(importTable.company_id, companyId) : undefined,
+            inArray(importTable.farm_id, farmIds),
+            or(
+              and(
+                sql`${importTable.slaughter_from} IS NOT NULL`,
+                sql`${importTable.slaughter_from} <= ${to + ' 23:59:59'}`,
+                sql`coalesce(${importTable.slaughter_to}, ${importTable.slaughter_from}) >= ${from + ' 00:00:00'}`,
+              ),
+              and(
+                sql`${importTable.slaughter_from} IS NULL`,
+                sql`coalesce(${importTable.confirmed_at}, ${importTable.created_at}) >= ${from + ' 00:00:00'}`,
+                sql`coalesce(${importTable.confirmed_at}, ${importTable.created_at}) <= ${to + ' 23:59:59'}`,
+              ),
+            ),
+          ),
+        )
+        .groupBy(importTable.farm_id);
+
+      let totalColdMass = 0;
+      let totalHeads = 0;
+
+      for (const r of rows) {
+        const fid = String(r.farm_id);
+        const heads = Number(r.heads);
+        const coldMass = Number(Number(r.cold_mass_kg).toFixed(2));
+        totalColdMass += coldMass;
+        totalHeads += heads;
+
+        const avgCdm = heads > 0 ? Number((coldMass / heads).toFixed(2)) : null;
+        const cos = salesByFarm[fid]?.cost_of_sales ?? null;
+        const tonnes = coldMass / 1000;
+        const cosPerTonne =
+          tonnes > 0 && cos != null ? Number((cos / tonnes).toFixed(2)) : null;
+
+        map.set(fid, {
+          cold_mass_kg: coldMass,
+          heads,
+          avg_cdm: avgCdm,
+          cos_per_tonne: cosPerTonne,
+        });
+      }
+
+      const totalCos = salesByFarm.all?.cost_of_sales ?? null;
+      const allAvgCdm =
+        totalHeads > 0 ? Number((totalColdMass / totalHeads).toFixed(2)) : null;
+      const allTonnes = totalColdMass / 1000;
+      const allCosPerTonne =
+        allTonnes > 0 && totalCos != null
+          ? Number((totalCos / allTonnes).toFixed(2))
+          : null;
+
+      map.set('all', {
+        cold_mass_kg: totalColdMass,
+        heads: totalHeads,
+        avg_cdm: allAvgCdm,
+        cos_per_tonne: allCosPerTonne,
+      });
+    } catch {
+      // kill_sheet_import table not present or unmigrated; return empty map
+    }
+
+    return map;
+  }
+
   /**
    * The sold disposals of the farms' batches between two dates: heads and book value from the bio-asset ledger's
    * disposal (TRANSFORMATION) entries, proceeds from the "Sale" journal the same batch posted that day. A disposal
@@ -1266,5 +1417,264 @@ export class PiggeryAnalyticsService {
         ),
       ),
     };
+  }
+
+  private async slaughterMetrics(
+    tenantId: string,
+    companyId?: string,
+    farmId?: string,
+    period?: { start_date: string; to: string } | null,
+  ): Promise<GmSlaughterMetrics> {
+    try {
+      const importTable = schema.killSheetImport;
+    const carcassTable = schema.killSheetCarcass;
+    const productTable = schema.killSheetProduct;
+    const companyTable = schema.companyMaster;
+    const locationTable = schema.locationMaster;
+
+    const startTimestamp = period?.start_date ? `${period.start_date} 00:00:00` : null;
+    const endTimestamp = period?.to ? `${period.to} 23:59:59` : null;
+
+    const baseWhere = and(
+      eq(importTable.tenant_id, tenantId),
+      eq(importTable.status, 'IMPORTED'),
+      companyId ? eq(importTable.company_id, companyId) : undefined,
+      farmId ? eq(importTable.farm_id, farmId) : undefined,
+      startTimestamp && endTimestamp
+        ? or(
+            and(
+              sql`${importTable.slaughter_from} <= ${endTimestamp}`,
+              sql`${importTable.slaughter_to} >= ${startTimestamp}`,
+            ),
+            and(
+              sql`${importTable.confirmed_at} >= ${startTimestamp}`,
+              sql`${importTable.confirmed_at} <= ${endTimestamp}`,
+            ),
+          )
+        : undefined,
+    );
+
+    const [header] = await this.db
+      .select({
+        total_animals: sql<number>`coalesce(sum(${importTable.actual_animal_count}), 0)`,
+        warm_mass_kg: sql<number>`coalesce(sum(${importTable.actual_warm_mass_kg}), 0)`,
+        cold_mass_kg: sql<number>`coalesce(sum(${importTable.actual_cold_mass_kg}), 0)`,
+        reported_product_value: sql<number>`coalesce(sum(${importTable.reported_product_value}), 0)`,
+      })
+      .from(importTable)
+      .where(baseWhere);
+
+    const totalAnimals = Number(header?.total_animals ?? 0);
+    const warmMass = Number(Number(header?.warm_mass_kg ?? 0).toFixed(2));
+    const coldMass = Number(Number(header?.cold_mass_kg ?? 0).toFixed(2));
+    const reportedValue = Number(Number(header?.reported_product_value ?? 0).toFixed(3));
+    const avgWeight = totalAnimals > 0 ? Number((coldMass / totalAnimals).toFixed(2)) : null;
+
+    if (totalAnimals === 0) {
+      return {
+        total_animals: 0,
+        warm_mass_kg: 0,
+        cold_mass_kg: 0,
+        average_carcass_weight_kg: null,
+        reported_product_value: 0,
+        grades: [],
+        sexes: [],
+        sick_codes: [],
+        by_company: [],
+        by_farm: [],
+        trends: [],
+        product_categories: [],
+      };
+    }
+
+    const gradeRows = await this.db
+      .select({
+        grade: sql<string>`coalesce(${carcassTable.grade}, 'UNGRADED')`,
+        count: sql<number>`count(*)`,
+        warm_mass_kg: sql<number>`round(coalesce(sum(${carcassTable.warm_mass_kg}), 0), 2)`,
+        cold_mass_kg: sql<number>`round(coalesce(sum(${carcassTable.cold_mass_kg}), 0), 2)`,
+      })
+      .from(carcassTable)
+      .innerJoin(importTable, eq(importTable.import_id, carcassTable.import_id))
+      .where(baseWhere)
+      .groupBy(sql`coalesce(${carcassTable.grade}, 'UNGRADED')`)
+      .orderBy(sql`1`);
+
+    const grades = gradeRows.map((r) => {
+      const count = Number(r.count);
+      return {
+        grade: r.grade,
+        count,
+        percentage: totalAnimals > 0 ? Number(((count / totalAnimals) * 100).toFixed(1)) : 0,
+        warm_mass_kg: Number(r.warm_mass_kg),
+        cold_mass_kg: Number(r.cold_mass_kg),
+      };
+    });
+
+    const sexRows = await this.db
+      .select({
+        sex: sql<string>`coalesce(${carcassTable.sex}, 'UNKNOWN')`,
+        count: sql<number>`count(*)`,
+      })
+      .from(carcassTable)
+      .innerJoin(importTable, eq(importTable.import_id, carcassTable.import_id))
+      .where(baseWhere)
+      .groupBy(sql`coalesce(${carcassTable.sex}, 'UNKNOWN')`)
+      .orderBy(sql`1`);
+
+    const sexes = sexRows.map((r) => {
+      const count = Number(r.count);
+      return {
+        sex: r.sex,
+        count,
+        percentage: totalAnimals > 0 ? Number(((count / totalAnimals) * 100).toFixed(1)) : 0,
+      };
+    });
+
+    const sickRows = await this.db
+      .select({
+        sick_code: sql<string>`coalesce(${carcassTable.sick_code}, '0')`,
+        count: sql<number>`count(*)`,
+      })
+      .from(carcassTable)
+      .innerJoin(importTable, eq(importTable.import_id, carcassTable.import_id))
+      .where(baseWhere)
+      .groupBy(sql`coalesce(${carcassTable.sick_code}, '0')`)
+      .orderBy(sql`1`);
+
+    const sickCodes = sickRows.map((r) => ({
+      sick_code: r.sick_code,
+      count: Number(r.count),
+    }));
+
+    const companyRows = await this.db
+      .select({
+        company_id: importTable.company_id,
+        company_name: companyTable.company_name,
+        animals: sql<number>`coalesce(sum(${importTable.actual_animal_count}), 0)`,
+        warm_mass_kg: sql<number>`round(coalesce(sum(${importTable.actual_warm_mass_kg}), 0), 2)`,
+        cold_mass_kg: sql<number>`round(coalesce(sum(${importTable.actual_cold_mass_kg}), 0), 2)`,
+      })
+      .from(importTable)
+      .innerJoin(companyTable, eq(companyTable.company_id, importTable.company_id))
+      .where(baseWhere)
+      .groupBy(importTable.company_id, companyTable.company_name)
+      .orderBy(sql`1`);
+
+    const byCompany = companyRows.map((r) => ({
+      company_id: r.company_id,
+      company_name: r.company_name,
+      animals: Number(r.animals),
+      warm_mass_kg: Number(r.warm_mass_kg),
+      cold_mass_kg: Number(r.cold_mass_kg),
+    }));
+
+    const farmRows = await this.db
+      .select({
+        farm_id: importTable.farm_id,
+        farm_name: locationTable.location_name,
+        animals: sql<number>`coalesce(sum(${importTable.actual_animal_count}), 0)`,
+        warm_mass_kg: sql<number>`round(coalesce(sum(${importTable.actual_warm_mass_kg}), 0), 2)`,
+        cold_mass_kg: sql<number>`round(coalesce(sum(${importTable.actual_cold_mass_kg}), 0), 2)`,
+      })
+      .from(importTable)
+      .innerJoin(locationTable, eq(locationTable.location_id, importTable.farm_id))
+      .where(baseWhere)
+      .groupBy(importTable.farm_id, locationTable.location_name)
+      .orderBy(sql`1`);
+
+    const byFarm = farmRows.map((r) => ({
+      farm_id: r.farm_id,
+      farm_name: r.farm_name,
+      animals: Number(r.animals),
+      warm_mass_kg: Number(r.warm_mass_kg),
+      cold_mass_kg: Number(r.cold_mass_kg),
+    }));
+
+    const trendRows = await this.db
+      .select({
+        date: sql<string>`coalesce(date(${carcassTable.slaughtered_at}), date(${importTable.confirmed_at}), date(${importTable.created_at}))`,
+        animals: sql<number>`count(*)`,
+        warm_mass_kg: sql<number>`round(coalesce(sum(${carcassTable.warm_mass_kg}), 0), 2)`,
+        cold_mass_kg: sql<number>`round(coalesce(sum(${carcassTable.cold_mass_kg}), 0), 2)`,
+      })
+      .from(carcassTable)
+      .innerJoin(importTable, eq(importTable.import_id, carcassTable.import_id))
+      .where(baseWhere)
+      .groupBy(sql`coalesce(date(${carcassTable.slaughtered_at}), date(${importTable.confirmed_at}), date(${importTable.created_at}))`)
+      .orderBy(sql`1`);
+
+    const trends = trendRows.map((r) => ({
+      date: String(r.date),
+      animals: Number(r.animals),
+      warm_mass_kg: Number(r.warm_mass_kg),
+      cold_mass_kg: Number(r.cold_mass_kg),
+    }));
+
+    const categoryRows = await this.db
+      .select({
+        category: sql<string>`coalesce(${productTable.category}, 'Uncategorized')`,
+        quantity: sql<number>`round(coalesce(sum(${productTable.quantity}), 0), 0)`,
+        warm_mass_kg: sql<number>`round(coalesce(sum(${productTable.warm_mass_kg}), 0), 2)`,
+        cold_mass_kg: sql<number>`round(coalesce(sum(${productTable.cold_mass_kg}), 0), 2)`,
+        reported_value: sql<number>`round(coalesce(sum(${productTable.reported_value}), 0), 3)`,
+      })
+      .from(productTable)
+      .innerJoin(importTable, eq(importTable.import_id, productTable.import_id))
+      .where(baseWhere)
+      .groupBy(sql`coalesce(${productTable.category}, 'Uncategorized')`)
+      .orderBy(sql`1`);
+
+    const productCategories = categoryRows.map((r) => {
+      const quantity = Number(r.quantity);
+      const cold = Number(r.cold_mass_kg);
+      return {
+        category: r.category,
+        quantity,
+        warm_mass_kg: Number(r.warm_mass_kg),
+        cold_mass_kg: cold,
+        average_mass_kg: quantity > 0 ? Number((cold / quantity).toFixed(2)) : 0,
+        reported_value: Number(r.reported_value),
+      };
+    });
+
+    return {
+      total_animals: totalAnimals,
+      warm_mass_kg: warmMass,
+      cold_mass_kg: coldMass,
+      average_carcass_weight_kg: avgWeight,
+      reported_product_value: reportedValue,
+      grades,
+      sexes,
+      sick_codes: sickCodes,
+      by_company: byCompany,
+      by_farm: byFarm,
+      trends,
+      product_categories: productCategories,
+    };
+    } catch (err: any) {
+      if (
+        err?.code === 'ER_NO_SUCH_TABLE' ||
+        err?.cause?.code === 'ER_NO_SUCH_TABLE' ||
+        String(err?.message || '').includes("doesn't exist") ||
+        String(err?.cause?.sqlMessage || '').includes("doesn't exist")
+      ) {
+        return {
+          total_animals: 0,
+          warm_mass_kg: 0,
+          cold_mass_kg: 0,
+          average_carcass_weight_kg: null,
+          reported_product_value: 0,
+          grades: [],
+          sexes: [],
+          sick_codes: [],
+          by_company: [],
+          by_farm: [],
+          trends: [],
+          product_categories: [],
+        };
+      }
+      throw err;
+    }
   }
 }

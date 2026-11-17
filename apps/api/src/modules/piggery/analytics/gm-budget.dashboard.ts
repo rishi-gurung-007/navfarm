@@ -49,10 +49,13 @@ export function budgetActuals(
   sales: SalesFigures | null,
   kgSoldPerSowYear: number | null,
   overheads: OverheadFigures | null = null,
+  slaughter?: { avg_cdm: number | null; cos_per_tonne: number | null; heads?: number | null } | null,
 ): BudgetActuals {
   return {
-    PIGS_TO_SLAUGHTER: sales?.heads ?? null,
+    PIGS_TO_SLAUGHTER: sales?.heads ?? (slaughter?.heads && slaughter.heads > 0 ? slaughter.heads : null),
+    AVG_CDM: slaughter?.avg_cdm ?? null,
     COST_OF_SALES: sales?.cost_of_sales ?? null,
+    COS_PER_TONNE: slaughter?.cos_per_tonne ?? null,
     GROSS_MARGIN: sales?.gross_margin ?? null,
     GROSS_MARGIN_PCT: sales?.gross_margin_pct ?? null,
     KG_SOLD_PER_SOW_YEAR: kgSoldPerSowYear,

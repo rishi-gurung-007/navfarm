@@ -722,6 +722,43 @@ describe('GM Dashboard — layout and coverage', () => {
     await screen.findByRole('region', { name: 'gmdBreedingMatrix' });
     expect(screen.queryByTestId('gmd-coverage')).toBeNull();
   });
+
+  it('renders Avg CDM and COS per tonne from budget actuals filled by kill sheet data', async () => {
+    const base = response('p10');
+    get.mockResolvedValue({
+      data: {
+        ...base.data,
+        budget: {
+          month: {
+            all: {
+              avg_cdm: {
+                budget: 88,
+                actual: 86.9,
+                var: -1.1,
+                var_pct: -1.25,
+                status: 'GREEN',
+                missing: [],
+              },
+              cos_per_tonne: {
+                budget: 1650,
+                actual: 1540,
+                var: -110,
+                var_pct: -6.67,
+                status: 'GREEN',
+                missing: [],
+              },
+            },
+          },
+          ytd: {},
+          by_period: [],
+        },
+      },
+    });
+
+    render(<PiggeryGmDashboard />);
+    await screen.findByRole('region', { name: 'gmdBreedingMatrix' });
+    expect(screen.getByRole('region', { name: 'gmdAvgCdm' }).textContent).toContain('86.9');
+  });
 });
 
 describe('fmtShort', () => {

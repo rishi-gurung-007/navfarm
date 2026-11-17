@@ -25,6 +25,58 @@ export interface GmDashboardPeriod {
   end_date: string;
 }
 
+export interface GmSlaughterMetrics {
+  total_animals: number;
+  warm_mass_kg: number;
+  cold_mass_kg: number;
+  average_carcass_weight_kg: number | null;
+  reported_product_value: number;
+  grades: Array<{
+    grade: string;
+    count: number;
+    percentage: number;
+    warm_mass_kg: number;
+    cold_mass_kg: number;
+  }>;
+  sexes: Array<{
+    sex: string;
+    count: number;
+    percentage: number;
+  }>;
+  sick_codes: Array<{
+    sick_code: string;
+    count: number;
+  }>;
+  by_company: Array<{
+    company_id: string;
+    company_name: string;
+    animals: number;
+    warm_mass_kg: number;
+    cold_mass_kg: number;
+  }>;
+  by_farm: Array<{
+    farm_id: string;
+    farm_name: string;
+    animals: number;
+    warm_mass_kg: number;
+    cold_mass_kg: number;
+  }>;
+  trends: Array<{
+    date: string;
+    animals: number;
+    warm_mass_kg: number;
+    cold_mass_kg: number;
+  }>;
+  product_categories: Array<{
+    category: string;
+    quantity: number;
+    warm_mass_kg: number;
+    cold_mass_kg: number;
+    average_mass_kg: number;
+    reported_value: number;
+  }>;
+}
+
 export interface PiggeryGmDashboardData {
   /** The chosen period, the first day of its business year (YTD), and the last day counted (its end, or today). */
   period:
@@ -64,6 +116,7 @@ export interface PiggeryGmDashboardData {
   farm_view: GmFarmView | null;
   /** The farms (of those shown) with a farrowing, weaning or sale in the period; the rest have no records to show. */
   farms_reporting: { reporting: number; total: number; farm_ids: string[] };
+  slaughter?: GmSlaughterMetrics;
 }
 
 export interface GmFarmView {

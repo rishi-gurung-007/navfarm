@@ -392,6 +392,7 @@ export default function ConsoleLayout({
     { label: t('navBatchEntry'), href: '/batches/entry' },
     { label: t('navBatchRecords'), href: '/batches/records' },
     { label: t('navBatchTransfers'), href: '/batches/transfers' },
+    { label: 'Kill Sheets', href: '/batches/kill-sheets' },
   ];
   const livestockChildren = LIVESTOCK_MENU_SECTIONS.map((section) => ({
     label:

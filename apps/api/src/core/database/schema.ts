@@ -4301,6 +4301,42 @@ export const batchAttachment = mysqlTable('batch_attachment', {
     .notNull(),
 });
 
+// Imported slaughter reports. Source workbooks are private files on the server
+// disk: `*_storage_key` is never exposed as a static URL.
+export const killSheetImport = mysqlTable('kill_sheet_import', {
+  import_id: varchar('import_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  farm_id: varchar('farm_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  batch_id: varchar('batch_id', { length: 36 }).notNull().references(() => batchHeader.batch_id, { onDelete: 'restrict' }),
+  status: varchar('status', { length: 20 }).default('PREVIEW_READY').notNull(),
+  reconciliation_status: varchar('reconciliation_status', { length: 20 }).default('INVALID').notNull(),
+  report_reference: varchar('report_reference', { length: 120 }), report_batch_reference: varchar('report_batch_reference', { length: 120 }),
+  slaughter_from: datetime('slaughter_from', { mode: 'string' }), slaughter_to: datetime('slaughter_to', { mode: 'string' }),
+  individual_file_name: varchar('individual_file_name', { length: 255 }).notNull(), individual_storage_key: varchar('individual_storage_key', { length: 500 }).notNull(),
+  individual_sha512: char('individual_sha512', { length: 128 }).notNull(), summary_file_name: varchar('summary_file_name', { length: 255 }), summary_storage_key: varchar('summary_storage_key', { length: 500 }), summary_sha512: char('summary_sha512', { length: 128 }),
+  expected_animal_count: int('expected_animal_count'), expected_warm_mass_kg: decimal('expected_warm_mass_kg', { precision: 18, scale: 4 }), expected_cold_mass_kg: decimal('expected_cold_mass_kg', { precision: 18, scale: 4 }),
+  actual_animal_count: int('actual_animal_count'), actual_warm_mass_kg: decimal('actual_warm_mass_kg', { precision: 18, scale: 4 }), actual_cold_mass_kg: decimal('actual_cold_mass_kg', { precision: 18, scale: 4 }), reported_product_value: decimal('reported_product_value', { precision: 18, scale: 4 }),
+  validation_json: json('validation_json'), metadata_json: json('metadata_json'), override_reason: varchar('override_reason', { length: 500 }), confirmed_at: timestamp('confirmed_at', { mode: 'string' }), confirmed_by: varchar('confirmed_by', { length: 36 }),
+  created_by: varchar('created_by', { length: 36 }), created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(), updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+}, (t) => ({ scope: index('idx_kill_sheet_import_scope').on(t.tenant_id, t.company_id, t.farm_id, t.created_at), hash: uniqueIndex('uq_kill_sheet_import_hash').on(t.tenant_id, t.batch_id, t.individual_sha512) }));
+
+export const killSheetCarcass = mysqlTable('kill_sheet_carcass', {
+  carcass_id: varchar('carcass_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()), import_id: varchar('import_id', { length: 36 }).notNull().references(() => killSheetImport.import_id, { onDelete: 'cascade' }),
+  serial_number: varchar('serial_number', { length: 100 }).notNull(), ear_tag: varchar('ear_tag', { length: 100 }), grade: varchar('grade', { length: 100 }), warm_mass_kg: decimal('warm_mass_kg', { precision: 18, scale: 4 }).notNull(), cold_mass_kg: decimal('cold_mass_kg', { precision: 18, scale: 4 }).notNull(), sex: varchar('sex', { length: 100 }), fat_mm: decimal('fat_mm', { precision: 18, scale: 4 }), meat_mm: decimal('meat_mm', { precision: 18, scale: 4 }), meat_percentage: decimal('meat_percentage', { precision: 18, scale: 4 }), sick_code: varchar('sick_code', { length: 100 }), slaughtered_at: datetime('slaughtered_at', { mode: 'string' }),
+}, (t) => ({ serial: uniqueIndex('uq_kill_sheet_carcass_serial').on(t.import_id, t.serial_number), tag: index('idx_kill_sheet_carcass_tag').on(t.import_id, t.ear_tag) }));
+
+export const killSheetProduct = mysqlTable('kill_sheet_product', {
+  product_id: varchar('product_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()), import_id: varchar('import_id', { length: 36 }).notNull().references(() => killSheetImport.import_id, { onDelete: 'cascade' }),
+  category: varchar('category', { length: 150 }), product_code: varchar('product_code', { length: 100 }).notNull(), description: varchar('description', { length: 255 }), quantity: decimal('quantity', { precision: 18, scale: 4 }), warm_mass_kg: decimal('warm_mass_kg', { precision: 18, scale: 4 }), cold_mass_kg: decimal('cold_mass_kg', { precision: 18, scale: 4 }), average_mass_kg: decimal('average_mass_kg', { precision: 18, scale: 4 }), reported_price: decimal('reported_price', { precision: 18, scale: 4 }), reported_value: decimal('reported_value', { precision: 18, scale: 4 }),
+}, (t) => ({ import: index('idx_kill_sheet_product_import').on(t.import_id) }));
+
+export const killSheetSickCode = mysqlTable('kill_sheet_sick_code', {
+  sick_code_id: varchar('sick_code_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  import_id: varchar('import_id', { length: 36 }).notNull().references(() => killSheetImport.import_id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 100 }).notNull(), description: varchar('description', { length: 500 }).notNull(),
+}, (t) => ({ code: uniqueIndex('uq_kill_sheet_sick_code').on(t.import_id, t.code) }));
+
 export const batchOutputLine = mysqlTable('batch_output_line', {
   line_id: varchar('line_id', { length: 36 })
     .primaryKey()

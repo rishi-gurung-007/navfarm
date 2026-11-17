@@ -193,7 +193,9 @@ describe('budgetActuals', () => {
   it('takes heads, cost of sales, gross margin and its % from the sales figures and kg from the kg figure', () => {
     expect(budgetActuals(sales(10, 100, 30, 23.08), 1500)).toEqual({
       PIGS_TO_SLAUGHTER: 10,
+      AVG_CDM: null,
       COST_OF_SALES: 100,
+      COS_PER_TONNE: null,
       GROSS_MARGIN: 30,
       GROSS_MARGIN_PCT: 23.08,
       KG_SOLD_PER_SOW_YEAR: 1500,
@@ -203,10 +205,34 @@ describe('budgetActuals', () => {
     });
   });
 
+  it('populates AVG_CDM and COS_PER_TONNE when slaughter data is provided', () => {
+    expect(
+      budgetActuals(
+        sales(10, 100, 30, 23.08),
+        1500,
+        null,
+        { avg_cdm: 88.5, cos_per_tonne: 1520.25 },
+      ),
+    ).toEqual({
+      PIGS_TO_SLAUGHTER: 10,
+      AVG_CDM: 88.5,
+      COST_OF_SALES: 100,
+      COS_PER_TONNE: 1520.25,
+      GROSS_MARGIN: 30,
+      GROSS_MARGIN_PCT: 23.08,
+      KG_SOLD_PER_SOW_YEAR: 1500,
+      OTHER_OVERHEADS: null,
+      STAFF_OVERHEADS: null,
+      PBT: 30,
+    });
+  });
+
   it('no sale gives null actuals, never 0', () => {
     expect(budgetActuals(null, null)).toEqual({
       PIGS_TO_SLAUGHTER: null,
+      AVG_CDM: null,
       COST_OF_SALES: null,
+      COS_PER_TONNE: null,
       GROSS_MARGIN: null,
       GROSS_MARGIN_PCT: null,
       KG_SOLD_PER_SOW_YEAR: null,
