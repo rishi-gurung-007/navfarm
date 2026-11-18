@@ -5711,7 +5711,8 @@ const glPostingGroup: MasterDataConfig = {
       helpText: 'GL account the cost of stock used or sold is posted to.',
       visibleWhen: { allOf: [{ key: 'kind', equals: 'INVENTORY' }] },
     },
-    { key: 'is_active', label: 'Active', type: 'boolean', helpText: 'A group in use by an item cannot be made inactive.' },
+    // Create takes no is_active (a new group is active by default); only the update API accepts it.
+    { key: 'is_active', label: 'Active', type: 'boolean', editOnly: true, helpText: 'A group in use by an item cannot be made inactive.' },
   ],
 };
 
