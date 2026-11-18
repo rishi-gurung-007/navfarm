@@ -1,0 +1,63 @@
+import { registerAs } from '@nestjs/config';
+
+/**
+ * Business Central connection settings, read from the environment (apps/api/.env, gitignored).
+ *
+ * The client secret is a credential: it is only ever read here and handed to the token request. It is never
+ * logged, returned by an endpoint, or written to the database.
+ *
+ * BC_ENABLED=false (the default) means NAVFarm makes no call to Business Central at all — the IN_HOUSE mode
+ * AGENTS.md describes. There are no fake BC calls or success states.
+ */
+export interface BusinessCentralConfig {
+  enabled: boolean;
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
+  environment: string;
+  companyId: string;
+  apiBaseUrl: string;
+  authorityUrl: string;
+  scope: string;
+  requestTimeoutMs: number;
+  maxRetries: number;
+  pageSize: number;
+}
+
+const int = (value: string | undefined, fallback: number, min: number, max: number): number => {
+  const n = Number.parseInt(value ?? '', 10);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+};
+
+const trimSlash = (url: string): string => url.replace(/\/+$/, '');
+
+export function readBusinessCentralConfig(env: NodeJS.ProcessEnv = process.env): BusinessCentralConfig {
+  return {
+    enabled: env.BC_ENABLED === 'true',
+    tenantId: (env.BC_TENANT_ID ?? '').trim(),
+    clientId: (env.BC_CLIENT_ID ?? '').trim(),
+    clientSecret: env.BC_CLIENT_SECRET ?? '',
+    environment: (env.BC_ENVIRONMENT ?? '').trim(),
+    companyId: (env.BC_COMPANY_ID ?? '').trim(),
+    apiBaseUrl: trimSlash(env.BC_API_BASE_URL || 'https://api.businesscentral.dynamics.com'),
+    authorityUrl: trimSlash(env.BC_AUTHORITY_URL || 'https://login.microsoftonline.com'),
+    scope: env.BC_SCOPE || 'https://api.businesscentral.dynamics.com/.default',
+    requestTimeoutMs: int(env.BC_REQUEST_TIMEOUT_MS, 30_000, 1_000, 300_000),
+    maxRetries: int(env.BC_MAX_RETRIES, 3, 0, 6),
+    pageSize: int(env.BC_PAGE_SIZE, 1_000, 1, 20_000),
+  };
+}
+
+/** The settings that must be present before any call is attempted. Empty list = complete. */
+export function missingBusinessCentralSettings(config: BusinessCentralConfig): string[] {
+  const missing: string[] = [];
+  if (!config.tenantId) missing.push('BC_TENANT_ID');
+  if (!config.clientId) missing.push('BC_CLIENT_ID');
+  if (!config.clientSecret) missing.push('BC_CLIENT_SECRET');
+  if (!config.environment) missing.push('BC_ENVIRONMENT');
+  return missing;
+}
+
+export const BUSINESS_CENTRAL_CONFIG = 'businessCentral';
+
+export default registerAs(BUSINESS_CENTRAL_CONFIG, () => readBusinessCentralConfig());

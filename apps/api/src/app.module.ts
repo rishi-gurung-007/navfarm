@@ -90,6 +90,7 @@ import { BreedingModule } from './modules/piggery/breeding/breeding.module';
 import { GiltSelectionModule } from './modules/piggery/gilt-selection/gilt-selection.module';
 import { PiggeryAnalyticsModule } from './modules/piggery/analytics/piggery-analytics.module';
 import { ReportsModule } from './modules/piggery/reports/reports.module';
+import { BusinessCentralModule } from './modules/integration/business-central/business-central.module';
 import { TenantMiddleware } from './common/middlewares/tenant.middleware';
 import appConfig from './config/app.config';
 import databaseConfig from './config/database.config';
@@ -211,6 +212,8 @@ import { SystemController } from './system/system.controller';
     GiltSelectionModule,
     PiggeryAnalyticsModule,
     ReportsModule,
+    // Business Central connector. BC_ENABLED=false (default) makes no call to BC.
+    BusinessCentralModule,
   ],
   controllers: [SystemController],
   providers: [],
