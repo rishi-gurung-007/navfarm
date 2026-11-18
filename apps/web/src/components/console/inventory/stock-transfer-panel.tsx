@@ -1988,15 +1988,17 @@ export default function StockTransferPanel({
 
                 {/* Right side: All action buttons aligned together */}
                 <div className="flex items-center gap-2.5 ml-auto flex-wrap">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={closeModal}
-                    disabled={saving || shipping || receiving}
-                    className="text-xs font-medium"
-                  >
-                    {editingTransfer ? 'Close' : 'Cancel'}
-                  </Button>
+                  {!editingTransfer && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={closeModal}
+                      disabled={saving || shipping || receiving}
+                      className="text-xs font-medium"
+                    >
+                      Cancel
+                    </Button>
+                  )}
 
                   {editingTransfer &&
                     (() => {
