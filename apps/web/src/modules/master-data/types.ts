@@ -273,6 +273,12 @@ export interface MasterDataField {
    * but excluded from the save payload.
    */
   filterOnly?: boolean;
+  /**
+   * List-filter source for a select-entity column whose form picker depends on another field (the
+   * Animal Register's Source GRN follows its Item). The list loads this endpoint once, offers its rows
+   * as the column's filter choices and shows their label in the column instead of the raw id.
+   */
+  filterEndpoint?: string;
   /** Excluded from the create/edit form (e.g. company_id, auto-injected) */
   hideInForm?: boolean;
   /** Visible for context but never editable or included in a save payload. */

@@ -484,6 +484,12 @@ export class ItemService {
     const qcProblems = specProblems(qcSpecs);
     if (qcProblems.length) throw new BadRequestException(qcProblems.join(' '));
 
+    // A living asset is counted in one unit (head): no secondary UOM, no conversion (client, 18 Nov).
+    if (dto.is_biological_asset) {
+      dto.uom_secondary = undefined;
+      dto.uom_conversion_factor = undefined;
+    }
+
     const itemId = randomUUID();
     const newItem = {
       item_id: itemId,
@@ -1441,6 +1447,13 @@ export class ItemService {
       updates.tracking_series_id = null;
     if (dto.is_biological_asset !== undefined)
       updates.is_biological_asset = dto.is_biological_asset;
+    // A living asset is counted in one unit (head): no secondary UOM, no conversion (client, 18 Nov).
+    if (dto.is_biological_asset ?? item.is_biological_asset) {
+      dto.uom_secondary = undefined;
+      dto.uom_conversion_factor = undefined;
+      updates.uom_secondary = null;
+      updates.uom_conversion_factor = null;
+    }
     if (dto.is_biological_costing_method !== undefined)
       updates.is_biological_costing_method = dto.is_biological_costing_method;
     if (dto.is_inventoriable !== undefined)

@@ -27,6 +27,7 @@ export function EntryModal({
   savingLabel,
   issues,
   summary,
+  sidePanel = true,
   children,
 }: {
   title: string;
@@ -39,6 +40,12 @@ export function EntryModal({
   issues: Issue[];
   /** What this entry will do once saved — stock moved, status changed — shown beside the checks. */
   summary?: ReactNode;
+  /**
+   * false drops the right-hand column (the "When you save" and "Checks" cards) and gives the form the full width
+   * (client, 18 Nov: Mating and AI Station collection). Errors still show under their fields, and once Save is
+   * clicked every problem is also listed above the buttons, so a rule tied to no one field is not lost.
+   */
+  sidePanel?: boolean;
   children: ReactNode;
 }) {
   const blocking = errorsOf(issues);
@@ -75,13 +82,26 @@ export function EntryModal({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-4 grid gap-5 lg:grid-cols-[minmax(0,1fr)_17rem]">
+        <div className={`flex-1 overflow-y-auto px-5 py-4 grid gap-5 ${sidePanel ? "lg:grid-cols-[minmax(0,1fr)_17rem]" : ""}`}>
           <div className="space-y-5 min-w-0">{children}</div>
-          <aside className="space-y-3 lg:sticky lg:top-0 self-start">
-            {summary}
-            <ChecksPanel issues={issues} />
-          </aside>
+          {sidePanel && (
+            <aside className="space-y-3 lg:sticky lg:top-0 self-start">
+              {summary}
+              <ChecksPanel issues={issues} />
+            </aside>
+          )}
         </div>
+
+        {!sidePanel && (engaged ? issues : issues.filter((i) => i.level === "warn")).length > 0 && (
+          <div className="px-5 py-2 border-t space-y-1" style={{ borderColor: "var(--border)" }} aria-live="polite">
+            {(engaged ? issues : issues.filter((i) => i.level === "warn")).map((i, k) => (
+              <p key={k} className="text-[11px] flex items-start gap-1.5" style={{ color: i.level === "error" ? "var(--danger)" : "var(--warning)" }}>
+                {i.level === "error" ? <XCircle className="w-3.5 h-3.5 mt-px shrink-0" /> : <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />}
+                <span>{i.text}</span>
+              </p>
+            ))}
+          </div>
+        )}
 
         <div className="flex items-center justify-between gap-3 px-5 py-3 border-t" style={{ borderColor: "var(--border)" }}>
           <p className="text-xs" style={{ color: blocking.length && engaged ? "var(--danger)" : "var(--text-muted)" }}>

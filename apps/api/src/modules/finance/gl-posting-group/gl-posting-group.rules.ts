@@ -38,7 +38,7 @@ export function accountsOfKind(kind: string, accounts: GroupAccounts): Record<Ac
 /** What is wrong with a group as saved. */
 export function validateGroup(kind: string, code: string, name: string, accounts: GroupAccounts): string[] {
   const e: string[] = [];
-  if (!(GROUP_KINDS as readonly string[]).includes(kind)) return ['Kind must be BIOLOGICAL or INVENTORY.'];
+  if (!(GROUP_KINDS as readonly string[]).includes(kind)) return ['Group Type must be Biological or Inventory.'];
   if (!code?.trim()) e.push('Enter a group code.');
   if (!name?.trim()) e.push('Enter a group name.');
   for (const f of ACCOUNT_FIELDS) if (has(accounts[f]) && !fieldsOfKind(kind).includes(f)) e.push(`${ACCOUNT_LABELS[f]} does not belong on a ${kind} group.`);

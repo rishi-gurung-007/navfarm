@@ -122,6 +122,10 @@ export default function BatchPanel() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  // Client, 18 Nov: users pick the order. The list is fetched whole (up to 200) and paged here, so it is sorted here.
+  const [sortOrder, setSortOrder] = useState<
+    'NEWEST' | 'OLDEST' | 'BATCH_ASC' | 'BATCH_DESC'
+  >('NEWEST');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
 
@@ -403,8 +407,23 @@ export default function BatchPanel() {
 
   useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, pageSize]);
-  const pagedRows = rows.slice((page - 1) * pageSize, page * pageSize);
+  }, [search, statusFilter, pageSize, sortOrder]);
+  // Newest/oldest go by Start Date, then by when the batch was created (two batches started the same day).
+  const sortedRows = [...rows].sort((a, b) => {
+    if (sortOrder === 'BATCH_ASC' || sortOrder === 'BATCH_DESC') {
+      const cmp = String(a.batch_no ?? '').localeCompare(
+        String(b.batch_no ?? ''),
+        undefined,
+        { numeric: true },
+      );
+      return sortOrder === 'BATCH_ASC' ? cmp : -cmp;
+    }
+    const key = (r: Row) =>
+      `${String(r.start_date ?? '').slice(0, 10)}|${String(r.created_at ?? '')}`;
+    const cmp = key(a).localeCompare(key(b));
+    return sortOrder === 'OLDEST' ? cmp : -cmp;
+  });
+  const pagedRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -1786,6 +1805,21 @@ export default function BatchPanel() {
           </p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <div className="w-44">
+            <SearchableSelect
+              ariaLabel="Sort Batches"
+              value={sortOrder}
+              onChange={(val) =>
+                setSortOrder((val || 'NEWEST') as typeof sortOrder)
+              }
+              options={[
+                { value: 'NEWEST', label: 'Newest to oldest' },
+                { value: 'OLDEST', label: 'Oldest to newest' },
+                { value: 'BATCH_ASC', label: 'Batch No. A to Z' },
+                { value: 'BATCH_DESC', label: 'Batch No. Z to A' },
+              ]}
+            />
+          </div>
           <div className="w-44">
             <SearchableSelect
               ariaLabel="Status Filter"
