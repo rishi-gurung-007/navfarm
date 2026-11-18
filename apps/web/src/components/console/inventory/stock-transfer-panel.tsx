@@ -1960,16 +1960,44 @@ export default function StockTransferPanel({
             maxWidth="xl"
             footer={
               <div className="flex w-full items-center justify-between gap-3 flex-wrap">
+                {/* Left side: Informational status badges when applicable */}
                 <div className="flex items-center gap-2">
+                  {editingTransfer &&
+                    editingTransfer.status === 'IN_TRANSIT' &&
+                    !canUserReceive(editingTransfer) && (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-md">
+                        <Truck className="h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          In transit to{' '}
+                          {editingTransfer.to_warehouse_name ||
+                            warehouseCode(
+                              editingTransfer.to_warehouse_id,
+                              editingTransfer.to_warehouse_code,
+                            )}{' '}
+                          — Awaiting receipt
+                        </span>
+                      </span>
+                    )}
+                  {editingTransfer && editingTransfer.status === 'RECEIVED' && (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-md font-semibold">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      Transfer Completed &amp; Stock Received
+                    </span>
+                  )}
+                </div>
+
+                {/* Right side: All action buttons aligned together */}
+                <div className="flex items-center gap-2.5 ml-auto flex-wrap">
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={closeModal}
                     disabled={saving || shipping || receiving}
-                    className="text-xs"
+                    className="text-xs font-medium"
                   >
                     {editingTransfer ? 'Close' : 'Cancel'}
                   </Button>
+
                   {editingTransfer &&
                     (() => {
                       const hasRemainingToShip = lines.some((l) => {
@@ -1994,23 +2022,7 @@ export default function StockTransferPanel({
                         );
 
                       return (
-                        <div className="flex items-center gap-2">
-                          {canClose && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() =>
-                                handleCloseOrder(editingTransfer.transfer_id)
-                              }
-                              disabled={closing}
-                              className="text-xs text-red-500 border-red-500/30 hover:bg-red-500/10"
-                              title="Cancel remaining unfulfilled balance and close order"
-                            >
-                              {closing
-                                ? 'Closing…'
-                                : 'Close Order (Cancel Remainder)'}
-                            </Button>
-                          )}
+                        <>
                           {canResolveDiscrepancy && (
                             <Button
                               size="sm"
@@ -2020,19 +2032,34 @@ export default function StockTransferPanel({
                                 setDiscrepancyModalOpen(true);
                               }}
                               disabled={resolvingDiscrepancy}
-                              className="text-xs text-amber-500 border-amber-500/30 hover:bg-amber-500/10 flex items-center gap-1.5"
+                              className="text-xs border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 flex items-center gap-1.5 font-medium"
                               title="Resolve lost, damaged, or returned in-transit stock"
                             >
                               <AlertTriangle className="h-3.5 w-3.5" />
-                              Resolve Transit Discrepancy
+                              Resolve Discrepancy
                             </Button>
                           )}
-                        </div>
+                          {canClose && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                handleCloseOrder(editingTransfer.transfer_id)
+                              }
+                              disabled={closing}
+                              className="text-xs font-medium border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--danger,#b93826)] hover:border-[var(--danger,#b93826)]/40 hover:bg-[var(--surface-raised)] transition-colors"
+                              title="Cancel remaining unfulfilled balance and close order"
+                            >
+                              {closing ? (
+                                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                              ) : null}
+                              {closing ? 'Closing…' : 'Close Order'}
+                            </Button>
+                          )}
+                        </>
                       );
                     })()}
-                </div>
 
-                <div className="flex items-center gap-2">
                   {!editingTransfer ? (
                     <>
                       <Button
@@ -2054,7 +2081,7 @@ export default function StockTransferPanel({
                         size="sm"
                         onClick={() => handleSave(true)}
                         disabled={saving}
-                        className="nf-btn-primary flex items-center gap-1.5 text-xs font-semibold"
+                        className="nf-btn-primary flex items-center gap-1.5 text-xs font-semibold shadow-2xs"
                         title="Create Transfer Order and immediately dispatch outbound shipment with Qty. to Ship"
                       >
                         {savingAndShipping ? (
@@ -2073,23 +2100,30 @@ export default function StockTransferPanel({
                       {editingTransfer.status === 'DRAFT' &&
                         canUserShip(editingTransfer) && (
                           <>
-                            {!embeddedRequisition && <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={handleDirectPost}
-                              disabled={posting}
-                              className="text-xs"
-                              title="Direct transfer without transit delay"
-                            >
-                              {posting
-                                ? 'Posting…'
-                                : 'Direct Transfer (1-Step)'}
-                            </Button>}
+                            {!embeddedRequisition && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={handleDirectPost}
+                                disabled={posting}
+                                className="text-xs font-semibold border-[var(--primary)] text-[var(--primary)] hover:bg-[var(--primary)]/10 flex items-center gap-1.5 transition-colors shadow-2xs"
+                                title="Direct transfer without transit delay"
+                              >
+                                {posting ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                )}
+                                {posting
+                                  ? 'Posting…'
+                                  : 'Direct Transfer (1-Step)'}
+                              </Button>
+                            )}
                             <Button
                               size="sm"
                               onClick={handleShipOrder}
                               disabled={shipping}
-                              className="nf-btn-primary flex items-center gap-1.5 text-xs font-semibold"
+                              className="nf-btn-primary flex items-center gap-1.5 text-xs font-semibold shadow-2xs"
                               title="Dispatch outbound shipment with Qty. to Ship"
                             >
                               {shipping ? (
@@ -2163,29 +2197,7 @@ export default function StockTransferPanel({
                                   : 'Ship Remaining Balance'}
                               </Button>
                             )}
-                          {!canUserReceive(editingTransfer) && (
-                            <span className="inline-flex items-center gap-1.5 text-xs text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-1 rounded-md">
-                              <Truck className="h-3.5 w-3.5 shrink-0" />
-                              <span>
-                                In transit to{' '}
-                                {editingTransfer.to_warehouse_name ||
-                                  warehouseCode(
-                                    editingTransfer.to_warehouse_id,
-                                    editingTransfer.to_warehouse_code,
-                                  )}{' '}
-                                — Awaiting receipt
-                              </span>
-                            </span>
-                          )}
                         </>
-                      )}
-
-                      {/* Received status */}
-                      {editingTransfer.status === 'RECEIVED' && (
-                        <span className="inline-flex items-center gap-1.5 text-xs text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-md font-semibold">
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                          Transfer Completed &amp; Stock Received
-                        </span>
                       )}
                     </>
                   )}
