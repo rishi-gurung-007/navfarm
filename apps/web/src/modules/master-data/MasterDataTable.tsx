@@ -1207,6 +1207,23 @@ export function MasterDataTable({
    * the field's entityValueKey — the same distinction the form makes between a
    * stored uom_code and a stored UUID.
    */
+  /** A filterEndpoint column shows the picked row's label (GRN No., item code) rather than its id. */
+  const entityCellLabel = (row: Row, key: string): string | undefined => {
+    const field = config.fields.find((f) => f.key === key);
+    if (!field?.filterEndpoint) return undefined;
+    const v = row[key];
+    if (v === null || v === undefined || v === '') return undefined;
+    const valueKey = field.entityValueKey || 'id';
+    const hit = (entityOptions[field.filterEndpoint] || []).find(
+      (r) => String(r[valueKey]) === String(v),
+    );
+    if (!hit) return undefined;
+    return (
+      entityDisplayText(hit, field.entityLabelKeys || [], valueKey) ||
+      undefined
+    );
+  };
+
   const filterChoicesFor = (
     key: string,
   ): { value: string; label: string }[] | undefined => {
@@ -1232,13 +1249,12 @@ export function MasterDataTable({
       }
       return opts;
     }
-    if (
-      field.type !== 'select-entity' ||
-      field.dependsOn ||
-      !field.entityEndpoint
-    )
-      return undefined;
-    const loaded = entityOptions[field.entityEndpoint];
+    if (field.type !== 'select-entity') return undefined;
+    const listEndpoint =
+      field.filterEndpoint ??
+      (field.dependsOn ? undefined : field.entityEndpoint);
+    if (!listEndpoint) return undefined;
+    const loaded = entityOptions[listEndpoint];
     if (!loaded?.length) return undefined;
     const valueKey = field.entityValueKey || 'id';
     const labelKeys = field.entityLabelKeys || [];
@@ -1743,7 +1759,12 @@ export function MasterDataTable({
             (f) =>
               f.type === 'select-entity' && f.entityEndpoint && !f.dependsOn,
           )
-          .map((f) => f.entityEndpoint!),
+          .map((f) => f.entityEndpoint!)
+          .concat(
+            config.fields
+              .filter((f) => f.filterEndpoint)
+              .map((f) => f.filterEndpoint!),
+          ),
       ),
     );
     endpoints.forEach(async (ep) => {
@@ -2347,6 +2368,23 @@ export function MasterDataTable({
     return f.validate(v, form) ?? undefined;
   };
 
+  // Item → Bio Asset Costing: with "Weight × price per kg" the residual value is weight times price, shown
+  // read only. Display only — the API stores weight and price, and the total is never sent (see the payload).
+  useEffect(() => {
+    if (config.key !== 'item') return;
+    const w = Number(form.bio_residual_weight_kg);
+    const p = Number(form.bio_residual_price_per_kg);
+    const total =
+      form.bio_residual_rule === 'WEIGHT_X_PRICE' &&
+      form.bio_residual_weight_kg !== '' && form.bio_residual_weight_kg != null &&
+      form.bio_residual_price_per_kg !== '' && form.bio_residual_price_per_kg != null &&
+      Number.isFinite(w) && Number.isFinite(p)
+        ? (w * p).toFixed(2)
+        : '';
+    if ((form.bio_residual_total ?? '') !== total)
+      setForm((prev) => ({ ...prev, bio_residual_total: total }));
+  }, [config.key, form.bio_residual_rule, form.bio_residual_weight_kg, form.bio_residual_price_per_kg, form.bio_residual_total]);
+
   const setField = (key: string, value: any) => {
     if (key === numbering.codeKey) {
       codeFieldTouchedRef.current = true;
@@ -2733,6 +2771,7 @@ export function MasterDataTable({
           delete payload.tracking_series_id;
         }
         delete payload.tracking_type;
+        delete payload.bio_residual_total;
       }
 
       if (form.item_template_id || editing?.item_template_id) {
@@ -5253,13 +5292,14 @@ export function MasterDataTable({
                                     className="whitespace-nowrap"
                                     style={S.primary}
                                   >
-                                    {displayValue(
-                                      row,
-                                      c.key,
-                                      t('mdYes'),
-                                      t('mdNo'),
-                                      c,
-                                    )}
+                                    {entityCellLabel(row, c.key) ??
+                                      displayValue(
+                                        row,
+                                        c.key,
+                                        t('mdYes'),
+                                        t('mdNo'),
+                                        c,
+                                      )}
                                   </TableCell>
                                 )}
                                 {idx === 0 && (

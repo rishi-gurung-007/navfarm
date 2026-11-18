@@ -285,6 +285,9 @@ const location: MasterDataConfig = {
     // check validates against. notEquals rather than an enumerated equals
     // list, so a location type added later stays required by default instead
     // of silently inheriting the SILO exception.
+    // Hidden for STORE too (client, 18 Nov): a store holds stock, not head, so a head-count
+    // capacity means nothing there. The API never required it; the child-fits-in-parent
+    // check skips a parent with no Max Capacity.
     {
       key: 'max_capacity',
       label: 'Max Capacity',
@@ -293,10 +296,10 @@ const location: MasterDataConfig = {
       max: 9999999,
       step: '1',
       visibleWhen: {
-        anyOf: [{ key: 'location_type', notEquals: ['SILO', 'MILL', 'BIN'] }],
+        anyOf: [{ key: 'location_type', notEquals: ['SILO', 'MILL', 'BIN', 'STORE'] }],
       },
       requiredWhen: {
-        anyOf: [{ key: 'location_type', notEquals: ['SILO', 'MILL', 'BIN'] }],
+        anyOf: [{ key: 'location_type', notEquals: ['SILO', 'MILL', 'BIN', 'STORE'] }],
       },
       section: 'Identification',
     },
@@ -308,10 +311,10 @@ const location: MasterDataConfig = {
       entityValueKey: 'uom_code',
       entityLabelKeys: ['uom_code', 'uom_name'],
       visibleWhen: {
-        anyOf: [{ key: 'location_type', notEquals: ['SILO', 'MILL', 'BIN'] }],
+        anyOf: [{ key: 'location_type', notEquals: ['SILO', 'MILL', 'BIN', 'STORE'] }],
       },
       requiredWhen: {
-        anyOf: [{ key: 'location_type', notEquals: ['SILO', 'MILL', 'BIN'] }],
+        anyOf: [{ key: 'location_type', notEquals: ['SILO', 'MILL', 'BIN', 'STORE'] }],
       },
       section: 'Identification',
     },
@@ -1165,6 +1168,9 @@ const animal: MasterDataConfig = {
     { key: 'animal_code', label: 'Code' },
     { key: 'animal_type', label: 'Type' },
     { key: 'gender', label: 'Gender' },
+    // Item and GRN No. are columns so the list can be filtered by them (client, 18 Nov).
+    { key: 'item_id', label: 'Item (Living Asset)' },
+    { key: 'source_receipt_id', label: 'GRN No.' },
     { key: 'status', label: 'Status' },
   ],
   fields: [
@@ -1177,6 +1183,17 @@ const animal: MasterDataConfig = {
       section: 'Identification',
     },
     { key: 'company_id', label: 'Company', type: 'text', hideInForm: true },
+    // Not a form field: Dispose and the breeding events set an animal's status. Declared only so the
+    // list's Status filter is a dropdown of the real values, not a free-text box (client, 18 Nov).
+    {
+      key: 'status',
+      label: 'Status',
+      type: 'select',
+      hideInForm: true,
+      options: ['ACTIVE', 'QUARANTINE', 'SICK', 'PREGNANT', 'LACTATING', 'DRY', 'CULLED', 'DEAD', 'SOLD', 'SLAUGHTERED', 'CONVERTED_INV'].map(
+        (v) => ({ value: v, label: v }),
+      ),
+    },
     {
       key: 'nob_id',
       label: 'Nature of Business',
@@ -1338,6 +1355,7 @@ const animal: MasterDataConfig = {
       entityEndpoint: '/item?itemType=LIVING_ASSET',
       entityValueKey: 'item_id',
       entityLabelKeys: ['item_code', 'item_name'],
+      filterEndpoint: '/item?itemType=LIVING_ASSET',
       section: 'Acquisition',
     },
     // Shown only for the entry types they belong to. The API has always
@@ -1356,6 +1374,7 @@ const animal: MasterDataConfig = {
       entityValueKey: 'receipt_id',
       entityLabelKeys: ['receipt_no', 'animals_left_label'],
       selectedLabelKey: 'receipt_no',
+      filterEndpoint: '/goods-receipt?status=POSTED',
       entityColumnHeaders: ['GRN No.', 'Animals Left'],
       fills: [
         { key: 'entry_date', rowKeys: ['posting_date'] },
@@ -2600,6 +2619,8 @@ const item: MasterDataConfig = {
     },
     {
       key: 'uom_secondary',
+      // A living asset has one unit only (client, 18 Nov).
+      visibleWhen: { allOf: [{ key: 'is_biological_asset', notEquals: true }] },
       label: 'Secondary UOM',
       type: 'select-entity',
       entityEndpoint: '/uom',
@@ -2613,6 +2634,8 @@ const item: MasterDataConfig = {
       // secondary = N primary." Shown read-only when that table already holds
       // the pair; asked for, and recorded there, when it does not.
       key: 'uom_conversion_factor',
+      // A living asset has one unit only (client, 18 Nov).
+      visibleWhen: { allOf: [{ key: 'is_biological_asset', notEquals: true }] },
       label: 'UOM Conversion Factor',
       type: 'number',
       step: '0.000001',
@@ -3027,6 +3050,15 @@ const item: MasterDataConfig = {
       requiredWhen: bioWhen(['AMORTIZATION'], [{ key: 'bio_residual_rule', equals: 'WEIGHT_X_PRICE' }]),
       section: BIO_SECTION,
       ...bioLock,
+    },
+    {
+      key: 'bio_residual_total',
+      label: 'Total Residual Value',
+      type: 'number',
+      readOnly: true,
+      visibleWhen: bioWhen(['AMORTIZATION'], [{ key: 'bio_residual_rule', equals: 'WEIGHT_X_PRICE' }]),
+      helpText: 'Residual Weight × Residual Price per kg, worked out for you. Not stored; only weight and price are saved.',
+      section: BIO_SECTION,
     },
     {
       key: 'bio_run_frequency',
@@ -5603,7 +5635,8 @@ const glPostingGroup: MasterDataConfig = {
   columns: [
     { key: 'group_code', label: 'Code' },
     { key: 'group_name', label: 'Name' },
-    { key: 'kind', label: 'Kind' },
+    // "Group Type", not "Kind" (client, 18 Nov); the list shows the same words as the form.
+    { key: 'kind', label: 'Group Type', labels: { BIOLOGICAL: 'Biological (animals)', INVENTORY: 'Inventory (stock items)' } },
     { key: 'item_count', label: 'Items' },
   ],
   fields: [
@@ -5612,7 +5645,7 @@ const glPostingGroup: MasterDataConfig = {
     { key: 'group_name', label: 'Name', type: 'text', required: true, placeholder: 'Imported gilts' },
     {
       key: 'kind',
-      label: 'Kind',
+      label: 'Group Type',
       type: 'select',
       required: true,
       createOnly: true,

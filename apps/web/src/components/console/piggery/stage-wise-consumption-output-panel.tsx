@@ -1027,8 +1027,8 @@ export default function StageWiseConsumptionOutputPanel() {
       `Stage,${stageLabel}\n` +
       `Animal,${animalLabel}\n` +
       `Date Range,${dateFrom} to ${dateTo}\n` +
-      `Animals Start,${displayStage.startAnimals}\n` +
-      `Animals End,${displayStage.endAnimals}\n` +
+      `Head at Stage Start,${displayStage.startAnimals}\n` +
+      `Head at Stage End,${displayStage.endAnimals}\n` +
       `Total Feed Consumed (KG),${totalFeedKg}\n` +
       `Total Feed Cost,${totalFeedCost}\n` +
       `Total Medicine Cost,${totalMedCost}\n` +

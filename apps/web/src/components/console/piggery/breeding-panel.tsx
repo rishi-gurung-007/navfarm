@@ -56,7 +56,6 @@ import {
   BatchPicker,
   EntryModal,
   Field,
-  ImpactCard,
   Step,
   inputStyle,
 } from './breeding-form-parts';
@@ -81,6 +80,7 @@ import {
   todayIso,
   whyNotFarrowing,
   whyNotServed,
+  maturityOf,
 } from './breeding-rules';
 
 type Row = Record<string, any>;
@@ -251,8 +251,10 @@ export function BreedingPanel({
   const pigletItems = pagedPigletItems.options.filter(
     (i) => i.is_biological_asset && !i.is_blocked && i.is_active !== false,
   );
-  const [pickedPigletItem, setPickedPigletItem] = useState<Row | null>(null);
+  const [, setPickedPigletItem] = useState<Row | null>(null);
   const [stages, setStages] = useState<Row[]>([]);
+  // Breeds, for each sow's Mature Age (months): the mating picker shows her age and the date she matures.
+  const [breeds, setBreeds] = useState<Row[]>([]);
   // Locations, for the pens a new weaner batch can be placed in.
   const [locations, setLocations] = useState<Row[]>([]);
   // Any item the farm uses for semen: nothing is fixed.
@@ -280,8 +282,6 @@ export function BreedingPanel({
   const [showSemenModal, setShowSemenModal] = useState(false);
   // The rules of the primary boar's breeding line (Breeding Line Setup), read as he is chosen. Null: none set.
   const [lineRules, setLineRules] = useState<LineRules | null>(null);
-  // The names of the farms the line's setup sends its semen to, read when the form is open.
-  const [lineFarmNames, setLineFarmNames] = useState<Record<string, string>>({});
   // The AI Station's collectors (Semen Collectors master), offered per boar on the collection form.
   const [collectors, setCollectors] = useState<Row[]>([]);
   const [showPregCheckModal, setShowPregCheckModal] = useState(false);
@@ -502,6 +502,10 @@ export function BreedingPanel({
         .then((r) => setStages(unwrap<Row[]>(r) || []))
         .catch(() => setStages([]));
       api
+        .get('/breed?limit=500')
+        .then((r) => setBreeds(unwrap<Row[]>(r) || []))
+        .catch(() => setBreeds([]));
+      api
         .get('/location?limit=500')
         .then((r) => setLocations(unwrap<Row[]>(r) || []))
         .catch(() => setLocations([]));
@@ -543,25 +547,6 @@ export function BreedingPanel({
       current = false;
     };
   }, [showSemenModal, semenPrimaryBreedId]);
-  useEffect(() => {
-    if (!showSemenModal) return;
-    for (const id of lineRules?.destination_farm_ids ?? []) {
-      api
-        .get(`/location/${id}`)
-        .then((res) => {
-          const farm = unwrap<Row>(res);
-          if (farm?.location_code || farm?.location_name) {
-            setLineFarmNames((m) => ({
-              ...m,
-              [id]: [farm.location_code, farm.location_name]
-                .filter(Boolean)
-                .join(' — '),
-            }));
-          }
-        })
-        .catch(() => {});
-    }
-  }, [showSemenModal, lineRules]);
   useEffect(() => {
     if (!showSemenModal) return;
     api
@@ -1037,11 +1022,6 @@ export function BreedingPanel({
       (Number(farrowForm.foster_received) || 0) -
       (Number(farrowForm.fostered_out) || 0),
   );
-  const pigletItem =
-    pigletItems.find((i) => i.item_id === farrowForm.piglet_item_id) ??
-    (pickedPigletItem?.item_id === farrowForm.piglet_item_id
-      ? pickedPigletItem
-      : undefined);
 
   const semenBatchBoars = inBatch(boars, semenForm.batch_id);
   // The breeds the batch's boars belong to: the line is picked from these, then only that line's boars are offered.
@@ -1071,15 +1051,6 @@ export function BreedingPanel({
       .filter((b) => b.breed_id === semenForm.breed_id)
       .map((b) => b.animal_id),
   });
-  // Where the lot is for: the farm its plan names, else the one farm the line's setup gives.
-  const semenPlan = semenForm.plan_info as Row | null;
-  const semenDestination = semenPlan?.destination_farm_code
-    ? [semenPlan.destination_farm_code, semenPlan.destination_farm_name]
-        .filter(Boolean)
-        .join(' — ')
-    : lineRules?.destination_rule === 'ONE'
-      ? (lineFarmNames[lineRules.destination_farm_ids?.[0] ?? ''] ?? null)
-      : null;
   const semenItem =
     semenItems.find((i) => i.item_id === semenForm.output_item_id) ??
     (pickedSemenItem?.item_id === semenForm.output_item_id
@@ -1992,41 +1963,7 @@ export function BreedingPanel({
           submitLabel={t('brpBtnSaveMating')}
           savingLabel={t('brpBtnRecording')}
           issues={matingIssues}
-          summary={
-            <ImpactCard
-              title="When you save"
-              rows={[
-                [
-                  'Filed under batch',
-                  batches.find((b) => b.batch_id === matingForm.batch_id)
-                    ?.batch_no ?? NA,
-                ],
-                ['Sow', matingSow?.animal_code ?? NA],
-                [
-                  'Sire',
-                  matingBoar?.animal_code ??
-                    (matingLot?.pooled ? 'pooled — not one boar' : NA),
-                ],
-                [
-                  'Semen from stock',
-                  matingForm.mating_type === 'AI' && matingLot
-                    ? `−${Number(matingForm.semen_dose_qty) || 0} dose (${lotState(matingLot, matingForm.mating_date).left - (Number(matingForm.semen_dose_qty) || 0)} left in ${matingLot.lot_no ?? 'lot'})`
-                    : 'none',
-                ],
-                [
-                  'Expected farrowing',
-                  matingForm.expected_farrowing_date || NA,
-                ],
-                [
-                  'Sow status',
-                  matingForm.conception_result === 'CONFIRMED'
-                    ? 'becomes PREGNANT'
-                    : 'unchanged until the check',
-                ],
-              ]}
-              note="An AI service that names a lot takes its doses out of inventory in the same save."
-            />
-          }
+          sidePanel={false}
         >
           <Step
             n={1}
@@ -2077,7 +2014,10 @@ export function BreedingPanel({
                 }
                 disabled={!matingForm.batch_id}
                 options={matingSows.map((a) => {
-                  const why = whyNotServed(a, matings);
+                  const m = maturityOf(a, breeds, matingForm.mating_date);
+                  const why =
+                    whyNotServed(a, matings, stages) ??
+                    (m.immature ? `immature — matures ${formatDate(m.matureOn)}` : null);
                   return {
                     value: a.animal_id,
                     label: `${a.animal_code} · ${a.animal_type} · parity ${a.parity_count ?? 0} · ${why ?? 'ready to serve'}`,
@@ -2088,6 +2028,9 @@ export function BreedingPanel({
                       stages.find((st) => st.stage_id === a.current_stage_id)
                         ?.stage_name ?? NA,
                     status: why ?? 'Ready to serve',
+                    // Age on the mating date, and when she matures (date of birth + breed Mature Age).
+                    age: m.ageMonths == null ? NA : `${m.ageMonths} mo`,
+                    matures: m.matureOn ? formatDate(m.matureOn) : NA,
                     disabled: !!why,
                   };
                 })}
@@ -2095,6 +2038,8 @@ export function BreedingPanel({
                   { key: 'code', label: 'Code' },
                   { key: 'type', label: 'Type' },
                   { key: 'parity', label: 'Parity' },
+                  { key: 'age', label: 'Age' },
+                  { key: 'matures', label: 'Matures On' },
                   { key: 'stage', label: 'Stage' },
                   { key: 'status', label: 'Status' },
                 ]}
@@ -2510,42 +2455,7 @@ export function BreedingPanel({
           submitLabel={t('brpBtnSaveFarrowing')}
           savingLabel={t('brpBtnSaving')}
           issues={farrowIssues}
-          summary={
-            <ImpactCard
-              title="When you save"
-              rows={[
-                [
-                  'Filed under batch',
-                  batches.find((b) => b.batch_id === farrowForm.batch_id)
-                    ?.batch_no ?? NA,
-                ],
-                ['Born', `${farrowTotalBorn} (${farrowLive} live)`],
-                [
-                  'Piglet lot',
-                  farrowNetLitter > 0
-                    ? `${farrowNetLitter} × ${pigletItem?.item_name ?? 'item not chosen'}`
-                    : 'none',
-                ],
-                [
-                  'Sow',
-                  farrowSow ? `${farrowSow.animal_code} → LACTATING` : NA,
-                ],
-                [
-                  'Litter no.',
-                  farrowSow
-                    ? `${(Number(farrowSow.parity_count) || 0) + 1} (sow parity rises to this on saving)`
-                    : NA,
-                ],
-                [
-                  'Weaning planned',
-                  farrowForm.farrowing_date
-                    ? addDays(farrowForm.farrowing_date, 28)
-                    : NA,
-                ],
-              ]}
-              note="The live piglets become a head-count lot in a new batch, with an entry in the Bio Asset Ledger. They are born at nil value; at weaning the sow's lactation feed, drug and overhead cost moves into the lot, spread over the piglets weaned."
-            />
-          }
+          sidePanel={false}
         >
           <Step
             n={1}
@@ -3517,85 +3427,7 @@ export function BreedingPanel({
           submitLabel={t('brpBtnSaveCollectionBatch')}
           savingLabel={t('brpBtnCalculatingSaving')}
           issues={semenIssues}
-          summary={
-            <ImpactCard
-              title="When you save"
-              rows={[
-                [
-                  'Filed under batch',
-                  batches.find((b) => b.batch_id === semenForm.batch_id)
-                    ?.batch_no ?? NA,
-                ],
-                ...(semenForm.plan_no
-                  ? ([['Plan', semenForm.plan_no]] as [string, string][])
-                  : []),
-                [
-                  'Boars in the lot',
-                  semenAcceptedIds.length
-                    ? semenChosenBoars
-                        .filter((b) => semenAcceptedIds.includes(b.animal_id))
-                        .map((b) => b.animal_code)
-                        .join(' + ')
-                    : NA,
-                ],
-                [
-                  'Lot',
-                  semenAcceptedIds.length > 1
-                    ? 'one pooled lot'
-                    : semenAcceptedIds.length
-                      ? 'single-boar lot'
-                      : NA,
-                ],
-                ...(lineRules?.label_template
-                  ? ([['Lot label', 'worked out on save']] as [string, string][])
-                  : []),
-                ...(semenDestination
-                  ? ([['For farm', semenDestination]] as [string, string][])
-                  : []),
-                ...(semenPlan?.reference
-                  ? ([
-                      [
-                        lineRules?.reference_label?.trim() || 'Reference',
-                        semenPlan.reference,
-                      ],
-                    ] as [string, string][])
-                  : []),
-                ...(lineRules?.colorant_name
-                  ? ([
-                      [
-                        'Colorant',
-                        lineRules.colorant_name,
-                      ],
-                    ] as [string, string][])
-                  : []),
-                [
-                  'Rejected',
-                  semenChosenBoars.length > semenAcceptedIds.length
-                    ? `${semenChosenBoars.length - semenAcceptedIds.length} recorded, not in the lot`
-                    : 'none',
-                ],
-                [
-                  'Into inventory',
-                  semenItem && lotDosesOf(semenForm) > 0
-                    ? semenItem.is_qc_required
-                      ? `${lotDosesOf(semenForm)} × ${semenItem.item_name} — held until its QC inspection is accepted`
-                      : `+${lotDosesOf(semenForm)} × ${semenItem.item_name}`
-                    : 'nothing — no item chosen',
-                ],
-                [
-                  'Expires',
-                  semenItem?.shelf_life_days && semenForm.collection_date
-                    ? addDays(
-                        semenForm.collection_date,
-                        Number(semenItem.shelf_life_days),
-                      )
-                    : 'no shelf life on the item',
-                ],
-                ['Cost per dose', 'worked out on save'],
-              ]}
-              note="Doses enter the boar's farm store at nil value (the cost per dose is kept on the lot), with a lot number and a QR tied to the batch."
-            />
-          }
+          sidePanel={false}
         >
           <Step
             n={1}

@@ -202,6 +202,8 @@ interface BatchMeta {
   closingKept?: boolean;
   mortalityCount: number;
   transferredCount: number;
+  /** Animals brought into this batch by a posted Batch Transfer. */
+  transferredInCount?: number;
   lobId: string | null;
   breedId: string | null;
   /** BATCH_WISE (default) or ANIMAL_WISE — ANIMAL_WISE batches have no single
@@ -1218,17 +1220,34 @@ export default function OperationalBatchDataEntry() {
         const cumulativeMortality = txs
           .filter((tx: any) => tx.transaction_type === 'MORTALITY')
           .reduce((sum: number, tx: any) => sum + Number(tx.quantity || 0), 0);
-        const stageMoves = Array.isArray(batchData?.stage_log)
-          ? batchData.stage_log.length
-          : 0;
         setBatchPatches((prev) => ({
           ...prev,
           [selectedBatchId]: {
             ...prev[selectedBatchId],
             mortalityCount: cumulativeMortality,
-            transferredCount: stageMoves,
           },
         }));
+        // Transferred = animals moved to another batch by a posted Batch Transfer (client, 18 Nov). It used to be
+        // the number of stage moves, so a batch transfer never changed it. Transfers in are counted apart.
+        const transferBatchId = selectedBatchId;
+        api
+          .get(`/batch-transfer?batch_id=${transferBatchId}&status=POSTED`)
+          .then((res) => {
+            const list = unwrap<Row[]>(res) || [];
+            const heads = (dir: 'from_batch_id' | 'to_batch_id') =>
+              list
+                .filter((tr) => tr[dir] === transferBatchId)
+                .reduce((sum, tr) => sum + (Number(tr.head_count) || 0), 0);
+            setBatchPatches((prev) => ({
+              ...prev,
+              [transferBatchId]: {
+                ...prev[transferBatchId],
+                transferredCount: heads('from_batch_id'),
+                transferredInCount: heads('to_batch_id'),
+              },
+            }));
+          })
+          .catch(() => {});
 
         setDataEntryLoading(false);
         setStockVersion((v) => v + 1);
@@ -2735,8 +2754,11 @@ export default function OperationalBatchDataEntry() {
                 label: t('bdeTransferred'),
                 value: currentBatch?.transferredCount ?? 0,
                 color: 'var(--text-primary)',
+                sub: currentBatch?.transferredInCount
+                  ? `${currentBatch.transferredInCount} in`
+                  : undefined,
               },
-            ].map((kpi) => (
+            ].map((kpi: { label: string; value: number; color: string; sub?: string }) => (
               <div
                 key={kpi.label}
                 className="flex min-w-[82px] flex-col items-center justify-center gap-0.5 px-4 py-2.5"
@@ -2751,6 +2773,11 @@ export default function OperationalBatchDataEntry() {
                 <p className="text-lg font-bold" style={{ color: kpi.color }}>
                   {kpi.value}
                 </p>
+                {kpi.sub && (
+                  <p className="text-[10px]" style={S.muted}>
+                    {kpi.sub}
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -3861,6 +3888,10 @@ export default function OperationalBatchDataEntry() {
                                 </span>
                               </div>
                             )}
+                            {/* Same place and same rule as "Change Stage (all N)" above, so picking one
+                                animal does not move the button (client, 18 Nov). It used to sit beside the
+                                code and needed the animal in the separately loaded roster, so it moved and
+                                sometimes vanished; an animal not in the roster is now fetched on click. */}
                             <div className="mb-2 flex items-center justify-between gap-2">
                               <p
                                 className="font-mono text-[11px] font-semibold"
@@ -3868,20 +3899,30 @@ export default function OperationalBatchDataEntry() {
                               >
                                 {animal.animal_code}
                               </p>
-                              {rosterAnimal &&
-                                selectedStage.lock_status !== 'LOCKED' &&
-                                !isFutureDate && (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setStageTransitionAnimal(rosterAnimal)
+                              {selectedStage.lock_status !== 'LOCKED' && (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    if (rosterAnimal) {
+                                      setStageTransitionAnimal(rosterAnimal);
+                                      return;
                                     }
-                                    className="text-[10px] font-semibold hover:underline"
-                                    style={S.accent}
-                                  >
-                                    Change Stage
-                                  </button>
-                                )}
+                                    try {
+                                      const res = await api.get(
+                                        `/animal/${animal.animal_id}`,
+                                      );
+                                      const full = unwrap<Row>(res);
+                                      if (full) setStageTransitionAnimal(full);
+                                    } catch {
+                                      /* the modal cannot open without the animal */
+                                    }
+                                  }}
+                                  className="text-[10px] font-semibold hover:underline"
+                                  style={S.accent}
+                                >
+                                  Change Stage ({animal.animal_code})
+                                </button>
+                              )}
                             </div>
                             {renderActivityBoxes(
                               animal.lines || [],

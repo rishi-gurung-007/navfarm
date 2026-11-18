@@ -43,13 +43,48 @@ export function openMatingOf(sowId: string, matings: Row[]): Row | undefined {
     .sort((a, b) => String(b.mating_date).localeCompare(String(a.mating_date)))[0];
 }
 
-/** Why a sow cannot be served now, or null when she can. Mirrors BreedingService.assertSowCanBeServed. */
-export function whyNotServed(sow: Row, matings: Row[]): string | null {
+/**
+ * Why a sow cannot be served now, or null when she can. Mirrors BreedingService.assertSowCanBeServed and, given the
+ * stage list, assertSowReadyForInsemination's stage rule (client, 18 Nov): only an animal in the Insemination stage is
+ * served. Immaturity needs the breed's maturity age, so it is left to the API, which names the date she matures.
+ */
+export function whyNotServed(sow: Row, matings: Row[], stages?: Row[]): string | null {
   const open = openMatingOf(sow.animal_id, matings);
   if (open) return `open service ${formatDate(open.mating_date)} — not farrowed`;
   if (sow.status === "PREGNANT") return "pregnant";
   if (sow.status === "LACTATING") return "nursing — wean first";
+  if (stages?.length) {
+    const stage = stages.find((st) => st.stage_id === sow.current_stage_id);
+    if (!stage) return "no stage — move to Insemination first";
+    if (String(stage.stage_code).toUpperCase() !== "INSEMINATION") return `in ${stage.stage_name} — move to Insemination first`;
+  }
   return null;
+}
+
+/**
+ * A female's maturity on a date, mirroring BreedingService.assertSowReadyForInsemination (client, 18 Nov):
+ * she matures on her date of birth plus her breed's Mature Age (months). Unknown (null) when either is missing,
+ * and then the API does not check it either.
+ */
+export function maturityOf(
+  sow: Row,
+  breeds: Row[],
+  onDate: string,
+): { ageMonths: number | null; matureOn: string | null; immature: boolean } {
+  const dob = sow.dob ? String(sow.dob).slice(0, 10) : "";
+  const on = String(onDate || "").slice(0, 10);
+  let ageMonths: number | null = null;
+  if (dob && on) {
+    const [by, bm, bd] = dob.split("-").map(Number);
+    const [oy, om, od] = on.split("-").map(Number);
+    ageMonths = (oy - by) * 12 + (om - bm) - (od < bd ? 1 : 0);
+  }
+  const months = Number(breeds.find((b) => b.breed_id === sow.breed_id)?.mature_age_months);
+  if (!dob || !months || months <= 0) return { ageMonths, matureOn: null, immature: false };
+  const d = new Date(`${dob}T00:00:00Z`);
+  d.setUTCMonth(d.getUTCMonth() + months);
+  const matureOn = d.toISOString().slice(0, 10);
+  return { ageMonths, matureOn, immature: !!on && on < matureOn };
 }
 
 /** Why a sow cannot farrow now (no open service to farrow from, or she is already nursing), or null. */

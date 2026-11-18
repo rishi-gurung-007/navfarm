@@ -13,6 +13,7 @@ import {
   openMatingOf,
   whyNotFarrowing,
   whyNotServed,
+  maturityOf,
 } from "./breeding-rules";
 
 const sow = { animal_id: "s1", animal_code: "SOW-1", animal_type: "SOW", gender: "F", status: "ACTIVE", is_active: true };
@@ -48,6 +49,13 @@ describe("who a breeding form offers", () => {
     expect(whyNotServed({ ...sow, status: "PREGNANT" }, [])).toBe("pregnant");
     expect(whyNotServed({ ...sow, status: "LACTATING" }, [])).toMatch(/wean/);
     expect(whyNotServed(sow, [{ sow_id: "s1", mating_date: "2026-06-01", conception_result: "PENDING" }])).toMatch(/open service/);
+    const stages = [
+      { stage_id: "st-ins", stage_code: "INSEMINATION", stage_name: "Insemination" },
+      { stage_id: "st-gr", stage_code: "GILT_REARING", stage_name: "Gilt Rearing" },
+    ];
+    expect(whyNotServed({ ...sow, current_stage_id: "st-ins" }, [], stages)).toBeNull();
+    expect(whyNotServed({ ...sow, current_stage_id: "st-gr" }, [], stages)).toBe("in Gilt Rearing — move to Insemination first");
+    expect(whyNotServed({ ...sow, current_stage_id: null }, [], stages)).toMatch(/no stage/);
     expect(whyNotFarrowing(sow, [])).toMatch(/no open mating/);
     expect(whyNotFarrowing({ ...sow, status: "LACTATING" }, [{ sow_id: "s1", mating_date: "2026-06-01" }])).toMatch(/nursing/);
     expect(whyNotFarrowing(sow, [{ sow_id: "s1", mating_date: "2026-06-01" }])).toBeNull();
@@ -314,5 +322,18 @@ describe("checkSemen", () => {
       expect(check({ destination_rule: "LIST" }, { plan_id: "p1" })).toEqual([]);
       expect(check({ destination_rule: "ONE" })).toEqual([]);
     });
+  });
+});
+
+describe("maturityOf", () => {
+  const breeds = [{ breed_id: "b1", mature_age_months: 8 }];
+  it("matures on date of birth plus the breed's Mature Age, and is immature the day before", () => {
+    const sow = { breed_id: "b1", dob: "2026-04-01" };
+    expect(maturityOf(sow, breeds, "2026-11-30")).toEqual({ ageMonths: 7, matureOn: "2026-12-01", immature: true });
+    expect(maturityOf(sow, breeds, "2026-12-01")).toEqual({ ageMonths: 8, matureOn: "2026-12-01", immature: false });
+  });
+  it("is unknown, and not blocking, without a date of birth or a breed Mature Age", () => {
+    expect(maturityOf({ breed_id: "b1", dob: null }, breeds, "2026-12-01").matureOn).toBeNull();
+    expect(maturityOf({ breed_id: "b2", dob: "2026-04-01" }, breeds, "2026-12-01")).toEqual({ ageMonths: 8, matureOn: null, immature: false });
   });
 });
