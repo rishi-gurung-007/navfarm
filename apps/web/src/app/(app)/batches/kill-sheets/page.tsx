@@ -8,7 +8,6 @@ import {
   Plus,
   Search,
   ChevronRight,
-  RefreshCw,
 } from 'lucide-react';
 import { ConsolePage } from '@/components/ui/console-page';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -183,23 +182,12 @@ export default function KillSheetsPage() {
         description="Abattoir slaughter reports, carcass classifications, product summaries, and reconciliation."
         sticky={false}
         actions={
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fetchKillSheets()}
-              disabled={loading}
-              title="Refresh list"
-            >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          <Link href="/batches/kill-sheets/new">
+            <Button size="sm" className="gap-1.5">
+              <Plus className="h-4 w-4" />
+              Upload Kill Sheet
             </Button>
-            <Link href="/batches/kill-sheets/new">
-              <Button size="sm" className="gap-1.5">
-                <Plus className="h-4 w-4" />
-                Upload Kill Sheet
-              </Button>
-            </Link>
-          </div>
+          </Link>
         }
       />
 

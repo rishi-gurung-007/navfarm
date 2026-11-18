@@ -1,9 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState, use } from 'react';
-import Link from 'next/link';
 import {
-  ArrowLeft,
   Download,
   FileCheck,
   CheckCircle2,
@@ -315,13 +313,6 @@ export default function KillSheetDetailPage({
         sticky={false}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Link href="/batches/kill-sheets">
-              <Button variant="outline" size="sm" className="gap-1.5">
-                <ArrowLeft className="h-4 w-4" />
-                Back to List
-              </Button>
-            </Link>
-
             {detail.individual_file_name && (
               <Button
                 variant="outline"
