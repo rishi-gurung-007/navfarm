@@ -41,6 +41,12 @@ const STATUS_VARIANT: Record<string, BadgeProps['variant']> = {
   COMPLETED: 'success',
   SUSPENDED: 'warning',
 
+  // Kill Sheets lifecycle & reconciliation
+  PREVIEW_READY: 'accent',
+  IMPORTED: 'success',
+  MATCHED: 'success',
+  INVALID: 'danger',
+
   // Alert severity
   INFO: 'info',
   WARNING: 'warning',

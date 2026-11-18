@@ -25,6 +25,53 @@ beforeEach(() => {
   for (const fn of Object.values(showToast)) (fn as jest.Mock).mockClear();
 });
 
+// The embedded Transfer Order dialog is its own large screen; here it stands in as a stub that shows what the
+// requisition hands it and lets a test play a post or a close.
+const embeddedProps: Array<Record<string, any>> = [];
+jest.mock('../src/components/console/inventory/stock-transfer-panel', () => ({
+  __esModule: true,
+  default: (props: Record<string, any>) => {
+    embeddedProps.push(props);
+    return (
+      <div
+        data-testid="embedded-to"
+        data-transfer={props.embeddedTransferId}
+        data-shipment={props.embeddedShipmentId ?? ''}
+      >
+        <button
+          type="button"
+          onClick={() =>
+            props.onEmbeddedPosted?.(
+              {
+                data: { requisition_id: 'req-1', document_status: 'RELEASED' },
+              },
+              'SHIPMENT',
+            )
+          }
+        >
+          stub-shipped
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            props.onEmbeddedPosted?.(
+              {
+                data: { requisition_id: 'req-1', document_status: 'RELEASED' },
+              },
+              'RECEIPT',
+            )
+          }
+        >
+          stub-received
+        </button>
+        <button type="button" onClick={() => props.onEmbeddedClose?.()}>
+          stub-close
+        </button>
+      </div>
+    );
+  },
+}));
+
 jest.mock('../src/services/api-client', () => ({
   api: { get: jest.fn(), post: jest.fn(), put: jest.fn() },
 }));
@@ -155,6 +202,7 @@ const released = (
 
 beforeEach(() => {
   jest.clearAllMocks();
+  embeddedProps.length = 0;
   mockStoredUser = { userId: 'u-req', userType: 'STANDARD_USER' };
   get.mockResolvedValue({ data: options });
   post.mockImplementation(async () => ({ data: base() }));
@@ -438,7 +486,7 @@ describe('CommonRequisitionDetail', () => {
     );
   });
 
-  it('W2D W12: shows the linked transfer order, linked to it, on a released Store requisition', () => {
+  it('W2D W12: shows the linked transfer order on a released Store requisition, and opens it inside the requisition', () => {
     render(
       <CommonRequisitionDetail
         initial={released({
@@ -450,9 +498,19 @@ describe('CommonRequisitionDetail', () => {
       />,
     );
     expect(screen.getByText('crqLinkedTransfer')).toBeTruthy();
+    expect(screen.getByText('TR-9')).toBeTruthy();
+    // Not a link out to Inventory: the Transfer Order is shown here (Rishi, 12 Nov).
+    expect(screen.queryByRole('link', { name: 'TR-9' })).toBeNull();
+    expect(screen.queryByTestId('embedded-to')).toBeNull();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'View Transfer Order' }),
+    );
     expect(
-      screen.getByRole('link', { name: 'TR-9' }).getAttribute('href'),
-    ).toBe('/inventory/transfers?id=tr-9');
+      screen.getByTestId('embedded-to').getAttribute('data-transfer'),
+    ).toBe('tr-9');
+    expect(embeddedProps.at(-1)).toMatchObject({
+      embeddedRequisition: { id: 'req-1', kind: 'COMMON' },
+    });
   });
 
   it('W2D W12: shows the linked PO no. on a Purchase requisition, and says when none is linked yet', () => {
@@ -500,138 +558,6 @@ describe('CommonRequisitionDetail', () => {
     );
   });
 
-  it('ships several lines at once: only lines with a balance get a field, only positive entries are sent', async () => {
-    const onView = jest.fn();
-    const view = released({
-      lines: [
-        line(1, { balance_to_ship: 4 }) as any,
-        line(2, { balance_to_ship: 6 }) as any,
-        line(3, { balance_to_ship: 0 }) as any,
-      ],
-    });
-    render(
-      <CommonRequisitionDetail
-        initial={view}
-        onView={onView}
-        onBack={jest.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByText('crqShip'));
-    expect(screen.queryByLabelText('crqShipQtyFor:{"line":3}')).toBeNull();
-    fireEvent.change(screen.getByLabelText('crqShipQtyFor:{"line":1}'), {
-      target: { value: '3' },
-    });
-    fireEvent.change(screen.getByLabelText('crqShipQtyFor:{"line":2}'), {
-      target: { value: '6' },
-    });
-    fireEvent.click(screen.getByText('crqPostShipment'));
-    await waitFor(() =>
-      expect(post).toHaveBeenCalledWith('/requisition/req-1/shipment', {
-        posting_date: todayIso(),
-        lines: [
-          { line_id: 'l1', quantity: 3 },
-          { line_id: 'l2', quantity: 6 },
-        ],
-      }),
-    );
-    await waitFor(() =>
-      expect(onView).toHaveBeenCalledWith(expect.anything(), 'crqShipped'),
-    );
-    // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
-    await waitFor(() =>
-      expect(showToast.success).toHaveBeenCalledWith('crqShipped'),
-    );
-  });
-
-  it('Transfer Shipment opens in a second dialog stacked on the requisition and closes after a post', async () => {
-    const onView = jest.fn();
-    const view = released({ lines: [line(1, { balance_to_ship: 4 }) as any] });
-    render(
-      <Dialog open onClose={jest.fn()} title="REQ" presentation="page">
-        <CommonRequisitionDetail
-          embedded
-          initial={view}
-          onView={onView}
-          onBack={jest.fn()}
-        />
-      </Dialog>,
-    );
-    expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    fireEvent.click(screen.getByText('crqShip'));
-    expect(screen.getAllByRole('dialog')).toHaveLength(2);
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(screen.getAllByRole('dialog')).toHaveLength(1);
-    fireEvent.click(screen.getByText('crqShip'));
-    fireEvent.change(screen.getByLabelText('crqShipQtyFor:{"line":1}'), {
-      target: { value: '3' },
-    });
-    fireEvent.click(screen.getByText('crqPostShipment'));
-    await waitFor(() =>
-      expect(onView).toHaveBeenCalledWith(expect.anything(), 'crqShipped'),
-    );
-    await waitFor(() => expect(screen.getAllByRole('dialog')).toHaveLength(1));
-  });
-
-  it('leaves a blank shipping line out of the body', async () => {
-    const view = released({
-      lines: [
-        line(1, { balance_to_ship: 4 }) as any,
-        line(2, { balance_to_ship: 6 }) as any,
-      ],
-    });
-    render(
-      <CommonRequisitionDetail
-        initial={view}
-        onView={jest.fn()}
-        onBack={jest.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByText('crqShip'));
-    fireEvent.change(screen.getByLabelText('crqShipQtyFor:{"line":2}'), {
-      target: { value: '2' },
-    });
-    fireEvent.click(screen.getByText('crqPostShipment'));
-    await waitFor(() =>
-      expect(post).toHaveBeenCalledWith('/requisition/req-1/shipment', {
-        posting_date: todayIso(),
-        lines: [{ line_id: 'l2', quantity: 2 }],
-      }),
-    );
-  });
-
-  it('disables Post shipment when a quantity exceeds the balance or nothing is entered', () => {
-    const view = released({
-      lines: [
-        line(1, { balance_to_ship: 4 }) as any,
-        line(2, { balance_to_ship: 6 }) as any,
-      ],
-    });
-    render(
-      <CommonRequisitionDetail
-        initial={view}
-        onView={jest.fn()}
-        onBack={jest.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByText('crqShip'));
-    const post_ = screen
-      .getByText('crqPostShipment')
-      .closest('button') as HTMLButtonElement;
-    expect(post_.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText('crqShipQtyFor:{"line":2}'), {
-      target: { value: '5' },
-    });
-    expect(post_.disabled).toBe(false);
-    fireEvent.change(screen.getByLabelText('crqShipQtyFor:{"line":1}'), {
-      target: { value: '5' },
-    });
-    expect(post_.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText('crqShipQtyFor:{"line":1}'), {
-      target: { value: '4' },
-    });
-    expect(post_.disabled).toBe(false);
-  });
-
   const shipments = [
     {
       shipment_id: 's1',
@@ -668,45 +594,109 @@ describe('CommonRequisitionDetail', () => {
       may_receive,
     });
 
-  it('receives against a chosen shipment, offering only shipments and lines that still have a remainder', async () => {
-    const onView = jest.fn();
-    render(
-      <CommonRequisitionDetail
-        initial={withShipments()}
-        onView={onView}
-        onBack={jest.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByText('crqReceive'));
-    const select = screen.getByLabelText('crqShipment');
-    const labels = optionLabels(select);
-    expect(labels).toContain('SH-1');
-    expect(labels).toContain('SH-3');
-    expect(labels).not.toContain('SH-2');
-    chooseValue(select, 's1');
-    expect(screen.queryByLabelText('crqReceiveQtyFor:{"line":2}')).toBeNull();
-    fireEvent.change(screen.getByLabelText('crqReceiveQtyFor:{"line":1}'), {
-      target: { value: '4' },
-    });
-    fireEvent.click(screen.getByText('crqPostReceipt'));
-    await waitFor(() =>
-      expect(post).toHaveBeenCalledWith('/requisition/req-1/receipt', {
-        posting_date: todayIso(),
-        shipment_id: 's1',
-        lines: [{ line_id: 'l1', quantity: 4 }],
-      }),
-    );
-    await waitFor(() =>
-      expect(onView).toHaveBeenCalledWith(expect.anything(), 'crqReceived'),
-    );
-    // P1 follow-up item 7: the success notice is shown inside the document (so inside its dialog), not behind it.
-    await waitFor(() =>
-      expect(showToast.success).toHaveBeenCalledWith('crqReceived'),
-    );
-  });
-
   // Rishi, 5 Oct: "The one requesting is the one who would be receiving." The
   // server decides it (may_receive, review p1f I3); the web only follows.
+  // Rishi, 12 Nov: Ship and Receive open the shared Transfer Order dialog inside the requisition instead of a posting form
+  // of their own; quantities, caps and the shipment choice are that dialog's.
+  describe('the embedded Transfer Order dialog', () => {
+    const linked = (over: Record<string, unknown> = {}) =>
+      released({
+        lines: [line(1, { balance_to_ship: 4 }) as any],
+        linked_transfer_no: 'TR-9',
+        linked_transfer_id: 'tr-9',
+        shipments,
+        may_receive: true,
+        ...over,
+      } as any);
+
+    it('Transfer Shipment opens the linked Transfer Order', () => {
+      render(
+        <CommonRequisitionDetail
+          initial={linked()}
+          onView={jest.fn()}
+          onBack={jest.fn()}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'crqShip' }));
+      expect(
+        screen.getByTestId('embedded-to').getAttribute('data-transfer'),
+      ).toBe('tr-9');
+      expect(screen.queryByLabelText('crqPostingDate')).toBeNull();
+    });
+
+    it('Transfer Receipt opens it on the first shipment that still has a remainder', () => {
+      render(
+        <CommonRequisitionDetail
+          initial={linked()}
+          onView={jest.fn()}
+          onBack={jest.fn()}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'crqReceive' }));
+      // s1 and s3 have something left; s2 is fully received.
+      expect(
+        screen.getByTestId('embedded-to').getAttribute('data-shipment'),
+      ).toBe('s1');
+    });
+
+    it('cannot open the dialog before the requisition has produced its Transfer Order', () => {
+      render(
+        <CommonRequisitionDetail
+          initial={linked({
+            linked_transfer_no: null,
+            linked_transfer_id: null,
+          })}
+          onView={jest.fn()}
+          onBack={jest.fn()}
+        />,
+      );
+      expect(
+        (screen.getByRole('button', { name: 'crqShip' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true);
+      expect(
+        (
+          screen.getByRole('button', {
+            name: 'crqReceive',
+          }) as HTMLButtonElement
+        ).disabled,
+      ).toBe(true);
+    });
+
+    it('a shipment or receipt posted in the dialog refreshes the requisition and says what happened', () => {
+      const onView = jest.fn();
+      render(
+        <CommonRequisitionDetail
+          initial={linked()}
+          onView={onView}
+          onBack={jest.fn()}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'crqShip' }));
+      fireEvent.click(screen.getByRole('button', { name: 'stub-shipped' }));
+      expect(onView).toHaveBeenLastCalledWith(
+        expect.objectContaining({ requisition_id: 'req-1' }),
+        'crqShipped',
+      );
+      expect(showToast.success).toHaveBeenLastCalledWith('crqShipped');
+      fireEvent.click(screen.getByRole('button', { name: 'stub-received' }));
+      expect(showToast.success).toHaveBeenLastCalledWith('crqReceived');
+    });
+
+    it('closing the dialog leaves the requisition as it was', () => {
+      render(
+        <CommonRequisitionDetail
+          initial={linked()}
+          onView={jest.fn()}
+          onBack={jest.fn()}
+        />,
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'crqShip' }));
+      fireEvent.click(screen.getByRole('button', { name: 'stub-close' }));
+      expect(screen.queryByTestId('embedded-to')).toBeNull();
+    });
+  });
+
   it('keeps Transfer Receipt disabled when the server says the caller may not receive', () => {
     render(
       <CommonRequisitionDetail
@@ -719,35 +709,6 @@ describe('CommonRequisitionDetail', () => {
       (screen.getByRole('button', { name: 'crqReceive' }) as HTMLButtonElement)
         .disabled,
     ).toBe(true);
-  });
-
-  it("shows the second shipment's own line and caps the receipt at its remainder", async () => {
-    render(
-      <CommonRequisitionDetail
-        initial={withShipments()}
-        onView={jest.fn()}
-        onBack={jest.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByText('crqReceive'));
-    chooseValue(screen.getByLabelText('crqShipment'), 's3');
-    expect(screen.queryByLabelText('crqReceiveQtyFor:{"line":1}')).toBeNull();
-    const qty = screen.getByLabelText('crqReceiveQtyFor:{"line":2}');
-    const button = screen
-      .getByText('crqPostReceipt')
-      .closest('button') as HTMLButtonElement;
-    fireEvent.change(qty, { target: { value: '6' } });
-    expect(button.disabled).toBe(true);
-    fireEvent.change(qty, { target: { value: '5' } });
-    expect(button.disabled).toBe(false);
-    fireEvent.click(button);
-    await waitFor(() =>
-      expect(post).toHaveBeenCalledWith('/requisition/req-1/receipt', {
-        posting_date: todayIso(),
-        shipment_id: 's3',
-        lines: [{ line_id: 'l2', quantity: 5 }],
-      }),
-    );
   });
 
   it('links a PO number on a released Purchase requisition', async () => {

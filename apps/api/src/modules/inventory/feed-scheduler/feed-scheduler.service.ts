@@ -1,6 +1,6 @@
-import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
@@ -12,17 +12,12 @@ import { FARM_SCOPE_KEY, UNRESTRICTED_FARM_SCOPE } from '../../../common/farm-sc
 import { isDuplicateEntry } from '../../../common/filters/http-exception.filter';
 import { FeedForecastService } from '../feed-forecast/feed-forecast.service';
 import { FeedSettingsService } from '../feed-settings/feed-settings.service';
-import { toFarmFeedSettings } from '../feed-settings/feed-settings.rules';
 import { FeedAlertService } from '../feed-alert/feed-alert.service';
-import { isoProductionWeek } from '../feed-forecast/feed-plan.rules';
 import { localClock, parseUtcTimestamp, utcTimestamp, type LocalClock } from '../feed-forecast/feed-forecast.engine';
-import { productionCycle } from '../../procurement/feed-requisition/feed-requisition.rules';
-import { FEED_JOBS, FEED_SCHEDULER_ACTOR, FeedJob, ScheduleSettings, duePeriod, runKey } from './feed-scheduler.rules';
+import { FEED_JOBS, FeedJob, ScheduleSettings, duePeriod, runKey } from './feed-scheduler.rules';
 
 /** A RUNNING scheduler row older than this was abandoned (crash, restart) and may be reclaimed. */
 export const STALE_RUN_MS = 30 * 60_000;
-/** The Feed Plan week claim is held while a plan is being made, so it is only abandoned after this (and only if the week still has no plan). */
-export const STALE_PLAN_LOCK_MS = 2 * 60 * 60_000;
 /** A job that failed this many times in one period stops being retried until the next period. */
 export const MAX_FAILED_RUNS = 3;
 
@@ -39,13 +34,7 @@ interface FarmContext {
   clock: LocalClock;
 }
 
-export type PlanOutcome =
-  | { status: 'GENERATED' | 'EXISTS'; planId: string; planCode: string; planType: string; planWeek: string; version: number; productionDate: string }
-  | { status: 'SKIPPED'; reason: string; planWeek: string; productionDate: string };
-
 export interface JobSummary {
-  plan?: PlanOutcome;
-  planNotice?: { rules: number; raised: number };
   /** STOCK_TAKE_DUE: notices raised, and period/location pairs checked as taken or closed (their alerts closed). */
   stockTake?: { raised: number; resolved: number };
   /** What the one alert evaluator did: the in-app notices are feed_alert rows, raised once per rule and document. */
@@ -272,13 +261,6 @@ export class FeedSchedulerService {
   }
 
   private async execute(job: FeedJob, farm: NoticeFarm, ctx: FarmContext, tenantId: string, nowMs: number): Promise<JobSummary> {
-    if (job === 'TENTATIVE_PLAN') {
-      const plan = await this.tentativePlan(farm, ctx, tenantId, nowMs);
-      const planNotice = plan.status === 'SKIPPED'
-        ? undefined
-        : await this.alerts.raisePlanAvailable(farm.farmId, farm.companyId, tenantId, plan, nowMs);
-      return { plan, planNotice };
-    }
     if (job === 'STOCK_TAKE_DUE') {
       return { stockTake: await this.alerts.evaluateStockTakeDue({ farmId: farm.farmId, companyId: farm.companyId, tenantId }, nowMs) };
     }
@@ -295,71 +277,5 @@ export class FeedSchedulerService {
         ...(evaluation.forecastError ? { forecastError: evaluation.forecastError } : {}),
       },
     };
-  }
-
-  /**
-   * Feed Forecast row 7 / Engine row 69: the tentative Feed Plan for the coming
-   * production week, through the existing generator (FeedForecastService.
-   * generateFeedPlanVersion — the five-week history over the farm's saved
-   * calculation). Never a second version for a week that already has one,
-   * Tentative or Actual: "no Wednesday overwrite of approved quantities".
-   * A farm with no saved calculation, or none covering the week, is SKIPPED
-   * with the generator's own reason.
-   */
-  private async tentativePlan(farm: NoticeFarm, ctx: FarmContext, tenantId: string, nowMs: number): Promise<PlanOutcome> {
-    const { productionWeekday } = toFarmFeedSettings(ctx.settings);
-    const { productionDate } = productionCycle(ctx.clock.date, productionWeekday);
-    const planWeek = isoProductionWeek(productionDate);
-    const existingPlan = async (): Promise<PlanOutcome | null> => {
-      const [existing] = await this.db.select().from(schema.feedPlan).where(and(
-        eq(schema.feedPlan.tenant_id, tenantId), eq(schema.feedPlan.company_id, farm.companyId),
-        eq(schema.feedPlan.farm_id, farm.farmId), eq(schema.feedPlan.plan_week, planWeek),
-      )).orderBy(desc(schema.feedPlan.version)).limit(1);
-      return existing ? {
-        status: 'EXISTS', planId: existing.plan_id, planCode: existing.plan_code, planType: existing.plan_type,
-        planWeek, version: existing.version, productionDate: existing.production_date,
-      } : null;
-    };
-    const found = await existingPlan();
-    if (found) return found;
-
-    // No saved calculation means nothing can be generated: a skip, decided before the week is claimed so no
-    // PLAN_LOCK row (and no failure) is written for it. Same reason the generator gives.
-    const [calculation] = await this.db.select({ run_id: schema.feedForecastRun.run_id }).from(schema.feedForecastRun).where(and(
-      eq(schema.feedForecastRun.tenant_id, tenantId), eq(schema.feedForecastRun.company_id, farm.companyId),
-      eq(schema.feedForecastRun.farm_id, farm.farmId), isNull(schema.feedForecastRun.archived_at),
-    )).limit(1);
-    if (!calculation) {
-      return { status: 'SKIPPED', reason: 'Save a feed forecast calculation before generating a feed plan.', planWeek, productionDate };
-    }
-
-    // The check above and the generation below must not interleave with another run (a manual "Run now"
-    // racing the scheduled one): generating takes a per farm-and-week claim, whoever is running, and a run
-    // that loses it re-reads the week instead of making a second version.
-    const lockKey = `PLAN_WEEK|${farm.farmId}|${planWeek}`;
-    const lockId = await this.claim({
-      tenant_id: tenantId, company_id: farm.companyId, farm_id: farm.farmId, job_code: 'TENTATIVE_PLAN',
-      trigger_type: 'PLAN_LOCK', period_key: planWeek, triggered_by: null,
-    }, lockKey, nowMs, STALE_PLAN_LOCK_MS); // the week was just confirmed to have no plan, so only a very old claim is abandoned
-    if (!lockId) {
-      return (await existingPlan()) ?? { status: 'SKIPPED', reason: 'Another run is generating this week\'s Feed Plan.', planWeek, productionDate };
-    }
-    const settle = (status: 'DONE' | 'FAILED', release: boolean, note?: string) => this.db.update(schema.feedScheduleLog)
-      .set({ status, finished_at: utcTimestamp(), error_message: note ?? null, ...(release ? { run_key: null } : {}) })
-      .where(eq(schema.feedScheduleLog.run_id, lockId));
-    try {
-      const created = await this.cls.run(async () => {
-        this.cls.set(FARM_SCOPE_KEY, { farmId: null, companyId: farm.companyId, restricted: false, lobId: null });
-        return this.forecast.generateFeedPlanVersion(farm.farmId, productionDate, tenantId, { userId: FEED_SCHEDULER_ACTOR, userType: 'SYSTEM' });
-      });
-      await settle('DONE', false); // the week now has its plan; the key stays taken
-      return { status: 'GENERATED', ...created, productionDate };
-    } catch (error) {
-      await settle('FAILED', true, (error as Error).message); // nothing was made: release the week for a retry
-      if (error instanceof ConflictException || error instanceof NotFoundException) {
-        return { status: 'SKIPPED', reason: error.message, planWeek, productionDate };
-      }
-      throw error;
-    }
   }
 }

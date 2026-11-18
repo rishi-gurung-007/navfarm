@@ -1,5 +1,6 @@
 import type { OpsMetrics } from '../reports/monthly-ops.metrics';
 import type { Target } from '../reports/farrowing-report.metrics';
+import type { KpiBands } from '../../production/lifecycle/kpi-limits';
 
 /**
  * The arithmetic of the GM Dashboard (Rishi, 2 Nov; docs/superpowers/specs/2026-11-02-gm-dashboard-phase-1-design.md),
@@ -30,7 +31,26 @@ const ratio = (num: number, den: number, scale = 1) =>
   den > 0 ? round((num / den) * scale) : null;
 
 /**
- * Green at or better than the target's Average Value; amber when worse but within its tolerance band on that side
+ * The sheet's cut-offs (Rishi, 16 Nov): the number under each colour is where that colour is reached, so a value
+ * that has reached green is green, one that has reached yellow but not green is amber, anything short of yellow is
+ * red. A triple that runs against the metric's direction is a data-entry slip, so it gives no verdict.
+ */
+export function bandStatus(
+  value: number,
+  bands: KpiBands,
+  lowerIsBetter: boolean,
+): Status | undefined {
+  const { red, yellow, green } = bands;
+  if (lowerIsBetter) {
+    if (!(red >= yellow && yellow >= green)) return undefined;
+    return value <= green ? 'GREEN' : value <= yellow ? 'AMBER' : 'RED';
+  }
+  if (!(red <= yellow && yellow <= green)) return undefined;
+  return value >= green ? 'GREEN' : value >= yellow ? 'AMBER' : 'RED';
+}
+
+/**
+ * The farm's red / yellow / green cut-offs when it has them; otherwise green at or better than the target's Average Value; amber when worse but within its tolerance band on that side
  * (or 10 % of the average when it has none); red beyond. No value or no target: no status.
  */
 export function ragStatus(
@@ -39,6 +59,10 @@ export function ragStatus(
   lowerIsBetter: boolean,
 ): Status {
   if (value == null || !target) return null;
+  if (target.bands) {
+    const banded = bandStatus(value, target.bands, lowerIsBetter);
+    if (banded) return banded;
+  }
   const { average, lower, upper } = target;
   if (average == null) {
     if (lower == null && upper == null) return null;
@@ -66,10 +90,25 @@ export function meanTarget(
       ? round(values.reduce((a, v) => a + v, 0) / values.length, 4)
       : null;
   };
+  const banded = present.filter((t) => t.bands);
+  const meanBand = (pick: (b: KpiBands) => number) =>
+    round(
+      banded.reduce((a, t) => a + pick(t.bands as KpiBands), 0) / banded.length,
+      4,
+    );
   return {
     average: mean((t) => t.average),
     lower: mean((t) => t.lower),
     upper: mean((t) => t.upper),
+    ...(banded.length
+      ? {
+          bands: {
+            red: meanBand((b) => b.red),
+            yellow: meanBand((b) => b.yellow),
+            green: meanBand((b) => b.green),
+          },
+        }
+      : {}),
   };
 }
 
@@ -80,7 +119,7 @@ export function cell(
 ): Cell {
   return {
     value,
-    target: target?.average ?? null,
+    target: target?.bands?.green ?? target?.average ?? null,
     status: ragStatus(value, target, lowerIsBetter),
   };
 }
@@ -134,13 +173,17 @@ export function breedingFigures(perBreed: OpsMetrics[]): BreedingFigures {
   };
 }
 
-/** Kg sold per sow per year over the dates the metrics cover: kg sold ÷ average sows × 365 ÷ days. */
+/** Kg sold per sow per year over the dates the metrics cover: kg sold ÷ average sows × 365 ÷ days. Takes cold mass from kill sheets when available. */
 export function kgSoldPerSowYear(
   perBreed: OpsMetrics[],
   days: number,
+  coldMassKg?: number | null,
 ): number | null {
   const sows = perBreed.reduce((a, m) => a + (m.average_sows ?? 0), 0);
-  const kg = perBreed.reduce((a, m) => a + m.kg_sold, 0);
+  const kg =
+    coldMassKg != null && coldMassKg > 0
+      ? coldMassKg
+      : perBreed.reduce((a, m) => a + m.kg_sold, 0);
   return sows > 0 && days > 0 ? round((kg / sows) * (365 / days)) : null;
 }
 
@@ -209,6 +252,7 @@ export interface StageExit {
   target_weight: Target | null;
   target_fcr: Target | null;
   target_mortality: Target | null;
+  target_gain: Target | null;
 }
 
 /**
@@ -231,6 +275,7 @@ export function stageExit(args: {
     weight: Target | null;
     fcr: Target | null;
     mortality: Target | null;
+    gain?: Target | null;
   };
 }): StageExit {
   const {
@@ -276,6 +321,7 @@ export function stageExit(args: {
     target_weight: targets.weight,
     target_fcr: targets.fcr,
     target_mortality: targets.mortality,
+    target_gain: targets.gain ?? null,
   };
 }
 
@@ -461,7 +507,7 @@ export function farmRow(
     label: def.label,
     unit: def.unit,
     lower_is_better: def.lower,
-    target: target?.average ?? null,
+    target: target?.bands?.green ?? target?.average ?? null,
     status: ragStatus(values.this_week, target, def.lower),
     values,
     trend: Array.from({ length: TREND_WEEKS }, (_, i) =>
@@ -494,4 +540,141 @@ export function farmAlerts(rows: FarmRow[]): FarmAlert[] {
       above: r.target != null && (r.values.this_week as number) > r.target,
     }))
     .sort((a, b) => order[a.status] - order[b.status]);
+}
+
+/** One sold disposal of a batch (Rishi, 16 Nov): heads and book value from the bio-asset ledger, proceeds from the sale journal. */
+export interface SaleRow {
+  farm_id: string;
+  date: string;
+  heads: number;
+  cost: number;
+  revenue: number;
+}
+
+export interface SalesFigures {
+  heads: number;
+  cost_of_sales: number;
+  revenue: number;
+  gross_margin: number;
+  gross_margin_pct: number | null;
+}
+
+/**
+ * Pigs sold, cost of sales (their book value), revenue and gross margin of the sales in a window, for one farm or all
+ * (farmId null). Null when the window holds no sale at all, so a tenant that never sells shows N/A, not zeros.
+ */
+export function salesFigures(
+  rows: SaleRow[],
+  from: string,
+  to: string,
+  farmId: string | null,
+): SalesFigures | null {
+  const inWindow = rows.filter(
+    (r) => r.date >= from && r.date <= to && (!farmId || r.farm_id === farmId),
+  );
+  if (!inWindow.length) return null;
+  const sum = (pick: (r: SaleRow) => number) =>
+    round(
+      inWindow.reduce((a, r) => a + pick(r), 0),
+      2,
+    );
+  const revenue = sum((r) => r.revenue);
+  const cost = sum((r) => r.cost);
+  const grossMargin = round(revenue - cost, 2);
+  return {
+    heads: sum((r) => r.heads),
+    cost_of_sales: cost,
+    revenue,
+    gross_margin: grossMargin,
+    gross_margin_pct:
+      revenue > 0 ? round((grossMargin / revenue) * 100, 2) : null,
+  };
+}
+
+/** The GL accounts the overhead rows read: Other Overheads is 4600 (Rishi, 17 Nov); Staff Overheads is 4610, made for it. */
+export const OTHER_OVERHEAD_GL = '4600';
+export const STAFF_OVERHEAD_GL = '4610';
+
+/** One posted overhead entry: a farm's cost centre's net debit on the Other or Staff Overheads account. */
+export interface OverheadRow {
+  farm_id: string;
+  date: string;
+  kind: 'OTHER' | 'STAFF';
+  amount: number;
+}
+
+export interface OverheadFigures {
+  other: number;
+  staff: number;
+}
+
+/** The overheads posted in a window, for one farm or all of them; null when nothing was posted. */
+export function overheadFigures(
+  rows: OverheadRow[],
+  from: string,
+  to: string,
+  farmId: string | null,
+): OverheadFigures | null {
+  const inWindow = rows.filter(
+    (r) => r.date >= from && r.date <= to && (!farmId || r.farm_id === farmId),
+  );
+  if (!inWindow.length) return null;
+  const sum = (kind: OverheadRow['kind']) =>
+    round(
+      inWindow.filter((r) => r.kind === kind).reduce((a, r) => a + r.amount, 0),
+      2,
+    );
+  return { other: sum('OTHER'), staff: sum('STAFF') };
+}
+
+/**
+ * Profit before tax: gross margin less both overheads. It exists when either side has figures; a side with none counts
+ * as 0 (a farm with overheads and no sale in the window shows the loss).
+ */
+export function pbtOf(
+  sales: SalesFigures | null,
+  overheads: OverheadFigures | null,
+): number | null {
+  if (!sales && !overheads) return null;
+  return round(
+    (sales?.gross_margin ?? 0) - (overheads?.other ?? 0) - (overheads?.staff ?? 0),
+    2,
+  );
+}
+
+/** The business year's running PBT, one point per period up to the chosen one (the PBT chart's actuals). */
+export function pbtByPeriod(
+  sales: SaleRow[],
+  overheads: OverheadRow[],
+  periods: Array<{ period_code: string; start_date: string; end_date: string }>,
+  farmId: string | null,
+  to: string,
+): Array<{ period_code: string; pbt: number | null }> {
+  let running = 0;
+  return periods.map((p) => {
+    if (p.start_date > to) return { period_code: p.period_code, pbt: null };
+    const end = p.end_date < to ? p.end_date : to;
+    running +=
+      pbtOf(
+        salesFigures(sales, p.start_date, end, farmId),
+        overheadFigures(overheads, p.start_date, end, farmId),
+      ) ?? 0;
+    return { period_code: p.period_code, pbt: round(running, 2) };
+  });
+}
+
+/** The business year's running total of pigs sold, one point per period up to the chosen one (the YTD chart's actuals). */
+export function headsByPeriod(
+  rows: SaleRow[],
+  periods: Array<{ period_code: string; start_date: string; end_date: string }>,
+  farmId: string | null,
+  to: string,
+): Array<{ period_code: string; heads: number | null }> {
+  let running = 0;
+  return periods.map((p) => {
+    if (p.start_date > to) return { period_code: p.period_code, heads: null };
+    const end = p.end_date < to ? p.end_date : to;
+    running += salesFigures(rows, p.start_date, end, farmId)?.heads ?? 0;
+    return { period_code: p.period_code, heads: running };
+  });
 }

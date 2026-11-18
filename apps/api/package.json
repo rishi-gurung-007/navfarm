@@ -4,6 +4,14 @@
   "private": true,
   "nx": {
     "targets": {
+      "verify-kill-sheet-integration": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --import tsx src/scripts/verify-kill-sheet-integration.ts"
+        }
+      },
       "verify-demo-master-integrity": {
         "executor": "nx:run-commands",
         "cache": false,
@@ -599,6 +607,13 @@
         "options": {
           "cwd": "apps/api",
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/migrate-all-tenants.ts"
+        }
+      },
+      "db-reconcile-tenant-migrations": {
+        "executor": "nx:run-commands",
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/reconcile-tenant-migrations.ts"
         }
       },
       "db-sync-nob-lob": {

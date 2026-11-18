@@ -393,7 +393,7 @@ export default function DashboardPage() {
   );
 
   return (
-    <ConsolePage className="text-(--text-primary)">
+    <ConsolePage className="max-w-[112rem] text-(--text-primary)">
       {/* ── Top Header Bar & Scope-Specific Title & Filters ── */}
       <div
         className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b pb-5"

@@ -724,8 +724,9 @@ describe('FeedRequisitionService.submit (D25)', () => {
 });
 
 describe('Feed requisition decided in the Approvals inbox (D25)', () => {
-  it('refreshes an Actual Feed Plan after an approved run-linked requisition commits', async () => {
-    const { approvals, forecast, as } = setup(
+  // Mill Planning replaced Feed Plan (spec 2026-11-03): an approval no longer writes an Actual plan version.
+  it('does not write a feed plan after an approved run-linked requisition commits', async () => {
+    const { approvals, forecast, as, writes } = setup(
       new Map<unknown, unknown[][]>([
         [
           schema.approvalRequest,
@@ -747,16 +748,11 @@ describe('Feed requisition decided in the Approvals inbox (D25)', () => {
         [schema.requisitionLine, [[LINE_6000]]],
       ]),
     );
-    const refresh = jest
-      .spyOn(forecast, 'generateFeedPlanVersion')
-      .mockResolvedValue({} as any);
     await as(COMPANY_ADMIN_SCOPE, () =>
       approvals.approve('ar-1', 'tenant-1', ADMIN),
     );
-    expect(refresh).toHaveBeenCalledWith('farm-grs', '2026-10-08', 'tenant-1', {
-      userId: 'u-admin',
-      userType: 'COMPANY_ADMIN',
-    });
+    expect('generateFeedPlanVersion' in forecast).toBe(false);
+    expect(writes().some((e) => e.table === schema.feedPlan || e.table === schema.feedPlanLine)).toBe(false);
   });
 
   it('approving updates the requisition and the request together, then re-evaluates alerts after commit', async () => {

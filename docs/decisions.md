@@ -29,6 +29,19 @@ These apply to all work and are not up for re-litigation.
 | **Leave the dev servers running.** Close them only when memory is actually red — check `top -l 1 -n 0 \| grep PhysMem` and `sysctl vm.swapusage`. | 2026-09-07. Rishi browses the app in Brave while work happens; stopping the server pulls the page out from under him. The 8 GB machine still swaps hard, so check rather than guess.                                    |
 | **Never run `pkill`.** Kill a PID confirmed with `lsof -ti :PORT`.                                                                                | A `pkill` killed an entire working session.                                                                                                                                                                             |
 
+### Kill-sheet file storage stays on the server's local disk
+
+_Decided 2026-11-17._
+
+Kill-sheet workbooks are stored on the local filesystem in development and on the
+single production server's local disk in production. They are private: no static
+or public upload URL is used, and download is through an authenticated backend
+endpoint which verifies tenant and farm scope before streaming the file. The
+server backup runbook must include this storage directory. Do not add Cloudflare
+R2, S3, or another external object-storage service; keep the local storage code
+small and modular so the storage adapter can be revisited only when a real
+multi-server scaling need exists.
+
 ---
 
 ## Master data
@@ -4953,6 +4966,55 @@ order, for the mill manager to see on the Mill Consolidation sheet.
 - Feed alerts keep their own priority levels (Alerts and Notifications Master r49); this ruling is about the
   requisition line only. Common (Item, Fixed Asset, Service) requisitions never used the line priority.
 
+## 12 Nov 2026 — Logistics costing and truck capacity (Rishi)
+
+- The USD 500 approval threshold applies to **logistics costs only**, not every Expense Voucher. The approval is
+  handled by the Finance module, for the user/role that has the relevant Finance permission.
+- A vehicle's own recorded capacity is the authoritative truck capacity for logistics checks. The Feed Planning
+  **Bulk Truck Target** is a planning/compartment target within that truck capacity; it is not a replacement for the
+  truck's capacity and is not itself a hard cap.
+- In the current animal model, **SOLD is an animal disposal type**: it records the animal's exit from the herd as sold.
+  There is no separate normal-sales workflow currently implemented. The Logistics design must therefore keep the
+  distinction between a SOLD disposal and a transfer/slaughter event explicit; the open question of what source creates
+  a slaughter trip remains unresolved.
+
+## 12 Nov 2026 — Every physical Transfer Order may carry a Logistics trip (Rishi)
+
+- A Logistics trip belongs to the **Transfer Order**, not only to feed or slaughter movements. The design must support
+  attaching a trip to every physical TO type: feed, store/common requisition, livestock/farm transfer and the future
+  slaughter TO.
+- The existing company setting `trip_required_to_ship` remains the rollout control. It may stay off while the workflow is
+  being introduced; when enabled, a TO cannot ship without a valid attached trip.
+- The trip carries the vehicle, driver, route, delivery zone, capacity checks and transport costs for the TO. The TO's
+  own business type remains separate from the trip's logistics data.
+- A TO created from a requisition follows the same rule as every other TO. The trip is attached when the requisition is
+  released into a TO, and the requisition document shows the linked TO and its trip status/details. A requisition that
+  has not yet produced a TO does not require a trip by itself.
+
+## 12 Nov 2026 — Inventory TO and requisition shipment/receipt use the same trip (Rishi clarification)
+
+- This applies specifically to the Inventory → Transfer Orders flow and to the requisition's **Transfer Shipment and
+  Transfer Receipt** actions. A requisition-created stock Transfer Order is the same execution document as the
+  inventory TO, not a separate transport implementation.
+- The Logistics trip is linked to the stock Transfer Order header. Transfer Shipment uses that trip for dispatch and
+  records the vehicle/driver/route against the TO; Transfer Receipt displays and references the same trip and records
+  arrival/receipt against that movement. Receipt does not create a second trip.
+- Feed and common requisitions use the same stock-transfer linkage. Loading instructions may display the same trip, but
+  must not invent a separate logistics record for the loading sheet.
+- Direct Transfer, where shipment and receipt happen together, follows the same TO/trip linkage when the trip-required
+  setting is enabled.
+
+## 12 Nov 2026 — Requisition must contain the full Inventory TO experience (Rishi clarification)
+
+- The requisition's linked Transfer Order must **not** be presented only as a transfer number/link that opens
+  Inventory → Transfer Orders. The requisition document itself must contain the Transfer Order view/dialog.
+- Inside the requisition, users must be able to see the same TO information and controls as the Inventory TO flow:
+  source and destination, posting date and purpose, transport/trip details, TO lines, quantities, shipment dispatch,
+  and Transfer Receipt.
+- Feed and common requisitions keep their existing requisition fields and approval controls, but their fulfilment area
+  embeds the shared Inventory TO document/experience. Inventory remains the source of the shared implementation, not a
+  second page the user must navigate to.
+
 ## 13 Nov 2026 — piglet, weaner and grower lots are never matured or amortised (BBP S.NO.6; Arun's instruction, awaiting Rishi)
 
 Source: BBP-2 S.NO.6 ("Imported breeding asset amortization shall remain a period expense and shall not be included in Weaner, Grower, WIP or finished goods cost"; weaners and growers are current biological assets, cost to week 17, fair value from week 18). Plan: `docs/superpowers/plans/2026-11-13-bbp-costing-alignment.md`.
@@ -5052,3 +5114,21 @@ Proved by `pnpm nx run api:verify-slaughter-transfer` (rolls back): refusals for
 **Livestock > Slaughter Transfer Orders** (`/livestock/slaughter`, `slaughter-transfer-panel.tsx`): a list with a status filter (Open / Closed / Cancelled / All), the order with its lines, and the next step as the one button: Dispatch, Record POD (a DOA for each line), Enter Kill Sheet (average carcass weight and price per line, with the invoice shown before saving), Close; a draft can be cancelled. The New Transfer Order form picks the farm, then lists that farm's weaner, grower and finisher lots with their head and value per head (`GET /slaughter-transfer-order/eligible-lots`), marks a lot still in a medicine withdrawal and refuses more head than a lot holds. The list and the order now carry the farm's code and name. English labels only (the other languages fall back to English).
 
 Looked at in the browser on nf_devco as the company admin: the closed STO-2026-0001 with its two lines, DOA, carcass weights and amounts; a draft STO-2026-0003 made through the form (20 head refused for a 12-head lot, then 2 head) and cancelled, which posted nothing (it stays as a Cancelled order); the POD form of STO-2026-0002 opened and closed without saving. No console errors. `specs/slaughter-transfer-panel.spec.tsx` covers the filter, the POD and the kill sheet's invoice.
+
+## 17 Nov 2026 — Kill Sheets implementation and GM Dashboard integration
+
+1. **Architecture & Scope:** Multi-tenant isolated database per tenant. Within Tenant A, Company Alpha (Triple C Farm) and Company Beta (Beta Farm Group) operate distinct farms and batches within the same tenant database (`nf_killsheetita`). Tenant B operates with complete database isolation (`nf_killsheetitb`).
+2. **Workbook Parsing & Reconciliation:** Real Colcom abattoir workbooks (Porta Farm Batch 3647102 and Multiplier Batch 3647106) parsed using SheetJS (`xlsx`). Product value is strictly reported product value, not sales revenue, profit, or Cost of Sales.
+3. **Storage & Security:** Private filesystem storage (`apps/api/private-uploads/`) with tenant/company/farm-scoped authenticated download endpoints (`/api/v1/kill-sheets/:id/download/:fileType`). Sha512 duplicate file checking prevents double-importing workbooks.
+4. **User Workflow:**
+   - List view (`/batches/kill-sheets`) with search by farm, batch, report reference, ear tag, status filtering, and pagination.
+   - Upload workflow (`/batches/kill-sheets/new`) with company -> farm -> batch cascade selectors, file dropzones, preview & reconciliation (`POST /kill-sheets/preview`), variance warnings, and transactional import confirmation (`POST /kill-sheets/:id/confirm`).
+   - Detail view (`/batches/kill-sheets/[id]`) with KPI summary cards, paginated carcass records with search, product summary, and grade/sex/defect distributions.
+5. **GM Dashboard Integration (Owner Decision, 17 Nov 2026):**
+   - **No separate "Slaughter & Kill Sheets (Confirmed)" section** on the GM Dashboard (`/dashboard`, `/piggery/analytics/gm-dashboard`).
+   - Instead, confirmed kill sheet data directly feeds the standard GM Dashboard missing metrics:
+     - **Avg CDM (kg):** Populates Month & YTD on the top KPI card (`withBudget`), and each reporting farm's cell in the **Slaughter & Financial Performance** matrix table with status dots (target 88 kg).
+     - **COS $/tonne (USD):** Populates Month & YTD sub-metrics on the **Cost of Sales** top KPI card (`cost_of_sales / (cold_mass_kg / 1000)`), and each farm's cell in the **Slaughter & Financial Performance** matrix table with status dots (target $1,650/tonne).
+     - **Kg Meat Sold / Sow / Year:** Populates using confirmed kill sheet cold mass (`coldMassKg`) as meat sold in `kgSoldPerSowYear` for both per-farm and aggregate ('all') calculations.
+     - **Operational Period Selection:** `farmsWithRecords` checks on-farm operational records (farrowings, weanings, disposals), ensuring the dashboard defaults to the latest complete operating period (`2026-10`) with full multi-farm data, while allowing selection of newer periods like `2026-11` where confirmed kill sheets supply actual slaughtered heads and Avg CDM.
+

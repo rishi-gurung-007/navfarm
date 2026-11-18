@@ -48,6 +48,8 @@ import { WarehouseController } from '../modules/master-data/warehouse/warehouse.
 import { BinDietAssignmentController } from '../modules/master-data/bin-diet-assignment/bin-diet-assignment.controller';
 import { BreedLifecycleStageController } from '../modules/master-data/breed/breed-lifecycle-stage.controller';
 import { FarmController } from '../modules/master-data/farm/farm.controller';
+import { LogisticsTripController } from '../modules/logistics/logistics-trip.controller';
+import { BudgetController } from '../modules/piggery/budget/budget.controller';
 
 /**
  * Farm scope is opt-in per controller, and a controller that forgets it reads
@@ -114,6 +116,8 @@ const SCOPED = {
   BinDietAssignmentController,
   BreedLifecycleStageController,
   FarmController,
+  LogisticsTripController,
+  BudgetController,
 };
 
 const EXEMPT: Record<string, string> = {
@@ -153,6 +157,10 @@ const EXEMPT: Record<string, string> = {
     'Master data, not farm-specific.',
   'master-data/location-type/location-type.controller.ts':
     'Master data, not farm-specific.',
+  'logistics/logistics-master.controller.ts':
+    "Company masters (Logistics: vehicles, drivers, zones, routes, rates, service plans, settings); not a farm's.",
+  'logistics/road-distance.controller.ts':
+    'Measures the distance between two points on a company route, and lists the route\'s own marks; reads no farm data and writes nothing.',
   'master-data/accounting-period/accounting-period.controller.ts':
     "Company master (Accounting Period Master); periods are company-wide, not a farm's.",
   'master-data/no-series/no-series.controller.ts':

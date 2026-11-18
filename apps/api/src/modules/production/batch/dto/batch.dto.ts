@@ -805,6 +805,11 @@ export class QueryBatchDto {
   @IsUUID()
   companyId?: string;
 
+  @ApiProperty({ description: 'Filter by farm UUID', required: false })
+  @IsOptional()
+  @IsUUID()
+  farmId?: string;
+
   @ApiProperty({
     description:
       'Filter by status: one of DRAFT, ACTIVE, CLOSED, CANCELLED, or several comma-separated',

@@ -8,7 +8,7 @@ describe('FeedSchedulerController — "Run now" is admin only', () => {
   beforeEach(() => jest.clearAllMocks());
 
   it.each(['FARM_MANAGER', 'OPERATIONAL_ADMIN', 'STAFF', 'MILL_MANAGER'])('refuses %s and runs nothing', async (userType) => {
-    await expect(controller.run('TENTATIVE_PLAN', {}, req(userType))).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(controller.run('REQ_CUTOFF', {}, req(userType))).rejects.toBeInstanceOf(ForbiddenException);
     await expect(controller.runs({}, req(userType))).rejects.toBeInstanceOf(ForbiddenException);
     expect(scheduler.runNow).not.toHaveBeenCalled();
   });
@@ -17,6 +17,12 @@ describe('FeedSchedulerController — "Run now" is admin only', () => {
     const result = await controller.run('REQ_CUTOFF', { companyId: 'co-9' }, req(userType));
     expect(scheduler.runNow).toHaveBeenCalledWith('REQ_CUTOFF', { companyId: 'co-9', farmId: undefined }, 't1', 'u1');
     expect(result.success).toBe(true);
+  });
+
+  // Mill Planning replaced Feed Plan (spec 2026-11-03): the tentative-plan job cannot be run any more.
+  it('refuses the retired TENTATIVE_PLAN job', async () => {
+    await expect(controller.run('TENTATIVE_PLAN', {}, req('TENANT_ADMIN'))).rejects.toBeInstanceOf(BadRequestException);
+    expect(scheduler.runNow).not.toHaveBeenCalled();
   });
 
   it('keeps a company admin to their own company', async () => {

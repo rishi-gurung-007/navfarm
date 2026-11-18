@@ -57,6 +57,7 @@ import { REPORT_SECTIONS } from '@/components/console/reports/reports-shell';
 import {
   MASTER_DATA_CONFIGS,
   MASTER_DATA_NAV_ORDER,
+  masterTabRoutes,
 } from '@/modules/master-data/configs';
 import { filterNavByPermission } from '@/utils/nav-permissions';
 
@@ -391,6 +392,7 @@ export default function ConsoleLayout({
     { label: t('navBatchEntry'), href: '/batches/entry' },
     { label: t('navBatchRecords'), href: '/batches/records' },
     { label: t('navBatchTransfers'), href: '/batches/transfers' },
+    { label: 'Kill Sheets', href: '/batches/kill-sheets' },
   ];
   const livestockChildren = LIVESTOCK_MENU_SECTIONS.map((section) => ({
     label:
@@ -418,6 +420,9 @@ export default function ConsoleLayout({
     { label: t('invGoodsReceipt'), href: '/inventory/goods-receipt' },
     { label: t('invQcInspection'), href: '/inventory/qc-inspection' },
     { label: t('invTransfers'), href: '/inventory/transfers' },
+    // Logistics Phase 2: the trips Transfer Orders travel on, beside them.
+    { label: t('trpNavTrips'), href: '/logistics/trips' },
+    { label: t('dspNavBoard'), href: '/logistics/dispatch' },
     { label: t('invStockAdjustment'), href: '/inventory/stock-adjustment' },
     { label: t('invLedger'), href: '/inventory/ledger' },
     { label: t('invBioAssetLedger'), href: '/inventory/bio-asset-ledger' },
@@ -434,8 +439,8 @@ export default function ConsoleLayout({
       href: '/inventory/feed-forecast?tab=forecast',
     },
     {
-      label: t('fftTabFeedPlan'),
-      href: '/inventory/feed-forecast?tab=feed-plan',
+      label: t('fftTabMillPlanning'),
+      href: '/inventory/feed-forecast?tab=mill-planning',
     },
     {
       label: t('fftTabCompareReport'),
@@ -472,11 +477,17 @@ export default function ConsoleLayout({
       if (bi === -1) return -1;
       return ai - bi;
     })
-    .map((c) => ({ label: tLabel(c.label), href: `/master-data/${c.key}` }));
+    .map((c) => ({
+      label: tLabel(c.label),
+      href: `/master-data/${c.key}`,
+      // A master's tabs are routes of their own and are not listed here, so the menu has to be told they belong
+      // to the parent — otherwise opening a tab leaves nothing in the flyout highlighted.
+      alsoActiveOn: masterTabRoutes(c.key),
+    }));
   // QC Parameters is a master the item card's QC Specification picks from (client, 9 Nov), so it is listed with the masters, right after
   // Item. Its page is its own panel, not a config-driven table, so it is not in MASTER_DATA_CONFIGS.
   {
-    const qcParameters = { label: t('navQcParameters'), href: '/master-data/qc-parameter' };
+    const qcParameters = { label: t('navQcParameters'), href: '/master-data/qc-parameter', alsoActiveOn: [] as string[] };
     const afterItem = masterDataChildren.findIndex((c) => c.href === '/master-data/item');
     masterDataChildren.splice(afterItem === -1 ? masterDataChildren.length : afterItem + 1, 0, qcParameters);
   }

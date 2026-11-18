@@ -304,9 +304,6 @@ export class FeedAlertService {
       let active = await this.loadActive(farmId, tenantId, timeZone);
       if (forecastError)
         active = active.filter((a) => !FORECAST_EVENTS.includes(a.eventType));
-      const closedPlans = levelsOnly
-        ? {}
-        : await this.closedPlans(active, farmId, tenantId);
       const plan = planAlerts({
         today,
         nowMs,
@@ -320,7 +317,6 @@ export class FeedAlertService {
         orderFacts,
         active,
         levelsOnly,
-        closedPlans,
       });
       await this.applyPlan(plan, { tenantId, companyId, farmId, nowMs });
       if (!levelsOnly) {
@@ -404,92 +400,8 @@ export class FeedAlertService {
   }
 
   /**
-   * PLAN_AVAILABLE (Master Setup row 45, "plan available") is pushed, not
-   * evaluated: the feed scheduler raises it for the farm's Feed Plan of the
-   * week (brief B). One open alert per active PLAN_AVAILABLE rule and plan,
-   * through the same unique active_key as every other alert; the rule's
-   * previous plan notice for this farm resolves as SUPERSEDED. A company with
-   * no PLAN_AVAILABLE rule gets no notice — no recipients are assumed.
-   */
-  async raisePlanAvailable(
-    farmId: string,
-    companyId: string,
-    tenantId: string,
-    plan: {
-      planId: string;
-      planCode: string;
-      planType: string;
-      productionDate: string;
-    },
-    nowMs: number = Date.now(),
-  ): Promise<{ rules: number; raised: number }> {
-    // The same seeding GET /alert-rule uses: a fresh database has no PLAN_AVAILABLE rule until it runs.
-    // Rishi, 12 Oct: no default rules are created; only the company's own configured rules raise alerts.
-    const rules = (await this.loadRules(companyId, farmId, tenantId)).filter(
-      (r) =>
-        r.isActive &&
-        r.eventType === 'PLAN_AVAILABLE' &&
-        (r.farmId === null || r.farmId === farmId),
-    );
-    const now = ts(nowMs);
-    let raised = 0;
-    for (const rule of rules) {
-      const dedupKey = `${rule.ruleId}|${plan.planId}`;
-      await this.db
-        .update(schema.feedAlert)
-        .set({
-          status: 'RESOLVED',
-          active_key: null,
-          resolved_at: now,
-          resolved_reason: 'SUPERSEDED',
-        })
-        .where(
-          and(
-            eq(schema.feedAlert.tenant_id, tenantId),
-            eq(schema.feedAlert.farm_id, farmId),
-            eq(schema.feedAlert.rule_id, rule.ruleId),
-            eq(schema.feedAlert.status, 'ACTIVE'),
-            sql`${schema.feedAlert.dedup_key} <> ${dedupKey}`,
-          ),
-        );
-      const kind = plan.planType === 'ACTUAL' ? 'Actual' : 'Tentative';
-      try {
-        await this.db.insert(schema.feedAlert).values({
-          alert_id: randomUUID(),
-          tenant_id: tenantId,
-          company_id: companyId,
-          farm_id: farmId,
-          rule_id: rule.ruleId,
-          notification_code: rule.notificationCode,
-          event_type: rule.eventType,
-          priority_level: rule.priorityLevel,
-          subject_type: 'FEED_PLAN',
-          subject_id: plan.planId,
-          item_id: null,
-          dedup_key: dedupKey,
-          active_key: dedupKey,
-          status: 'ACTIVE',
-          title: `Feed plan available: ${plan.planCode}`.slice(0, 200),
-          message: `${kind} Feed Plan ${plan.planCode} for production on ${dayShort(plan.productionDate)} is ready to review.`,
-          observed_value: null,
-          threshold_value:
-            rule.thresholdValue == null ? null : String(rule.thresholdValue),
-          recipient_roles: rule.recipientRoles,
-          raised_at: now,
-          last_notified_at: now,
-          notify_count: 1,
-        });
-        raised += 1;
-      } catch (error) {
-        if (!isDuplicateEntry(error)) throw error; // already raised for this plan
-      }
-    }
-    return { rules: rules.length, raised };
-  }
-
-  /**
    * W4G1: the pushed events — MILL_DISPATCH (Req. rows 74–76), MILL_ADJUSTED (row 126), RECEIPT_VARIANCE (checkpoint 26)
-   * and CAPACITY_EXCEEDED (checkpoint 34). Same machinery as PLAN_AVAILABLE: one open alert per active rule of the
+   * and CAPACITY_EXCEEDED (checkpoint 34): one open alert per active rule of the
    * event and `dedupSuffix`, through the unique active_key (a repeat is a no-op), scoped to the company and farm, in
    * app only. A company with no active rule for the event gets no notice; no recipients are assumed.
    */
@@ -1185,65 +1097,6 @@ export class FeedAlertService {
         highLevelKg: num(s.high_level_kg),
       };
     });
-  }
-
-  /**
-   * The open PLAN_AVAILABLE alerts whose Feed Plan is no longer the one to act on: approved (ACTUAL) or
-   * followed by a later version of the same week.
-   */
-  private async closedPlans(
-    active: ActiveAlertFact[],
-    farmId: string,
-    tenantId: string,
-  ): Promise<Record<string, 'SUPERSEDED' | 'APPROVED'>> {
-    const planIds = [
-      ...new Set(
-        active
-          .filter((a) => a.eventType === 'PLAN_AVAILABLE' && a.subjectId)
-          .map((a) => a.subjectId as string),
-      ),
-    ];
-    if (!planIds.length) return {};
-    const P = schema.feedPlan;
-    const subjects = await this.db
-      .select({
-        plan_id: P.plan_id,
-        plan_week: P.plan_week,
-        version: P.version,
-        plan_type: P.plan_type,
-      })
-      .from(P)
-      .where(
-        and(
-          eq(P.tenant_id, tenantId),
-          eq(P.farm_id, farmId),
-          inArray(P.plan_id, planIds),
-        ),
-      );
-    if (!subjects.length) return {};
-    const weeks = await this.db
-      .select({ plan_week: P.plan_week, version: P.version })
-      .from(P)
-      .where(
-        and(
-          eq(P.tenant_id, tenantId),
-          eq(P.farm_id, farmId),
-          inArray(P.plan_week, [...new Set(subjects.map((s) => s.plan_week))]),
-        ),
-      );
-    const latest = new Map<string, number>();
-    for (const w of weeks)
-      latest.set(
-        w.plan_week,
-        Math.max(latest.get(w.plan_week) ?? 0, w.version),
-      );
-    const out: Record<string, 'SUPERSEDED' | 'APPROVED'> = {};
-    for (const s of subjects) {
-      if (s.plan_type === 'ACTUAL') out[s.plan_id] = 'APPROVED';
-      else if ((latest.get(s.plan_week) ?? 0) > s.version)
-        out[s.plan_id] = 'SUPERSEDED';
-    }
-    return out;
   }
 
   /** Caller contract (c): unapproved feed requisitions of this farm only. */

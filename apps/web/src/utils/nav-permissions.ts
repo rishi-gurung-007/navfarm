@@ -4,6 +4,8 @@
  * own API reads (@RequirePermission on its controller); "any of" where the API accepts any of several.
  */
 import { hasPermission } from '@/hooks/useAuth';
+import { LOGISTICS_GRANTS } from '@/modules/master-data/logistics-configs';
+import { BUDGET_GRANTS } from '@/modules/master-data/budget-configs';
 
 type Grant = readonly [moduleCode: string, resource: string];
 
@@ -43,6 +45,8 @@ const ROUTE_GRANTS: Array<[path: string, anyOf: Grant[]]> = [
     '/inventory/feed-forecast?tab=physical-count',
     [['INVENTORY', 'STOCK_COUNT']],
   ],
+  ['/logistics/trips', [['LOGISTICS', 'TRIP']]],
+  ['/logistics/dispatch', [['LOGISTICS', 'TRIP']]],
   ['/requisitions', [['PROCUREMENT', 'REQUISITION']]],
   ['/finance', [['FINANCE', 'REPORTS']]],
   ['/finance/journal', [['FINANCE', 'JOURNAL']]],
@@ -82,6 +86,8 @@ const MASTER_DATA_GRANTS: Record<string, Grant> = {
   'number-series': ['SYSTEM', 'NUMBER_SERIES'],
   animal: ['PIGGERY', 'ANIMAL'],
   'alert-rule': ['NOTIFICATION', 'ALERT_RULE'],
+  ...LOGISTICS_GRANTS,
+  ...BUDGET_GRANTS,
 };
 
 export function grantsFor(href: string): Grant[] | null {

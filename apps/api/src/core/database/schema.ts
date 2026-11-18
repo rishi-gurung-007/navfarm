@@ -4301,6 +4301,42 @@ export const batchAttachment = mysqlTable('batch_attachment', {
     .notNull(),
 });
 
+// Imported slaughter reports. Source workbooks are private files on the server
+// disk: `*_storage_key` is never exposed as a static URL.
+export const killSheetImport = mysqlTable('kill_sheet_import', {
+  import_id: varchar('import_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+  company_id: varchar('company_id', { length: 36 }).notNull().references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+  farm_id: varchar('farm_id', { length: 36 }).notNull().references(() => locationMaster.location_id, { onDelete: 'restrict' }),
+  batch_id: varchar('batch_id', { length: 36 }).notNull().references(() => batchHeader.batch_id, { onDelete: 'restrict' }),
+  status: varchar('status', { length: 20 }).default('PREVIEW_READY').notNull(),
+  reconciliation_status: varchar('reconciliation_status', { length: 20 }).default('INVALID').notNull(),
+  report_reference: varchar('report_reference', { length: 120 }), report_batch_reference: varchar('report_batch_reference', { length: 120 }),
+  slaughter_from: datetime('slaughter_from', { mode: 'string' }), slaughter_to: datetime('slaughter_to', { mode: 'string' }),
+  individual_file_name: varchar('individual_file_name', { length: 255 }).notNull(), individual_storage_key: varchar('individual_storage_key', { length: 500 }).notNull(),
+  individual_sha512: char('individual_sha512', { length: 128 }).notNull(), summary_file_name: varchar('summary_file_name', { length: 255 }), summary_storage_key: varchar('summary_storage_key', { length: 500 }), summary_sha512: char('summary_sha512', { length: 128 }),
+  expected_animal_count: int('expected_animal_count'), expected_warm_mass_kg: decimal('expected_warm_mass_kg', { precision: 18, scale: 4 }), expected_cold_mass_kg: decimal('expected_cold_mass_kg', { precision: 18, scale: 4 }),
+  actual_animal_count: int('actual_animal_count'), actual_warm_mass_kg: decimal('actual_warm_mass_kg', { precision: 18, scale: 4 }), actual_cold_mass_kg: decimal('actual_cold_mass_kg', { precision: 18, scale: 4 }), reported_product_value: decimal('reported_product_value', { precision: 18, scale: 4 }),
+  validation_json: json('validation_json'), metadata_json: json('metadata_json'), override_reason: varchar('override_reason', { length: 500 }), confirmed_at: timestamp('confirmed_at', { mode: 'string' }), confirmed_by: varchar('confirmed_by', { length: 36 }),
+  created_by: varchar('created_by', { length: 36 }), created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(), updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+}, (t) => ({ scope: index('idx_kill_sheet_import_scope').on(t.tenant_id, t.company_id, t.farm_id, t.created_at), hash: uniqueIndex('uq_kill_sheet_import_hash').on(t.tenant_id, t.batch_id, t.individual_sha512) }));
+
+export const killSheetCarcass = mysqlTable('kill_sheet_carcass', {
+  carcass_id: varchar('carcass_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()), import_id: varchar('import_id', { length: 36 }).notNull().references(() => killSheetImport.import_id, { onDelete: 'cascade' }),
+  serial_number: varchar('serial_number', { length: 100 }).notNull(), ear_tag: varchar('ear_tag', { length: 100 }), grade: varchar('grade', { length: 100 }), warm_mass_kg: decimal('warm_mass_kg', { precision: 18, scale: 4 }).notNull(), cold_mass_kg: decimal('cold_mass_kg', { precision: 18, scale: 4 }).notNull(), sex: varchar('sex', { length: 100 }), fat_mm: decimal('fat_mm', { precision: 18, scale: 4 }), meat_mm: decimal('meat_mm', { precision: 18, scale: 4 }), meat_percentage: decimal('meat_percentage', { precision: 18, scale: 4 }), sick_code: varchar('sick_code', { length: 100 }), slaughtered_at: datetime('slaughtered_at', { mode: 'string' }),
+}, (t) => ({ serial: uniqueIndex('uq_kill_sheet_carcass_serial').on(t.import_id, t.serial_number), tag: index('idx_kill_sheet_carcass_tag').on(t.import_id, t.ear_tag) }));
+
+export const killSheetProduct = mysqlTable('kill_sheet_product', {
+  product_id: varchar('product_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()), import_id: varchar('import_id', { length: 36 }).notNull().references(() => killSheetImport.import_id, { onDelete: 'cascade' }),
+  category: varchar('category', { length: 150 }), product_code: varchar('product_code', { length: 100 }).notNull(), description: varchar('description', { length: 255 }), quantity: decimal('quantity', { precision: 18, scale: 4 }), warm_mass_kg: decimal('warm_mass_kg', { precision: 18, scale: 4 }), cold_mass_kg: decimal('cold_mass_kg', { precision: 18, scale: 4 }), average_mass_kg: decimal('average_mass_kg', { precision: 18, scale: 4 }), reported_price: decimal('reported_price', { precision: 18, scale: 4 }), reported_value: decimal('reported_value', { precision: 18, scale: 4 }),
+}, (t) => ({ import: index('idx_kill_sheet_product_import').on(t.import_id) }));
+
+export const killSheetSickCode = mysqlTable('kill_sheet_sick_code', {
+  sick_code_id: varchar('sick_code_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+  import_id: varchar('import_id', { length: 36 }).notNull().references(() => killSheetImport.import_id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 100 }).notNull(), description: varchar('description', { length: 500 }).notNull(),
+}, (t) => ({ code: uniqueIndex('uq_kill_sheet_sick_code').on(t.import_id, t.code) }));
+
 export const batchOutputLine = mysqlTable('batch_output_line', {
   line_id: varchar('line_id', { length: 36 })
     .primaryKey()
@@ -4393,6 +4429,8 @@ export const batchTransfer = mysqlTable('batch_transfer', {
     .notNull(),
   reason: varchar('reason', { length: 100 }),
   remarks: text('remarks'),
+  // 0257: the Logistics trip a cross-farm transfer travels on (null on a same-farm move or one with no trip).
+  trip_id: varchar('trip_id', { length: 36 }),
   status: varchar('status', { length: 20 }).default('DRAFT').notNull(),
   posted_at: timestamp('posted_at', { mode: 'string' }),
   posted_by: varchar('posted_by', { length: 36 }),
@@ -6177,6 +6215,45 @@ export const reportingPeriod = mysqlTable(
   }),
 );
 
+export const gmBudget = mysqlTable(
+  'gm_budget',
+  {
+    budget_id: varchar('budget_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(
+      () => companyMaster.company_id,
+      { onDelete: 'cascade' },
+    ),
+    period_id: varchar('period_id', { length: 36 }).notNull(),
+    farm_id: varchar('farm_id', { length: 36 }).notNull(),
+    metric_code: varchar('metric_code', { length: 40 }).notNull(),
+    amount_type: varchar('amount_type', { length: 10 }).notNull(),
+    amount: decimal('amount', { precision: 18, scale: 4 }).notNull(),
+    tolerance_pct: decimal('tolerance_pct', { precision: 6, scale: 2 }),
+    notes: varchar('notes', { length: 500 }),
+    is_active: boolean('is_active').default(true).notNull(),
+    created_by: varchar('created_by', { length: 36 }),
+    updated_by: varchar('updated_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    updated_at: timestamp('updated_at', { mode: 'string' })
+      .defaultNow()
+      .notNull(),
+    deleted_at: timestamp('deleted_at', { mode: 'string' }),
+  },
+  (table) => ({
+    idxLookup: index('idx_gm_budget_lookup').on(
+      table.tenant_id,
+      table.company_id,
+      table.period_id,
+      table.farm_id,
+    ),
+  }),
+);
+
 /**
  * In-app feed alerts raised from alert_rule (Plan B). active_key = dedup_key
  * while ACTIVE, NULL once RESOLVED: the unique index is what makes "one open
@@ -7416,6 +7493,8 @@ export const stockTransfer = mysqlTable(
     status: varchar('status', { length: 20 }).default('DRAFT').notNull(),
     posted_at: timestamp('posted_at', { mode: 'string' }),
     posted_by: varchar('posted_by', { length: 36 }),
+    // The logistics trip carrying this transfer (Logistics Phase 2); null until it is put on a trip.
+    trip_id: varchar('trip_id', { length: 36 }),
     created_by: varchar('created_by', { length: 36 }),
     updated_by: varchar('updated_by', { length: 36 }),
     created_at: timestamp('created_at', { mode: 'string' })
@@ -7427,6 +7506,7 @@ export const stockTransfer = mysqlTable(
     deleted_at: timestamp('deleted_at', { mode: 'string' }),
   },
   (table) => ({
+    idxTrip: index('idx_stock_transfer_trip').on(table.tenant_id, table.trip_id),
     fromWarehouseFk: foreignKey({
       columns: [table.from_warehouse_id],
       foreignColumns: [locationMaster.location_id],
@@ -9476,6 +9556,289 @@ export const milkProductionLogRelations = relations(
       references: [companyMaster.company_id],
     }),
   }),
+);
+
+// ── Logistics (NAVFarm TDD: Logistics Module, Phase 1 masters — 0228) ───────────────────────────────────
+// Company masters like every other; references to suppliers, locations, zones and GL accounts are checked in the
+// services rather than by foreign keys, so a master row never blocks a supplier or location being retired.
+
+const logisticsAudit = () => ({
+  is_active: boolean('is_active').default(true).notNull(),
+  created_by: varchar('created_by', { length: 36 }),
+  updated_by: varchar('updated_by', { length: 36 }),
+  created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  updated_at: timestamp('updated_at', { mode: 'string' }).defaultNow().notNull(),
+  deleted_at: timestamp('deleted_at', { mode: 'string' }),
+});
+
+/** A truck. Its status is set by the system (trips and maintenance move it from Phase 2), never by hand. */
+export const logisticsVehicle = mysqlTable(
+  'logistics_vehicle',
+  {
+    vehicle_id: varchar('vehicle_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    registration_no: varchar('registration_no', { length: 30 }).notNull(),
+    vehicle_type: varchar('vehicle_type', { length: 20 }).notNull(), // LIVESTOCK, BULK_FEED, BAGGED_FEED
+    ownership: varchar('ownership', { length: 20 }).notNull(), // OWN, HIRED, COLCOM_POOL
+    carrier_supplier_id: varchar('carrier_supplier_id', { length: 36 }),
+    home_farm_id: varchar('home_farm_id', { length: 36 }),
+    capacity_kg: decimal('capacity_kg', { precision: 12, scale: 2 }),
+    capacity_head: int('capacity_head'),
+    capacity_bags: int('capacity_bags'),
+    capacity_tonnes: decimal('capacity_tonnes', { precision: 10, scale: 3 }),
+    compartments: int('compartments'),
+    odometer_km: decimal('odometer_km', { precision: 12, scale: 1 }),
+    status: varchar('status', { length: 20 }).default('AVAILABLE').notNull(), // AVAILABLE, RESERVED, IN_USE, IN_MAINTENANCE, BLOCKED
+    remarks: varchar('remarks', { length: 500 }),
+    ...logisticsAudit(),
+  },
+  (t) => ({ uqReg: uniqueIndex('uq_logistics_vehicle_reg').on(t.tenant_id, t.company_id, t.registration_no) }),
+);
+
+/** A vehicle's paper with its expiry: insurance, licence, fitness. Expired insurance blocks dispatch (Phase 2). */
+export const logisticsVehicleDocument = mysqlTable(
+  'logistics_vehicle_document',
+  {
+    document_id: varchar('document_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    vehicle_id: varchar('vehicle_id', { length: 36 }).notNull(),
+    document_type: varchar('document_type', { length: 20 }).notNull(), // INSURANCE, LICENCE, FITNESS, OTHER
+    document_no: varchar('document_no', { length: 60 }),
+    issue_date: date('issue_date', { mode: 'string' }),
+    expiry_date: date('expiry_date', { mode: 'string' }).notNull(),
+    remarks: varchar('remarks', { length: 500 }),
+    ...logisticsAudit(),
+  },
+  (t) => ({ idxVehicle: index('idx_logistics_vehicle_document_vehicle').on(t.tenant_id, t.vehicle_id) }),
+);
+
+export const logisticsDriver = mysqlTable(
+  'logistics_driver',
+  {
+    driver_id: varchar('driver_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    driver_name: varchar('driver_name', { length: 120 }).notNull(),
+    licence_no: varchar('licence_no', { length: 40 }).notNull(),
+    licence_class: varchar('licence_class', { length: 20 }).notNull(),
+    licence_expiry: date('licence_expiry', { mode: 'string' }).notNull(),
+    mobile: varchar('mobile', { length: 30 }),
+    remarks: varchar('remarks', { length: 500 }),
+    ...logisticsAudit(),
+  },
+  (t) => ({ uqLicence: uniqueIndex('uq_logistics_driver_licence').on(t.tenant_id, t.company_id, t.licence_no) }),
+);
+
+/** A place a truck goes: a farm, the mill, quarantine, Colcom. Map point and radius are kept for GPS later. */
+export const logisticsDeliveryZone = mysqlTable(
+  'logistics_delivery_zone',
+  {
+    zone_id: varchar('zone_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    zone_code: varchar('zone_code', { length: 30 }).notNull(),
+    zone_name: varchar('zone_name', { length: 120 }).notNull(),
+    zone_type: varchar('zone_type', { length: 20 }).notNull(), // FARM, MILL, QUARANTINE, COLCOM, OTHER
+    location_id: varchar('location_id', { length: 36 }),
+    address: varchar('address', { length: 300 }),
+    latitude: decimal('latitude', { precision: 10, scale: 7 }),
+    longitude: decimal('longitude', { precision: 10, scale: 7 }),
+    arrival_radius_m: int('arrival_radius_m'),
+    ...logisticsAudit(),
+  },
+  (t) => ({ uqCode: uniqueIndex('uq_logistics_zone_code').on(t.tenant_id, t.company_id, t.zone_code) }),
+);
+
+/** From one zone to another: what the ETA and the freight estimate are worked out from. */
+export const logisticsRoute = mysqlTable(
+  'logistics_route',
+  {
+    route_id: varchar('route_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    route_code: varchar('route_code', { length: 30 }).notNull(),
+    from_zone_id: varchar('from_zone_id', { length: 36 }).notNull(),
+    to_zone_id: varchar('to_zone_id', { length: 36 }).notNull(),
+    distance_km: decimal('distance_km', { precision: 10, scale: 1 }).notNull(),
+    speed_kmh: decimal('speed_kmh', { precision: 6, scale: 1 }).notNull(),
+    loading_minutes: int('loading_minutes').default(0).notNull(),
+    offloading_minutes: int('offloading_minutes').default(0).notNull(),
+    break_minutes: int('break_minutes').default(0).notNull(),
+    tolls: decimal('tolls', { precision: 12, scale: 2 }).default('0').notNull(),
+    return_leg_charged: boolean('return_leg_charged').default(false).notNull(),
+    ...logisticsAudit(),
+  },
+  (t) => ({ uqCode: uniqueIndex('uq_logistics_route_code').on(t.tenant_id, t.company_id, t.route_code) }),
+);
+
+/**
+ * An extra drop on a multi-stop route, in order. A stop carries its own name and map point: the route code already
+ * says which zone the route runs in, so `zone_id` is no longer asked for (Rishi, 5 Nov) and is kept nullable only
+ * so stops recorded against a zone before 0239 still read back.
+ */
+export const logisticsRouteStop = mysqlTable(
+  'logistics_route_stop',
+  {
+    stop_id: varchar('stop_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    route_id: varchar('route_id', { length: 36 }).notNull(),
+    stop_seq: int('stop_seq').notNull(),
+    stop_name: varchar('stop_name', { length: 120 }),
+    zone_id: varchar('zone_id', { length: 36 }),
+    latitude: decimal('latitude', { precision: 10, scale: 7 }),
+    longitude: decimal('longitude', { precision: 10, scale: 7 }),
+    distance_from_previous_km: decimal('distance_from_previous_km', { precision: 10, scale: 1 }),
+    stop_minutes: int('stop_minutes').default(0).notNull(),
+    ...logisticsAudit(),
+  },
+  (t) => ({ uqSeq: uniqueIndex('uq_logistics_route_stop_seq').on(t.tenant_id, t.route_id, t.stop_seq) }),
+);
+
+/** A carrier's rate. Finance approves it (Phase 4); rates of one carrier, route and basis may not overlap in dates. */
+export const logisticsFreightRate = mysqlTable(
+  'logistics_freight_rate',
+  {
+    rate_id: varchar('rate_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    carrier_supplier_id: varchar('carrier_supplier_id', { length: 36 }).notNull(),
+    route_id: varchar('route_id', { length: 36 }),
+    rate_basis: varchar('rate_basis', { length: 20 }).notNull(), // KM, TONNE, TONNE_KM, TRIP, HEAD
+    rate: decimal('rate', { precision: 14, scale: 4 }).notNull(),
+    minimum_charge: decimal('minimum_charge', { precision: 14, scale: 2 }),
+    fuel_surcharge_pct: decimal('fuel_surcharge_pct', { precision: 6, scale: 2 }),
+    waiting_rate_per_hour: decimal('waiting_rate_per_hour', { precision: 14, scale: 2 }),
+    valid_from: date('valid_from', { mode: 'string' }).notNull(),
+    valid_to: date('valid_to', { mode: 'string' }),
+    approval_status: varchar('approval_status', { length: 20 }).default('DRAFT').notNull(), // DRAFT, PENDING, APPROVED, REJECTED
+    ...logisticsAudit(),
+  },
+  (t) => ({ idxCarrier: index('idx_logistics_rate_carrier').on(t.tenant_id, t.company_id, t.carrier_supplier_id) }),
+);
+
+/**
+ * When a truck is due a service: every X km and/or Y days, for one vehicle or every vehicle of a type. Where
+ * both are set, `vehicle_id` is the scope and `vehicle_type` is only that truck's own type, filled in for
+ * information (Rishi, 5 Nov) — see servicePlanProblems.
+ */
+export const logisticsServicePlan = mysqlTable(
+  'logistics_service_plan',
+  {
+    plan_id: varchar('plan_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    plan_name: varchar('plan_name', { length: 120 }).notNull(),
+    vehicle_id: varchar('vehicle_id', { length: 36 }),
+    vehicle_type: varchar('vehicle_type', { length: 20 }),
+    interval_km: decimal('interval_km', { precision: 12, scale: 1 }),
+    interval_days: int('interval_days'),
+    grace_km: decimal('grace_km', { precision: 12, scale: 1 }),
+    grace_days: int('grace_days'),
+    workshop_supplier_id: varchar('workshop_supplier_id', { length: 36 }),
+    ...logisticsAudit(),
+  },
+);
+
+/** One per company: the thresholds, the accounts trip and maintenance costs post to, and whether shipping needs a trip. */
+export const logisticsSetting = mysqlTable(
+  'logistics_setting',
+  {
+    setting_id: varchar('setting_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    capacity_warning_pct: decimal('capacity_warning_pct', { precision: 5, scale: 2 }).default('95').notNull(),
+    cost_variance_pct: decimal('cost_variance_pct', { precision: 5, scale: 2 }).default('10').notNull(),
+    service_grace_days: int('service_grace_days').default(0).notNull(),
+    pod_reminder_hours: int('pod_reminder_hours').default(24).notNull(),
+    freight_expense_account_id: varchar('freight_expense_account_id', { length: 36 }),
+    maintenance_expense_account_id: varchar('maintenance_expense_account_id', { length: 36 }),
+    paid_from_account_id: varchar('paid_from_account_id', { length: 36 }),
+    trip_required_to_ship: boolean('trip_required_to_ship').default(false).notNull(),
+    ...logisticsAudit(),
+  },
+  (t) => ({ uqCompany: uniqueIndex('uq_logistics_setting_company').on(t.tenant_id, t.company_id) }),
+);
+
+/** A trip: one vehicle and driver on one route carrying one or more Transfer Orders. */
+export const logisticsTrip = mysqlTable(
+  'logistics_trip',
+  {
+    trip_id: varchar('trip_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    trip_no: varchar('trip_no', { length: 50 }).notNull(),
+    vehicle_id: varchar('vehicle_id', { length: 36 }),
+    driver_id: varchar('driver_id', { length: 36 }),
+    route_id: varchar('route_id', { length: 36 }),
+    carrier_supplier_id: varchar('carrier_supplier_id', { length: 36 }),
+    status: varchar('status', { length: 20 }).default('DRAFT').notNull(),
+    planned_departure: datetime('planned_departure', { mode: 'string' }),
+    estimated_arrival: datetime('estimated_arrival', { mode: 'string' }),
+    actual_departure: datetime('actual_departure', { mode: 'string' }),
+    actual_arrival: datetime('actual_arrival', { mode: 'string' }),
+    pod_received_at: datetime('pod_received_at', { mode: 'string' }),
+    returned_at: datetime('returned_at', { mode: 'string' }),
+    load_value: decimal('load_value', { precision: 14, scale: 2 }),
+    load_unit: varchar('load_unit', { length: 20 }),
+    capacity_pct: decimal('capacity_pct', { precision: 6, scale: 2 }),
+    estimated_cost: decimal('estimated_cost', { precision: 14, scale: 2 }),
+    estimate_note: varchar('estimate_note', { length: 500 }),
+    hq_approval_ref: varchar('hq_approval_ref', { length: 100 }),
+    cancel_reason: varchar('cancel_reason', { length: 500 }),
+    closed_at: datetime('closed_at', { mode: 'string' }),
+    remarks: varchar('remarks', { length: 500 }),
+    ...logisticsAudit(),
+  },
+  (t) => ({
+    uqNo: uniqueIndex('uq_logistics_trip_no').on(t.tenant_id, t.company_id, t.trip_no),
+    idxStatus: index('idx_logistics_trip_status').on(t.tenant_id, t.company_id, t.status),
+  }),
+);
+
+/** A Transfer Order (or one of its lines) on a trip, with its share of the load and of the estimated cost. */
+export const logisticsTripLine = mysqlTable(
+  'logistics_trip_line',
+  {
+    trip_line_id: varchar('trip_line_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    trip_id: varchar('trip_id', { length: 36 }).notNull(),
+    // Exactly one of transfer_id (a stock Transfer Order) and batch_transfer_id (0257, a livestock batch transfer) is set.
+    transfer_id: varchar('transfer_id', { length: 36 }),
+    transfer_line_id: varchar('transfer_line_id', { length: 36 }),
+    batch_transfer_id: varchar('batch_transfer_id', { length: 36 }),
+    weight_kg: decimal('weight_kg', { precision: 14, scale: 2 }),
+    head_count: int('head_count'),
+    bag_count: int('bag_count'),
+    share_pct: decimal('share_pct', { precision: 6, scale: 2 }),
+    estimated_cost_share: decimal('estimated_cost_share', { precision: 14, scale: 2 }),
+    ...logisticsAudit(),
+  },
+  (t) => ({
+    idxTrip: index('idx_logistics_trip_line_trip').on(t.tenant_id, t.trip_id),
+    idxTransfer: index('idx_logistics_trip_line_transfer').on(t.tenant_id, t.transfer_id),
+    idxBatchTransfer: index('idx_logistics_trip_line_batch_transfer').on(t.tenant_id, t.batch_transfer_id),
+  }),
+);
+
+/** A cost against a trip: an estimate made at planning or an actual recorded as the trip runs. */
+export const logisticsTripCost = mysqlTable(
+  'logistics_trip_cost',
+  {
+    cost_id: varchar('cost_id', { length: 36 }).primaryKey().$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).references(() => companyMaster.company_id, { onDelete: 'cascade' }),
+    trip_id: varchar('trip_id', { length: 36 }).notNull(),
+    cost_type: varchar('cost_type', { length: 30 }).notNull(),
+    amount: decimal('amount', { precision: 14, scale: 2 }).notNull(),
+    is_estimate: boolean('is_estimate').default(false).notNull(),
+    remarks: varchar('remarks', { length: 500 }),
+    ...logisticsAudit(),
+  },
+  (t) => ({ idxTrip: index('idx_logistics_trip_cost_trip').on(t.tenant_id, t.trip_id) }),
 );
 
 /** 0250: the accounts of a class of items, set once and picked on the item. BIOLOGICAL holds the animal accounts; INVENTORY the stock and cost-of-sales accounts. */

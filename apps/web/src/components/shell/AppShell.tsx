@@ -26,6 +26,13 @@ export const SHELL_DESKTOP_QUERY = "(min-width: 1024px)";
 export interface AppShellNavChild {
   label: string;
   href: string;
+  /**
+   * Other paths that count as this child's own, for a page that belongs to it but has no entry of its own.
+   * A master's tabs are separate routes — Vehicle Documents lives at /master-data/vehicle-document, not under
+   * /master-data/vehicle — so without this, opening the Documents tab left the whole flyout unhighlighted and
+   * the menu could not say which master you were inside.
+   */
+  alsoActiveOn?: string[];
 }
 
 export interface AppShellNavItem {
@@ -83,13 +90,17 @@ export interface AppShellProps {
   children: ReactNode;
 }
 
-function isHrefActive(
+export function isHrefActive(
   targetHref: string,
   currentPath: string,
   searchParams: URLSearchParams | null,
-  allNavHrefs: string[]
+  allNavHrefs: string[],
+  alsoActiveOn?: string[]
 ): boolean {
   if (!targetHref) return false;
+  // A page this entry owns but does not link to (a master's other tabs): an exact match, so a longer entry
+  // elsewhere cannot be a better one.
+  if (alsoActiveOn?.some((path) => currentPath === path || currentPath.startsWith(path + "/"))) return true;
   const [targetPath, targetQuery] = targetHref.split("?");
 
   // Path check
@@ -214,7 +225,7 @@ function PrimaryNavContent({
           let isChildActive = false;
           if (hasChildren && item.children) {
             isChildActive = item.children.some((child) =>
-              isHrefActive(child.href, pathname, searchParams, allNavHrefs)
+              isHrefActive(child.href, pathname, searchParams, allNavHrefs, child.alsoActiveOn)
             );
           }
 
@@ -317,7 +328,7 @@ function PrimaryNavContent({
                   <PopoverHeading title={item.label} variant="caption" />
                   <PopoverMenu label={item.label}>
                     {item.children!.map((child) => {
-                      const childActive = isHrefActive(child.href, pathname, searchParams, allNavHrefs);
+                      const childActive = isHrefActive(child.href, pathname, searchParams, allNavHrefs, child.alsoActiveOn);
                       return (
                         <MenuItem key={child.label} href={child.href} checked={childActive} onSelect={onItemClick}>
                           {child.label}
@@ -400,7 +411,7 @@ function PrimaryNavContent({
                 {!isCollapsed && isExpanded && (
                   <ul className="mt-0.5 space-y-0.5 pl-6 pr-1">
                     {item.children!.map((child) => {
-                      const childActive = isHrefActive(child.href, pathname, searchParams, allNavHrefs);
+                      const childActive = isHrefActive(child.href, pathname, searchParams, allNavHrefs, child.alsoActiveOn);
                       return (
                         <li key={child.label}>
                           <Link

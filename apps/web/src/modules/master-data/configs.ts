@@ -1,4 +1,6 @@
 import type { MasterDataConfig, MasterDataField } from './types';
+import { LOGISTICS_CONFIGS } from './logistics-configs';
+import { BUDGET_CONFIGS } from './budget-configs';
 import { ANIMAL_ACCOUNT_NOTE, GL_MAPPING_TYPE_RULES, mappingDimensions, type MappingDimension, type MappingPath } from './gl-mapping-fields';
 
 const STATUS_OPTIONS = [
@@ -6576,6 +6578,8 @@ export const MASTER_DATA_CONFIGS: MasterDataConfig[] = [
   country,
   currency,
   exchangeRate,
+  ...LOGISTICS_CONFIGS,
+  ...BUDGET_CONFIGS,
 ];
 
 export const MASTER_DATA_GROUPS = [
@@ -6586,6 +6590,8 @@ export const MASTER_DATA_GROUPS = [
   'Livestock & Health',
   'Business Partners',
   'Finance',
+  'Logistics',
+  'Budget',
 ] as const;
 
 /**
@@ -6611,6 +6617,16 @@ export function getConfig(key: string): MasterDataConfig | undefined {
   if (key === 'no-series')
     return MASTER_DATA_CONFIGS.find((c) => c.key === 'number-series');
   return MASTER_DATA_CONFIGS.find((c) => c.key === key);
+}
+
+/**
+ * The routes of a master's own tabs. A tab is a master in its own right at its own path — Vehicle Documents is
+ * /master-data/vehicle-document, not a path under /master-data/vehicle — and only primary masters appear in the
+ * sidebar. Without telling the menu that these paths belong to the parent, opening any tab left the whole Farm
+ * Master flyout unhighlighted, so it could not say which master you were inside.
+ */
+export function masterTabRoutes(parentKey: string): string[] {
+  return MASTER_DATA_CONFIGS.filter((c) => c.tabOf === parentKey).map((c) => `/master-data/${c.key}`);
 }
 
 export { STATUS_OPTIONS };

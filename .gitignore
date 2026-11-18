@@ -65,3 +65,6 @@ out
 
 # Playwright MCP session artifacts (page snapshots, console logs)
 .playwright-mcp/
+*.sql.gz
+.local-test-data/
+apps/api/private-uploads/

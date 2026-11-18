@@ -4,23 +4,20 @@
  * period.
  *
  * Times and days are configuration, never constants here (decisions 1 Oct):
- * Feed Planning Settings hold the tentative-plan run (Engine row 69), the
- * reminder (Requisition row 84) and the submission cutoff (row 85). A job
+ * Feed Planning Settings hold the reminder (Requisition row 84) and the
+ * submission cutoff (row 85); the tentative-plan run went with Feed Plan
+ * (Mill Planning, spec 2026-11-03). A job
  * whose day or time is not configured is not scheduled; "Run now" still runs it.
  * Notices are in-app only: the email channel is deferred (Rishi, 11 Oct).
  */
 import type { LocalClock } from '../feed-forecast/feed-forecast.engine';
 
-export const FEED_JOBS = ['TENTATIVE_PLAN', 'REQ_REMINDER', 'REQ_CUTOFF', 'DIET_CHANGE', 'ESCALATION', 'STOCK_TAKE_DUE'] as const;
+export const FEED_JOBS = ['REQ_REMINDER', 'REQ_CUTOFF', 'DIET_CHANGE', 'ESCALATION', 'STOCK_TAKE_DUE'] as const;
 export type FeedJob = (typeof FEED_JOBS)[number];
 export const isFeedJob = (value: unknown): value is FeedJob => typeof value === 'string' && (FEED_JOBS as readonly string[]).includes(value);
 
-/** Who creates the scheduled Feed Plan version (feed_plan.created_by is not a user FK). */
-export const FEED_SCHEDULER_ACTOR = 'FEED_SCHEDULER';
 
 export interface ScheduleSettings {
-  tentativePlanWeekday: number | null;
-  tentativePlanTime: string | null;
   reminderWeekday: number | null;
   reminderTime: string | null;
   submissionWeekday: number | null;
@@ -33,7 +30,7 @@ export type JobCadence =
   | { kind: 'HOURLY' };
 
 /**
- * TENTATIVE_PLAN, REQ_REMINDER and REQ_CUTOFF are weekly at their configured
+ * REQ_REMINDER and REQ_CUTOFF are weekly at their configured
  * day and time; null when either is unset. DIET_CHANGE is daily (checkpoint 30's
  * "within N days" is a whole-day window, so the first tick of the farm's day
  * is enough). STOCK_TAKE_DUE (Master Setup row 45) is daily too: its window is whole days before a period's stock take date. ESCALATION is hourly, because Escalation After Hours (row 53)
@@ -43,7 +40,6 @@ export function cadenceOf(job: FeedJob, s: ScheduleSettings): JobCadence | null 
   const weekly = (weekday: number | null, time: string | null): JobCadence | null =>
     weekday === null || !time ? null : { kind: 'WEEKLY', weekday, time };
   switch (job) {
-    case 'TENTATIVE_PLAN': return weekly(s.tentativePlanWeekday, s.tentativePlanTime);
     case 'REQ_REMINDER': return weekly(s.reminderWeekday, s.reminderTime);
     case 'REQ_CUTOFF': return weekly(s.submissionWeekday, s.submissionTime);
     case 'DIET_CHANGE': return { kind: 'DAILY' };

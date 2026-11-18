@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import {
@@ -22,6 +23,7 @@ import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { CreateBatchTransferDto, QueryBatchTransferDto } from './dto/batch.dto';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
+import { LogisticsTripService } from '../../logistics/logistics-trip.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { SchedulerHeaderService } from '../scheduler-header/scheduler-header.service';
 import { farmScope } from '../../../common/farm-scope';
@@ -97,7 +99,45 @@ export class BatchTransferService {
     private readonly movementLog: AnimalMovementLogService,
     private readonly animalBookValue: AnimalBookValueService,
     private readonly glPostingService: GlPostingService,
+    // Logistics Phase 3: the trip a cross-farm transfer travels on. Optional, so a caller (or spec) built without
+    // Logistics posts exactly as before.
+    @Optional() private readonly logisticsTrips?: LogisticsTripService,
   ) {}
+
+  /**
+   * Logistics Phase 3: may this transfer post? A cross-farm transfer on a trip posts only while the trip is planned,
+   * confirmed or in transit; with no trip it posts as before unless the company's Logistics setting requires one. A
+   * transfer inside one farm never needs a truck. Returns the trip to move once it has posted, or null.
+   */
+  private async tripForPost(transferId: string, tenantId: string): Promise<{ trip_id: string } | null> {
+    if (!this.logisticsTrips) return null;
+    const [t] = await this.db
+      .select({
+        status: schema.batchTransfer.status, company_id: schema.batchTransfer.company_id, trip_id: schema.batchTransfer.trip_id,
+        from_batch_id: schema.batchTransfer.from_batch_id, to_batch_id: schema.batchTransfer.to_batch_id,
+      })
+      .from(schema.batchTransfer)
+      .where(and(eq(schema.batchTransfer.transfer_id, transferId), eq(schema.batchTransfer.tenant_id, tenantId)))
+      .limit(1);
+    // Not there, or not a draft: postInner says so in its own words.
+    if (!t || t.status !== 'DRAFT') return null;
+    if (t.trip_id) return this.logisticsTrips.assertTripForBatchTransfer(transferId, tenantId);
+    if (!(await this.logisticsTrips.tripRequiredToShip(t.company_id, tenantId))) return null;
+    const farms = await this.logisticsTrips.batchTransferFarms(t.from_batch_id, t.to_batch_id, tenantId);
+    if (!this.logisticsTrips.isCrossFarm(farms)) return null;
+    throw new BadRequestException('This transfer moves head between farms and needs a planned trip before it can post.');
+  }
+
+  /** True when this draft cannot post yet because it still needs its trip: create leaves it a draft rather than refusing it. */
+  private async needsTripFirst(transferId: string, tenantId: string): Promise<boolean> {
+    try {
+      await this.tripForPost(transferId, tenantId);
+      return false;
+    } catch (err) {
+      if (err instanceof BadRequestException) return true;
+      throw err;
+    }
+  }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -467,7 +507,7 @@ export class BatchTransferService {
       },
     });
 
-    if (dto.post_immediately !== false) {
+    if (dto.post_immediately !== false && !(await this.needsTripFirst(transferId, tenantId))) {
       return this.post(
         transferId,
         tenantId,
@@ -593,7 +633,7 @@ export class BatchTransferService {
       },
     });
 
-    if (dto.post_immediately !== false) {
+    if (dto.post_immediately !== false && !(await this.needsTripFirst(transferId, tenantId))) {
       return this.post(transferId, tenantId, userPayload);
     }
     return this.findOne(transferId, tenantId);
@@ -822,8 +862,9 @@ export class BatchTransferService {
     // movement log and the status all post together or not at all — they used to commit in
     // separate steps, so a failure part-way left animals moved with their value behind.
     // Joins the caller's transaction when one is open (a TRANSFER scheduler line posts from one).
-    return withTenantTransaction(this.cls, () =>
-      this.postInner(
+    return withTenantTransaction(this.cls, async () => {
+      const trip = await this.tripForPost(transferId, tenantId);
+      const posted = await this.postInner(
         transferId,
         tenantId,
         userPayload,
@@ -831,8 +872,14 @@ export class BatchTransferService {
         skipMovementLog,
         toStageId,
         returnStages,
-      ),
-    );
+      );
+      if (trip) {
+        await this.logisticsTrips!.onBatchTransferPosted(trip.trip_id, tenantId, userPayload);
+        // Read again so the transfer shows its trip as it now is (arrived), not as it was before the move.
+        return this.findOne(transferId, tenantId);
+      }
+      return posted;
+    });
   }
 
   private async postInner(
@@ -1433,6 +1480,12 @@ export class BatchTransferService {
         'Only a DRAFT transfer can be cancelled. A posted transfer must be reversed by a new transfer in the opposite direction.',
       );
     }
+    // A draft on a live trip is not cancelled from under it: the trip is cancelled first, which frees the transfer.
+    if (transfer.trip && !['CANCELLED', 'CLOSED'].includes(transfer.trip.status)) {
+      throw new BadRequestException(
+        `This transfer is on trip ${transfer.trip.trip_no}; cancel the trip first.`,
+      );
+    }
     await this.db
       .update(schema.batchTransfer)
       .set({
@@ -1487,7 +1540,12 @@ export class BatchTransferService {
       .where(eq(schema.batchTransferLine.transfer_id, transferId))
       .orderBy(schema.batchTransferLine.line_no);
 
-    return { ...transfer, lines };
+    // The trip a cross-farm transfer travels on (Logistics Phase 3); read only when there is one.
+    const trip =
+      transfer.trip_id && this.logisticsTrips
+        ? await this.logisticsTrips.tripOfBatchTransfer(transfer.transfer_id, tenantId)
+        : null;
+    return { ...transfer, lines, trip };
   }
 
   async findAll(query: QueryBatchTransferDto, tenantId: string) {

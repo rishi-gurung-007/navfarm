@@ -39,3 +39,26 @@ export function kpiLimits(row: KpiLimitsInput): {
   }
   return { average, lower, upper };
 }
+
+/**
+ * A KPI's red / yellow / green cut-offs as the GM Dashboard sheet gives them per farm (Rishi, 16 Nov): the number
+ * under each colour is where that colour is reached. All three must be numbers, or the KPI has no bands.
+ */
+export interface KpiBands {
+  red: number;
+  yellow: number;
+  green: number;
+}
+
+export function kpiBands(row: {
+  red_at?: unknown;
+  yellow_at?: unknown;
+  green_at?: unknown;
+}): KpiBands | null {
+  const red = num(row.red_at);
+  const yellow = num(row.yellow_at);
+  const green = num(row.green_at);
+  return red === null || yellow === null || green === null
+    ? null
+    : { red, yellow, green };
+}

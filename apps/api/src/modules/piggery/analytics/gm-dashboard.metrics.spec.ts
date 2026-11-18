@@ -4,14 +4,21 @@ import {
   farmAlerts,
   farmRow,
   farmWindows,
+  headsByPeriod,
   kgSoldPerSowYear,
   meanTarget,
+  overheadFigures,
+  pbtByPeriod,
+  pbtOf,
   ragStatus,
+  salesFigures,
   stageExit,
   stageFigures,
   stageSegments,
 } from './gm-dashboard.metrics';
 import type { OpsMetrics } from '../reports/monthly-ops.metrics';
+import { targetsFromLifecycle } from '../reports/farrowing-report.metrics';
+import { cell } from './gm-dashboard.metrics';
 
 const target = (
   average: number | null,
@@ -427,6 +434,279 @@ describe('farmRow and farmAlerts', () => {
         status: 'GREEN',
         above: false,
       },
+    ]);
+  });
+});
+
+// Rishi, 16 Nov: the sheet's red / yellow / green cut-offs; the number under a colour is where that colour is reached.
+describe('ragStatus with the sheet cut-offs', () => {
+  const farrow = {
+    average: null,
+    lower: null,
+    upper: null,
+    bands: { red: 87, yellow: 89, green: 92 },
+  };
+  const preWean = {
+    average: null,
+    lower: null,
+    upper: null,
+    bands: { red: 10, yellow: 8, green: 7.5 },
+  };
+
+  it('is green from the green number, amber from the yellow one, red short of it', () => {
+    expect(ragStatus(92, farrow, false)).toBe('GREEN');
+    expect(ragStatus(95, farrow, false)).toBe('GREEN');
+    expect(ragStatus(91.9, farrow, false)).toBe('AMBER');
+    expect(ragStatus(89, farrow, false)).toBe('AMBER');
+    expect(ragStatus(88, farrow, false)).toBe('RED');
+    expect(ragStatus(87, farrow, false)).toBe('RED');
+    expect(ragStatus(80, farrow, false)).toBe('RED');
+  });
+
+  it('runs the other way when lower is better', () => {
+    expect(ragStatus(7.5, preWean, true)).toBe('GREEN');
+    expect(ragStatus(7.8, preWean, true)).toBe('AMBER');
+    expect(ragStatus(8, preWean, true)).toBe('AMBER');
+    expect(ragStatus(9, preWean, true)).toBe('RED');
+    expect(ragStatus(12, preWean, true)).toBe('RED');
+  });
+
+  it('wins over the average and tolerance when both are there', () => {
+    expect(
+      ragStatus(88, { ...farrow, average: 80, lower: 70, upper: 90 }, false),
+    ).toBe('RED');
+  });
+
+  it('falls back to the average when the cut-offs run against the metric (a sheet slip)', () => {
+    const slip = {
+      average: 5,
+      lower: null,
+      upper: null,
+      bands: { red: 4.75, yellow: 4.88, green: 5 },
+    };
+    expect(ragStatus(5, slip, true)).toBe('GREEN');
+    expect(ragStatus(7, slip, true)).toBe('RED');
+    expect(ragStatus(5, { ...slip, average: null }, true)).toBeNull();
+  });
+
+  it('shows the green number as the target when there is no average', () => {
+    expect(
+      farmRow(
+        { key: 'k', label: 'K', unit: '', lower: false },
+        () => 90,
+        farrow,
+        () => true,
+      ).target,
+    ).toBe(92);
+  });
+
+  it("averages the cut-offs of a farm's breeds", () => {
+    const a = {
+      average: null,
+      lower: null,
+      upper: null,
+      bands: { red: 80, yellow: 85, green: 90 },
+    };
+    const b = {
+      average: null,
+      lower: null,
+      upper: null,
+      bands: { red: 84, yellow: 87, green: 92 },
+    };
+    expect(meanTarget([a, b])?.bands).toEqual({
+      red: 82,
+      yellow: 86,
+      green: 91,
+    });
+  });
+});
+
+describe('the target a cell shows', () => {
+  it("is the sheet's green number when the farm has cut-offs, else the average", () => {
+    const withBands = {
+      average: 90,
+      lower: null,
+      upper: null,
+      bands: { red: 87, yellow: 89, green: 92 },
+    };
+    expect(
+      farmRow(
+        { key: 'k', label: 'K', unit: '', lower: false },
+        () => 91,
+        withBands,
+        () => true,
+      ).target,
+    ).toBe(92);
+    expect(
+      farmRow(
+        { key: 'k', label: 'K', unit: '', lower: false },
+        () => 91,
+        { average: 90, lower: null, upper: null },
+        () => true,
+      ).target,
+    ).toBe(90);
+  });
+});
+
+// Rishi, 16 Nov: Pigs to Slaughter, Cost of Sales and Gross Margin come from the ledgers' sold disposals.
+describe('salesFigures', () => {
+  const sales = [
+    { farm_id: 'g', date: '2026-09-28', heads: 67, cost: 4000, revenue: 16603 },
+    { farm_id: 'g', date: '2026-10-08', heads: 55, cost: 3000, revenue: 13629 },
+    { farm_id: 'p', date: '2026-10-24', heads: 25, cost: 2500, revenue: 6195 },
+  ];
+
+  it('adds the sales in the window for one farm, or for all farms', () => {
+    expect(salesFigures(sales, '2026-09-27', '2026-10-24', 'g')).toEqual({
+      heads: 122,
+      cost_of_sales: 7000,
+      revenue: 30232,
+      gross_margin: 23232,
+      gross_margin_pct: 76.85,
+    });
+    expect(salesFigures(sales, '2026-09-27', '2026-10-24', null)?.heads).toBe(
+      147,
+    );
+  });
+
+  it('counts a sale on the first and last day, and none outside', () => {
+    expect(salesFigures(sales, '2026-10-08', '2026-10-08', 'g')?.heads).toBe(
+      55,
+    );
+    expect(salesFigures(sales, '2026-10-09', '2026-11-16', 'g')).toBeNull();
+  });
+
+  it('has no margin percentage when nothing was received', () => {
+    const free = [
+      { farm_id: 'g', date: '2026-10-08', heads: 5, cost: 100, revenue: 0 },
+    ];
+    const f = salesFigures(free, '2026-10-01', '2026-10-31', 'g');
+    expect(f?.gross_margin).toBe(-100);
+    expect(f?.gross_margin_pct).toBeNull();
+  });
+});
+
+describe('headsByPeriod', () => {
+  const periods = [
+    {
+      period_code: '2026-09',
+      start_date: '2026-08-23',
+      end_date: '2026-09-26',
+    },
+    {
+      period_code: '2026-10',
+      start_date: '2026-09-27',
+      end_date: '2026-10-24',
+    },
+    {
+      period_code: '2026-11',
+      start_date: '2026-10-25',
+      end_date: '2026-11-21',
+    },
+    {
+      period_code: '2026-12',
+      start_date: '2026-11-22',
+      end_date: '2026-12-26',
+    },
+  ];
+  const sales = [
+    { farm_id: 'g', date: '2026-09-13', heads: 11, cost: 1, revenue: 2 },
+    { farm_id: 'g', date: '2026-10-08', heads: 55, cost: 1, revenue: 2 },
+  ];
+
+  it('runs a total up to today and leaves later periods empty', () => {
+    expect(headsByPeriod(sales, periods, null, '2026-11-16')).toEqual([
+      { period_code: '2026-09', heads: 11 },
+      { period_code: '2026-10', heads: 66 },
+      { period_code: '2026-11', heads: 66 },
+      { period_code: '2026-12', heads: null },
+    ]);
+  });
+});
+
+// Rishi, 16 Nov: the sheet's Kgs sold / sow / year row has its own red, yellow and green per farm (Grasmere 2910 / 2940 / 3095).
+describe('Kg Meat Sold / Sow / Year bands', () => {
+  const lifecycle = [
+    {
+      farm_id: 'g',
+      kpi_thresholds: [
+        { metric: 'KG_SOLD_PER_SOW_YEAR', red_at: 2910, yellow_at: 2940, green_at: 3095 },
+      ],
+    },
+  ];
+
+  it('is read from the farrowing KPI entry of the farm', () => {
+    const t = targetsFromLifecycle(lifecycle, 'g').kg_sold_per_sow_year;
+    expect(t?.bands).toEqual({ red: 2910, yellow: 2940, green: 3095 });
+  });
+
+  it('a farm with no such entry has no target and no colour', () => {
+    const t = targetsFromLifecycle([{ farm_id: 'g', kpi_thresholds: [] }], 'g').kg_sold_per_sow_year;
+    expect(t).toBeNull();
+    expect(cell(3000, t, false).status).toBeNull();
+  });
+
+  it.each([
+    [3200, 'GREEN'],
+    [3095, 'GREEN'],
+    [3000, 'AMBER'],
+    [2940, 'AMBER'],
+    [2900, 'RED'],
+    [1200, 'RED'],
+  ])('colours %s as %s, higher being better', (kg, status) => {
+    const t = targetsFromLifecycle(lifecycle, 'g').kg_sold_per_sow_year;
+    expect(cell(kg, t, false)).toEqual({ value: kg, target: 3095, status });
+  });
+
+  it('gives no colour for a farm with no sows', () => {
+    const t = targetsFromLifecycle(lifecycle, 'g').kg_sold_per_sow_year;
+    expect(cell(null, t, false).status).toBeNull();
+  });
+});
+
+
+describe('overheads and PBT', () => {
+  const oh = (
+    farm_id: string,
+    date: string,
+    kind: 'OTHER' | 'STAFF',
+    amount: number,
+  ) => ({ farm_id, date, kind, amount });
+  const rows = [
+    oh('f1', '2026-10-05', 'OTHER', 1000),
+    oh('f1', '2026-10-12', 'STAFF', 400),
+    oh('f2', '2026-10-06', 'OTHER', 700),
+    oh('f1', '2026-09-01', 'OTHER', 50),
+  ];
+
+  it('sums a window for one farm or all, and is null when nothing was posted', () => {
+    expect(overheadFigures(rows, '2026-09-27', '2026-10-24', 'f1')).toEqual({ other: 1000, staff: 400 });
+    expect(overheadFigures(rows, '2026-09-27', '2026-10-24', null)).toEqual({ other: 1700, staff: 400 });
+    expect(overheadFigures(rows, '2026-11-01', '2026-11-30', null)).toBeNull();
+  });
+
+  it('PBT is gross margin less both overheads, and a side with no figures counts as 0', () => {
+    const sales = { heads: 10, cost_of_sales: 100, revenue: 3000, gross_margin: 2900, gross_margin_pct: 96.67 };
+    expect(pbtOf(sales, { other: 1000, staff: 400 })).toBe(1500);
+    expect(pbtOf(null, { other: 1000, staff: 400 })).toBe(-1400);
+    expect(pbtOf(sales, null)).toBe(2900);
+    expect(pbtOf(null, null)).toBeNull();
+  });
+
+  it('PBT by period is a running total up to the chosen day', () => {
+    const sales = [
+      { farm_id: 'f1', date: '2026-09-10', heads: 5, cost: 500, revenue: 1500 },
+      { farm_id: 'f1', date: '2026-10-10', heads: 5, cost: 500, revenue: 2500 },
+    ];
+    const periods = [
+      { period_code: '2026-09', start_date: '2026-08-23', end_date: '2026-09-26' },
+      { period_code: '2026-10', start_date: '2026-09-27', end_date: '2026-10-24' },
+      { period_code: '2026-11', start_date: '2026-10-25', end_date: '2026-11-21' },
+    ];
+    expect(pbtByPeriod(sales, rows, periods, 'f1', '2026-10-24')).toEqual([
+      { period_code: '2026-09', pbt: 950 }, // 1000 margin less 50 overhead
+      { period_code: '2026-10', pbt: 950 + 2000 - 1400 },
+      { period_code: '2026-11', pbt: null },
     ]);
   });
 });

@@ -513,6 +513,7 @@ export function FeedRequisitionDocument({
   remarksMissing = false,
   remarksError = null,
   options,
+  onOpenTransfer,
 }: {
   view: FeedRequisitionDocumentView;
   editable: boolean;
@@ -529,6 +530,7 @@ export function FeedRequisitionDocument({
    */
   remarksError?: string | null;
   options?: FeedRequisitionOptions | null;
+  onOpenTransfer?: (transferId: string) => void;
 }) {
   const { t } = useLanguage();
   const lines = Array.isArray(view.lines) ? view.lines : [];
@@ -629,10 +631,20 @@ export function FeedRequisitionDocument({
                 ? linkedTransfers.map((tr, i) => (
                     <span key={tr.transfer_id}>
                       {i > 0 && ', '}
-                      <RecordLink
-                        code={tr.transfer_no}
-                        href={transferHref(tr.transfer_id)}
-                      />
+                      {onOpenTransfer ? (
+                        <button
+                          type="button"
+                          className="text-(--accent) hover:underline"
+                          onClick={() => onOpenTransfer(tr.transfer_id)}
+                        >
+                          {tr.transfer_no}
+                        </button>
+                      ) : (
+                        <RecordLink
+                          code={tr.transfer_no}
+                          href={transferHref(tr.transfer_id)}
+                        />
+                      )}
                     </span>
                   ))
                 : header?.linked_transfer_no,

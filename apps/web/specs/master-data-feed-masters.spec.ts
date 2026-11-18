@@ -169,12 +169,19 @@ describe('Reporting Period configuration and Alert Rules navigation', () => {
     const touched = MASTER_DATA_CONFIGS.filter((c) =>
       (c.columns ?? []).some((col) => col.format || col.labels),
     ).map((c) => c.key);
-    // Accounting Periods (R12) shows its Starting and Ending Dates the same way Reporting Periods does.
+    // Accounting Periods (R12) shows its Starting and Ending Dates the same way Reporting Periods does; the Logistics
+    // masters show their expiry and validity dates the same way, and their types and statuses by name.
     expect(touched.sort()).toEqual([
       'accounting-period',
       'alert-rule',
       'bin-diet-assignment',
+      'delivery-zone',
+      'driver',
+      'freight-rate',
       'reporting-period',
+      'service-plan',
+      'vehicle',
+      'vehicle-document',
     ]);
     for (const key of ['location', 'item', 'breed', 'stage', 'number-series']) {
       const cols = getConfig(key)?.columns ?? [];

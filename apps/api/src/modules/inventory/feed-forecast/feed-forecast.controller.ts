@@ -1,7 +1,8 @@
-import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Optional, Param, ParseUUIDPipe, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { FeedForecastService } from './feed-forecast.service';
-import { GenerateFeedPlanDto, QueryFeedForecastDto, QueryMillCompareDto, QueryFeedForecastRunsDto, QueryFeedPeriodsDto, QuerySiloStatusDto } from './dto/feed-forecast.dto';
+import { MillPlanService } from './mill-plan.service';
+import { QueryFeedForecastDto, QueryMillCompareDto, QueryMillPlanDto, QueryFeedForecastRunsDto, QueryFeedPeriodsDto, QuerySiloStatusDto } from './dto/feed-forecast.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
@@ -16,7 +17,10 @@ import { FarmScoped } from '../../../common/farm-scope';
 @Controller('feed-forecast')
 @FarmScoped()
 export class FeedForecastController {
-  constructor(private readonly feedForecastService: FeedForecastService) {}
+  constructor(
+    private readonly feedForecastService: FeedForecastService,
+    @Optional() private readonly millPlanService?: MillPlanService,
+  ) {}
 
   // Read under the same grant as the report (INVENTORY/LEDGER view): a farm
   // login choosing a period has no Master Data grant, and needs none to read
@@ -60,13 +64,14 @@ export class FeedForecastController {
     return { success: true, message: 'Current feed forecast run retrieved successfully.', data };
   }
 
-  @Get('feed-plan')
+  @Get('mill-plan')
   @RequirePermission('INVENTORY', 'LEDGER', 'view')
-  @ApiOperation({ summary: 'Saved feed plan with requisition and transfer fulfilment for one farm' })
-  async feedPlan(@Query('farmId') farmId: string | undefined, @Query('from') from: string | undefined, @Query('to') to: string | undefined, @Query('productionDate') productionDate: string | undefined, @Req() req: any) {
+  @ApiOperation({ summary: 'Mill Planning: one week of every selected farm\'s forecast, approved demand and mill capacity' })
+  async millPlan(@Query() query: QueryMillPlanDto, @Req() req: any) {
+    if (!this.millPlanService) throw new Error('Mill plan service is not configured.');
     const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.feedForecastService.feedPlan(farmId, tenantId, req.user?.userType, from, to, productionDate || undefined);
-    return { success: true, message: 'Feed plan retrieved successfully.', data };
+    const data = await this.millPlanService.generate(tenantId, req.user?.userType, query);
+    return { success: true, message: 'Mill plan generated.', data };
   }
 
   @Get('mill-compare')
@@ -76,33 +81,6 @@ export class FeedForecastController {
     const tenantId = req.user?.tenantId || req['tenantId'];
     const data = await this.feedForecastService.millCompareReport(tenantId, req.user?.userType, { millId: query.millId, date: query.date, period: query.period });
     return { success: true, message: 'Compare report retrieved successfully.', data };
-  }
-
-  @Get('feed-plan/versions')
-  @RequirePermission('INVENTORY', 'LEDGER', 'view')
-  @ApiOperation({ summary: 'Retained Tentative and Actual Feed Plan versions for one farm' })
-  async feedPlanVersions(@Query('farmId') farmId: string | undefined, @Req() req: any) {
-    const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.feedForecastService.listFeedPlanVersions(farmId, tenantId, req.user?.userType);
-    return { success: true, message: 'Feed plan versions retrieved successfully.', data };
-  }
-
-  @Get('feed-plan/versions/:id')
-  @RequirePermission('INVENTORY', 'LEDGER', 'view')
-  @ApiOperation({ summary: 'One retained Feed Plan version with its five-week evidence' })
-  async feedPlanVersion(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
-    const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.feedForecastService.findFeedPlanVersion(id, tenantId);
-    return { success: true, message: 'Feed plan version retrieved successfully.', data };
-  }
-
-  @Post('feed-plan/versions')
-  @RequirePermission('INVENTORY', 'LEDGER', 'create')
-  @ApiOperation({ summary: 'Generate and retain the next Tentative or Actual Feed Plan version' })
-  async generateFeedPlanVersion(@Body() dto: GenerateFeedPlanDto, @Req() req: any) {
-    const tenantId = req.user?.tenantId || req['tenantId'];
-    const data = await this.feedForecastService.generateFeedPlanVersion(dto.farmId, dto.productionDate, tenantId, req.user);
-    return { success: true, message: 'Feed plan version generated.', data };
   }
 
   @Get('runs/:id')

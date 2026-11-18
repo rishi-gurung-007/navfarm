@@ -68,6 +68,7 @@ const LEGACY_ROUTE_REDIRECTS = [
   ['/production', '/batches'],
   ['/piggery/facility-occupancy', '/livestock/facility'],
   ['/piggery/herd-analytics', '/livestock/analytics'],
+  ['/piggery/analytics/gm-dashboard', '/livestock/analytics?tab=gm'],
   ['/piggery/breeding', '/livestock/breeding'],
   ['/piggery/animals', '/livestock'],
   ['/piggery', '/livestock'],

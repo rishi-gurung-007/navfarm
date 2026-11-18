@@ -2010,6 +2010,8 @@ export class BatchService {
 
     if (query.companyId)
       conditions.push(eq(schema.batchHeader.company_id, query.companyId));
+    if (query.farmId)
+      conditions.push(eq(schema.batchHeader.farm_id, query.farmId));
     if (query.status) {
       // One status, or several comma-separated (a transfer's destination is ACTIVE or DRAFT).
       const statuses = query.status

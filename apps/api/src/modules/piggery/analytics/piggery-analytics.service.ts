@@ -9,7 +9,7 @@ import {
   batchScopeConditions,
 } from '../../../common/farm-scope';
 import { loadBatchDeaths, loadHeadMoves } from '../../production/batch-heads';
-import { kpiLimits } from '../../production/lifecycle/kpi-limits';
+import { kpiBands, kpiLimits } from '../../production/lifecycle/kpi-limits';
 import { MonthlyOpsService } from '../reports/monthly-ops.service';
 import {
   targetsFromLifecycle,
@@ -21,6 +21,7 @@ import type { OpsMetrics } from '../reports/monthly-ops.metrics';
 import {
   GmDashboardPeriod,
   GmFarmView,
+  GmSlaughterMetrics,
   PiggeryGmDashboardData,
   QueryPiggeryGmDashboardDto,
 } from './piggery-analytics.dto';
@@ -34,9 +35,18 @@ import {
   farmRow,
   farmWindows,
   HeadMoveRow,
+  headsByPeriod,
   kgSoldPerSowYear,
+  OTHER_OVERHEAD_GL,
+  OverheadRow,
+  overheadFigures,
+  pbtByPeriod,
+  STAFF_OVERHEAD_GL,
   meanTarget,
   MetricRow,
+  SaleRow,
+  SalesFigures,
+  salesFigures,
   StageBatch,
   stageExit,
   StageExit,
@@ -44,8 +54,14 @@ import {
   stageFigures,
   stageSegments,
 } from './gm-dashboard.metrics';
+import { budgetMetric } from '../budget/budget-metrics';
+import { BudgetLine } from './gm-budget.metrics';
+import { budgetActuals, budgetSection } from './gm-budget.dashboard';
 
 type Farm = { farm_id: string; farm_code: string; farm_name: string };
+
+/** How many periods back the dashboard looks for one with records when it opens on a period that has none. */
+const MAX_FALLBACK_PERIODS = 6;
 
 /** The Breeding & Farrowing rows: the figure, its lifecycle target and whether lower is better. */
 const BREEDING_ROWS: Array<{
@@ -134,7 +150,7 @@ const STAGE_ROWS: Array<{
     unit: 'kg',
     lower: false,
     pick: (s) => s.weaner.gain_kg,
-    target: null,
+    target: (e) => target(e.weaner, (x) => x.target_gain),
   },
   {
     key: 'fce_weaner',
@@ -176,6 +192,8 @@ const STAGE_METRICS = {
   weight: 'BODY_WEIGHT',
   fcr: 'FCR',
   mortality: 'MORTALITY_PCT',
+  /** The weaner stage's 70-day gain in kg: carried only by the sheet's red / yellow / green cut-offs (16 Nov). */
+  gain: 'GAIN_70_DAY',
 } as const;
 
 const day = (v: unknown) => String(v).slice(0, 10);
@@ -247,11 +265,6 @@ export class PiggeryAnalyticsService {
       )
       .orderBy(asc(P.start_date));
     const today = this.today();
-    const chosen = query.periodId
-      ? periods.find((p) => p.period_id === query.periodId)
-      : (periods.find((p) => p.start_date <= today && today <= p.end_date) ??
-        periods[periods.length - 1]);
-
     const allFarms = (await this.ops.listFarms(tenantId, userType)).filter(
       (f) => !companyId || !f.company_id || f.company_id === companyId,
     );
@@ -266,32 +279,160 @@ export class PiggeryAnalyticsService {
         farm_name,
       }));
 
+    // With no period asked for, open on the one holding today; when it has no records yet (a new period, or a
+    // database whose records stop earlier) step back to the latest period that does, so the page opens on figures.
+    let chosen: GmDashboardPeriod | undefined;
+    let fallbackFrom: string | null = null;
+    if (query.periodId) {
+      chosen = periods.find((p) => p.period_id === query.periodId);
+    } else {
+      const current =
+        periods.find((p) => p.start_date <= today && today <= p.end_date) ??
+        periods[periods.length - 1];
+      chosen = current;
+      if (current && current.start_date <= today) {
+        const at = periods.indexOf(current);
+        for (let i = at; i >= 0 && i > at - MAX_FALLBACK_PERIODS; i--) {
+          const p = periods[i];
+          const upTo = p.end_date > today ? today : p.end_date;
+          const reporting = await this.farmsWithRecords(
+            tenantId,
+            companyId,
+            farms.map((f) => f.farm_id),
+            p.start_date,
+            upTo,
+          );
+          if (reporting.size) {
+            chosen = p;
+            break;
+          }
+        }
+        if (chosen && chosen !== current) fallbackFrom = current.period_code;
+      }
+    }
+
     const empty: PiggeryGmDashboardData = {
       period: null,
       periods,
       farms,
-      kg_sold_per_sow_year: { month: {}, ytd: {} },
+      kg_sold_per_sow_year: { month: {}, ytd: {}, cells: {} },
+      financial: { month: {}, ytd: {}, heads_by_period: [], pbt_by_period: [] },
+      budget: { month: {}, ytd: {}, by_period: [] },
       breeding: [],
       weaner_grower: [],
+      financial_rows: [],
       alerts: [],
       farm_view: null,
+      farms_reporting: { reporting: 0, total: farms.length, farm_ids: [] },
     };
-    if (!chosen) return empty;
+    if (!chosen) {
+      const slaughter = await this.slaughterMetrics(tenantId, companyId, query.farmId, null);
+      return { ...empty, slaughter };
+    }
     const ytdFrom =
       periods.find((p) => p.business_year === chosen.business_year)
         ?.start_date ?? chosen.start_date;
     const to = chosen.end_date > today ? today : chosen.end_date;
-    const period = { ...chosen, ytd_from: ytdFrom, to };
+    const period = {
+      ...chosen,
+      ytd_from: ytdFrom,
+      to,
+      fallback_from: fallbackFrom,
+    };
     // A period still to come has no day to count yet.
-    if (chosen.start_date > today) return { ...empty, period };
+    if (chosen.start_date > today) {
+      const slaughter = await this.slaughterMetrics(tenantId, companyId, query.farmId, { start_date: chosen.start_date, to });
+      return { ...empty, period, slaughter };
+    }
+    // Farms with any farrowing, weaning or sale inside the period: the others have nothing to show yet.
+    const reportingFarms = await this.farmsWithRecords(
+      tenantId,
+      companyId,
+      farms.map((f) => f.farm_id),
+      chosen.start_date,
+      to,
+    );
 
     const month = { name: 'month', startDate: chosen.start_date, endDate: to };
     const ytd = { name: 'ytd', startDate: ytdFrom, endDate: to };
-    const stageIds = await this.stageIds(tenantId, companyId);
+    // With no company chosen, each farm answers for the company it belongs to: its colour levels and stages are
+    // that company's, so an empty company must not mean "rows with no company".
+    const farmCompany = new Map(allFarms.map((f) => [f.farm_id, f.company_id]));
+    const companyOf = (farmId: string): string =>
+      companyId || farmCompany.get(farmId) || '';
+    const stageIdCache = new Map<string, Record<string, string[]>>();
+    const stageIdsFor = async (cid: string) => {
+      if (!stageIdCache.has(cid))
+        stageIdCache.set(cid, await this.stageIds(tenantId, cid));
+      return stageIdCache.get(cid)!;
+    };
+
+    const sales = await this.soldDisposals(
+      tenantId,
+      companyId,
+      farms.map((f) => f.farm_id),
+      ytd.startDate,
+      ytd.endDate,
+    );
+    const overheads = await this.overheadRows(
+      tenantId,
+      companyId,
+      farms,
+      ytd.startDate,
+      ytd.endDate,
+    );
+    const keys: Array<[string, string | null]> = [
+      ['all', null],
+      ...farms.map((f): [string, string | null] => [f.farm_id, f.farm_id]),
+    ];
+    const financial: PiggeryGmDashboardData['financial'] = {
+      month: Object.fromEntries(
+        keys.map(([k, id]) => [
+          k,
+          salesFigures(sales, month.startDate, month.endDate, id),
+        ]),
+      ),
+      ytd: Object.fromEntries(
+        keys.map(([k, id]) => [
+          k,
+          salesFigures(sales, ytd.startDate, ytd.endDate, id),
+        ]),
+      ),
+      heads_by_period: headsByPeriod(
+        sales,
+        periods.filter((p) => p.business_year === chosen.business_year),
+        query.farmId ?? null,
+        to,
+      ),
+      pbt_by_period: pbtByPeriod(
+        sales,
+        overheads,
+        periods.filter((p) => p.business_year === chosen.business_year),
+        query.farmId ?? null,
+        to,
+      ),
+    };
+
+    const slaughterMonth = await this.slaughterByFarm(
+      tenantId,
+      companyId,
+      farms.map((f) => f.farm_id),
+      month.startDate,
+      month.endDate,
+      financial.month,
+    );
+    const slaughterYtd = await this.slaughterByFarm(
+      tenantId,
+      companyId,
+      farms.map((f) => f.farm_id),
+      ytd.startDate,
+      ytd.endDate,
+      financial.ytd,
+    );
 
     const breedingByFarm = new Map<
       string,
-      { figures: BreedingFigures; targets: Targets }
+      { figures: BreedingFigures; targets: Targets; kgTarget: Target | null }
     >();
     const kgMonth: Record<string, number | null> = {};
     const kgYtd: Record<string, number | null> = {};
@@ -316,16 +457,19 @@ export class PiggeryAnalyticsService {
       kgMonth[farm.farm_id] = kgSoldPerSowYear(
         inMonth,
         daysIn(month.startDate, month.endDate),
+        slaughterMonth.get(farm.farm_id)?.cold_mass_kg,
       );
       kgYtd[farm.farm_id] = kgSoldPerSowYear(
         inYtd,
         daysIn(ytd.startDate, ytd.endDate),
+        slaughterYtd.get(farm.farm_id)?.cold_mass_kg,
       );
 
       const breedIds = [...new Set(rows.map((r) => r.breed_id))];
+      const farmCid = companyOf(farm.farm_id);
       const lifecycle = await this.lifecycleRows(
         tenantId,
-        companyId,
+        farmCid,
         farm.farm_id,
         month.startDate,
         month.endDate,
@@ -343,17 +487,18 @@ export class PiggeryAnalyticsService {
       breedingByFarm.set(farm.farm_id, {
         figures: breedingFigures(inMonth),
         targets,
+        kgTarget: meanTarget(perBreed.map((t) => t.kg_sold_per_sow_year)),
       });
 
       stageByFarm.set(
         farm.farm_id,
         await this.stageExits(
           tenantId,
-          companyId,
+          farmCid,
           farm.farm_id,
           month.startDate,
           month.endDate,
-          stageIds,
+          await stageIdsFor(farmCid),
           scope,
         ),
       );
@@ -361,8 +506,13 @@ export class PiggeryAnalyticsService {
     kgMonth.all = kgSoldPerSowYear(
       allMonth,
       daysIn(month.startDate, month.endDate),
+      slaughterMonth.get('all')?.cold_mass_kg,
     );
-    kgYtd.all = kgSoldPerSowYear(allYtd, daysIn(ytd.startDate, ytd.endDate));
+    kgYtd.all = kgSoldPerSowYear(
+      allYtd,
+      daysIn(ytd.startDate, ytd.endDate),
+      slaughterYtd.get('all')?.cold_mass_kg,
+    );
 
     const breeding: MetricRow[] = BREEDING_ROWS.map((row) => ({
       key: row.key,
@@ -379,6 +529,20 @@ export class PiggeryAnalyticsService {
         }),
       ),
     }));
+
+    // Kg Meat Sold / Sow / Year closes the Breeding & Farrowing matrix; its red / yellow / green come from the sheet.
+    const kgRow: MetricRow = {
+      key: 'kg_sold_per_sow_year',
+      label: 'Kg Meat Sold / Sow / Year',
+      unit: 'kg',
+      lower_is_better: false,
+      cells: Object.fromEntries(
+        farms.map((f) => [
+          f.farm_id,
+          cell(kgMonth[f.farm_id] ?? null, breedingByFarm.get(f.farm_id)!.kgTarget, false),
+        ]),
+      ),
+    };
 
     const figures = new Map(
       farms.map((f) => {
@@ -413,27 +577,82 @@ export class PiggeryAnalyticsService {
       ),
     }));
 
+    const yearPeriods = periods.filter(
+      (p) => p.business_year === chosen.business_year,
+    );
+    const budgetLines = await this.budgetLines(
+      tenantId,
+      farms.map((f) => f.farm_id),
+      yearPeriods.map((p) => p.period_id),
+    );
+    const actualsOf = (
+      sales: Record<string, SalesFigures | null>,
+      kg: Record<string, number | null>,
+      window: { startDate: string; endDate: string },
+      slaughterMap: Map<string, { avg_cdm: number | null; cos_per_tonne: number | null }>,
+    ) =>
+      Object.fromEntries(
+        keys.map(([k, id]) => [
+          k,
+          budgetActuals(
+            sales[k] ?? null,
+            kg[k] ?? null,
+            overheadFigures(overheads, window.startDate, window.endDate, id),
+            slaughterMap.get(k) ?? null,
+          ),
+        ]),
+      );
+    const { budget, financialRows } = budgetSection({
+      lines: budgetLines,
+      farms,
+      yearPeriods,
+      periodId: chosen.period_id,
+      actuals: {
+        month: actualsOf(financial.month, kgMonth, month, slaughterMonth),
+        ytd: actualsOf(financial.ytd, kgYtd, ytd, slaughterYtd),
+      },
+    });
+
+    const slaughter = await this.slaughterMetrics(
+      tenantId,
+      companyId,
+      query.farmId,
+      { start_date: chosen.start_date, to },
+    );
+
     return {
       period,
       periods,
       farms,
-      kg_sold_per_sow_year: { month: kgMonth, ytd: kgYtd },
+      kg_sold_per_sow_year: { month: kgMonth, ytd: kgYtd, cells: kgRow.cells },
+      financial,
+      budget,
       breeding,
       weaner_grower: weanerGrower,
-      alerts: alertsFrom([...breeding, ...weanerGrower], farms),
+      financial_rows: financialRows,
+      alerts: alertsFrom(
+        [...breeding, kgRow, ...weanerGrower, ...financialRows],
+        farms,
+      ),
       farm_view:
         query.farmId && farms.length === 1
           ? await this.farmView(
               tenantId,
-              companyId,
+              companyOf(farms[0].farm_id),
               farms[0],
               period,
               periods,
-              stageIds,
+              await stageIdsFor(companyOf(farms[0].farm_id)),
               scope,
               kgYtd[farms[0].farm_id] ?? null,
             )
           : null,
+      farms_reporting: {
+        reporting: reportingFarms.size,
+        total: farms.length,
+        farm_ids: [...reportingFarms],
+      },
+      slaughter,
     };
   }
 
@@ -550,6 +769,43 @@ export class PiggeryAnalyticsService {
     };
   }
 
+  /** The live budget lines of the farms and periods, in one query (GM Dashboard Budget master, 16 Nov). */
+  private async budgetLines(
+    tenantId: string,
+    farmIds: string[],
+    periodIds: string[],
+  ): Promise<BudgetLine[]> {
+    if (!farmIds.length || !periodIds.length) return [];
+    const B = schema.gmBudget;
+    const rows = await this.db
+      .select({
+        period_id: B.period_id,
+        farm_id: B.farm_id,
+        metric_code: B.metric_code,
+        amount: B.amount,
+        tolerance_pct: B.tolerance_pct,
+      })
+      .from(B)
+      .where(
+        and(
+          eq(B.tenant_id, tenantId),
+          inArray(B.farm_id, farmIds),
+          inArray(B.period_id, periodIds),
+          eq(B.is_active, true),
+          isNull(B.deleted_at),
+        ),
+      );
+    return rows
+      .filter((r) => budgetMetric(r.metric_code))
+      .map((r) => ({
+        period_id: r.period_id,
+        farm_id: r.farm_id,
+        metric_code: r.metric_code as BudgetLine['metric_code'],
+        amount: Number(r.amount),
+        tolerance_pct: r.tolerance_pct == null ? null : Number(r.tolerance_pct),
+      }));
+  }
+
   /** The stage ids of WEANER and GROWER, the company's own row first, as stage masters are overridden. */
   private async stageIds(
     tenantId: string,
@@ -631,12 +887,14 @@ export class PiggeryAnalyticsService {
       const found = list.find((t: any) => t?.metric === metric);
       if (!found) continue;
       const limits = kpiLimits(found);
+      const bands = kpiBands(found);
       if (
         limits.average !== null ||
         limits.lower !== null ||
-        limits.upper !== null
+        limits.upper !== null ||
+        bands
       )
-        return limits;
+        return bands ? { ...limits, bands } : limits;
     }
     return null;
   }
@@ -647,6 +905,256 @@ export class PiggeryAnalyticsService {
    * its unreversed CONSUMPTION kg; a weaner spell's entry weight is the weaning weight of the batch's litters, a
    * grower spell's the last weighing on or before it entered.
    */
+  /**
+   * Cold mass, slaughtered heads, Avg CDM and COS per tonne from confirmed kill sheets
+   * for the given farms and period window.
+   */
+  private async slaughterByFarm(
+    tenantId: string,
+    companyId: string,
+    farmIds: string[],
+    from: string,
+    to: string,
+    salesByFarm: Record<string, SalesFigures | null>,
+  ): Promise<
+    Map<
+      string,
+      {
+        cold_mass_kg: number;
+        heads: number;
+        avg_cdm: number | null;
+        cos_per_tonne: number | null;
+      }
+    >
+  > {
+    const map = new Map<
+      string,
+      {
+        cold_mass_kg: number;
+        heads: number;
+        avg_cdm: number | null;
+        cos_per_tonne: number | null;
+      }
+    >();
+    if (!farmIds.length) return map;
+
+    try {
+      const importTable = schema.killSheetImport;
+      const rows = await this.db
+        .select({
+          farm_id: importTable.farm_id,
+          heads: sql<number>`coalesce(sum(${importTable.actual_animal_count}), 0)`,
+          cold_mass_kg: sql<number>`coalesce(sum(${importTable.actual_cold_mass_kg}), 0)`,
+        })
+        .from(importTable)
+        .where(
+          and(
+            eq(importTable.tenant_id, tenantId),
+            eq(importTable.status, 'IMPORTED'),
+            companyId ? eq(importTable.company_id, companyId) : undefined,
+            inArray(importTable.farm_id, farmIds),
+            or(
+              and(
+                sql`${importTable.slaughter_from} IS NOT NULL`,
+                sql`${importTable.slaughter_from} <= ${to + ' 23:59:59'}`,
+                sql`coalesce(${importTable.slaughter_to}, ${importTable.slaughter_from}) >= ${from + ' 00:00:00'}`,
+              ),
+              and(
+                sql`${importTable.slaughter_from} IS NULL`,
+                sql`coalesce(${importTable.confirmed_at}, ${importTable.created_at}) >= ${from + ' 00:00:00'}`,
+                sql`coalesce(${importTable.confirmed_at}, ${importTable.created_at}) <= ${to + ' 23:59:59'}`,
+              ),
+            ),
+          ),
+        )
+        .groupBy(importTable.farm_id);
+
+      let totalColdMass = 0;
+      let totalHeads = 0;
+
+      for (const r of rows) {
+        const fid = String(r.farm_id);
+        const heads = Number(r.heads);
+        const coldMass = Number(Number(r.cold_mass_kg).toFixed(2));
+        totalColdMass += coldMass;
+        totalHeads += heads;
+
+        const avgCdm = heads > 0 ? Number((coldMass / heads).toFixed(2)) : null;
+        const cos = salesByFarm[fid]?.cost_of_sales ?? null;
+        const tonnes = coldMass / 1000;
+        const cosPerTonne =
+          tonnes > 0 && cos != null ? Number((cos / tonnes).toFixed(2)) : null;
+
+        map.set(fid, {
+          cold_mass_kg: coldMass,
+          heads,
+          avg_cdm: avgCdm,
+          cos_per_tonne: cosPerTonne,
+        });
+      }
+
+      const totalCos = salesByFarm.all?.cost_of_sales ?? null;
+      const allAvgCdm =
+        totalHeads > 0 ? Number((totalColdMass / totalHeads).toFixed(2)) : null;
+      const allTonnes = totalColdMass / 1000;
+      const allCosPerTonne =
+        allTonnes > 0 && totalCos != null
+          ? Number((totalCos / allTonnes).toFixed(2))
+          : null;
+
+      map.set('all', {
+        cold_mass_kg: totalColdMass,
+        heads: totalHeads,
+        avg_cdm: allAvgCdm,
+        cos_per_tonne: allCosPerTonne,
+      });
+    } catch {
+      // kill_sheet_import table not present or unmigrated; return empty map
+    }
+
+    return map;
+  }
+
+  /**
+   * The sold disposals of the farms' batches between two dates: heads and book value from the bio-asset ledger's
+   * disposal (TRANSFORMATION) entries, proceeds from the "Sale" journal the same batch posted that day. A disposal
+   * with no sale journal (a harvest into the store) is not a sale and is left out.
+   */
+  private async soldDisposals(
+    tenantId: string,
+    companyId: string,
+    farmIds: string[],
+    from: string,
+    to: string,
+  ): Promise<SaleRow[]> {
+    if (!farmIds.length) return [];
+    const [rows] = (await this.db.execute(sql`
+      SELECT x.farm_id AS farm_id, DATE_FORMAT(x.d, '%Y-%m-%d') AS d,
+             x.heads AS heads, x.cost AS cost, p.proceeds AS revenue
+      FROM (
+        SELECT b.farm_id, b.batch_no, bal.posting_date AS d,
+               SUM(-bal.quantity) AS heads, SUM(-bal.cost_amount) AS cost
+        FROM bio_asset_ledger bal
+        JOIN batch_header b ON b.batch_id = bal.batch_id
+        WHERE bal.tenant_id = ${tenantId}
+          ${companyId ? sql`AND bal.company_id = ${companyId}` : sql``}
+          AND bal.entry_type = 'TRANSFORMATION'
+          AND bal.posting_date BETWEEN ${from} AND ${to}
+          AND b.farm_id IN (${sql.join(
+            farmIds.map((id) => sql`${id}`),
+            sql`, `,
+          )})
+        GROUP BY b.farm_id, b.batch_no, bal.posting_date
+      ) x
+      JOIN (
+        SELECT h.source_document_no AS batch_no, h.posting_date AS d,
+               SUM(l.debit_amount) AS proceeds
+        FROM journal_header h
+        JOIN journal_line l ON l.journal_id = h.journal_id
+        WHERE h.tenant_id = ${tenantId}
+          ${companyId ? sql`AND h.company_id = ${companyId}` : sql``}
+          AND h.source_document_type = 'BATCH'
+          AND h.status = 'POSTED'
+          AND h.description LIKE 'Sale%'
+          AND h.posting_date BETWEEN ${from} AND ${to}
+        GROUP BY h.source_document_no, h.posting_date
+      ) p ON p.batch_no = x.batch_no AND p.d = x.d
+    `)) as unknown as [Array<Record<string, unknown>>, unknown];
+    return rows.map((r) => ({
+      farm_id: String(r.farm_id),
+      date: String(r.d),
+      heads: Number(r.heads),
+      cost: Number(r.cost),
+      revenue: Number(r.revenue),
+    }));
+  }
+
+  /**
+   * The overheads posted between two dates: each posted journal line on the Other Overheads (4600) or Staff Overheads
+   * (4610) account, net debit, to the farm whose cost centre (CC-<farm code>) it carries.
+   */
+  private async overheadRows(
+    tenantId: string,
+    companyId: string,
+    farms: Farm[],
+    from: string,
+    to: string,
+  ): Promise<OverheadRow[]> {
+    if (!farms.length) return [];
+    const byCostCentre = new Map(farms.map((f) => [`CC-${f.farm_code}`, f.farm_id]));
+    const [rows] = (await this.db.execute(sql`
+      SELECT cc.cost_center_code AS cc, a.account_code AS code,
+             DATE_FORMAT(h.posting_date, '%Y-%m-%d') AS d,
+             SUM(l.debit_amount - l.credit_amount) AS amount
+      FROM journal_header h
+      JOIN journal_line l ON l.journal_id = h.journal_id
+      JOIN gl_account_master a ON a.gl_account_id = l.gl_account_id
+      JOIN cost_center_master cc ON cc.cost_center_id = l.cost_center_id
+      WHERE h.tenant_id = ${tenantId}
+        ${companyId ? sql`AND h.company_id = ${companyId}` : sql``}
+        AND h.status = 'POSTED'
+        AND h.posting_date BETWEEN ${from} AND ${to}
+        AND a.account_code IN (${OTHER_OVERHEAD_GL}, ${STAFF_OVERHEAD_GL})
+        AND cc.cost_center_code IN (${sql.join(
+          [...byCostCentre.keys()].map((c) => sql`${c}`),
+          sql`, `,
+        )})
+      GROUP BY cc.cost_center_code, a.account_code, h.posting_date
+    `)) as unknown as [Array<Record<string, unknown>>, unknown];
+    return rows.flatMap((r) => {
+      const farmId = byCostCentre.get(String(r.cc));
+      return farmId
+        ? [
+            {
+              farm_id: farmId,
+              date: String(r.d),
+              kind: String(r.code) === STAFF_OVERHEAD_GL ? ('STAFF' as const) : ('OTHER' as const),
+              amount: Number(r.amount),
+            },
+          ]
+        : [];
+    });
+  }
+
+  /**
+   * The farms, among those given, with a farrowing, an actual weaning (piglets weaned; a planned weaning date alone is
+   * not one) or a disposal dated inside the window. A farm with none has no records to report for it, and the dashboard
+   * says so instead of drawing empty figures.
+   */
+  private async farmsWithRecords(
+    tenantId: string,
+    companyId: string,
+    farmIds: string[],
+    from: string,
+    to: string,
+  ): Promise<Set<string>> {
+    if (!farmIds.length) return new Set();
+    const ids = sql.join(
+      farmIds.map((id) => sql`${id}`),
+      sql`, `,
+    );
+    const [rows] = (await this.db.execute(sql`
+      SELECT b.farm_id AS farm_id
+      FROM farrowing_record f
+      JOIN batch_header b ON b.batch_id = f.batch_id
+      WHERE f.tenant_id = ${tenantId}
+        ${companyId ? sql`AND f.company_id = ${companyId}` : sql``}
+        AND b.farm_id IN (${ids})
+        AND (f.farrowing_date BETWEEN ${from} AND ${to}
+          OR (f.weaning_date BETWEEN ${from} AND ${to} AND f.piglets_weaned > 0))
+      UNION
+      SELECT b.farm_id AS farm_id
+      FROM bio_asset_ledger bal
+      JOIN batch_header b ON b.batch_id = bal.batch_id
+      WHERE bal.tenant_id = ${tenantId}
+        ${companyId ? sql`AND bal.company_id = ${companyId}` : sql``}
+        AND bal.entry_type = 'TRANSFORMATION'
+        AND bal.posting_date BETWEEN ${from} AND ${to}
+        AND b.farm_id IN (${ids})
+    `)) as unknown as [Array<Record<string, unknown>>, unknown];
+    return new Set(rows.map((r) => String(r.farm_id)));
+  }
+
   private async stageExits(
     tenantId: string,
     companyId: string,
@@ -843,6 +1351,7 @@ export class PiggeryAnalyticsService {
                 farmId,
                 STAGE_METRICS.mortality,
               ),
+              gain: this.metricTarget(own, farmId, STAGE_METRICS.gain),
             },
           ];
         }),
@@ -850,7 +1359,7 @@ export class PiggeryAnalyticsService {
     };
     const weanerTargets = await targetsFor(WEANER);
     const growerTargets = await targetsFor(GROWER);
-    const none = { weight: null, fcr: null, mortality: null };
+    const none = { weight: null, fcr: null, mortality: null, gain: null };
 
     const exitOf = (
       spell: {
@@ -859,7 +1368,12 @@ export class PiggeryAnalyticsService {
       },
       targets: Map<
         string,
-        { weight: Target | null; fcr: Target | null; mortality: Target | null }
+        {
+          weight: Target | null;
+          fcr: Target | null;
+          mortality: Target | null;
+          gain: Target | null;
+        }
       >,
       entryWeight: number | null,
     ) =>
@@ -903,5 +1417,264 @@ export class PiggeryAnalyticsService {
         ),
       ),
     };
+  }
+
+  private async slaughterMetrics(
+    tenantId: string,
+    companyId?: string,
+    farmId?: string,
+    period?: { start_date: string; to: string } | null,
+  ): Promise<GmSlaughterMetrics> {
+    try {
+      const importTable = schema.killSheetImport;
+    const carcassTable = schema.killSheetCarcass;
+    const productTable = schema.killSheetProduct;
+    const companyTable = schema.companyMaster;
+    const locationTable = schema.locationMaster;
+
+    const startTimestamp = period?.start_date ? `${period.start_date} 00:00:00` : null;
+    const endTimestamp = period?.to ? `${period.to} 23:59:59` : null;
+
+    const baseWhere = and(
+      eq(importTable.tenant_id, tenantId),
+      eq(importTable.status, 'IMPORTED'),
+      companyId ? eq(importTable.company_id, companyId) : undefined,
+      farmId ? eq(importTable.farm_id, farmId) : undefined,
+      startTimestamp && endTimestamp
+        ? or(
+            and(
+              sql`${importTable.slaughter_from} <= ${endTimestamp}`,
+              sql`${importTable.slaughter_to} >= ${startTimestamp}`,
+            ),
+            and(
+              sql`${importTable.confirmed_at} >= ${startTimestamp}`,
+              sql`${importTable.confirmed_at} <= ${endTimestamp}`,
+            ),
+          )
+        : undefined,
+    );
+
+    const [header] = await this.db
+      .select({
+        total_animals: sql<number>`coalesce(sum(${importTable.actual_animal_count}), 0)`,
+        warm_mass_kg: sql<number>`coalesce(sum(${importTable.actual_warm_mass_kg}), 0)`,
+        cold_mass_kg: sql<number>`coalesce(sum(${importTable.actual_cold_mass_kg}), 0)`,
+        reported_product_value: sql<number>`coalesce(sum(${importTable.reported_product_value}), 0)`,
+      })
+      .from(importTable)
+      .where(baseWhere);
+
+    const totalAnimals = Number(header?.total_animals ?? 0);
+    const warmMass = Number(Number(header?.warm_mass_kg ?? 0).toFixed(2));
+    const coldMass = Number(Number(header?.cold_mass_kg ?? 0).toFixed(2));
+    const reportedValue = Number(Number(header?.reported_product_value ?? 0).toFixed(3));
+    const avgWeight = totalAnimals > 0 ? Number((coldMass / totalAnimals).toFixed(2)) : null;
+
+    if (totalAnimals === 0) {
+      return {
+        total_animals: 0,
+        warm_mass_kg: 0,
+        cold_mass_kg: 0,
+        average_carcass_weight_kg: null,
+        reported_product_value: 0,
+        grades: [],
+        sexes: [],
+        sick_codes: [],
+        by_company: [],
+        by_farm: [],
+        trends: [],
+        product_categories: [],
+      };
+    }
+
+    const gradeRows = await this.db
+      .select({
+        grade: sql<string>`coalesce(${carcassTable.grade}, 'UNGRADED')`,
+        count: sql<number>`count(*)`,
+        warm_mass_kg: sql<number>`round(coalesce(sum(${carcassTable.warm_mass_kg}), 0), 2)`,
+        cold_mass_kg: sql<number>`round(coalesce(sum(${carcassTable.cold_mass_kg}), 0), 2)`,
+      })
+      .from(carcassTable)
+      .innerJoin(importTable, eq(importTable.import_id, carcassTable.import_id))
+      .where(baseWhere)
+      .groupBy(sql`coalesce(${carcassTable.grade}, 'UNGRADED')`)
+      .orderBy(sql`1`);
+
+    const grades = gradeRows.map((r) => {
+      const count = Number(r.count);
+      return {
+        grade: r.grade,
+        count,
+        percentage: totalAnimals > 0 ? Number(((count / totalAnimals) * 100).toFixed(1)) : 0,
+        warm_mass_kg: Number(r.warm_mass_kg),
+        cold_mass_kg: Number(r.cold_mass_kg),
+      };
+    });
+
+    const sexRows = await this.db
+      .select({
+        sex: sql<string>`coalesce(${carcassTable.sex}, 'UNKNOWN')`,
+        count: sql<number>`count(*)`,
+      })
+      .from(carcassTable)
+      .innerJoin(importTable, eq(importTable.import_id, carcassTable.import_id))
+      .where(baseWhere)
+      .groupBy(sql`coalesce(${carcassTable.sex}, 'UNKNOWN')`)
+      .orderBy(sql`1`);
+
+    const sexes = sexRows.map((r) => {
+      const count = Number(r.count);
+      return {
+        sex: r.sex,
+        count,
+        percentage: totalAnimals > 0 ? Number(((count / totalAnimals) * 100).toFixed(1)) : 0,
+      };
+    });
+
+    const sickRows = await this.db
+      .select({
+        sick_code: sql<string>`coalesce(${carcassTable.sick_code}, '0')`,
+        count: sql<number>`count(*)`,
+      })
+      .from(carcassTable)
+      .innerJoin(importTable, eq(importTable.import_id, carcassTable.import_id))
+      .where(baseWhere)
+      .groupBy(sql`coalesce(${carcassTable.sick_code}, '0')`)
+      .orderBy(sql`1`);
+
+    const sickCodes = sickRows.map((r) => ({
+      sick_code: r.sick_code,
+      count: Number(r.count),
+    }));
+
+    const companyRows = await this.db
+      .select({
+        company_id: importTable.company_id,
+        company_name: companyTable.company_name,
+        animals: sql<number>`coalesce(sum(${importTable.actual_animal_count}), 0)`,
+        warm_mass_kg: sql<number>`round(coalesce(sum(${importTable.actual_warm_mass_kg}), 0), 2)`,
+        cold_mass_kg: sql<number>`round(coalesce(sum(${importTable.actual_cold_mass_kg}), 0), 2)`,
+      })
+      .from(importTable)
+      .innerJoin(companyTable, eq(companyTable.company_id, importTable.company_id))
+      .where(baseWhere)
+      .groupBy(importTable.company_id, companyTable.company_name)
+      .orderBy(sql`1`);
+
+    const byCompany = companyRows.map((r) => ({
+      company_id: r.company_id,
+      company_name: r.company_name,
+      animals: Number(r.animals),
+      warm_mass_kg: Number(r.warm_mass_kg),
+      cold_mass_kg: Number(r.cold_mass_kg),
+    }));
+
+    const farmRows = await this.db
+      .select({
+        farm_id: importTable.farm_id,
+        farm_name: locationTable.location_name,
+        animals: sql<number>`coalesce(sum(${importTable.actual_animal_count}), 0)`,
+        warm_mass_kg: sql<number>`round(coalesce(sum(${importTable.actual_warm_mass_kg}), 0), 2)`,
+        cold_mass_kg: sql<number>`round(coalesce(sum(${importTable.actual_cold_mass_kg}), 0), 2)`,
+      })
+      .from(importTable)
+      .innerJoin(locationTable, eq(locationTable.location_id, importTable.farm_id))
+      .where(baseWhere)
+      .groupBy(importTable.farm_id, locationTable.location_name)
+      .orderBy(sql`1`);
+
+    const byFarm = farmRows.map((r) => ({
+      farm_id: r.farm_id,
+      farm_name: r.farm_name,
+      animals: Number(r.animals),
+      warm_mass_kg: Number(r.warm_mass_kg),
+      cold_mass_kg: Number(r.cold_mass_kg),
+    }));
+
+    const trendRows = await this.db
+      .select({
+        date: sql<string>`coalesce(date(${carcassTable.slaughtered_at}), date(${importTable.confirmed_at}), date(${importTable.created_at}))`,
+        animals: sql<number>`count(*)`,
+        warm_mass_kg: sql<number>`round(coalesce(sum(${carcassTable.warm_mass_kg}), 0), 2)`,
+        cold_mass_kg: sql<number>`round(coalesce(sum(${carcassTable.cold_mass_kg}), 0), 2)`,
+      })
+      .from(carcassTable)
+      .innerJoin(importTable, eq(importTable.import_id, carcassTable.import_id))
+      .where(baseWhere)
+      .groupBy(sql`coalesce(date(${carcassTable.slaughtered_at}), date(${importTable.confirmed_at}), date(${importTable.created_at}))`)
+      .orderBy(sql`1`);
+
+    const trends = trendRows.map((r) => ({
+      date: String(r.date),
+      animals: Number(r.animals),
+      warm_mass_kg: Number(r.warm_mass_kg),
+      cold_mass_kg: Number(r.cold_mass_kg),
+    }));
+
+    const categoryRows = await this.db
+      .select({
+        category: sql<string>`coalesce(${productTable.category}, 'Uncategorized')`,
+        quantity: sql<number>`round(coalesce(sum(${productTable.quantity}), 0), 0)`,
+        warm_mass_kg: sql<number>`round(coalesce(sum(${productTable.warm_mass_kg}), 0), 2)`,
+        cold_mass_kg: sql<number>`round(coalesce(sum(${productTable.cold_mass_kg}), 0), 2)`,
+        reported_value: sql<number>`round(coalesce(sum(${productTable.reported_value}), 0), 3)`,
+      })
+      .from(productTable)
+      .innerJoin(importTable, eq(importTable.import_id, productTable.import_id))
+      .where(baseWhere)
+      .groupBy(sql`coalesce(${productTable.category}, 'Uncategorized')`)
+      .orderBy(sql`1`);
+
+    const productCategories = categoryRows.map((r) => {
+      const quantity = Number(r.quantity);
+      const cold = Number(r.cold_mass_kg);
+      return {
+        category: r.category,
+        quantity,
+        warm_mass_kg: Number(r.warm_mass_kg),
+        cold_mass_kg: cold,
+        average_mass_kg: quantity > 0 ? Number((cold / quantity).toFixed(2)) : 0,
+        reported_value: Number(r.reported_value),
+      };
+    });
+
+    return {
+      total_animals: totalAnimals,
+      warm_mass_kg: warmMass,
+      cold_mass_kg: coldMass,
+      average_carcass_weight_kg: avgWeight,
+      reported_product_value: reportedValue,
+      grades,
+      sexes,
+      sick_codes: sickCodes,
+      by_company: byCompany,
+      by_farm: byFarm,
+      trends,
+      product_categories: productCategories,
+    };
+    } catch (err: any) {
+      if (
+        err?.code === 'ER_NO_SUCH_TABLE' ||
+        err?.cause?.code === 'ER_NO_SUCH_TABLE' ||
+        String(err?.message || '').includes("doesn't exist") ||
+        String(err?.cause?.sqlMessage || '').includes("doesn't exist")
+      ) {
+        return {
+          total_animals: 0,
+          warm_mass_kg: 0,
+          cold_mass_kg: 0,
+          average_carcass_weight_kg: null,
+          reported_product_value: 0,
+          grades: [],
+          sexes: [],
+          sick_codes: [],
+          by_company: [],
+          by_farm: [],
+          trends: [],
+          product_categories: [],
+        };
+      }
+      throw err;
+    }
   }
 }

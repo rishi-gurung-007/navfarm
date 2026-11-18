@@ -54,9 +54,9 @@ jest.mock('../src/components/console/inventory/mill-production-panel', () => ({
   __esModule: true,
   default: () => <div data-testid="mill-production-panel" />,
 }));
-jest.mock('../src/components/console/inventory/feed-plan-panel', () => ({
+jest.mock('../src/components/console/inventory/mill-plan-panel', () => ({
   __esModule: true,
-  default: () => <div data-testid="panel-feed-plan" />,
+  default: () => <div data-testid="panel-mill-planning" />,
 }));
 jest.mock('../src/components/console/inventory/feed-stock-count-panel', () => {
   const { useEffect } = jest.requireActual('react');
@@ -116,7 +116,7 @@ describe('Feed Forecast tab selection is carried by the URL', () => {
     expect(FEED_FORECAST_TABS).toEqual([
       'dashboard',
       'forecast',
-      'feed-plan',
+      'mill-planning',
       'compare-report',
       'feed-requisition',
       'mill-consolidation',
@@ -126,7 +126,9 @@ describe('Feed Forecast tab selection is carried by the URL', () => {
     ]);
     expect(readFeedForecastTab('dashboard')).toBe('dashboard');
     expect(readFeedForecastTab('forecast')).toBe('forecast');
-    expect(readFeedForecastTab('feed-plan')).toBe('feed-plan');
+    expect(readFeedForecastTab('mill-planning')).toBe('mill-planning');
+    // Mill Planning replaced Feed Plan (spec 2026-11-03): old links and bookmarks land on it.
+    expect(readFeedForecastTab('feed-plan')).toBe('mill-planning');
     expect(readFeedForecastTab('feed-requisition')).toBe('feed-requisition');
     expect(readFeedForecastTab('mill-consolidation')).toBe(
       'mill-consolidation',
@@ -251,7 +253,7 @@ describe('WP1d — Feed Forecast tab names follow the workbook', () => {
     expect(FEED_FORECAST_TABS).toEqual([
       'dashboard',
       'forecast',
-      'feed-plan',
+      'mill-planning',
       'compare-report',
       'feed-requisition',
       'mill-consolidation',
@@ -263,7 +265,7 @@ describe('WP1d — Feed Forecast tab names follow the workbook', () => {
     expect([
       en.fftTabDashboard,
       en.fftTabForecast,
-      en.fftTabFeedPlan,
+      en.fftTabMillPlanning,
       en.fftTabCompareReport,
       en.fftTabFeedRequisition,
       en.invFeedConsolidations,
@@ -273,7 +275,7 @@ describe('WP1d — Feed Forecast tab names follow the workbook', () => {
     ]).toEqual([
       'Dashboard',
       'Calculation',
-      'Plan',
+      'Mill Planning',
       'Comparison Report',
       'Feed Requisition',
       'Feed Mill Consolidation',

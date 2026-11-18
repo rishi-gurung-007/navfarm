@@ -1,5 +1,6 @@
 import type { ElementType, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
+import { HoverHint } from '@/components/ui/hover-hint';
 
 /**
  * The "KPI strip under the page title" pattern (apple.design.md §21's
@@ -52,6 +53,15 @@ export interface StatCardProps {
   emphasis?: boolean;
   href?: string;
   onClick?: () => void;
+  /**
+   * Keep the label and `sub` to two lines each (the label always taking two,
+   * so values line up across a row).
+   */
+  fitLines?: boolean;
+  /** A details card shown on hover over the whole card, headed by the label. */
+  detail?: ReactNode;
+  /** The plain text of `detail`, for assistive tech. */
+  detailHint?: string;
 }
 
 const TONE_TEXT: Record<string, string> = {
@@ -78,22 +88,32 @@ export function StatCard({
   emphasis = false,
   href,
   onClick,
+  fitLines = false,
+  detail,
+  detailHint,
 }: StatCardProps) {
   const emphasisClass = emphasis ? TONE_EMPHASIS[tone] : undefined;
   const Wrapper = href ? 'a' : 'div';
-  return (
+  const card = (
     <Wrapper
       href={href}
       onClick={onClick}
       className={cn(
         'rounded-md border p-4',
+        detail && 'h-full',
         emphasisClass || 'border-(--border) bg-(--surface)',
         (href || onClick) &&
           'nf-press cursor-pointer transition-colors hover:bg-(--surface-raised)',
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)">
+        <p
+          title={fitLines && !detail ? label : undefined}
+          className={cn(
+            'text-[11px] font-semibold uppercase tracking-wider text-(--text-muted)',
+            fitLines && 'line-clamp-2 min-h-[2lh]',
+          )}
+        >
           {label}
         </p>
         {action ??
@@ -120,8 +140,29 @@ export function StatCard({
         )}
       </p>
       {sub && (
-        <div className="mt-1.5 text-xs text-(--text-secondary)">{sub}</div>
+        <div
+          className={cn(
+            'mt-1.5 text-xs text-(--text-secondary)',
+            fitLines && 'line-clamp-2',
+          )}
+        >
+          {sub}
+        </div>
       )}
     </Wrapper>
+  );
+  return detail ? (
+    <HoverHint
+      plain
+      hint={detailHint ?? label}
+      heading={label}
+      content={detail}
+      followCursor
+      className="block h-full"
+    >
+      {card}
+    </HoverHint>
+  ) : (
+    card
   );
 }

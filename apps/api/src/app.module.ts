@@ -45,6 +45,7 @@ import { BoarConditionModule } from './modules/piggery/boar-condition/boar-condi
 import { AlertRuleModule } from './modules/system/alert-rule/alert-rule.module';
 import { ReportingPeriodModule } from './modules/master-data/reporting-period/reporting-period.module';
 import { AccountingPeriodModule } from './modules/master-data/accounting-period/accounting-period.module';
+import { LogisticsModule } from './modules/logistics/logistics.module';
 import { KpiMetricModule } from './modules/master-data/kpi-metric/kpi-metric.module';
 import { ActivityModule } from './modules/master-data/activity/activity.module';
 import { FeedFormulaModule } from './modules/master-data/feed-formula/feed-formula.module';
@@ -70,6 +71,7 @@ import { ExpenseModule } from './modules/finance/expense/expense.module';
 import { FinancialReportsModule } from './modules/finance/financial-reports/financial-reports.module';
 import { BatchModule } from './modules/production/batch/batch.module';
 import { SlaughterTransferModule } from './modules/production/slaughter/slaughter-transfer.module';
+import { KillSheetsModule } from './modules/production/kill-sheets/kill-sheets.module';
 import { ParameterModule } from './modules/production/parameter/parameter.module';
 import { StageModule } from './modules/production/stage/stage.module';
 import { SchedulerHeaderModule } from './modules/production/scheduler-header/scheduler-header.module';
@@ -89,6 +91,7 @@ import { AnimalModule } from './modules/piggery/animal/animal.module';
 import { BreedingModule } from './modules/piggery/breeding/breeding.module';
 import { GiltSelectionModule } from './modules/piggery/gilt-selection/gilt-selection.module';
 import { PiggeryAnalyticsModule } from './modules/piggery/analytics/piggery-analytics.module';
+import { BudgetModule } from './modules/piggery/budget/budget.module';
 import { ReportsModule } from './modules/piggery/reports/reports.module';
 import { TenantMiddleware } from './common/middlewares/tenant.middleware';
 import appConfig from './config/app.config';
@@ -158,6 +161,7 @@ import { SystemController } from './system/system.controller';
     AlertRuleModule,
     ReportingPeriodModule,
     AccountingPeriodModule,
+    LogisticsModule,
     KpiMetricModule,
     ActivityModule,
     FeedFormulaModule,
@@ -183,6 +187,7 @@ import { SystemController } from './system/system.controller';
     FinancialReportsModule,
     BatchModule,
     SlaughterTransferModule,
+    KillSheetsModule,
     ParameterModule,
     StageModule,
     SchedulerHeaderModule,
@@ -210,6 +215,7 @@ import { SystemController } from './system/system.controller';
     BreedingModule,
     GiltSelectionModule,
     PiggeryAnalyticsModule,
+    BudgetModule,
     ReportsModule,
   ],
   controllers: [SystemController],

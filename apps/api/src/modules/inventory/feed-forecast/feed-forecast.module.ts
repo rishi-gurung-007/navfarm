@@ -5,13 +5,13 @@ import { InventoryLedgerModule } from '../inventory-ledger/inventory-ledger.modu
 import { SiloFeedModule } from '../silo-feed/silo-feed.module';
 import { FeedSettingsModule } from '../feed-settings/feed-settings.module';
 import { FeedForecastRunService } from './feed-forecast-run.service';
-import { FeedPlanService } from './feed-plan.service';
+import { MillPlanService } from './mill-plan.service';
 import { MillCapacityService } from './mill-capacity.service';
 
 @Module({
   imports: [InventoryLedgerModule, SiloFeedModule, FeedSettingsModule],
   controllers: [FeedForecastController],
-  providers: [FeedForecastService, FeedForecastRunService, FeedPlanService, MillCapacityService],
-  exports: [FeedForecastService, FeedForecastRunService, FeedPlanService, MillCapacityService],
+  providers: [FeedForecastService, FeedForecastRunService, MillCapacityService, MillPlanService],
+  exports: [FeedForecastService, FeedForecastRunService, MillCapacityService],
 })
 export class FeedForecastModule {}

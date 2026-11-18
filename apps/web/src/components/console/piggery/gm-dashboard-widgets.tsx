@@ -19,6 +19,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { HoverHint } from '@/components/ui/hover-hint';
 import { NA } from '@/utils/na';
 import type { TranslationKeys } from '@/utils/translations';
 
@@ -50,6 +51,15 @@ export type Farm = { farm_id: string; farm_code: string; farm_name: string };
 export interface Figure {
   actual: number | null;
   budget: number | null;
+  /**
+   * The API's Var, Var % (points for a percent metric) and colour. Absent (undefined) when the API sent no budget
+   * cell, and the card works them out from actual and budget; null means the API judged there is none.
+   */
+  var?: number | null;
+  var_pct?: number | null;
+  status?: Status;
+  /** Why the budget reads N/A, or is only partial, for the hover; absent when there is nothing to say. */
+  budgetHint?: string;
 }
 
 export const NO_FIGURE: Figure = { actual: null, budget: null };
@@ -57,10 +67,18 @@ export const NO_FIGURE: Figure = { actual: null, budget: null };
 type T = (key: TranslationKeys) => string;
 
 /** The theme's own status colours (Rishi, 2 Nov: the GM Dashboard keeps the current theme). */
+/**
+ * The dashboard's three status colours (Rishi, 17 Nov), kept apart from the app's --success / --warning / --danger.
+ * Amber, green and red are deepened from his yellow sample (#ecb24d) to one muted shade level, so they read as a set.
+ */
+export const AMBER_COLOR = '#d39a2c';
+export const GREEN_COLOR = '#2f9e5f';
+export const RED_COLOR = '#c8402f';
+
 const STATUS_COLOR: Record<Exclude<Status, null>, string> = {
-  GREEN: 'var(--success)',
-  AMBER: 'var(--warning)',
-  RED: 'var(--danger)',
+  GREEN: GREEN_COLOR,
+  AMBER: AMBER_COLOR,
+  RED: RED_COLOR,
 };
 
 export const fmt = (value: number | null | undefined, unit = '') =>
@@ -68,8 +86,31 @@ export const fmt = (value: number | null | undefined, unit = '') =>
     ? NA
     : `${value.toLocaleString('en-GB', { maximumFractionDigits: 2 })}${unit ? (unit === '%' ? '%' : ` ${unit}`) : ''}`;
 
+/**
+ * A figure for a card or a matrix cell: thousands and millions shortened (102.9K, 1.54M) so a narrow card never clips
+ * it. The whole number stays in the element's title.
+ */
+export function fmtShort(value: number): string {
+  const a = Math.abs(value);
+  if (a >= 1_000_000)
+    return `${(value / 1_000_000).toLocaleString('en-GB', { maximumFractionDigits: 2 })}M`;
+  if (a >= 100_000)
+    return `${(value / 1_000).toLocaleString('en-GB', { maximumFractionDigits: 1 })}K`;
+  if (a >= 1_000)
+    return value.toLocaleString('en-GB', { maximumFractionDigits: 0 });
+  return value.toLocaleString('en-GB', { maximumFractionDigits: 2 });
+}
+
 const signed = (value: number, unit = '') =>
-  `${value > 0 ? '+' : ''}${fmt(value, unit)}`;
+  `${value > 0 ? '+' : ''}${unit === '%' || unit === 'pp' ? fmt(value, unit) : `${fmtShort(value)}${unit ? ` ${unit}` : ''}`}`;
+
+/** A percent metric to one decimal, as the cards read (32.0%); any other figure shortened by fmtShort. */
+const fig = (value: number | null | undefined, unit: string) =>
+  value == null
+    ? NA
+    : unit === '%'
+      ? `${value.toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`
+      : fmtShort(value);
 
 /** Actual − budget and its share of the budget, and whether it is good news. */
 export function variance(f: Figure, lowerIsBetter: boolean) {
@@ -84,15 +125,37 @@ export function variance(f: Figure, lowerIsBetter: boolean) {
     pct,
     up: diff >= 0,
     good: lowerIsBetter ? diff <= 0 : diff >= 0,
+    warn: false,
+  };
+}
+
+/** The Var a card shows: the API's own figures and colour when it sent them, else worked out here. */
+export function figureVariance(f: Figure, lowerIsBetter: boolean) {
+  if (f.var === undefined) return variance(f, lowerIsBetter);
+  if (f.var == null) return null;
+  return {
+    diff: f.var,
+    pct: f.var_pct ?? null,
+    up: f.var >= 0,
+    good:
+      f.status != null
+        ? f.status === 'GREEN'
+        : lowerIsBetter
+          ? f.var <= 0
+          : f.var >= 0,
+    warn: f.status === 'AMBER',
   };
 }
 
 export function StatusDot({
   status,
   size = 'md',
+  hasValue = false,
 }: {
   status: Status;
   size?: 'sm' | 'md';
+  /** A figure with no target to judge it by: a light solid dot, so it reads apart from "no data" (the dashed ring). */
+  hasValue?: boolean;
 }) {
   const dim = size === 'sm' ? 'h-2.5 w-2.5' : 'h-3.5 w-3.5';
   return (
@@ -103,20 +166,31 @@ export function StatusDot({
       style={
         status
           ? { backgroundColor: STATUS_COLOR[status] }
-          : { border: '1.5px dashed var(--text-muted)' }
+          : hasValue
+            ? { backgroundColor: 'var(--text-muted)', opacity: 0.35 }
+            : { border: '1.5px dashed var(--text-muted)' }
       }
     />
   );
 }
 
-function TrendArrow({ v }: { v: ReturnType<typeof variance> }) {
+const toneOf = (v: NonNullable<ReturnType<typeof variance>>) =>
+  v.warn ? AMBER_COLOR : v.good ? GREEN_COLOR : RED_COLOR;
+
+function TrendArrow({ v, t }: { v: ReturnType<typeof variance>; t: T }) {
   if (!v) return null;
   const Icon = v.up ? ArrowUp : ArrowDown;
   return (
     <span
       className="inline-flex h-6 w-6 items-center justify-center rounded-full text-white"
-      style={{ backgroundColor: v.good ? 'var(--success)' : 'var(--danger)' }}
-      aria-label={v.good ? 'on or better than budget' : 'worse than budget'}
+      style={{ backgroundColor: toneOf(v) }}
+      aria-label={
+        v.warn
+          ? t('gmdWithinToleranceOfBudget')
+          : v.good
+            ? t('gmdOnOrBetterThanBudget')
+            : t('gmdWorseThanBudget')
+      }
     >
       <Icon className="h-3.5 w-3.5" strokeWidth={3} />
     </span>
@@ -132,15 +206,22 @@ function VarianceText({
 }) {
   if (!v) return <span className="text-(--text-secondary)">{NA}</span>;
   return (
-    <span
-      className="font-semibold"
-      style={{ color: v.good ? 'var(--success)' : 'var(--danger)' }}
-    >
+    <span className="font-semibold" style={{ color: toneOf(v) }}>
       {signed(v.diff, unit === '%' ? 'pp' : '')}
       {v.pct != null && unit !== '%' && (
         <span className="block text-[11px]">{signed(v.pct, '%')}</span>
       )}
     </span>
+  );
+}
+
+/** A budget figure; N/A or partial, it carries the hover that says why. */
+function BudgetValue({ figure, unit }: { figure: Figure; unit: string }) {
+  const text = fig(figure.budget, unit);
+  return figure.budgetHint ? (
+    <HoverHint hint={figure.budgetHint}>{text}</HoverHint>
+  ) : (
+    <>{text}</>
   );
 }
 
@@ -158,23 +239,26 @@ function FigureBlock({
   lowerIsBetter: boolean;
   t: T;
 }) {
-  const v = variance(figure, lowerIsBetter);
+  const v = figureVariance(figure, lowerIsBetter);
   return (
     <div className="min-w-0 flex-1">
       <div className="flex items-start justify-between gap-1">
         <div className="min-w-0">
           <p className="text-xs text-(--text-secondary)">{label}</p>
-          <p className="truncate font-mono text-xl font-semibold tabular-nums">
-            {fmt(figure.actual, unit === '%' ? '%' : '')}
+          <p
+            className="truncate font-mono text-xl font-semibold tabular-nums"
+            title={figure.actual == null ? undefined : fmt(figure.actual, unit)}
+          >
+            {fig(figure.actual, unit)}
           </p>
         </div>
-        <TrendArrow v={v} />
+        <TrendArrow v={v} t={t} />
       </div>
       <div className="mt-1 grid grid-cols-2 gap-1 text-xs">
         <div>
           <p className="text-(--text-secondary)">{t('gmdBudget')}</p>
           <p className="font-mono tabular-nums">
-            {fmt(figure.budget, unit === '%' ? '%' : '')}
+            <BudgetValue figure={figure} unit={unit} />
           </p>
         </div>
         <div>
@@ -210,15 +294,15 @@ function SubLine({
   lowerIsBetter: boolean;
   t: T;
 }) {
-  const v = variance(figure, lowerIsBetter);
+  const v = figureVariance(figure, lowerIsBetter);
   return (
     <div className="flex items-center gap-2 text-xs">
       <span className="w-9 text-(--text-secondary)">{label}</span>
       <span className="font-mono font-semibold tabular-nums">
-        {fmt(figure.actual, unit === '%' ? '%' : '')}
+        {fig(figure.actual, unit)}
       </span>
       <span className="text-(--text-secondary)">
-        {t('gmdBudget')} {fmt(figure.budget, unit === '%' ? '%' : '')}
+        {t('gmdBudget')} <BudgetValue figure={figure} unit={unit} />
       </span>
       <span className="ml-auto">
         <VarianceText v={v} unit={unit} />
@@ -323,6 +407,8 @@ export function Matrix({
   farms,
   t,
   note,
+  budgeted = false,
+  reportingFarmIds,
 }: {
   icon: ElementType;
   title: string;
@@ -330,7 +416,16 @@ export function Matrix({
   farms: Farm[];
   t: T;
   note?: ReactNode;
+  /** The rows' figures are budgets (Slaughter & Financial), so the hover says Budget, not Target. */
+  budgeted?: boolean;
+  /** The farms with records in the period: any other column is dimmed and shows a dash, not an empty circle. */
+  reportingFarmIds?: string[];
 }) {
+  const silent = (farmId: string) =>
+    !!reportingFarmIds && !reportingFarmIds.includes(farmId);
+  const [targetKey, noTargetKey] = budgeted
+    ? (['gmdBudget', 'gmdNoBudget'] as const)
+    : (['gmdTarget', 'gmdNoTarget'] as const);
   return (
     <section
       className="flex min-w-0 flex-col rounded-md border border-(--border) bg-(--surface)"
@@ -349,40 +444,77 @@ export function Matrix({
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-(--surface-raised) text-(--text-secondary)">
-              <th className="px-3 py-2 text-left font-medium">
+              <th className="sticky left-0 z-10 min-w-[5.5rem] bg-(--surface-raised) px-2 py-2 text-left font-medium">
                 {t('gmdMetric')}
               </th>
               {farms.map((f) => (
                 <th
                   key={f.farm_id}
-                  className="px-2 py-2 text-center font-medium"
-                  title={f.farm_name}
+                  className={`w-[3.25rem] min-w-[3.25rem] px-0.5 py-2 text-center align-bottom text-[9px] font-semibold uppercase leading-[1.15] tracking-tight ${silent(f.farm_id) ? 'opacity-50' : ''}`}
                 >
-                  {f.farm_name}
+                  {/* The name wraps in its narrow column; the card on hover gives it whole. */}
+                  <HoverHint
+                    hint={
+                      silent(f.farm_id)
+                        ? `${f.farm_name} — ${t('gmdNoRecordsThisPeriod')}`
+                        : f.farm_name
+                    }
+                    plain
+                    focusable={false}
+                    className="block break-words"
+                  >
+                    {f.farm_name}
+                  </HoverHint>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.key} className="border-t border-(--border)">
-                <td className="px-3 py-2">{row.label}</td>
+              <tr
+                key={row.key}
+                className="group h-12 border-t border-(--border) hover:bg-(--surface-raised)"
+              >
+                <td className="sticky left-0 z-10 bg-(--surface) px-2 py-2 group-hover:bg-(--surface-raised)">
+                  {row.label}
+                </td>
                 {farms.map((f) => {
                   const c = row.cells[f.farm_id];
+                  if (silent(f.farm_id)) {
+                    const quiet = `${f.farm_name} — ${t('gmdNoRecordsThisPeriod')}`;
+                    return (
+                      <td
+                        key={f.farm_id}
+                        className="px-1 py-2 text-center text-(--text-muted)"
+                        title={quiet}
+                        aria-label={quiet}
+                      >
+                        –
+                      </td>
+                    );
+                  }
                   const tip = `${f.farm_name} — ${row.label}: ${fmt(c?.value, row.unit)} · ${
                     c?.target != null
-                      ? `${t('gmdTarget')} ${fmt(c.target, row.unit)}`
-                      : t('gmdNoTarget')
+                      ? `${t(targetKey)} ${fmt(c.target, row.unit)}`
+                      : t(noTargetKey)
                   }`;
                   return (
                     <td
                       key={f.farm_id}
-                      className="px-2 py-2 text-center"
+                      className="px-1 py-2 text-center"
                       title={tip}
                       aria-label={tip}
                     >
-                      <span className="inline-flex justify-center">
-                        <StatusDot status={c?.status ?? null} />
+                      <span className="inline-flex flex-col items-center gap-0.5">
+                        <StatusDot
+                          status={c?.status ?? null}
+                          hasValue={c?.value != null}
+                        />
+                        {c?.value != null && (
+                          <span className="text-[10px] leading-none tabular-nums text-(--text-secondary)">
+                            {fig(c.value, row.unit)}
+                          </span>
+                        )}
                       </span>
                     </td>
                   );
@@ -595,7 +727,7 @@ export function KgMeatCard({
   ytd?: Figure;
   t: T;
 }) {
-  const v = variance(main, false);
+  const v = figureVariance(main, false);
   return (
     <section
       className="rounded-md border border-(--border) bg-(--surface-raised) p-4"
@@ -612,9 +744,9 @@ export function KgMeatCard({
             >
               {fmt(main.actual)}
             </span>
-            <TrendArrow v={v} />
+            <TrendArrow v={v} t={t} />
             <span className="text-xs text-(--text-secondary)">
-              {t('gmdBudget')} {fmt(main.budget)}
+              {t('gmdBudget')} <BudgetValue figure={main} unit="" />
             </span>
             <span className="text-xs text-(--text-secondary)">
               {t('gmdVar')} <VarianceText v={v} unit="" />
@@ -630,7 +762,7 @@ export function KgMeatCard({
                 {fmt(ytd.actual)}
               </span>
               {' · '}
-              {t('gmdBudget')} {fmt(ytd.budget)}
+              {t('gmdBudget')} <BudgetValue figure={ytd} unit="" />
             </p>
           )}
         </div>
@@ -665,6 +797,8 @@ export interface FarmRow {
   lower_is_better: boolean;
   target: number | null;
   status: Status;
+  /** The dot's colour when it is not the This Week status (a Month budget colour); defaults to `status`. */
+  dotStatus?: Status;
   values: Record<FarmColumn, number | null>;
   trend: Array<number | null>;
 }
@@ -714,13 +848,19 @@ export function FarmMatrix({
   rows,
   t,
   note,
+  budgeted = false,
 }: {
   icon: ElementType;
   title: string;
   rows: FarmRow[];
   t: T;
   note?: ReactNode;
+  /** The rows' figures are budgets (Slaughter & Financial), so the hover says Budget, not Target. */
+  budgeted?: boolean;
 }) {
+  const [targetKey, noTargetKey] = budgeted
+    ? (['gmdBudget', 'gmdNoBudget'] as const)
+    : (['gmdTarget', 'gmdNoTarget'] as const);
   return (
     <section
       className="flex min-w-0 flex-col rounded-md border border-(--border) bg-(--surface)"
@@ -759,8 +899,8 @@ export function FarmMatrix({
             {rows.map((row) => {
               const tip =
                 row.target != null
-                  ? `${t('gmdTarget')} ${fmt(row.target, row.unit)}`
-                  : t('gmdNoTarget');
+                  ? `${t(targetKey)} ${fmt(row.target, row.unit)}`
+                  : t(noTargetKey);
               return (
                 <tr key={row.key} className="border-t border-(--border)">
                   <td className="px-2 py-1.5 leading-tight">
@@ -786,7 +926,14 @@ export function FarmMatrix({
                       className="flex items-center justify-center gap-1.5"
                       title={tip}
                     >
-                      <StatusDot status={row.status} size="sm" />
+                      <StatusDot
+                        status={
+                          row.dotStatus !== undefined
+                            ? row.dotStatus
+                            : row.status
+                        }
+                        size="sm"
+                      />
                       <TrendBars
                         values={row.trend}
                         label={`${row.label}: ${row.trend.map((v) => fmt(v)).join(', ')}`}

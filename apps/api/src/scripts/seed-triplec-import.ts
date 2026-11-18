@@ -21,6 +21,7 @@
 import * as fs from 'node:fs';
 import * as zlib from 'node:zlib';
 import * as readline from 'node:readline';
+import { basename, resolve } from 'node:path';
 import * as mysql from 'mysql2/promise';
 
 const MASTER_DB = process.env.DATABASE_NAME || 'nf_master';
@@ -72,9 +73,20 @@ async function* statements(
 }
 
 async function main() {
-  const file = process.argv.slice(2).find((a) => !a.startsWith('--'));
-  if (!file || !fs.existsSync(file))
+  const rawFile = process.argv.slice(2).find((a) => !a.startsWith('--'));
+  if (!rawFile)
     throw new Error('Name the exported .sql.gz file.');
+  const candidates = [
+    rawFile,
+    resolve(process.cwd(), rawFile),
+    resolve(process.cwd(), '../../', rawFile),
+    resolve(__dirname, '../../../', rawFile),
+    resolve(__dirname, '../../../exports', basename(rawFile)),
+    resolve(process.cwd(), 'exports', basename(rawFile)),
+  ];
+  const file = candidates.find((c) => fs.existsSync(c));
+  if (!file)
+    throw new Error(`Name the exported .sql.gz file (could not find: ${rawFile}).`);
   const apply = process.argv.includes('--apply');
 
   const it = statements(file);

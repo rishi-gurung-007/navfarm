@@ -4,7 +4,6 @@ import { FeedSchedulerService } from './feed-scheduler.service';
 // Triple C starting configuration (decisions 1 Oct), passed in as settings, never built in.
 const settings = {
   productionWeekday: 0, bulkMultipleKg: 3000, bagSizeKg: 50, truckTargetKg: 30000, safetyStockKg: 0,
-  tentativePlanWeekday: 3, tentativePlanTime: '09:00',
   reminderWeekday: 5, reminderTime: '18:00',
   submissionWeekday: 6, submissionTime: '12:00',
   sources: { companySetting: 'COMPANY' },
@@ -26,7 +25,7 @@ function boundValues(cond: any, out: unknown[] = []): unknown[] {
   return out;
 }
 
-function harness(opts: { settings?: Partial<typeof settings>; existingPlan?: any; planError?: Error; noCalculation?: boolean } = {}) {
+function harness(opts: { settings?: Partial<typeof settings> } = {}) {
   const logs: any[] = [];
   const updates: any[] = [];
   const db: any = {
@@ -54,11 +53,7 @@ function harness(opts: { settings?: Partial<typeof settings>; existingPlan?: any
       const self: any = {
         from: (t: unknown) => { table = t; return self; }, where: (c: any) => { cond = c; return self; }, orderBy: () => self, limit: () => self,
         then: (ok: any, err: any) => {
-          const rows = table === schema.feedPlan
-            ? (opts.existingPlan ? [opts.existingPlan] : [])
-            : table === schema.feedForecastRun
-              ? (opts.noCalculation ? [] : [{ run_id: 'run-1' }])
-            : logs.filter((l) => { const bound = boundValues(cond); return bound.length > 0 && bound.every((b) => Object.values(l).includes(b)); });
+          const rows = logs.filter((l) => { const bound = boundValues(cond); return bound.length > 0 && bound.every((b) => Object.values(l).includes(b)); });
           return Promise.resolve(rows).then(ok, err);
         },
       };
@@ -69,16 +64,11 @@ function harness(opts: { settings?: Partial<typeof settings>; existingPlan?: any
   const forecast: any = {
     listFarms: jest.fn(async () => [farm]),
     farmToday: jest.fn(async () => ({ today: '2026-09-23', timeZone: 'Africa/Harare' })),
-    generateFeedPlanVersion: jest.fn(async () => {
-      if (opts.planError) throw opts.planError;
-      return { planId: 'plan-1', planCode: 'FP-GRS-0927-V1', planWeek: '202639', planType: 'TENTATIVE', version: 1 };
-    }),
   };
   const feedSettings: any = { resolveForFeedPlanning: jest.fn(async () => ({ ...settings, ...opts.settings })) };
   const evaluation = (extra: any = {}) => ({ raise: [], renotify: [], escalate: [], resolve: [], ...extra });
   const alerts: any = {
     evaluateFarm: jest.fn(async () => evaluation()),
-    raisePlanAvailable: jest.fn(async () => ({ rules: 1, raised: 1 })),
     evaluateStockTakeDue: jest.fn(async () => ({ raised: 0, resolved: 0 })),
   };
   const service = new FeedSchedulerService(cls, {} as any, {} as any, forecast, feedSettings, alerts);
@@ -87,21 +77,10 @@ function harness(opts: { settings?: Partial<typeof settings>; existingPlan?: any
 }
 
 describe('FeedSchedulerService.runDue — what is due at the company wall clock', () => {
-  it('Wednesday 09:00 Harare: generates the tentative plan through the existing service, then raises PLAN_AVAILABLE (checkpoint 36)', async () => {
-    const h = harness();
-    const results = await h.service.runDue('t1', WED_0900);
-    const tentative = results.find((r) => r.job === 'TENTATIVE_PLAN')!;
-    expect(tentative.status).toBe('DONE');
-    // 23 Sep 2026 is a Wednesday; production weekday 0 (Sunday) => production on 27 Sep.
-    expect(h.forecast.generateFeedPlanVersion).toHaveBeenCalledWith('farm-1', '2026-09-27', 't1', { userId: 'FEED_SCHEDULER', userType: 'SYSTEM' });
-    expect(h.alerts.raisePlanAvailable).toHaveBeenCalledWith('farm-1', 'co-1', 't1', expect.objectContaining({ status: 'GENERATED', planId: 'plan-1', productionDate: '2026-09-27' }), WED_0900);
-    expect(tentative.summary?.plan).toEqual(expect.objectContaining({ status: 'GENERATED', planCode: 'FP-GRS-0927-V1' }));
-  });
-
-  it('uses the company time zone: 07:00Z on Wednesday is 09:00 in Harare, 06:55Z is not yet', async () => {
+  it('uses the company time zone: 16:00Z on Friday is 18:00 in Harare, 15:55Z is not yet', async () => {
     const early = harness();
-    expect((await early.service.runDue('t1', at('2026-09-23T06:55:00Z'))).some((r) => r.job === 'TENTATIVE_PLAN')).toBe(false);
-    expect(early.forecast.generateFeedPlanVersion).not.toHaveBeenCalled();
+    expect((await early.service.runDue('t1', at('2026-09-25T15:55:00Z'))).some((r) => r.job === 'REQ_REMINDER')).toBe(false);
+    expect((await early.service.runDue('t1', at('2026-09-25T16:00:00Z'))).some((r) => r.job === 'REQ_REMINDER')).toBe(true);
   });
 
   it('Friday 18:00 runs the reminder job, Saturday 12:00 the cutoff job, each through the one alert evaluator', async () => {
@@ -161,43 +140,10 @@ describe('FeedSchedulerService — idempotent', () => {
     const h = harness();
     const first = await h.service.runDue('t1', WED_0900);
     const second = await h.service.runDue('t1', WED_0900 + 5 * 60_000);
-    expect(first.find((r) => r.job === 'TENTATIVE_PLAN')!.status).toBe('DONE');
-    expect(second.find((r) => r.job === 'TENTATIVE_PLAN')!.status).toBe('ALREADY_RAN');
-    expect(h.forecast.generateFeedPlanVersion).toHaveBeenCalledTimes(1);
-    expect(h.alerts.raisePlanAvailable).toHaveBeenCalledTimes(1);
-    expect(h.logs.filter((l) => l.job_code === 'TENTATIVE_PLAN' && l.trigger_type === 'SCHEDULED')).toHaveLength(1);
-    expect(h.logs.find((l) => l.trigger_type === 'SCHEDULED' && l.job_code === 'TENTATIVE_PLAN')).toEqual(expect.objectContaining({ run_key: 'TENTATIVE_PLAN|farm-1|2026-09-23', trigger_type: 'SCHEDULED', period_key: '2026-09-23' }));
-  });
-
-  it('never makes a second Feed Plan for a week that has one, and still announces the existing plan once', async () => {
-    const h = harness({ existingPlan: { plan_id: 'plan-0', plan_code: 'FP-GRS-0927-V1', plan_type: 'ACTUAL', version: 1, production_date: '2026-09-27' } });
-    const [tentative] = (await h.service.runDue('t1', WED_0900)).filter((r) => r.job === 'TENTATIVE_PLAN');
-    expect(h.forecast.generateFeedPlanVersion).not.toHaveBeenCalled();
-    expect(tentative.summary?.plan).toEqual(expect.objectContaining({ status: 'EXISTS', planId: 'plan-0' }));
-    expect(h.alerts.raisePlanAvailable).toHaveBeenCalledWith('farm-1', 'co-1', 't1', expect.objectContaining({ planId: 'plan-0' }), WED_0900);
-  });
-
-  it('a farm with no saved calculation is SKIPPED with the generator\'s reason, and no notice is raised', async () => {
-    const { ConflictException } = await import('@nestjs/common');
-    const h = harness({ planError: new ConflictException('Save a feed forecast calculation before generating a feed plan.') });
-    const tentative = (await h.service.runDue('t1', WED_0900)).find((r) => r.job === 'TENTATIVE_PLAN')!;
-    expect(tentative.status).toBe('DONE');
-    expect(tentative.summary?.plan).toEqual(expect.objectContaining({ status: 'SKIPPED', reason: expect.stringContaining('Save a feed forecast calculation') }));
-    expect(h.alerts.raisePlanAvailable).not.toHaveBeenCalled();
-  });
-
-  it('a farm with no saved calculation writes no PLAN_LOCK row at all, never calls the generator, and is never counted as a failure', async () => {
-    const h = harness({ noCalculation: true });
-    for (let i = 0; i < 5; i++) {
-      const tentative = (await h.service.runDue('t1', WED_0900 + i * 60_000)).find((r) => r.job === 'TENTATIVE_PLAN')!;
-      expect(['DONE', 'ALREADY_RAN']).toContain(tentative.status);
-    }
-    const r = (await h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', WED_0900))[0];
-    expect(r.summary?.plan).toEqual(expect.objectContaining({ status: 'SKIPPED', reason: expect.stringContaining('Save a feed forecast calculation') }));
-    expect(h.forecast.generateFeedPlanVersion).not.toHaveBeenCalled();
-    expect(h.logs.filter((l) => l.trigger_type === 'PLAN_LOCK')).toHaveLength(0);
-    expect(h.logs.filter((l) => l.status === 'FAILED')).toHaveLength(0);
-    expect(h.alerts.raisePlanAvailable).not.toHaveBeenCalled();
+    expect(first.find((r) => r.job === 'DIET_CHANGE')!.status).toBe('DONE');
+    expect(second.find((r) => r.job === 'DIET_CHANGE')!.status).toBe('ALREADY_RAN');
+    expect(h.logs.filter((l) => l.job_code === 'DIET_CHANGE' && l.trigger_type === 'SCHEDULED')).toHaveLength(1);
+    expect(h.logs.find((l) => l.trigger_type === 'SCHEDULED' && l.job_code === 'DIET_CHANGE')).toEqual(expect.objectContaining({ run_key: 'DIET_CHANGE|farm-1|2026-09-23', trigger_type: 'SCHEDULED', period_key: '2026-09-23' }));
   });
 
   it('one job failing is logged FAILED and does not stop the others', async () => {
@@ -300,48 +246,7 @@ describe('FeedSchedulerService — a failure or a crash never blocks the period'
   });
 });
 
-describe('FeedSchedulerService — the Wednesday plan is generated once per farm and week', () => {
-  it('a manual run racing a scheduled one claims the same weekly key: only one generates', async () => {
-    const h = harness();
-    const [manual, scheduled] = await Promise.all([
-      h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', WED_0900),
-      h.service.runDue('t1', WED_0900),
-    ]);
-    expect(h.forecast.generateFeedPlanVersion).toHaveBeenCalledTimes(1);
-    expect(h.logs.filter((l) => l.trigger_type === 'PLAN_LOCK')).toHaveLength(1);
-    const plans = [manual[0], scheduled.find((r) => r.job === 'TENTATIVE_PLAN')!].map((r) => r.summary?.plan?.status);
-    expect(plans.sort()).toEqual(['GENERATED', 'SKIPPED']);
-  });
-
-  it('releases the week when the generator makes nothing, so a retry can still generate', async () => {
-    const { ConflictException } = await import('@nestjs/common');
-    const h = harness({ planError: new ConflictException('Save a feed forecast calculation before generating a feed plan.') });
-    await h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', WED_0900);
-    expect(h.logs.find((l) => l.trigger_type === 'PLAN_LOCK')).toEqual(expect.objectContaining({ status: 'FAILED', run_key: null }));
-    await h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', WED_0900);
-    expect(h.forecast.generateFeedPlanVersion).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe('FeedSchedulerService — plan week claim and back-off', () => {
-  it('does not treat the Feed Plan week claim as stale after 30 minutes, but does after 2 hours with the week still empty', async () => {
-    const h = harness();
-    h.logs.push({ run_id: 'lock', run_key: 'PLAN_WEEK|farm-1|202639', status: 'RUNNING', started_at: '2026-09-23 07:00:00', trigger_type: 'PLAN_LOCK', job_code: 'TENTATIVE_PLAN' });
-    const soon = await h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', at('2026-09-23T07:45:00Z'));
-    expect(soon[0].summary?.plan?.status).toBe('SKIPPED');
-    expect(h.forecast.generateFeedPlanVersion).not.toHaveBeenCalled();
-    const later = await h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', at('2026-09-23T09:10:00Z'));
-    expect(later[0].summary?.plan?.status).toBe('GENERATED');
-  });
-
-  it('never reclaims the claim when the week already has a plan, however old', async () => {
-    const h = harness({ existingPlan: { plan_id: 'plan-0', plan_code: 'FP', plan_type: 'TENTATIVE', version: 1, production_date: '2026-09-27' } });
-    h.logs.push({ run_id: 'lock', run_key: 'PLAN_WEEK|farm-1|202639', status: 'RUNNING', started_at: '2026-09-23 01:00:00', trigger_type: 'PLAN_LOCK', job_code: 'TENTATIVE_PLAN' });
-    const r = await h.service.runNow('TENTATIVE_PLAN', { farmId: 'farm-1' }, 't1', 'admin-1', WED_0900 + 6 * 3_600_000);
-    expect(r[0].summary?.plan?.status).toBe('EXISTS');
-    expect(h.forecast.generateFeedPlanVersion).not.toHaveBeenCalled();
-  });
-
+describe('FeedSchedulerService — back-off', () => {
   it('stops retrying a job after 3 failed runs in one period, warns once, and tries again next period', async () => {
     const h = harness();
     const warn = (h.service as any).logger.warn as jest.Mock;
