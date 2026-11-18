@@ -1779,6 +1779,20 @@
       "when": 1792000000124,
       "tag": "0256_breeding_line_setup_trim",
       "breakpoints": true
+    },
+    {
+      "idx": 254,
+      "version": "5",
+      "when": 1792000000125,
+      "tag": "0257_supplier_bc_vendor_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 255,
+      "version": "5",
+      "when": 1792000000126,
+      "tag": "0258_supplier_bc_contact_purchaser",
+      "breakpoints": true
     }
   ]
 }

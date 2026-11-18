@@ -3,10 +3,14 @@ import { validate } from 'class-validator';
 import { CreateSupplierDto, UpdateSupplierDto } from './dto/supplier.dto';
 
 /**
- * Supplier form bounds (Freebuff task-3, item 3): Supplier Name max 50;
- * descriptive text fields max 50; Country/State/City letters and spaces only;
- * Postal Code digits only. Mirrored by maxLength/pattern in the supplier
- * master config so the form refuses what the API would reject.
+ * Supplier form bounds (Freebuff task-3, item 3): descriptive text fields max
+ * 50; Country/State/City letters and spaces only. Mirrored by maxLength/pattern
+ * in the supplier master config so the form refuses what the API would reject.
+ *
+ * 17 Nov 2026: Supplier Name and Postal Code follow Business Central, the vendor
+ * master — Name up to 100 (BC vendor VEN0205 has 51) and Post Code as a code
+ * (Triple C vendors hold "HRE", "NORTON"). Under the old caps every save of
+ * those suppliers was refused.
  */
 const base = {
   supplier_name: 'Feed Ingredients Corp Ltd',
@@ -16,11 +20,11 @@ const ofCreate = async (extra: Record<string, unknown>) =>
   validate(plainToInstance(CreateSupplierDto, { ...base, ...extra }));
 
 describe('Supplier DTO — text bounds', () => {
-  it('accepts a 50-character supplier name and refuses 51', async () => {
-    const ok = await ofCreate({ supplier_name: 'A'.repeat(50) });
+  it('accepts a 100-character supplier name (BC Vendor Name) and refuses 101', async () => {
+    const ok = await ofCreate({ supplier_name: 'A'.repeat(100) });
     expect(ok.find((e) => e.property === 'supplier_name')).toBeUndefined();
 
-    const over = await ofCreate({ supplier_name: 'A'.repeat(51) });
+    const over = await ofCreate({ supplier_name: 'A'.repeat(101) });
     expect(over.find((e) => e.property === 'supplier_name')).toBeDefined();
   });
 
@@ -54,11 +58,13 @@ describe('Supplier DTO — text bounds', () => {
     }
   });
 
-  it('accepts digits in Postal Code and refuses letters', async () => {
-    const ok = await ofCreate({ pincode: '0123456789' });
-    expect(ok.find((e) => e.property === 'pincode')).toBeUndefined();
+  it('accepts a BC post code (digits or letters) and refuses punctuation', async () => {
+    for (const pincode of ['0123456789', 'HRE', 'NORTON', 'SW1A 1AA']) {
+      const ok = await ofCreate({ pincode });
+      expect(ok.find((e) => e.property === 'pincode')).toBeUndefined();
+    }
 
-    const bad = await ofCreate({ pincode: '12A45' });
+    const bad = await ofCreate({ pincode: '12@45' });
     expect(bad.find((e) => e.property === 'pincode')).toBeDefined();
   });
 
@@ -69,9 +75,9 @@ describe('Supplier DTO — text bounds', () => {
 
   it('keeps the same bounds on update', async () => {
     const bad = validate(plainToInstance(UpdateSupplierDto, {
-      supplier_name: 'B'.repeat(51),
+      supplier_name: 'B'.repeat(101),
       country: 'Z1mbabwe',
-      pincode: 'AB12',
+      pincode: 'AB#12',
       city: 'Norton9',
       state: 'St@te',
     }));
@@ -80,7 +86,7 @@ describe('Supplier DTO — text bounds', () => {
       expect(errors.find((e) => e.property === key)).toBeDefined();
     }
 
-    const ok = await validate(plainToInstance(UpdateSupplierDto, { country: 'Zimbabwe', pincode: '12345' }));
+    const ok = await validate(plainToInstance(UpdateSupplierDto, { country: 'Zimbabwe', pincode: 'HRE' }));
     expect(ok.find((e) => e.property === 'country')).toBeUndefined();
     expect(ok.find((e) => e.property === 'pincode')).toBeUndefined();
   });

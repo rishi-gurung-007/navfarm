@@ -213,7 +213,7 @@ const DEFAULT_RESOURCES = [
   {
     module_code: 'MASTER_DATA',
     resource: 'SUPPLIER',
-    name: 'Suppliers',
+    name: 'Vendors',
     nameKey: 'gSuppliers',
   },
   {

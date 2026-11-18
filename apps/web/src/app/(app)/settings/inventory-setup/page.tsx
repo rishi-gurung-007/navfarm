@@ -559,7 +559,7 @@ export default function InventorySetupPage() {
                 />
                 <input
                   type="text"
-                  placeholder="Search master (e.g. Item, Supplier)..."
+                  placeholder="Search master (e.g. Item, Vendor)..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="w-full rounded-lg border border-[var(--input-border)] bg-[var(--input-bg)] py-1.5 pl-8 pr-8 text-xs text-[var(--input-text)] placeholder:text-[var(--input-placeholder)] focus:outline-none focus:border-[var(--input-border-focus)] focus:ring-1 focus:ring-[var(--input-border-focus)]"

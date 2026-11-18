@@ -205,12 +205,28 @@ Masters are synced **into** NAVFarm. A transaction is accepted by BC only if eve
 | M4 | `gl_posting_group` (INVENTORY kind) | Inventory Posting Setup (5813), General Posting Setup (252) | custom `inventoryPostingSetups`, `generalPostingSetups` | BC→NF | Nightly |
 | M5 | `gl_posting_group` (BIOLOGICAL kind) | FA Posting Group (5606) | custom `faPostingGroups` | BC→NF | Nightly |
 | M6 | `uom_master` | Unit of Measure (204), Item Unit of Measure (5404) | std `unitsOfMeasure`; custom on Item UoM | BC→NF | Nightly |
-| M7 | `supplier_master` | Vendor (23) | std `vendors` | BC→NF | Hourly |
+| M7 | `supplier_master` | Vendor (23) | **Built 17 Nov 2026:** ODataV4 web service `VendorCardApi`, filter `NavFarm_Sync eq true`, write-back of `Navfarm_Sync_Error` / `Navfarm_Error_Message` / `Sync_Status`. Spec: `docs/bbp/BBP-BC-01-Vendor-Master-Integration.md` | BC→NF (+ status back) | Hourly + on demand |
 | M8 | `customer_master` | Customer (18) | std `customers` | BC→NF | Hourly |
 | M9 | `location_master` (FARM, MILL) | Location (14) | std `locations` | BC→NF | Nightly |
 | M10 | `animal_register` (breeding) | Fixed Asset (5600) + FA Depreciation Book (5612) | custom `farmFixedAssets` | NF→BC create; BC→NF values | On event |
 | M11 | `accounting_period` | Accounting Period (50), G/L Setup posting window | std `accountingPeriods` + custom setup read | BC→NF | Nightly |
 | M12 | (new) expected receipts | Purchase Header/Line (38/39) | std `purchaseOrders`, `purchaseOrderLines` | BC→NF | Hourly |
+
+### 3.1a What the BC developer has published (SandboxUAT, 17 Nov 2026)
+
+The BC side chose **ODataV4 web services** (published pages) with custom NAVFarm sync fields, rather than the custom API pages proposed in §6. The connector supports both (`BcODataClient` endpoint kinds `standard`, `custom`, `odataV4`). Pattern used on the Vendor Card, to repeat for every master:
+
+| BC field (custom) | Type | Who writes it | Meaning |
+|---|---|---|---|
+| `NavFarm_Sync` | Boolean | BC user | Record is in scope for NAVFarm (NAVFarm filters on it) |
+| `Sync_Status` | Option | NAVFarm (write-back) | Result of the last sync — option values to be confirmed |
+| `Navfarm_Sync_Error` | Boolean | NAVFarm (write-back) | NAVFarm could not take the record |
+| `Navfarm_Error_Message` | Text 250 | NAVFarm (write-back) | Why |
+| `Status` | Option | BC | Change flag (`Modified` on every vendor today) — meaning to be confirmed |
+
+Services already published that the next masters will use: `NavfarmItems`, `NavfarmItemUOM`, `Chart_of_Accounts`, `DimensionValueList`, `Invpostinggrouplist`, `GENprodpostinggrouplist`, `LocationList`, `UnitOfMeasurelist`, `ItemCategoriesList`, `Itemtrackingcodelist`, `NavfarmAnimalRegister`, `NavfarmBioAssets`, `NavfarmFADeprBooks`, `FixedAssetCardApi`, `PurchOrderCardApi` / `PurchorderSubformApi`, `PurchRequisitionApi` / `PurchRequisitionSubformApi`, `Transfer_Order_Excel`, and the ledgers `ItemLedgerEntries`, `ValueEntries`, `FALedgerEntries`, `G_LEntries`.
+
+**Built so far on the NAVFarm side:** connector (auth, OData client, status), and **M7 Vendors → Suppliers** (sync, write-back, lock, run log) — see `docs/bbp/BBP-BC-01-Vendor-Master-Integration.md`.
 
 ### 3.2 M1 — G/L accounts
 

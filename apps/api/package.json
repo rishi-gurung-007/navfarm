@@ -1108,6 +1108,14 @@
           "command": "../../node_modules/.bin/ts-node --transpile-only --project tsconfig.app.json -O '{\"module\":\"node16\",\"moduleResolution\":\"node16\",\"esModuleInterop\":true,\"ignoreDeprecations\":\"6.0\"}' src/scripts/seed-boars-sows-batches.ts",
           "cwd": "apps/api"
         }
+      },
+      "db-bc-sync-vendors": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "cwd": "apps/api",
+          "command": "node --env-file-if-exists=.env ../../node_modules/ts-node/dist/bin.js --transpile-only --project tsconfig.scripts.json src/scripts/bc-sync-vendors.ts"
+        }
       }
     }
   },

@@ -37,7 +37,7 @@ const SOURCE_LABEL: Record<string, string> = {
 const STATUS_LABEL: Record<string, string> = { OPEN: "Open", PENDING_APPROVAL: "Pending approval", CLOSED: "Closed" };
 const TRANSFER_SOURCES = ["TRANSFER_RECEIPT", "TRANSFER_EVENT"];
 const DISPOSITION_LABEL: Record<string, string> = {
-  RETURN_TO_SUPPLIER: "Return to supplier",
+  RETURN_TO_SUPPLIER: "Return to vendor",
   SCRAP: "Scrap",
   HOLD: "Hold for a decision",
   RETURN_TO_SOURCE: "Returned to the sending location",

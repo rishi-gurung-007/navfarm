@@ -172,6 +172,10 @@ const EXEMPT: Record<string, string> = {
     'Master data, not farm-specific.',
   'master-data/supplier/supplier.controller.ts':
     'Master data, not farm-specific.',
+  'integration/business-central/business-central.controller.ts':
+    'Platform-admin connection diagnostics for Business Central; no farm data.',
+  'integration/business-central/vendor-sync/bc-vendor-sync.controller.ts':
+    'Syncs the Supplier master from BC vendors — master data, not farm-specific.',
   'master-data/uom/uom.controller.ts': 'Master data, not farm-specific.',
 
   // core — identity and tenant administration

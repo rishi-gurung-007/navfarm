@@ -23,7 +23,15 @@ describe('SupplierService', () => {
     update: mockDbUpdate,
   };
 
+  // The vendor master mode comes from the environment (apps/api/.env may say BC); these tests pin it explicitly.
+  const envMasterSource = process.env.BC_VENDOR_MASTER_SOURCE;
+  afterAll(() => {
+    if (envMasterSource === undefined) delete process.env.BC_VENDOR_MASTER_SOURCE;
+    else process.env.BC_VENDOR_MASTER_SOURCE = envMasterSource;
+  });
+
   beforeEach(async () => {
+    process.env.BC_VENDOR_MASTER_SOURCE = 'NAVFARM';
     mockDbSelect.mockReset();
     mockDbInsert.mockReset();
     mockDbUpdate.mockReset();
@@ -238,6 +246,160 @@ describe('SupplierService', () => {
       expect(setArg.is_approved).toBe(true);
       expect(setArg.approved_by).toBe('user-1');
       expect(result.is_approved).toBe(true);
+    });
+  });
+
+  describe('Business Central vendors (source_system = BC)', () => {
+    const bcRow = {
+      supplier_id: 'sup-bc',
+      supplier_code: 'VEN0001',
+      supplier_name: 'IRVINE S AFRICA',
+      source_system: 'BC',
+      vendor_type: 'GENERAL',
+      payment_terms: '14 DAYS',
+      email: null,
+      health_cert_url: null,
+      breeding_farm_code: null,
+      bank_account_no_enc: null,
+      company_id: 'co-1',
+      deleted_at: null,
+      is_active: true,
+      status: 'ACTIVE',
+    };
+    const selectReturns = (row: unknown) =>
+      mockDbSelect.mockReturnValue({
+        from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([row]) }) }),
+      });
+    const updateOk = () => mockDbUpdate.mockReturnValue({ set: jest.fn().mockReturnValue({ where: jest.fn().mockResolvedValue({}) }) });
+
+    afterEach(() => {
+      delete process.env.BC_VENDOR_MASTER_SOURCE;
+    });
+
+    it('marks BC rows so the form locks the BC-owned fields', async () => {
+      selectReturns(bcRow);
+      await expect(service.findOne('sup-bc')).resolves.toMatchObject({ bc_managed: true });
+    });
+
+    it('refuses a change to a field BC owns, naming the field', async () => {
+      selectReturns(bcRow);
+      await expect(service.update('sup-bc', { supplier_name: 'Renamed locally' } as any, 'tenant-1')).rejects.toThrow(
+        /Fields maintained in BC: supplier_name/,
+      );
+      expect(mockDbUpdate).not.toHaveBeenCalled();
+    });
+
+    it('accepts the form re-sending BC values unchanged together with a NAVFarm-owned field', async () => {
+      selectReturns(bcRow);
+      updateOk();
+      await expect(
+        service.update('sup-bc', { supplier_name: 'IRVINE S AFRICA ', payment_terms: '14 DAYS', email: '', vendor_type: 'FEED_SUPPLIER' } as any, 'tenant-1'),
+      ).resolves.toBeDefined();
+      expect(mockDbUpdate).toHaveBeenCalled();
+    });
+
+    it('refuses to delete a BC vendor (it is deactivated from BC instead)', async () => {
+      selectReturns(bcRow);
+      await expect(service.remove('sup-bc', 'tenant-1')).rejects.toThrow(/Blocked = All or untick "NavFarm Sync"/);
+    });
+
+    it('refuses local creation when BC is the only vendor source', async () => {
+      process.env.BC_VENDOR_MASTER_SOURCE = 'BC';
+      await expect(service.create({ supplier_name: 'Local Co' } as any, 'tenant-1')).rejects.toThrow(/created in Business Central/);
+      expect(mockDbInsert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Business Central write-through (BC_VENDOR_MASTER_SOURCE=BC, integration on)', () => {
+    const bcRow = {
+      supplier_id: 'sup-bc',
+      supplier_code: 'VEN0001',
+      supplier_name: 'IRVINE S AFRICA',
+      source_system: 'BC',
+      bc_vendor_no: 'VEN0001',
+      bc_etag: 'W/"1"',
+      vendor_type: 'GENERAL',
+      payment_terms: '14 DAYS',
+      email: null,
+      health_cert_url: null,
+      breeding_farm_code: null,
+      bank_account_no_enc: null,
+      company_id: 'co-1',
+      deleted_at: null,
+      is_active: true,
+      status: 'ACTIVE',
+    };
+    let bc: { writeThrough: boolean; createVendor: jest.Mock; updateVendor: jest.Mock; setNavfarmSync: jest.Mock };
+    let wt: SupplierService;
+    const selectReturns = (row: unknown) =>
+      mockDbSelect.mockReturnValue({
+        from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([row]) }) }),
+      });
+    const sets: any[] = [];
+    const updateOk = () =>
+      mockDbUpdate.mockReturnValue({ set: jest.fn((v) => (sets.push(v), { where: jest.fn().mockResolvedValue({}) })) });
+
+    beforeEach(() => {
+      sets.length = 0;
+      process.env.BC_VENDOR_MASTER_SOURCE = 'BC';
+      bc = {
+        writeThrough: true,
+        createVendor: jest.fn().mockResolvedValue('sup-bc'),
+        updateVendor: jest.fn().mockResolvedValue(undefined),
+        setNavfarmSync: jest.fn().mockResolvedValue('sup-bc'),
+      };
+      wt = new SupplierService(
+        { get: jest.fn((key: string) => (key === 'tenantPostingTransaction' ? true : mockDb)) } as any,
+        { log: jest.fn().mockResolvedValue({}) } as any,
+        encryptionService,
+        {} as any,
+        bc as any,
+      );
+    });
+    afterEach(() => {
+      delete process.env.BC_VENDOR_MASTER_SOURCE;
+    });
+
+    it('creates the vendor in BC (without a code: BC assigns the No.) and keeps NAVFarm fields locally', async () => {
+      selectReturns(bcRow);
+      updateOk();
+      await wt.create({ supplier_code: 'SUP-001', supplier_name: 'New Vendor', payment_terms: '14 DAYS', vendor_type: 'FEED_SUPPLIER' } as any, 'tenant-1', { userId: 'u1' });
+      expect(bc.createVendor).toHaveBeenCalledWith({ supplier_name: 'New Vendor', payment_terms: '14 DAYS' }, 'tenant-1', 'u1');
+      expect(sets[0]).toMatchObject({ vendor_type: 'FEED_SUPPLIER' });
+      expect(mockDbInsert).not.toHaveBeenCalled(); // the row came from BC's reply, not from the form
+    });
+
+    it('sends only changed BC fields to BC, and saves NAVFarm-owned fields locally', async () => {
+      selectReturns(bcRow);
+      updateOk();
+      await wt.update('sup-bc', { supplier_name: 'IRVINE S AFRICA', payment_terms: '30 DAYS', vendor_type: 'FEED_SUPPLIER' } as any, 'tenant-1', { userId: 'u1' });
+      expect(bc.updateVendor).toHaveBeenCalledWith({ bc_vendor_no: 'VEN0001', bc_etag: 'W/"1"' }, { payment_terms: '30 DAYS' }, 'tenant-1', 'u1');
+      expect(sets[0]).toMatchObject({ vendor_type: 'FEED_SUPPLIER' });
+      expect(sets[0]).not.toHaveProperty('payment_terms'); // BC's value arrives through the refresh, not the form
+    });
+
+    it('does not call BC when only NAVFarm fields change', async () => {
+      selectReturns(bcRow);
+      updateOk();
+      await wt.update('sup-bc', { supplier_name: 'IRVINE S AFRICA', vendor_type: 'SERVICES' } as any, 'tenant-1');
+      expect(bc.updateVendor).not.toHaveBeenCalled();
+    });
+
+    it('deactivating unticks NavFarm Sync in BC; deleting does too (the BC vendor is never deleted)', async () => {
+      selectReturns(bcRow);
+      updateOk();
+      await wt.update('sup-bc', { is_active: false } as any, 'tenant-1');
+      expect(bc.setNavfarmSync).toHaveBeenCalledWith('VEN0001', false, 'tenant-1', undefined);
+      expect(sets[0]).toMatchObject({ is_active: false, status: 'INACTIVE' });
+
+      bc.setNavfarmSync.mockClear();
+      await wt.remove('sup-bc', 'tenant-1');
+      expect(bc.setNavfarmSync).toHaveBeenCalledWith('VEN0001', false, 'tenant-1', undefined);
+    });
+
+    it('marks BC rows editable in the form when write-through is on', async () => {
+      selectReturns(bcRow);
+      await expect(wt.findOne('sup-bc')).resolves.toMatchObject({ bc_managed: true, bc_readonly: false });
     });
   });
 });

@@ -1207,8 +1207,8 @@ export default function GoodsReceiptPanel() {
                   setHeader((h) => ({ ...h, supplier_id: val }))
                 }
                 placeholder={t('grpSelectEllipsis')}
-                searchPlaceholder="Search supplier…"
-                columnHeaders={['Code', 'Supplier Name']}
+                searchPlaceholder="Search vendor…"
+                columnHeaders={['No.', 'Vendor Name']}
                 getLabelParts={(s: any) => [
                   s.supplier_code || '',
                   s.supplier_name || '',

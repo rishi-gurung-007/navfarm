@@ -83,6 +83,7 @@ import { SearchableEntitySelect } from './SearchableEntitySelect';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ItemTemplateSelectModal } from './ItemTemplateSelectModal';
 import FairValueRatesDialog from './FairValueRatesDialog';
+import { BcVendorAutoRefresh } from './BcVendorPanel';
 import QcSpecDialog, { toApiLines, type QcSpecRow } from './QcSpecDialog';
 import { exportMasterRowsToCsv } from './utils/master-csv';
 import MasterDataImportModal from './MasterDataImportModal';
@@ -4923,7 +4924,13 @@ export function MasterDataTable({
             </div>
           )}
 
-          {bcOwned && <BcOwnershipNotice config={config} />}
+          {bcOwned &&
+            (config.key === 'supplier' ? (
+              // Suppliers come from BC: refresh silently on open, no notice bar.
+              <BcVendorAutoRefresh onChanged={() => void load()} />
+            ) : (
+              <BcOwnershipNotice config={config} />
+            ))}
           {administrationRestricted && (
             <p className="rounded-lg border p-3 text-sm" style={S.raised}>
               Only a Tenant Admin or Company Admin can add, edit or deactivate

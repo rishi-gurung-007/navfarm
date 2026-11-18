@@ -9,7 +9,9 @@ import { MASTER_DATA_CONFIGS } from "@/modules/master-data/configs";
  * to end in _code (breeding farm registration, asset code, dialing code) are not
  * a record's own code and are left editable.
  */
-const NOT_AN_IDENTITY = new Set(["no_series_code", "breeding_farm_code", "asset_code", "phone_code"]);
+// currency_code / purchaser_code: a vendor's Business Central currency (ZAR, ZWG…) and purchaser — references to
+// other masters, not the vendor's own code.
+const NOT_AN_IDENTITY = new Set(["no_series_code", "breeding_farm_code", "asset_code", "phone_code", "currency_code", "purchaser_code"]);
 
 const identityCodeFields = MASTER_DATA_CONFIGS.flatMap((config) =>
   config.fields

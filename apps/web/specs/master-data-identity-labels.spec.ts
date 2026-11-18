@@ -32,7 +32,6 @@ const IDENTITIES: Record<string, IdentityFields> = {
   'reporting-period': { code: 'period_code' },
   disease: { code: 'disease_code', name: 'disease_name' },
   'feed-formula': { code: 'formula_code', name: 'formula_name' },
-  supplier: { code: 'supplier_code', name: 'supplier_name' },
   customer: { code: 'customer_code', name: 'customer_name' },
   resource: { code: 'resource_code', name: 'resource_name' },
   'gl-account': { code: 'account_code', name: 'account_name' },
@@ -43,6 +42,15 @@ const IDENTITIES: Record<string, IdentityFields> = {
 };
 
 describe('master identity labels', () => {
+  // Vendors mirror the Business Central Vendor Card, so they use BC's own labels: "No." and "Name" (18 Nov 2026).
+  it('vendor (supplier config) uses the BC Vendor Card labels No. and Name', () => {
+    const config = getConfig('supplier')!;
+    expect(config.fields.find((f) => f.key === 'supplier_code')?.label).toBe('No.');
+    expect(config.columns?.find((c) => c.key === 'supplier_code')?.label).toBe('No.');
+    expect(config.fields.find((f) => f.key === 'supplier_name')?.label).toBe('Name');
+    expect(config.columns?.find((c) => c.key === 'supplier_name')?.label).toBe('Name');
+  });
+
   it.each(Object.entries(IDENTITIES))('%s uses plain Code and Name labels', (configKey, identity) => {
     const config = getConfig(configKey)!;
     const field = (key: string) => config.fields.find((candidate) => candidate.key === key);

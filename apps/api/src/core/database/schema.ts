@@ -2748,6 +2748,22 @@ export const supplierMaster = mysqlTable(
     bank_account_no_enc: text('bank_account_no_enc'),
     bank_ifsc: varchar('bank_ifsc', { length: 20 }),
     credit_limit: decimal('credit_limit', { precision: 18, scale: 4 }),
+    // 0257: Business Central vendor link. source_system = 'BC' means the row is a copy of a BC vendor (VendorCardApi,
+    // "NavFarm Sync" ticked): the BC-owned fields are written only by the vendor sync and refused on edit.
+    source_system: varchar('source_system', { length: 10 }).default('NAVFARM').notNull(), // NAVFARM, BC
+    bc_vendor_no: varchar('bc_vendor_no', { length: 20 }), // BC Vendor No. (= supplier_code for BC rows)
+    bc_name_2: varchar('bc_name_2', { length: 50 }), // BC "Name 2" — on Triple C it holds the legacy account code and currency, e.g. "IRV001 RAND"
+    registration_number: varchar('registration_number', { length: 50 }), // BC Registration No. (company registration; tax_number holds the VAT no.)
+    currency_code: varchar('currency_code', { length: 10 }), // BC Currency Code; NULL = BC local currency
+    gen_bus_posting_group: varchar('gen_bus_posting_group', { length: 20 }), // BC Gen. Bus. Posting Group (LOCAL, FOREIGN, INTERCOMPANY)
+    vendor_posting_group: varchar('vendor_posting_group', { length: 20 }), // BC Vendor Posting Group (TRADE USD, TRADE ZWG, …)
+    contact_name: varchar('contact_name', { length: 100 }), // 0258: BC Contact (Vendor Card Control16 / list contactName)
+    purchaser_code: varchar('purchaser_code', { length: 20 }), // 0258: BC Purchaser Code
+    bc_blocked: varchar('bc_blocked', { length: 10 }), // BC Blocked: NULL, Payment, All
+    bc_etag: varchar('bc_etag', { length: 100 }), // last @odata.etag seen; unchanged ETag = nothing to update
+    bc_last_modified_date: date('bc_last_modified_date', { mode: 'string' }), // BC Last Date Modified
+    bc_synced_at: timestamp('bc_synced_at', { mode: 'string' }),
+    bc_sync_error: varchar('bc_sync_error', { length: 250 }), // last reason the vendor could not be synced
     is_active: boolean('is_active').default(true).notNull(),
     status: varchar('status', { length: 20 }).default('ACTIVE').notNull(),
     created_by: varchar('created_by', { length: 36 }),
@@ -2767,7 +2783,44 @@ export const supplierMaster = mysqlTable(
       sql`(coalesce(${table.company_id}, ''))`,
       table.supplier_code,
     ),
+    uniqueIndex('uq_supplier_master_bc_vendor').on(
+      table.tenant_id,
+      sql`(coalesce(${table.company_id}, ''))`,
+      table.bc_vendor_no,
+    ),
   ],
+);
+
+/**
+ * 0257: one row per run of a Business Central sync (vendors first; items, COA … later). The run's counts and its
+ * per-record failures (details) are what the integration monitor and the reconciliation read.
+ */
+export const integrationSyncLog = mysqlTable(
+  'integration_sync_log',
+  {
+    log_id: varchar('log_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }),
+    external_system: varchar('external_system', { length: 10 }).default('BC').notNull(),
+    entity: varchar('entity', { length: 30 }).notNull(), // VENDOR
+    sync_trigger: varchar('sync_trigger', { length: 12 }).notNull(), // MANUAL, SCHEDULED, SCRIPT
+    status: varchar('status', { length: 12 }).default('RUNNING').notNull(), // RUNNING, SUCCESS, PARTIAL, FAILED
+    started_at: timestamp('started_at', { mode: 'string' }).defaultNow().notNull(),
+    finished_at: timestamp('finished_at', { mode: 'string' }),
+    fetched_count: int('fetched_count').default(0).notNull(),
+    created_count: int('created_count').default(0).notNull(),
+    updated_count: int('updated_count').default(0).notNull(),
+    unchanged_count: int('unchanged_count').default(0).notNull(),
+    deactivated_count: int('deactivated_count').default(0).notNull(),
+    failed_count: int('failed_count').default(0).notNull(),
+    written_back_count: int('written_back_count').default(0).notNull(),
+    error_message: varchar('error_message', { length: 1000 }),
+    details: json('details'),
+    triggered_by: varchar('triggered_by', { length: 36 }),
+  },
+  (table) => [index('idx_integration_sync_log_entity').on(table.tenant_id, table.entity, table.started_at)],
 );
 
 export const supplierMasterRelations = relations(supplierMaster, ({ one }) => ({

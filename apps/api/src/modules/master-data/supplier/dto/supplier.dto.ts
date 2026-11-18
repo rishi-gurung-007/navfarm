@@ -15,6 +15,12 @@ const DIGITS_ONLY = /^[0-9]*$/;
 const letters = (extra = '') =>
   Matches(LETTERS_ONLY, { message: `must contain letters and spaces only${extra ? ` (${extra})` : ''}` });
 const digits = () => Matches(DIGITS_ONLY, { message: 'must contain digits only' });
+// 17 Nov 2026: Business Central is the vendor master (MOM 18 Aug 2026), so a supplier must accept what a BC vendor
+// holds: Name up to 100 characters (VEN0205 has 51) and Post Code as a code — Triple C's vendors carry "HRE" and
+// "NORTON". The 29 Sep caps (name 50, postcode digits only) rejected every save of those suppliers, even of a field
+// NAVFarm owns. Flagged for Rishi in docs/bbp/BBP-BC-01-Vendor-Master-Integration.md §12.
+const NAME_MAX = 100;
+const postCode = () => Matches(/^[A-Za-z0-9 -]*$/, { message: 'must contain letters, digits, spaces or hyphens only' });
 
 export class CreateSupplierDto {
   @ApiProperty({ description: 'Company UUID scope ownership', example: 'company-uuid-here' })
@@ -30,7 +36,7 @@ export class CreateSupplierDto {
   @ApiProperty({ description: 'Full legal name of the supplier', example: 'Feed Ingredients Corp Ltd', maxLength: 50 })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(DESCRIPTIVE_MAX)
+  @MaxLength(NAME_MAX)
   supplier_name: string;
 
   @ApiProperty({ description: 'Contact email address', required: false, example: 'orders@feedingredients.com' })
@@ -87,7 +93,7 @@ export class CreateSupplierDto {
   @IsString()
   @IsOptional()
   @MaxLength(DESCRIPTIVE_MAX)
-  @digits()
+  @postCode()
   pincode?: string;
 
   @ApiProperty({ description: 'Vendor classification', enum: VENDOR_TYPES, default: 'GENERAL', required: false })
@@ -126,6 +132,43 @@ export class CreateSupplierDto {
   @Min(0)
   credit_limit?: number;
 
+  // Business Central vendor fields (docs/bbp/BBP-BC-01-Vendor-Master-Integration.md §4). Codes BC validates.
+  @ApiProperty({ description: 'Company registration no. (BC Registration No.)', required: false, maxLength: 50 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(50)
+  registration_number?: string;
+
+  @ApiProperty({ description: 'BC Currency Code; blank = BC local currency', required: false, example: 'ZAR', maxLength: 10 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(10)
+  currency_code?: string;
+
+  @ApiProperty({ description: 'BC Gen. Bus. Posting Group', required: false, example: 'LOCAL', maxLength: 20 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(20)
+  gen_bus_posting_group?: string;
+
+  @ApiProperty({ description: 'BC Vendor Posting Group', required: false, example: 'TRADE USD', maxLength: 20 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(20)
+  vendor_posting_group?: string;
+
+  @ApiProperty({ description: 'BC Name 2', required: false, maxLength: 50 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(50)
+  bc_name_2?: string;
+
+  @ApiProperty({ description: 'BC Purchaser Code', required: false, maxLength: 20 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(20)
+  purchaser_code?: string;
+
   @ApiProperty({ description: 'Flexible custom config configurations in JSON format', required: false })
   @IsOptional()
   extension_config?: any;
@@ -150,7 +193,7 @@ export class UpdateSupplierDto {
   @ApiProperty({ required: false, maxLength: 50 })
   @IsString()
   @IsOptional()
-  @MaxLength(DESCRIPTIVE_MAX)
+  @MaxLength(NAME_MAX)
   supplier_name?: string;
 
   @ApiProperty({ required: false })
@@ -207,7 +250,7 @@ export class UpdateSupplierDto {
   @IsString()
   @IsOptional()
   @MaxLength(DESCRIPTIVE_MAX)
-  @digits()
+  @postCode()
   pincode?: string;
 
   @ApiProperty({ required: false, enum: VENDOR_TYPES })
@@ -245,6 +288,43 @@ export class UpdateSupplierDto {
   @IsOptional()
   @Min(0)
   credit_limit?: number;
+
+  // Business Central vendor fields (docs/bbp/BBP-BC-01-Vendor-Master-Integration.md §4). Codes BC validates.
+  @ApiProperty({ description: 'Company registration no. (BC Registration No.)', required: false, maxLength: 50 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(50)
+  registration_number?: string;
+
+  @ApiProperty({ description: 'BC Currency Code; blank = BC local currency', required: false, example: 'ZAR', maxLength: 10 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(10)
+  currency_code?: string;
+
+  @ApiProperty({ description: 'BC Gen. Bus. Posting Group', required: false, example: 'LOCAL', maxLength: 20 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(20)
+  gen_bus_posting_group?: string;
+
+  @ApiProperty({ description: 'BC Vendor Posting Group', required: false, example: 'TRADE USD', maxLength: 20 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(20)
+  vendor_posting_group?: string;
+
+  @ApiProperty({ description: 'BC Name 2', required: false, maxLength: 50 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(50)
+  bc_name_2?: string;
+
+  @ApiProperty({ description: 'BC Purchaser Code', required: false, maxLength: 20 })
+  @IsString()
+  @IsOptional()
+  @MaxLength(20)
+  purchaser_code?: string;
 
   @ApiProperty({ required: false })
   @IsBoolean()

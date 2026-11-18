@@ -28,6 +28,8 @@ export interface BcQuery {
   orderBy?: string;
   top?: number;
   skip?: number;
+  /** $count=true: the page carries @odata.count (total rows matching the filter). */
+  count?: boolean;
 }
 
 export interface BcRequestOptions {
@@ -139,6 +141,7 @@ export class BcODataClient {
     if (query.orderBy) parts.push(`$orderby=${encodeURIComponent(query.orderBy)}`);
     if (query.top != null) parts.push(`$top=${Math.max(0, Math.trunc(query.top))}`);
     if (query.skip != null) parts.push(`$skip=${Math.max(0, Math.trunc(query.skip))}`);
+    if (query.count) parts.push('$count=true');
     return parts.join('&');
   }
 

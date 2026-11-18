@@ -1,6 +1,6 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { companyCondition, masterScopeConditions } from '../../../common/master-data-scope';
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, Optional } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, like, or, isNull } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
@@ -12,9 +12,26 @@ import { EncryptionService } from '../../system/encryption/encryption.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { listFilterConditions, listOrderBy, runMasterList } from '../../../common/master-list-query';
 import { assertCodeUnchanged } from '../../../common/master-code';
+import { readBusinessCentralConfig } from '../../integration/business-central/business-central.config';
+import { BC_LOCKED_DTO_FIELDS } from '../../integration/business-central/vendor-sync/bc-vendor.mapper';
+import { BC_WRITABLE_SUPPLIER_FIELDS, changedBcFields } from '../../integration/business-central/vendor-sync/bc-vendor.writer';
+import { BcVendorWriteService } from '../../integration/business-central/vendor-sync/bc-vendor-write.service';
+
+/** BC vendor fields a NAVFarm-created supplier may also hold (0257). */
+const BC_REFERENCE_FIELDS = ['registration_number', 'currency_code', 'gen_bus_posting_group', 'vendor_posting_group', 'purchaser_code', 'bc_name_2'] as const;
+const KEEP_CASE = new Set<string>(['registration_number', 'bc_name_2']);
 
 const toMysqlTimestamp = (date: Date = new Date()) => {
   return date.toISOString().slice(0, 19).replace('T', ' ');
+};
+
+const BC_OWNED_MESSAGE =
+  'This vendor is maintained in Business Central. Change it on the BC Vendor Card; the vendor sync brings the change here.';
+
+/** Same value for the lock check: '' / null / undefined are all "empty", strings compare trimmed. */
+const sameValue = (a: unknown, b: unknown) => {
+  const norm = (v: unknown) => (v === undefined || v === null || v === '' ? null : typeof v === 'string' ? v.trim() : v);
+  return norm(a) === norm(b);
 };
 
 @Injectable()
@@ -24,7 +41,14 @@ export class SupplierService {
     private readonly auditService: AuditLogService,
     private readonly encryptionService: EncryptionService,
     private readonly numberSeriesService: NumberSeriesService,
+    // Optional so the supplier master still works (and its tests still build) without the BC module.
+    @Optional() private readonly bcVendors?: BcVendorWriteService,
   ) {}
+
+  /** BC is the vendor master and reachable: create/update/delete/restore of BC suppliers go to BC first. */
+  private get bcWriteThrough(): boolean {
+    return !!this.bcVendors?.writeThrough;
+  }
 
   private get db(): MySql2Database<typeof schema> {
     const tenantDb = this.cls.get<MySql2Database<typeof schema>>('tenantDb');
@@ -37,10 +61,10 @@ export class SupplierService {
   /** ANIMAL_SUPPLIER needs both docs; BREEDING_FARM needs its registration code. */
   private assertVendorTypeRequirements(vendorType: string, healthCertUrl?: string | null, breedingFarmCode?: string | null) {
     if (vendorType === 'ANIMAL_SUPPLIER' && (!healthCertUrl || !breedingFarmCode)) {
-      throw new BadRequestException('An animal supplier needs both a Health Certificate URL and a Breeding Farm Registration No.');
+      throw new BadRequestException('An animal vendor needs both a Health Certificate URL and a Breeding Farm Registration No.');
     }
     if (vendorType === 'BREEDING_FARM' && !breedingFarmCode) {
-      throw new BadRequestException('A breeding farm supplier needs a Breeding Farm Registration No.');
+      throw new BadRequestException('A breeding farm vendor needs a Breeding Farm Registration No.');
     }
   }
 
@@ -55,13 +79,112 @@ export class SupplierService {
         bank_account_last4 = null;
       }
     }
-    return { ...rest, bank_account_last4 };
+    // bc_managed: the row is a BC vendor. bc_readonly drives the web form's field lock (lockWhenRowFlag): BC fields are
+    // read-only only when NAVFarm cannot write them to BC (write-through off); with write-through they are edited here.
+    const bcManaged = rest.source_system === 'BC';
+    return { ...rest, bank_account_last4, bc_managed: bcManaged, bc_readonly: bcManaged && !this.bcWriteThrough };
+  }
+
+  /** A BC-sourced supplier: only NAVFarm's own fields (vendor type, compliance, bank, credit, NOB/LOB) may change here. */
+  private assertBcOwnedUnchanged(supplier: Record<string, any>, dto: Record<string, any>) {
+    if (supplier.source_system !== 'BC') return;
+    const changed = BC_LOCKED_DTO_FIELDS.filter((field) => dto[field] !== undefined && !sameValue(dto[field], supplier[field]));
+    if (changed.length) {
+      throw new BadRequestException(`${BC_OWNED_MESSAGE} Fields maintained in BC: ${changed.join(', ')}.`);
+    }
+  }
+
+  /**
+   * Write-through for a BC supplier: changed BC fields are PATCHed to the BC vendor first (ETag-guarded) and the
+   * supplier refreshed from BC; deactivating unticks "NavFarm Sync", reactivating ticks it. Returns the dto without
+   * the BC fields, so the local update that follows only touches NAVFarm's own fields.
+   */
+  private async writeBcChanges(supplier: Record<string, any>, dto: UpdateSupplierDto, tenantId: string, userPayload?: any): Promise<UpdateSupplierDto> {
+    assertCodeUnchanged('Vendor', supplier.supplier_code, dto.supplier_code);
+    const rest: Record<string, any> = { ...dto };
+    const vendorNo: string = supplier.bc_vendor_no;
+
+    if (dto.is_active === true && !supplier.is_active) {
+      await this.bcVendors!.setNavfarmSync(vendorNo, true, tenantId, userPayload?.userId);
+      delete rest.is_active;
+      delete rest.status; // BC's Blocked decides whether it is really active
+    } else if (dto.is_active === false && supplier.is_active) {
+      await this.bcVendors!.setNavfarmSync(vendorNo, false, tenantId, userPayload?.userId);
+      rest.status = 'INACTIVE';
+    } else {
+      delete rest.is_active;
+      delete rest.status;
+    }
+
+    const changed = changedBcFields(supplier, dto as Record<string, unknown>);
+    if (Object.keys(changed).length) {
+      await this.bcVendors!.updateVendor({ bc_vendor_no: vendorNo, bc_etag: supplier.bc_etag }, changed, tenantId, userPayload?.userId);
+    }
+    for (const field of [...BC_WRITABLE_SUPPLIER_FIELDS, 'supplier_code']) delete rest[field];
+    return rest as UpdateSupplierDto;
   }
 
   async create(dto: CreateSupplierDto, tenantId: string, userPayload?: any) {
+    if (readBusinessCentralConfig().vendor.masterSource === 'BC') {
+      if (this.bcWriteThrough) return this.createInBc(dto, tenantId, userPayload);
+      throw new BadRequestException(
+        'Vendors are created in Business Central. Create the vendor there and tick "NavFarm Sync" on the Vendor Card; the vendor sync adds it here.',
+      );
+    }
     // The number is drawn from the series inside this transaction, so a save that fails after it (a duplicate,
     // a bad reference) rolls the counter back instead of burning the number.
     return withTenantTransaction(this.cls, () => this.createRecord(dto, tenantId, userPayload));
+  }
+
+  /**
+   * BC is the vendor master: the vendor is created in BC first (BC assigns the Vendor No. from its number series and
+   * validates the codes), the supplier is stored from BC's reply, and only then are NAVFarm's own fields added.
+   * If BC refuses, nothing is stored in NAVFarm.
+   */
+  private async createInBc(dto: CreateSupplierDto, tenantId: string, userPayload?: any) {
+    const vendorType = dto.vendor_type || 'GENERAL';
+    this.assertVendorTypeRequirements(vendorType, dto.health_cert_url, dto.breeding_farm_code);
+    const bcValues: Record<string, unknown> = {};
+    for (const field of BC_WRITABLE_SUPPLIER_FIELDS) {
+      const value = (dto as unknown as Record<string, unknown>)[field];
+      if (value !== undefined && value !== null && value !== '') bcValues[field] = value;
+    }
+    const supplierId = await this.bcVendors!.createVendor(bcValues, tenantId, userPayload?.userId);
+    await this.db
+      .update(schema.supplierMaster)
+      .set({
+        ...this.navfarmOwnedValues(dto),
+        vendor_type: vendorType,
+        updated_by: userPayload?.userId || null,
+        updated_at: toMysqlTimestamp(),
+      })
+      .where(eq(schema.supplierMaster.supplier_id, supplierId));
+    const created = await this.findOne(supplierId);
+    await this.auditService.log({
+      tenantId,
+      companyId: created.company_id || undefined,
+      userId: userPayload?.userId,
+      action: 'CREATE',
+      entityName: 'supplier_master',
+      entityId: supplierId,
+      newValues: { source_system: 'BC', bc_vendor_no: created.bc_vendor_no, supplier_name: created.supplier_name, vendor_type: vendorType },
+    });
+    return created;
+  }
+
+  /** The fields NAVFarm owns on any supplier (never sent to BC). */
+  private navfarmOwnedValues(dto: Partial<CreateSupplierDto & UpdateSupplierDto>) {
+    const v: Record<string, unknown> = {};
+    if (dto.vendor_type !== undefined) v.vendor_type = dto.vendor_type;
+    if (dto.health_cert_url !== undefined) v.health_cert_url = dto.health_cert_url || null;
+    if (dto.breeding_farm_code !== undefined) v.breeding_farm_code = dto.breeding_farm_code || null;
+    if (dto.bank_account_no !== undefined) v.bank_account_no_enc = dto.bank_account_no ? this.encryptionService.encrypt(dto.bank_account_no) : null;
+    if (dto.bank_ifsc !== undefined) v.bank_ifsc = dto.bank_ifsc || null;
+    if (dto.credit_limit !== undefined) v.credit_limit = dto.credit_limit?.toString() || null;
+    if ((dto as any).nob_id !== undefined) v.nob_id = (dto as any).nob_id || null;
+    if ((dto as any).lob_id !== undefined) v.lob_id = (dto as any).lob_id || null;
+    if (dto.extension_config !== undefined) v.extension_config = JSON.stringify(dto.extension_config);
+    return v;
   }
 
   private async createRecord(dto: CreateSupplierDto, tenantId: string, userPayload?: any) {
@@ -121,6 +244,12 @@ export class SupplierService {
       bank_account_no_enc: dto.bank_account_no ? this.encryptionService.encrypt(dto.bank_account_no) : null,
       bank_ifsc: dto.bank_ifsc || null,
       credit_limit: dto.credit_limit?.toString() || null,
+      registration_number: dto.registration_number || null,
+      currency_code: dto.currency_code ? dto.currency_code.toUpperCase() : null,
+      gen_bus_posting_group: dto.gen_bus_posting_group ? dto.gen_bus_posting_group.toUpperCase() : null,
+      vendor_posting_group: dto.vendor_posting_group ? dto.vendor_posting_group.toUpperCase() : null,
+      purchaser_code: dto.purchaser_code ? dto.purchaser_code.toUpperCase() : null,
+      bc_name_2: dto.bc_name_2 || null,
       is_approved: false,
       is_active: true,
       status: 'ACTIVE',
@@ -177,7 +306,7 @@ export class SupplierService {
       .limit(1);
 
     if (!supplier) {
-      throw new NotFoundException(`Supplier with ID '${id}' not found.`);
+      throw new NotFoundException(`Vendor with ID '${id}' not found.`);
     }
 
     return this.maskSupplier(supplier);
@@ -222,14 +351,20 @@ export class SupplierService {
   }
 
   async update(id: string, dto: UpdateSupplierDto, tenantId: string, userPayload?: any) {
-    const supplier = await this.findOne(id);
+    let supplier = await this.findOne(id);
+    if (supplier.source_system === 'BC' && this.bcWriteThrough) {
+      dto = await this.writeBcChanges(supplier, dto, tenantId, userPayload);
+      supplier = await this.findOne(id);
+    } else {
+      this.assertBcOwnedUnchanged(supplier, dto as Record<string, any>);
+    }
 
     const updates: any = {
       updated_by: userPayload?.userId || null,
       updated_at: toMysqlTimestamp(),
     };
 
-    assertCodeUnchanged('Supplier', supplier.supplier_code, dto.supplier_code);
+    assertCodeUnchanged('Vendor', supplier.supplier_code, dto.supplier_code);
     if (dto.supplier_code && dto.supplier_code.trim()) {
       const trimmed = dto.supplier_code.trim().toUpperCase();
       if (trimmed !== supplier.supplier_code) {
@@ -269,6 +404,12 @@ export class SupplierService {
     if (dto.bank_account_no !== undefined) updates.bank_account_no_enc = dto.bank_account_no ? this.encryptionService.encrypt(dto.bank_account_no) : null;
     if (dto.bank_ifsc !== undefined) updates.bank_ifsc = dto.bank_ifsc;
     if (dto.credit_limit !== undefined) updates.credit_limit = dto.credit_limit?.toString() || null;
+    if (supplier.source_system !== 'BC') {
+      for (const field of BC_REFERENCE_FIELDS) {
+        const value = dto[field];
+        if (value !== undefined) updates[field] = value ? (KEEP_CASE.has(field) ? value : value.toUpperCase()) : null;
+      }
+    }
     if (dto.is_active !== undefined) updates.is_active = dto.is_active;
     if (dto.status !== undefined) updates.status = dto.status;
     if (dto.extension_config !== undefined) updates.extension_config = JSON.stringify(dto.extension_config);
@@ -301,7 +442,7 @@ export class SupplierService {
     const supplier = await this.findOne(id);
 
     if (supplier.is_approved) {
-      throw new BadRequestException(`Supplier '${supplier.supplier_name}' is already approved.`);
+      throw new BadRequestException(`Vendor '${supplier.supplier_name}' is already approved.`);
     }
 
     await this.db
@@ -330,6 +471,15 @@ export class SupplierService {
 
   async remove(id: string, tenantId: string, userPayload?: any) {
     const supplier = await this.findOne(id);
+    if (supplier.source_system === 'BC') {
+      if (!this.bcWriteThrough) {
+        throw new BadRequestException(
+          `${BC_OWNED_MESSAGE} To stop using it, set Blocked = All or untick "NavFarm Sync" in BC; the sync deactivates it here.`,
+        );
+      }
+      // The BC vendor is never deleted from NAVFarm: it only stops being synced ("NavFarm Sync" unticked).
+      await this.bcVendors!.setNavfarmSync(supplier.bc_vendor_no!, false, tenantId, userPayload?.userId);
+    }
     const deletedTime = toMysqlTimestamp();
 
     await this.db
@@ -353,7 +503,7 @@ export class SupplierService {
       newValues: { status: 'INACTIVE', deleted_at: deletedTime },
     });
 
-    return { success: true, message: `Supplier '${supplier.supplier_name}' has been soft-deleted.` };
+    return { success: true, message: `Vendor '${supplier.supplier_name}' has been deactivated.` };
   }
 
   async restore(id: string, tenantId: string, userPayload?: any) {
@@ -364,11 +514,19 @@ export class SupplierService {
       .limit(1);
 
     if (!supplier) {
-      throw new NotFoundException(`Supplier with ID '${id}' not found.`);
+      throw new NotFoundException(`Vendor with ID '${id}' not found.`);
     }
 
     if (!supplier.deleted_at) {
       return supplier;
+    }
+    if (supplier.source_system === 'BC') {
+      if (!this.bcWriteThrough) {
+        throw new BadRequestException(`${BC_OWNED_MESSAGE} Tick "NavFarm Sync" (and clear Blocked) in BC to bring it back.`);
+      }
+      // Ticking "NavFarm Sync" brings the vendor back through the sync planner, which restores the soft-deleted row.
+      await this.bcVendors!.setNavfarmSync(supplier.bc_vendor_no!, true, tenantId, userPayload?.userId);
+      return this.findOne(id);
     }
 
     await this.db

@@ -29,7 +29,7 @@ const EXPECTED: Record<string, string> = {
   'breed-lifecycle-stage': 'Breed Lifecycle Stage',
   disease: 'Disease',
   'feed-formula': 'Feed Formula',
-  supplier: 'Supplier',
+  supplier: 'Vendor',
   customer: 'Customer',
   resource: 'Resource',
   'gl-account': 'GL Account',
