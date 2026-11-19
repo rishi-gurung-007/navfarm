@@ -59,6 +59,7 @@ import {
   projectRequisitionStates,
   releaseTransition,
   type RequisitionPurpose,
+  type CommonDocType,
   reopenTransition,
   transferPlanFor,
 } from './requisition.rules';
@@ -278,7 +279,7 @@ export class RequisitionService {
       await assertLocationOnActiveFarm(this.db, scope, dto.to_location_id, 'Requisition destination location');
     }
 
-    await this.assertLineReferences(tenantId, dto.company_id, dto.lines);
+    await this.assertLineReferences(tenantId, dto.company_id, docType, dto.lines);
 
     return withTenantTransaction(this.cls, async () => {
       const reqNo = await this.nextReqNo(dto.company_id, tenantId);
@@ -333,6 +334,7 @@ export class RequisitionService {
   private async assertLineReferences(
     tenantId: string,
     companyId: string,
+    docType: CommonDocType,
     lines: Array<{ item_id?: string | null; lot_no?: string | null; serial_no?: string | null }>,
   ) {
     const itemIds = [...new Set(lines.map((l) => l.item_id).filter((v): v is string => !!v))];
@@ -352,8 +354,11 @@ export class RequisitionService {
       const found = new Map(rows.map((r) => [r.item_id, r]));
       const at = lines.findIndex((l) => l.item_id && !found.has(l.item_id));
       if (at >= 0) throw new BadRequestException(`Line ${at + 1}: item is not an active item of this company.`);
-      // Biological assets are not stock (Rishi, 14 Oct): a requisition cannot ask for one.
-      const bio = lines.findIndex((l) => l.item_id && found.get(l.item_id)?.is_biological_asset);
+      // Biological assets cannot be supplied through an Item/Store requisition:
+      // animals are registered from their GRN. Fixed Asset/Purchase can name
+      // a biological Item Master asset as the requested asset, but does not
+      // create stock movement or animal registration.
+      const bio = lines.findIndex((l) => l.item_id && found.get(l.item_id)?.is_biological_asset && docType === 'ITEM');
       if (bio >= 0) {
         throw new BadRequestException(`Line ${bio + 1}: ${found.get(lines[bio].item_id!)?.item_code} is a biological asset. Biological assets are not held in stock, so they cannot be requisitioned; animals are registered from their GRN in the Animal Register.`);
       }
@@ -459,7 +464,7 @@ export class RequisitionService {
       for (const [id, label] of [[dto.main_location_id, 'Requisition main location'], [fromLocationId, 'Requisition source location'], [toLocationId, 'Requisition destination location']] as const) {
         if (id) await assertLocationOnActiveFarm(this.db, scope, id, label);
       }
-      await this.assertLineReferences(tenantId, row.company_id, dto.lines);
+      await this.assertLineReferences(tenantId, row.company_id, docType, dto.lines);
       // P1 follow-up item 5: the farm follows the Main / Farm Location (shared
       // farmOfLocation). A location it cannot place leaves the stored farm.
       const mainLocationId = dto.main_location_id ?? row.main_location_id;
@@ -503,15 +508,18 @@ export class RequisitionService {
         // WP1c Item Tracking: the line offers the Lot/Serial assignment only
         // for a tracked item, so the editor needs both Item Master flags here.
         is_lot_tracked: schema.itemMaster.is_lot_tracked, is_serial_tracked: schema.itemMaster.is_serial_tracked,
+        is_biological_asset: schema.itemMaster.is_biological_asset,
       })
       .from(schema.itemMaster)
-      .where(and(eq(schema.itemMaster.tenant_id, tenantId), eq(schema.itemMaster.company_id, query.company_id), eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at),
-        // Biological assets are not stock (14 Oct): a requisition cannot ask for one.
-        eq(schema.itemMaster.is_biological_asset, false)))
+      .where(and(eq(schema.itemMaster.tenant_id, tenantId), eq(schema.itemMaster.company_id, query.company_id), eq(schema.itemMaster.is_active, true), isNull(schema.itemMaster.deleted_at)))
       .orderBy(schema.itemMaster.item_code);
     // MySQL hands these back as tinyint 1/0; the editor branches on them, so
     // they cross the wire as real booleans rather than truthy numbers.
-    const items = itemRows.map((i) => ({ ...i, is_lot_tracked: Boolean(i.is_lot_tracked), is_serial_tracked: Boolean(i.is_serial_tracked) }));
+    const allItems = itemRows.map((i) => ({ ...i, is_lot_tracked: Boolean(i.is_lot_tracked), is_serial_tracked: Boolean(i.is_serial_tracked) }));
+    // Biological assets cannot appear on an Item/Store request, but can be
+    // selected as the asset a Fixed Asset/Purchase request is asking for.
+    const items = allItems.filter((item) => !item.is_biological_asset);
+    const fixed_asset_items = allItems;
     const locationConditions: SQL[] = [
       eq(schema.locationMaster.tenant_id, tenantId),
       eq(schema.locationMaster.company_id, query.company_id),
@@ -581,7 +589,7 @@ export class RequisitionService {
       }
     }
     // No resources: no line may name one (Rishi, 5 Oct — Service lines are Description + Qty only).
-    return { items, locations, farms, departments, may_direct_transfer: mayDirectTransfer, requester };
+    return { items, fixed_asset_items, locations, farms, departments, may_direct_transfer: mayDirectTransfer, requester };
   }
 
   /**

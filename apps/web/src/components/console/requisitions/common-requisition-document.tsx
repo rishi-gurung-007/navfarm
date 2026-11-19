@@ -192,6 +192,7 @@ export function CommonRequisitionDocument({
   const locations = options?.locations ?? [];
   const departments = options?.departments ?? [];
   const items = options?.items ?? [];
+  const fixedAssetItems = options?.fixed_asset_items ?? items;
   const locCode = (id: string | null, code?: string | null) =>
     code ?? locations.find((l) => l.location_id === id)?.location_code ?? null;
   /** W2D W12: a location's code linked to its record; null when there is no code (the caller's empty text then shows). */
@@ -261,6 +262,7 @@ export function CommonRequisitionDocument({
   }));
 
   const isItem = view.doc_type === 'ITEM';
+  const selectsItem = view.doc_type === 'ITEM' || view.doc_type === 'FA';
   // Rishi, 7 Oct: every common (non-feed) requisition shows this complete line
   // contract in the same order. Applicability changes values, not visibility.
   const columns = [
@@ -571,14 +573,14 @@ export function CommonRequisitionDocument({
                   <tr key={line.line_id ?? `new-${i}`}>
                     {/* Rishi's columns, in his order. */}
                     <td className={cn(TD, NUM)}>{no}</td>
-                    {isItem ? (
+                    {selectsItem ? (
                       <>
                         <td className={TD}>
                           {can ? (
                             <SearchableSelect
                               ariaLabel={t('crqItemFor', { line: i + 1 })}
                               value={line.item_id ?? ''}
-                              options={items.map((it) => ({
+                              options={(view.doc_type === 'FA' ? fixedAssetItems : items).map((it) => ({
                                 value: it.item_id,
                                 code: it.item_code,
                                 name: it.item_name,
@@ -599,12 +601,24 @@ export function CommonRequisitionDocument({
                               noMatchesLabel={t('crqNoMatches')}
                               triggerClassName="w-48"
                               onChange={(itemId) => {
-                                const it = items.find(
-                                  (x) => x.item_id === itemId,
-                                );
+                                const it = (
+                                  view.doc_type === 'FA'
+                                    ? fixedAssetItems
+                                    : items
+                                ).find((x) => x.item_id === itemId);
                                 setLine(i, {
                                   item_id: itemId || null,
-                                  uom: it?.uom_primary ?? line.uom,
+                                  // An FA selection provides the required
+                                  // description, while still letting the user
+                                  // amend it for the actual asset requested.
+                                  description:
+                                    view.doc_type === 'FA'
+                                      ? it?.item_name ?? null
+                                      : line.description,
+                                  uom:
+                                    view.doc_type === 'ITEM'
+                                      ? it?.uom_primary ?? line.uom
+                                      : line.uom,
                                 });
                               }}
                             />
@@ -620,11 +634,24 @@ export function CommonRequisitionDocument({
                         {/* Item Name is the Item Master's name, never typed here. */}
                         <td className={TD}>
                           {line.item_name ??
-                            items.find((x) => x.item_id === line.item_id)
+                            (view.doc_type === 'FA'
+                              ? fixedAssetItems
+                              : items
+                            ).find((x) => x.item_id === line.item_id)
                               ?.item_name ??
                             ''}
                         </td>
-                        <td className={TD}>{t('rqNotApplicable')}</td>
+                        <td className={TD}>
+                          {view.doc_type === 'FA'
+                            ? cell(
+                                'crqDescriptionFor',
+                                line.description,
+                                (v) => setLine(i, { description: v }),
+                                'text',
+                                'w-48',
+                              )
+                            : t('rqNotApplicable')}
+                        </td>
                       </>
                     ) : (
                       <>

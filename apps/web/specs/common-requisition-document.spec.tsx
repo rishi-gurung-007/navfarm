@@ -94,16 +94,17 @@ describe("CommonRequisitionDocument", () => {
     expect(fallbackCells[6].textContent).toBe("crqToHeader");
   });
 
-  it("keeps locations and transfer quantities visible but not applicable on a Purchase document", () => {
+  it("keeps locations and transfer quantities not applicable, and offers an item picker, on a Fixed Asset Purchase document", () => {
     const { container } = render(<CommonRequisitionDocument view={emptyCommonRequisition("co-1", "FA", "PURCHASE", "2026-10-04")} editable options={options} onChange={jest.fn()} />);
     expect(screen.getByRole("textbox", { name: "crqFrom" }).textContent).toBe("rqNotApplicable");
     expect(screen.getByRole("textbox", { name: "crqTo" }).textContent).toBe("rqNotApplicable");
     expect(screen.getByRole("textbox", { name: "crqDirectTransfer" }).textContent).toBe("rqNotApplicable");
     expect(Array.from(container.querySelectorAll("thead th")).map((n) => n.textContent?.trim()).filter(Boolean)).toEqual(ALL_LINE_HEADERS);
+    // A Fixed Asset line now names an Item Master item too (Rishi, 19 Nov), so the picker replaces
+    // "Not applicable" in the Item No. column; the description stays its own editable cell.
+    expect(screen.getByRole("button", { name: 'crqItemFor:{"line":1}' })).toBeTruthy();
     expect(screen.getByLabelText('crqDescriptionFor:{"line":1}')).toBeTruthy();
     const cells = Array.from(container.querySelectorAll("tbody tr:first-child > td"));
-    expect(cells[1].textContent).toBe("rqNotApplicable");
-    expect(cells[2].textContent).toBe("rqNotApplicable");
     expect(cells.slice(5, 13).every((cell) => cell.textContent === "rqNotApplicable")).toBe(true);
   });
 

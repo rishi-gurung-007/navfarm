@@ -1,5 +1,5 @@
 import { BUDGET_METRICS, BudgetMetric } from '../budget/budget-metrics';
-import { BudgetLine, monthBudget, ytdBudget, variance } from './gm-budget.metrics';
+import { BudgetLine, monthBudget, rangeBudget, ytdBudget, variance } from './gm-budget.metrics';
 
 const m = (code: string): BudgetMetric => BUDGET_METRICS.find((x) => x.code === code)!;
 const line = (
@@ -88,6 +88,45 @@ describe('ytdBudget', () => {
     expect(ytdBudget(ls, m('GROSS_MARGIN'), [periods[0]], farms)).toEqual(
       monthBudget(ls, m('GROSS_MARGIN'), 'p1', farms),
     );
+  });
+});
+
+describe('rangeBudget', () => {
+  // p1: 1–10 Oct (10 days), p2: 11–20 Oct (10 days).
+  const p1 = { period_id: 'p1', period_code: '2026-10', start_date: '2026-10-01', end_date: '2026-10-10' };
+  const p2 = { period_id: 'p2', period_code: '2026-11', start_date: '2026-10-11', end_date: '2026-10-20' };
+
+  it('a range inside one period accumulates its daily rate for a SUM metric', () => {
+    const lines = [line('f1', 'p1', 'GROSS_MARGIN', 100)];
+    // 100 over 10 days = 10/day; 5 days (01–05) = 50.
+    const r = rangeBudget(lines, m('GROSS_MARGIN'), [p1, p2], '2026-10-01', '2026-10-05', [farms[0]]);
+    expect(r).toEqual({ budget: 50, tolerance_pct: 10, missing: [] });
+  });
+
+  it('a range spanning two periods sums each one\'s own daily rate for the days it overlaps', () => {
+    const lines = [line('f1', 'p1', 'GROSS_MARGIN', 100), line('f1', 'p2', 'GROSS_MARGIN', 200)];
+    // p1: 10/day × 5 days (06–10) = 50. p2: 20/day × 5 days (11–15) = 100. Total 150.
+    const r = rangeBudget(lines, m('GROSS_MARGIN'), [p1, p2], '2026-10-06', '2026-10-15', [farms[0]]);
+    expect(r.budget).toBe(150);
+  });
+
+  it('a MEAN metric time-weights each period\'s own budgeted average by the days it overlaps, not a daily rate', () => {
+    const lines = [line('f1', 'p1', 'GROSS_MARGIN_PCT', 30), line('f1', 'p2', 'GROSS_MARGIN_PCT', 40)];
+    // Half the range in p1 (30%), half in p2 (40%): the time-weighted average is 35%, not a summed rate.
+    const r = rangeBudget(lines, m('GROSS_MARGIN_PCT'), [p1, p2], '2026-10-06', '2026-10-15', [farms[0]]);
+    expect(r.budget).toBe(35);
+  });
+
+  it('is null — not partial — the moment any overlapping period is missing a line, and names it', () => {
+    const lines = [line('f1', 'p1', 'GROSS_MARGIN', 100), line('f1', 'p2', 'GROSS_MARGIN', 200)];
+    const r = rangeBudget(lines, m('GROSS_MARGIN'), [p1, p2], '2026-10-06', '2026-10-15', farms);
+    expect(r.budget).toBeNull();
+    expect(r.missing).toEqual(['F2 2026-10', 'F2 2026-11']);
+  });
+
+  it('no period overlaps the range: null, every farm missing', () => {
+    const r = rangeBudget([], m('GROSS_MARGIN'), [p1, p2], '2026-12-01', '2026-12-10', farms);
+    expect(r).toEqual({ budget: null, tolerance_pct: 10, missing: ['F1', 'F2'] });
   });
 });
 

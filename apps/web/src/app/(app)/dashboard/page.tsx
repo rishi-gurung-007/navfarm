@@ -20,7 +20,6 @@ import {
   Wheat,
   Building2,
   DollarSign,
-  LayoutDashboard,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -173,10 +172,7 @@ export default function DashboardPage() {
   // OPERATIONAL scope: view aggregated stats across every batch in this area,
   // or drill into one. Defaults to the first active batch, matching the old
   // hardcoded behavior, but is now a real, switchable selection.
-  const [batchViewMode, setBatchViewMode] = useState<string>('ALL');
-  const [piggeryViewMode, setPiggeryViewMode] = useState<'gm' | 'operations'>(
-    'gm',
-  );
+  const [batchViewMode] = useState<string>('ALL');
   // Each card, chart and section shows only what the user's role may open (Rishi, 20 Oct): the menu's own rule.
   const can = (href: string) => canOpen(user, href);
 
@@ -410,9 +406,7 @@ export default function DashboardPage() {
                   ? t('dashCompanyTitle', {
                       company: activeCompany?.company_name || 'Company',
                     })
-                  : t('dashAreaOperationsTitle', {
-                      area: activeArea?.area_name || activeLob,
-                    })
+                  : t('dashboard')
             }
             description={
               scope === 'TENANT'
@@ -605,43 +599,6 @@ export default function DashboardPage() {
                 />
                 <span>{activeArea?.area_name || activeLob}</span>
               </div>
-              {batches.length > 0 && (
-                <div
-                  className="flex h-11 min-w-0 max-w-full shrink-0 items-center gap-1.5 rounded-[var(--radius-pill)] border px-3 text-xs font-medium"
-                  style={{
-                    backgroundColor: 'var(--surface)',
-                    borderColor: 'var(--border)',
-                  }}
-                >
-                  <Layers className="h-3.5 w-3.5 text-[var(--text-secondary)]" />
-                  <span
-                    className="shrink-0 whitespace-nowrap"
-                    style={{ color: 'var(--text-secondary)' }}
-                  >
-                    {t('dashBatchColon')}
-                  </span>
-                  <Select
-                    value={batchViewMode}
-                    onChange={(e) => setBatchViewMode(e.target.value)}
-                    fullWidth={false}
-                    className="nf-input-sm min-w-0 shrink-0 truncate bg-transparent font-semibold outline-none cursor-pointer"
-                    style={{
-                      color: 'var(--text-primary)',
-                      width: '12rem',
-                      maxWidth: 'min(12rem, calc(100vw - 8rem))',
-                    }}
-                  >
-                    <option value="ALL">
-                      {t('dashAllBatches', { n: batches.length })}
-                    </option>
-                    {batches.map((b) => (
-                      <option key={b.batch_id} value={b.batch_id}>
-                        {b.batch_no}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              )}
             </>
           )}
         </div>
@@ -1441,40 +1398,9 @@ export default function DashboardPage() {
 
           return (
             <div className="space-y-6">
-              {/* View Switcher: GM Dashboard vs Batch Lifecycle Operations — the GM view reads the herd analytics,
-                so a role without the Animal Register sees the batch view only. */}
-              {can('/livestock') && (
-                <div
-                  className="flex items-center gap-2 border-b pb-2"
-                  style={{ borderColor: 'var(--border)' }}
-                >
-                  <button
-                    onClick={() => setPiggeryViewMode('gm')}
-                    className={`nf-press inline-flex items-center gap-2 rounded-[var(--radius-pill)] px-3.5 py-1 text-xs font-semibold transition-all ${
-                      piggeryViewMode === 'gm'
-                        ? 'bg-[var(--accent)] text-white shadow-xs'
-                        : 'text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]'
-                    }`}
-                  >
-                    <LayoutDashboard className="h-3.5 w-3.5" />
-                    <span>{t('gmdTitle')}</span>
-                  </button>
-
-                  <button
-                    onClick={() => setPiggeryViewMode('operations')}
-                    className={`nf-press inline-flex items-center gap-2 rounded-[var(--radius-pill)] px-3.5 py-1 text-xs font-semibold transition-all ${
-                      piggeryViewMode === 'operations'
-                        ? 'bg-[var(--accent)] text-white shadow-xs'
-                        : 'text-[var(--text-secondary)] hover:bg-[var(--surface-raised)]'
-                    }`}
-                  >
-                    <Layers className="h-3.5 w-3.5" />
-                    <span>Batch Lifecycle Operations</span>
-                  </button>
-                </div>
-              )}
-
-              {piggeryViewMode === 'gm' && can('/livestock') ? (
+              {/* A role without the Animal Register (no GM herd analytics) sees the
+                batch lifecycle view below instead — there is no toggle between them (19 Nov). */}
+              {can('/livestock') ? (
                 <PiggeryGmDashboard />
               ) : (
                 <div className="space-y-6">

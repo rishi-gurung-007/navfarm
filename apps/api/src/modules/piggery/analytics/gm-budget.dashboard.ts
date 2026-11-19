@@ -4,7 +4,7 @@
  * reads the lines in one query and calls this.
  */
 import { BUDGET_METRICS, BudgetMetricCode } from '../budget/budget-metrics';
-import { BudgetFigure, BudgetLine, monthBudget, variance, VarianceStatus, ytdBudget } from './gm-budget.metrics';
+import { BudgetFigure, BudgetLine, monthBudget, rangeBudget, variance, VarianceStatus, ytdBudget } from './gm-budget.metrics';
 import { type MetricRow, type OverheadFigures, pbtOf, type SalesFigures } from './gm-dashboard.metrics';
 
 export interface BudgetCell extends BudgetFigure {
@@ -130,4 +130,52 @@ export function budgetSection(args: {
   }));
 
   return { budget: { month, ytd, by_period }, financialRows };
+}
+
+/**
+ * A custom date range's budget section (19 Nov): Month and YTD are already the same window there, so both read the
+ * one `rangeBudget` figure — a Reporting Period's own by-period running chart has no equivalent for an arbitrary
+ * range, so `by_period` stays empty rather than inventing one.
+ */
+export function customRangeBudgetSection(args: {
+  lines: BudgetLine[];
+  farms: Array<{ farm_id: string; farm_code: string }>;
+  /** Every Reporting Period that overlaps the range, in no particular order. */
+  periods: Array<{ period_id: string; period_code: string; start_date: string; end_date: string }>;
+  from: string;
+  to: string;
+  /** Keyed by farm id and 'all'; month and ytd carry the same window's actuals. */
+  actuals: { month: Record<string, BudgetActuals>; ytd: Record<string, BudgetActuals> };
+}): { budget: GmBudgetSection; financialRows: MetricRow[] } {
+  const { lines, farms, periods, from, to, actuals } = args;
+  const keys: Array<[string, Array<{ farm_id: string; farm_code: string }>]> = [
+    ['all', farms],
+    ...farms.map((f): [string, typeof farms] => [f.farm_id, [f]]),
+  ];
+  const cellOf = (figure: BudgetFigure, actual: number | null, metric: (typeof BUDGET_METRICS)[number]): BudgetCell => ({
+    ...figure,
+    actual,
+    ...variance(actual, figure.budget, metric, figure.tolerance_pct),
+  });
+  const month: GmBudgetSection['month'] = {};
+  const ytd: GmBudgetSection['ytd'] = {};
+  for (const [key, inKey] of keys) {
+    month[key] = {};
+    ytd[key] = {};
+    for (const metric of BUDGET_METRICS) {
+      const figure = rangeBudget(lines, metric, periods, from, to, inKey);
+      month[key][metric.dashboardKey] = cellOf(figure, actuals.month[key]?.[metric.code] ?? null, metric);
+      ytd[key][metric.dashboardKey] = cellOf(figure, actuals.ytd[key]?.[metric.code] ?? null, metric);
+    }
+  }
+  const financialRows: MetricRow[] = FINANCIAL_ROWS.map((row) => ({
+    ...row,
+    cells: Object.fromEntries(
+      farms.map((f) => {
+        const c = month[f.farm_id][row.key];
+        return [f.farm_id, { value: c.actual, target: c.budget, status: c.status }];
+      }),
+    ),
+  }));
+  return { budget: { month, ytd, by_period: [] }, financialRows };
 }

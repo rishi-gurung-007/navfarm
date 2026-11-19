@@ -60,7 +60,9 @@ const HEADER = {
   requisition_date: '2026-10-05', requester_user_id: 'u-area', requester_department_id: null, sender_department_id: null,
   from_location_id: null, to_location_id: null, direct_transfer: false, created_by: 'u-area', deleted_at: null,
 };
-const FA_LINES = [{ description: 'Water pump', quantity: 1 }];
+// A Fixed Asset line now names an Item Master item too (Rishi, 19 Nov).
+const FA_LINES = [{ item_id: 'item-1', description: 'Water pump', quantity: 1 }];
+const ITEM_ROW = { item_id: 'item-1', item_code: 'IT-1', is_lot_tracked: false, is_serial_tracked: false, is_biological_asset: false };
 
 function setup(queues: Map<unknown, unknown[][]>) {
   const { db, log } = recordingDb(queues);
@@ -74,6 +76,7 @@ function setup(queues: Map<unknown, unknown[][]>) {
 
 const createQueues = (locations: unknown[][]) => new Map<unknown, unknown[][]>([
   [schema.userMaster, [[{ full_name: 'Area Admin', department_id: null, direct_transfer_allowed: false }]]],
+  [schema.itemMaster, [[ITEM_ROW]]],
   [schema.locationMaster, locations],
   // nextReqNo (no series: last number, clash check), then findOne's read-back.
   [schema.requisition, [[], [], [HEADER]]],
@@ -102,6 +105,7 @@ describe('create — the farm comes from the Main / Farm Location', () => {
 describe('update — the farm follows the Main / Farm Location', () => {
   const updateQueues = (row: Record<string, unknown>, locations: unknown[][]) => new Map<unknown, unknown[][]>([
     [schema.requisition, [[row], [row]]],
+    [schema.itemMaster, [[ITEM_ROW]]],
     [schema.locationMaster, locations],
   ]);
 

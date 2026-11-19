@@ -29,6 +29,24 @@ These apply to all work and are not up for re-litigation.
 | **Leave the dev servers running.** Close them only when memory is actually red — check `top -l 1 -n 0 \| grep PhysMem` and `sysctl vm.swapusage`. | 2026-09-07. Rishi browses the app in Brave while work happens; stopping the server pulls the page out from under him. The 8 GB machine still swaps hard, so check rather than guess.                                    |
 | **Never run `pkill`.** Kill a PID confirmed with `lsof -ti :PORT`.                                                                                | A `pkill` killed an entire working session.                                                                                                                                                                             |
 
+### Requisition boundary and Fixed Asset picker
+
+_Decided 2026-11-19 by Rishi._
+
+Feed requisitions continue to be created and fulfilled from **Feed Forecast**,
+where their forecast, silo, mill-consolidation and transfer information lives.
+They are also shown in the top-level **Requisition** list beside the common
+documents, so users have one cross-kind register; this is visibility only and
+does not route feed mutations through the common requisition API.
+
+There is no separate Fixed Asset master in NAVFarm. A Fixed Asset requisition
+is Purchase-only and now selects an active Item Master item through the same
+searchable code-and-name picker as an Item requisition. This picker includes
+biological asset items; only Item/Store requests exclude them because those
+are stock movements. The selected item's name pre-fills the required Fixed
+Asset description, which remains editable to state the requested asset
+precisely. Service remains Description + Qty only.
+
 ### Kill-sheet file storage stays on the server's local disk
 
 _Decided 2026-11-17._
@@ -5131,4 +5149,3 @@ Looked at in the browser on nf_devco as the company admin: the closed STO-2026-0
      - **COS $/tonne (USD):** Populates Month & YTD sub-metrics on the **Cost of Sales** top KPI card (`cost_of_sales / (cold_mass_kg / 1000)`), and each farm's cell in the **Slaughter & Financial Performance** matrix table with status dots (target $1,650/tonne).
      - **Kg Meat Sold / Sow / Year:** Populates using confirmed kill sheet cold mass (`coldMassKg`) as meat sold in `kgSoldPerSowYear` for both per-farm and aggregate ('all') calculations.
      - **Operational Period Selection:** `farmsWithRecords` checks on-farm operational records (farrowings, weanings, disposals), ensuring the dashboard defaults to the latest complete operating period (`2026-10`) with full multi-farm data, while allowing selection of newer periods like `2026-11` where confirmed kill sheets supply actual slaughtered heads and Avg CDM.
-

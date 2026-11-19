@@ -16,8 +16,8 @@
  *
  * What is ours (no field specification exists for these — flagged the same
  * way the Phase 9 MVP fields were): the line-level field shape per type (an
- * Item line is an Item Master row; FA and Service lines carry a description
- * only — Rishi's list, confirmed 5 Oct), the quantity bounds, the
+ * Item and Fixed Asset lines select an Item Master row; a Service line carries
+ * a description only — Rishi, 19 Nov), the quantity bounds, the
  * legacy-status projections, and the statement that Balance to Ship and
  * Remaining to Receive are computed, never stored.
  */
@@ -131,8 +131,8 @@ export function assertLineFields(docType: CommonDocType, line: RequisitionLineRu
   if (!(Number(line.quantity) > 0)) {
     throw new BadRequestException(`${at} needs a quantity greater than zero.`);
   }
-  // WP1c addendum (decisions.md 2026-10-05): Rishi's list makes an FA/Service
-  // line "Description + Qty only", so only an ITEM line carries a unit. The
+  // Fixed Asset and Service lines carry no unit. An FA line identifies the
+  // selected Item Master asset; a Service line remains Description + Qty.
   // column is nullable from 0149, which means the per-kind rule has to live
   // here — the database cannot express "required for one kind of row".
   // A unit already stored on an older FA/Service row is left alone rather than
@@ -155,7 +155,7 @@ export function assertLineFields(docType: CommonDocType, line: RequisitionLineRu
       if (present(line.resource_id)) throw new BadRequestException(`${at}: an Item requisition line cannot reference a Resource.`);
       break;
     case 'FA':
-      if (present(line.item_id)) throw new BadRequestException(`${at}: a Fixed Asset line cannot reference an inventory item.`);
+      if (!present(line.item_id)) throw new BadRequestException(`${at} needs an Item Master item.`);
       if (present(line.resource_id)) throw new BadRequestException(`${at}: a Fixed Asset line cannot reference a Resource.`);
       if (!present(line.description)) throw new BadRequestException(`${at} needs a Fixed Asset description.`);
       break;
