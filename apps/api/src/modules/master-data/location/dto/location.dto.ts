@@ -3,6 +3,9 @@ import { IsString, IsNotEmpty, IsOptional, IsUUID, IsBoolean, IsInt, Min, Max, I
 import { Transform, Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
 
+/** Location types with no general Max Capacity / Capacity UOM: silo, mill and bin have their own capacity fields; a store has none. */
+export const CAPACITY_EXEMPT_TYPES = ['SILO', 'MILL', 'BIN', 'STORE'];
+
 export class CreateLocationDto {
   @ApiProperty({ description: 'Company UUID scope', required: false })
   @IsUUID()
@@ -81,19 +84,21 @@ export class CreateLocationDto {
   @IsOptional()
   area_unit?: string;
 
+  // Not required for STORE either (client, 18 Nov): a store holds stock, not head, so a
+  // head-count capacity means nothing there; the form no longer asks for it.
   // Not required for SILO: Silo Capacity (KG) + Silo Reorder Days below are
   // what a silo's own capacity/reorder logic actually uses, and asking for a
   // second, general capacity right next to it read as the same question
   // twice (client request, 2026-09-22). ValidateIf keys off the DTO's own
   // location_type field, so this still runs before the entity is loaded.
   @ApiProperty({ description: 'Maximum storage or bird/animal capacity limit. Not required for SILO.', required: false })
-  @ValidateIf((dto: CreateLocationDto) => !['SILO', 'MILL', 'BIN'].includes(dto.location_type))
+  @ValidateIf((dto: CreateLocationDto) => !CAPACITY_EXEMPT_TYPES.includes(dto.location_type))
   @IsNumber()
   @Min(0)
   max_capacity?: number;
 
   @ApiProperty({ description: 'Capacity unit representation. Not required for SILO.', required: false })
-  @ValidateIf((dto: CreateLocationDto) => !['SILO', 'MILL', 'BIN'].includes(dto.location_type))
+  @ValidateIf((dto: CreateLocationDto) => !CAPACITY_EXEMPT_TYPES.includes(dto.location_type))
   @IsString()
   @IsNotEmpty()
   capacity_uom?: string;

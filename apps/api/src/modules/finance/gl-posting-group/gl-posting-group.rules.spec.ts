@@ -13,7 +13,7 @@ describe('posting group rules', () => {
   it('refuses the other kind\'s accounts, a missing code and name, and an unknown kind', () => {
     expect(validateGroup('INVENTORY', 'G', 'n', { inventory_gl_id: 'I', asset_gl_id: 'A' })).toEqual(['Acquisition cost account does not belong on a INVENTORY group.']);
     expect(validateGroup('BIOLOGICAL', ' ', '', { asset_gl_id: 'A' })).toEqual(['Enter a group code.', 'Enter a group name.']);
-    expect(validateGroup('X', 'G', 'n', {})).toEqual(['Kind must be BIOLOGICAL or INVENTORY.']);
+    expect(validateGroup('X', 'G', 'n', {})).toEqual(['Group Type must be Biological or Inventory.']);
   });
   it('clears the accounts of the other kind', () => {
     expect(accountsOfKind('INVENTORY', { inventory_gl_id: 'I', asset_gl_id: 'A' })).toMatchObject({ inventory_gl_id: 'I', asset_gl_id: null });

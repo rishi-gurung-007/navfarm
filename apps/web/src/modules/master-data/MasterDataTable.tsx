@@ -740,9 +740,21 @@ export function MasterDataTable({
     {},
   );
   // What choosing a record filled a coordinate pair with, keyed by field key — or why it could not.
-  const [coordinateSource, setCoordinateSource] = useState<Record<string, { label: string; filled: boolean }>>({});
+  const [coordinateSource, setCoordinateSource] = useState<
+    Record<string, { label: string; filled: boolean }>
+  >({});
   // Context points drawn on a "map" field (a route's start, destination and existing stops), keyed by field key.
-  const [mapMarks, setMapMarks] = useState<Record<string, Array<{ latitude: number; longitude: number; label: string; kind?: 'START' | 'END' | 'STOP' }>>>({});
+  const [mapMarks, setMapMarks] = useState<
+    Record<
+      string,
+      Array<{
+        latitude: number;
+        longitude: number;
+        label: string;
+        kind?: 'START' | 'END' | 'STOP';
+      }>
+    >
+  >({});
   // What a "map" field's auto-distance call last did, keyed by field key: whether it is in flight, the point it
   // measured from, and whether the answer came from the road network or the straight line.
   const [mapDistance, setMapDistance] = useState<
@@ -1237,6 +1249,22 @@ export function MasterDataTable({
    * the field's entityValueKey — the same distinction the form makes between a
    * stored uom_code and a stored UUID.
    */
+  /** A filterEndpoint column shows the picked row's label (GRN No., item code) rather than its id. */
+  const entityCellLabel = (row: Row, key: string): string | undefined => {
+    const field = config.fields.find((f) => f.key === key);
+    if (!field?.filterEndpoint) return undefined;
+    const v = row[key];
+    if (v === null || v === undefined || v === '') return undefined;
+    const valueKey = field.entityValueKey || 'id';
+    const hit = (entityOptions[field.filterEndpoint] || []).find(
+      (r) => String(r[valueKey]) === String(v),
+    );
+    if (!hit) return undefined;
+    return (
+      entityDisplayText(hit, field.entityLabelKeys || [], valueKey) || undefined
+    );
+  };
+
   const filterChoicesFor = (
     key: string,
   ): { value: string; label: string }[] | undefined => {
@@ -2307,7 +2335,8 @@ export function MasterDataTable({
       // the longitude never reached the form on edit: the pin was missing from a record that had one, and saving
       // wrote the longitude back as null.
       if (f.type === 'latlng' || f.type === 'map') {
-        const latKey = f.type === 'map' ? f.mapLatitudeKey || 'latitude' : f.key;
+        const latKey =
+          f.type === 'map' ? f.mapLatitudeKey || 'latitude' : f.key;
         const lngKey = f.mapLongitudeKey || 'longitude';
         initial[latKey] = row[latKey];
         initial[lngKey] = row[lngKey];
@@ -2397,6 +2426,32 @@ export function MasterDataTable({
       return undefined;
     return f.validate(v, form) ?? undefined;
   };
+
+  // Item → Bio Asset Costing: with "Weight × price per kg" the residual value is weight times price, shown
+  // read only. Display only — the API stores weight and price, and the total is never sent (see the payload).
+  useEffect(() => {
+    if (config.key !== 'item') return;
+    const w = Number(form.bio_residual_weight_kg);
+    const p = Number(form.bio_residual_price_per_kg);
+    const total =
+      form.bio_residual_rule === 'WEIGHT_X_PRICE' &&
+      form.bio_residual_weight_kg !== '' &&
+      form.bio_residual_weight_kg != null &&
+      form.bio_residual_price_per_kg !== '' &&
+      form.bio_residual_price_per_kg != null &&
+      Number.isFinite(w) &&
+      Number.isFinite(p)
+        ? (w * p).toFixed(2)
+        : '';
+    if ((form.bio_residual_total ?? '') !== total)
+      setForm((prev) => ({ ...prev, bio_residual_total: total }));
+  }, [
+    config.key,
+    form.bio_residual_rule,
+    form.bio_residual_weight_kg,
+    form.bio_residual_price_per_kg,
+    form.bio_residual_total,
+  ]);
 
   const setField = (key: string, value: any) => {
     if (key === numbering.codeKey) {
@@ -2729,9 +2784,13 @@ export function MasterDataTable({
         // nulls, so a point can be taken off a record that already had one.
         if (f.type === 'latlng') {
           const asCoord = (raw: any) =>
-            raw === '' || raw === undefined || raw === null ? null : Number(raw);
+            raw === '' || raw === undefined || raw === null
+              ? null
+              : Number(raw);
           payload[f.key] = asCoord(v);
-          payload[f.mapLongitudeKey || 'longitude'] = asCoord(form[f.mapLongitudeKey || 'longitude']);
+          payload[f.mapLongitudeKey || 'longitude'] = asCoord(
+            form[f.mapLongitudeKey || 'longitude'],
+          );
           continue;
         }
         if (v === '' || v === undefined || v === null) continue;
@@ -2794,6 +2853,7 @@ export function MasterDataTable({
           delete payload.tracking_series_id;
         }
         delete payload.tracking_type;
+        delete payload.bio_residual_total;
       }
 
       if (form.item_template_id || editing?.item_template_id) {
@@ -2862,7 +2922,9 @@ export function MasterDataTable({
       if (config.key === 'item' && !editing && form.is_qc_required) {
         if (pendingQcSpec.length === 0) {
           throw new Error(
-            tLabel('QC Required needs at least one check. Add it under QC Specification.'),
+            tLabel(
+              'QC Required needs at least one check. Add it under QC Specification.',
+            ),
           );
         }
         payload.qc_specs = toApiLines(pendingQcSpec);
@@ -3042,12 +3104,19 @@ export function MasterDataTable({
       let ready = true;
       for (const [param, formKey] of Object.entries(spec.params)) {
         const value = form[formKey];
-        if (value === undefined || value === null || value === '') { ready = false; break; }
+        if (value === undefined || value === null || value === '') {
+          ready = false;
+          break;
+        }
         params.set(param, String(value));
       }
       // A stop is not context for itself.
-      if (ready && spec.idParam && editing?.[config.idKey]) params.set(spec.idParam, String(editing[config.idKey]));
-      return { key: f.key, url: ready ? `${spec.endpoint}?${params.toString()}` : '' };
+      if (ready && spec.idParam && editing?.[config.idKey])
+        params.set(spec.idParam, String(editing[config.idKey]));
+      return {
+        key: f.key,
+        url: ready ? `${spec.endpoint}?${params.toString()}` : '',
+      };
     });
   const markQueryKey = markQueries.map((q) => `${q.key}=${q.url}`).join('&');
 
@@ -3055,7 +3124,9 @@ export function MasterDataTable({
     let cancelled = false;
     for (const { key, url } of markQueries) {
       if (!url) {
-        setMapMarks((prev) => (prev[key]?.length ? { ...prev, [key]: [] } : prev));
+        setMapMarks((prev) =>
+          prev[key]?.length ? { ...prev, [key]: [] } : prev,
+        );
         continue;
       }
       api
@@ -3063,7 +3134,10 @@ export function MasterDataTable({
         .then((res: any) => {
           if (cancelled) return;
           const rows = unwrap<any[]>(res);
-          setMapMarks((prev) => ({ ...prev, [key]: Array.isArray(rows) ? rows : [] }));
+          setMapMarks((prev) => ({
+            ...prev,
+            [key]: Array.isArray(rows) ? rows : [],
+          }));
         })
         // A map with no context points is still usable; it just has nothing to place the new one against.
         .catch(() => {
@@ -3091,19 +3165,33 @@ export function MasterDataTable({
     (f) => (f.type === 'latlng' && f.coordinatesFrom) || f.copyFrom,
   );
   const coordinateSourceKey = coordinateFields
-    .map((f) => `${f.key}=${form[(f.coordinatesFrom ?? f.copyFrom)!.sourceKey] ?? ''}`)
+    .map(
+      (f) =>
+        `${f.key}=${form[(f.coordinatesFrom ?? f.copyFrom)!.sourceKey] ?? ''}`,
+    )
     .join('&');
 
   /** The record currently chosen in `sourceKey`, from the options that field already fetched. */
-  const chosenRecordOf = (sourceKey: string): { row: Row; label: string } | null => {
+  const chosenRecordOf = (
+    sourceKey: string,
+  ): { row: Row; label: string } | null => {
     const source = config.fields.find((f) => f.key === sourceKey);
     const chosen = String(form[sourceKey] ?? '');
-    const rows = source?.entityEndpoint ? entityOptions[source.entityEndpoint] : undefined;
-    const row = rows?.find((r) => String(r[source?.entityValueKey || 'id'] ?? '') === chosen);
+    const rows = source?.entityEndpoint
+      ? entityOptions[source.entityEndpoint]
+      : undefined;
+    const row = rows?.find(
+      (r) => String(r[source?.entityValueKey || 'id'] ?? '') === chosen,
+    );
     if (!row) return null;
     return {
       row,
-      label: String((source?.entityLabelKeys || []).map((k) => row[k]).filter(Boolean).join(' — ') || 'That record'),
+      label: String(
+        (source?.entityLabelKeys || [])
+          .map((k) => row[k])
+          .filter(Boolean)
+          .join(' — ') || 'That record',
+      ),
     };
   };
 
@@ -3149,12 +3237,18 @@ export function MasterDataTable({
       const lat = toCoordinate(row[coords.latitudeKey]);
       const lng = toCoordinate(row[coords.longitudeKey]);
       if (lat === null || lng === null) {
-        setCoordinateSource((prev) => ({ ...prev, [field.key]: { label, filled: false } }));
+        setCoordinateSource((prev) => ({
+          ...prev,
+          [field.key]: { label, filled: false },
+        }));
         continue;
       }
       setField(field.key, lat);
       setField(field.mapLongitudeKey || 'longitude', lng);
-      setCoordinateSource((prev) => ({ ...prev, [field.key]: { label, filled: true } }));
+      setCoordinateSource((prev) => ({
+        ...prev,
+        [field.key]: { label, filled: true },
+      }));
       void fillMapDistance(field.key, lat, lng);
     }
     // Keyed on the chosen records alone: `coordinateFields` is rebuilt every render.
@@ -3171,24 +3265,39 @@ export function MasterDataTable({
     );
     const auto = mapField?.mapAutoDistance;
     if (!auto) return;
-    const params: Record<string, string> = { latitude: String(lat), longitude: String(lng) };
+    const params: Record<string, string> = {
+      latitude: String(lat),
+      longitude: String(lng),
+    };
     for (const [param, formKey] of Object.entries(auto.params)) {
       const supplied = form[formKey];
       // Not enough on the form yet to say what this is measured from — leave the distance to be typed.
-      if (supplied === undefined || supplied === null || supplied === '') return;
+      if (supplied === undefined || supplied === null || supplied === '')
+        return;
       params[param] = String(supplied);
     }
     setMapDistance((prev) => ({ ...prev, [latKey]: { busy: true } }));
     try {
-      const res = unwrap<any>(await api.get(`${auto.endpoint}?${new URLSearchParams(params).toString()}`));
+      const res = unwrap<any>(
+        await api.get(
+          `${auto.endpoint}?${new URLSearchParams(params).toString()}`,
+        ),
+      );
       const km = Number(res?.km);
-      if (!Number.isFinite(km)) throw new Error('The distance could not be worked out.');
+      if (!Number.isFinite(km))
+        throw new Error('The distance could not be worked out.');
       setField(auto.targetKey, km);
-      setMapDistance((prev) => ({ ...prev, [latKey]: { from: res?.from, source: res?.source } }));
+      setMapDistance((prev) => ({
+        ...prev,
+        [latKey]: { from: res?.from, source: res?.source },
+      }));
     } catch (err: any) {
       setMapDistance((prev) => ({
         ...prev,
-        [latKey]: { error: err?.message || 'The distance could not be worked out. Type it in.' },
+        [latKey]: {
+          error:
+            err?.message || 'The distance could not be worked out. Type it in.',
+        },
       }));
     }
   };
@@ -3981,7 +4090,12 @@ export function MasterDataTable({
       const lngKey = f.mapLongitudeKey || 'longitude';
       const lat = toCoordinate(value);
       const lng = toCoordinate(form[lngKey]);
-      const box = (key: string, placeholder: string, current: number | null, isLat: boolean) => (
+      const box = (
+        key: string,
+        placeholder: string,
+        current: number | null,
+        isLat: boolean,
+      ) => (
         <input
           type="number"
           step="0.0000001"
@@ -4011,7 +4125,12 @@ export function MasterDataTable({
             {box(lngKey, 'Longitude', lng, false)}
           </div>
           {from && (
-            <p className="text-[11px]" style={from.filled ? S.muted : { color: 'var(--warning, #b45309)' }}>
+            <p
+              className="text-[11px]"
+              style={
+                from.filled ? S.muted : { color: 'var(--warning, #b45309)' }
+              }
+            >
               {from.filled
                 ? `Taken from ${from.label}. Move the pin if the truck pulls in somewhere else.`
                 : `${from.label} has no coordinates in its own master, so nothing was filled in. Place the point on the map.`}
@@ -4041,7 +4160,10 @@ export function MasterDataTable({
             longitude={lng}
             onPick={pick}
             disabled={fieldDisabled}
-            marks={mapMarks[f.key] ?? (state.from ? [{ ...state.from, kind: 'START' as const }] : [])}
+            marks={
+              mapMarks[f.key] ??
+              (state.from ? [{ ...state.from, kind: 'START' as const }] : [])
+            }
             busy={state.busy}
           />
           {state.error ? (
@@ -5573,13 +5695,14 @@ export function MasterDataTable({
                                     className="whitespace-nowrap"
                                     style={S.primary}
                                   >
-                                    {displayValue(
-                                      row,
-                                      c.key,
-                                      t('mdYes'),
-                                      t('mdNo'),
-                                      c,
-                                    )}
+                                    {entityCellLabel(row, c.key) ??
+                                      displayValue(
+                                        row,
+                                        c.key,
+                                        t('mdYes'),
+                                        t('mdNo'),
+                                        c,
+                                      )}
                                   </TableCell>
                                 )}
                                 {idx === 0 && (
@@ -5895,20 +6018,20 @@ export function MasterDataTable({
             )}
           {config.key === 'item' &&
             (form.is_qc_required ?? editing?.is_qc_required) && (
-            <DialogHeaderActions>
-              <button
-                type="button"
-                onClick={() => setQcSpecOpen(true)}
-                className="rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer"
-                style={S.surface}
-              >
-                {tLabel('QC Specification')}
-                {!editing && pendingQcSpec.length > 0
-                  ? ` (${pendingQcSpec.length})`
-                  : ''}
-              </button>
-            </DialogHeaderActions>
-          )}
+              <DialogHeaderActions>
+                <button
+                  type="button"
+                  onClick={() => setQcSpecOpen(true)}
+                  className="rounded-lg border px-3 py-1.5 text-xs font-semibold cursor-pointer"
+                  style={S.surface}
+                >
+                  {tLabel('QC Specification')}
+                  {!editing && pendingQcSpec.length > 0
+                    ? ` (${pendingQcSpec.length})`
+                    : ''}
+                </button>
+              </DialogHeaderActions>
+            )}
           {subDialogNames.length > 0 && (
             <DialogHeaderActions>
               {subDialogNames.map((name) => (
@@ -5965,7 +6088,7 @@ export function MasterDataTable({
                         hint={
                           templateLockedFields.has(f.key)
                             ? '🔒 Set by template'
-                            : lockHint(f) ?? f.hintFor?.(form)
+                            : (lockHint(f) ?? f.hintFor?.(form))
                         }
                         tooltip={f.helpTextFor?.(form) ?? f.helpText}
                         className={
@@ -6081,7 +6204,7 @@ export function MasterDataTable({
                       hint={
                         templateLockedFields.has(f.key)
                           ? '🔒 Set by template'
-                          : lockHint(f) ?? f.hintFor?.(form)
+                          : (lockHint(f) ?? f.hintFor?.(form))
                       }
                       tooltip={f.helpTextFor?.(form) ?? f.helpText}
                       className={

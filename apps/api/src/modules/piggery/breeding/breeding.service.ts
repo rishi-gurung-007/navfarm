@@ -512,6 +512,62 @@ export class BreedingService {
     }
   }
 
+  /**
+   * Client, 18 Nov: only an animal standing in the Insemination stage is served, and never an immature one.
+   * Stage: her current stage must be INSEMINATION (a gilt in rearing or quarantine, a pregnant or nursing sow,
+   * a sow in Flush are all moved to Insemination first). Maturity: when her date of birth and her breed's
+   * age at productive maturity are both known, she must have reached that age by the mating date.
+   */
+  private async assertSowReadyForInsemination(
+    sow: typeof schema.animalRegister.$inferSelect,
+    matingDate: string,
+    tenantId: string,
+  ): Promise<void> {
+    const [stage] = sow.current_stage_id
+      ? await this.db
+          .select({
+            stage_code: schema.stageMaster.stage_code,
+            stage_name: schema.stageMaster.stage_name,
+          })
+          .from(schema.stageMaster)
+          .where(eq(schema.stageMaster.stage_id, sow.current_stage_id))
+          .limit(1)
+      : [];
+    if (!stage) {
+      throw new BadRequestException(
+        `${sow.animal_code} has no current stage. Move her to the Insemination stage before she is served.`,
+      );
+    }
+    if (String(stage.stage_code).toUpperCase() !== 'INSEMINATION') {
+      throw new BadRequestException(
+        `${sow.animal_code} is in the ${stage.stage_name} stage. Only an animal in the Insemination stage can be served; transfer her to Insemination first.`,
+      );
+    }
+
+    if (!sow.dob || !sow.breed_id) return;
+    const [breed] = await this.db
+      .select({ mature_age_months: schema.breedMaster.mature_age_months })
+      .from(schema.breedMaster)
+      .where(
+        and(
+          eq(schema.breedMaster.breed_id, sow.breed_id),
+          eq(schema.breedMaster.tenant_id, tenantId),
+        ),
+      )
+      .limit(1);
+    const matureMonths = Number(breed?.mature_age_months);
+    if (!matureMonths || matureMonths <= 0) return;
+    const born = new Date(`${String(sow.dob).slice(0, 10)}T00:00:00Z`);
+    const mature = new Date(born);
+    mature.setUTCMonth(mature.getUTCMonth() + matureMonths);
+    const served = new Date(`${String(matingDate).slice(0, 10)}T00:00:00Z`);
+    if (served < mature) {
+      throw new BadRequestException(
+        `${sow.animal_code} is immature: her breed is mature at ${matureMonths} months and she reaches it on ${mature.toISOString().slice(0, 10)}. She cannot be served before then.`,
+      );
+    }
+  }
+
   /** The semen lot a service draws from: collected on or before the service, not past its expiry. */
   private async assertLotUsable(
     lotId: string,
@@ -580,6 +636,7 @@ export class BreedingService {
     );
     await this.assertBatchOnSowFarm(batchId, sow, tenantId);
     await this.assertSowCanBeServed(sow, tenantId);
+    await this.assertSowReadyForInsemination(sow, dto.mating_date, tenantId);
     this.assertNotFuture(dto.mating_date, 'The mating date');
     if (dto.second_mating_date) {
       if (dto.second_mating_date < dto.mating_date)

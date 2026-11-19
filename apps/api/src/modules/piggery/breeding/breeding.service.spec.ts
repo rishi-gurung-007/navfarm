@@ -192,6 +192,50 @@ describe('BreedingService', () => {
     }).compile();
 
     service = module.get<BreedingService>(BreedingService);
+    // The stage and maturity rule has its own tests ("only an animal ready for insemination is served");
+    // the other mating tests are about what follows it, so their sows pass it.
+    readySpy = jest
+      .spyOn(service as any, 'assertSowReadyForInsemination')
+      .mockResolvedValue(undefined);
+  });
+
+  let readySpy: jest.SpyInstance;
+
+  describe('only an animal ready for insemination is served (client, 18 Nov)', () => {
+    const sow = (over: Record<string, unknown> = {}) => ({
+      animal_id: 'sow-1',
+      animal_code: 'SOW-001',
+      breed_id: 'breed-1',
+      dob: null,
+      current_stage_id: 'st-ins',
+      ...over,
+    });
+    const check = (s: Record<string, unknown>, date = '2026-11-18') =>
+      (service as any).assertSowReadyForInsemination(s, date, 'tenant-1');
+
+    beforeEach(() => readySpy.mockRestore());
+
+    it('serves an animal in the Insemination stage', async () => {
+      rows.set(schema.stageMaster, [{ stage_code: 'INSEMINATION', stage_name: 'Insemination' }]);
+      await expect(check(sow())).resolves.toBeUndefined();
+    });
+
+    it('refuses an animal in any other stage, naming the stage', async () => {
+      rows.set(schema.stageMaster, [{ stage_code: 'GESTATION', stage_name: 'Gestation' }]);
+      await expect(check(sow())).rejects.toThrow('SOW-001 is in the Gestation stage');
+    });
+
+    it('refuses an animal with no stage', async () => {
+      await expect(check(sow({ current_stage_id: null }))).rejects.toThrow('has no current stage');
+    });
+
+    it('refuses an immature animal, and serves her once she reaches the breed maturity age', async () => {
+      rows.set(schema.stageMaster, [{ stage_code: 'INSEMINATION', stage_name: 'Insemination' }]);
+      rows.set(schema.breedMaster, [{ mature_age_months: 8 }]);
+      const gilt = sow({ dob: '2026-04-01' });
+      await expect(check(gilt, '2026-11-30')).rejects.toThrow('is immature: her breed is mature at 8 months and she reaches it on 2026-12-01');
+      await expect(check(gilt, '2026-12-01')).resolves.toBeUndefined();
+    });
   });
 
   describe('recordMating', () => {

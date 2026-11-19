@@ -422,13 +422,17 @@ export default function PacksPanel() {
                   className="font-semibold uppercase tracking-wider"
                   style={S.muted}
                 >
-                  {t('pkNetGrossWeight')}
+                  {/* A pack counted in units (a semen pack in DOSE) has no gross weight: it showed
+                      "30 / N/A DOSE". It now reads "30 DOSE" under Quantity (client, 18 Nov). */}
+                  {viewing.gross_weight != null
+                    ? t('pkNetGrossWeight')
+                    : t('pkPackQuantity')}
                 </p>
                 <p style={S.primary}>
-                  {formatQuantity(viewing.net_weight)} /{' '}
+                  {formatQuantity(viewing.net_weight)}
                   {viewing.gross_weight != null
-                    ? formatQuantity(viewing.gross_weight)
-                    : NA}{' '}
+                    ? ` / ${formatQuantity(viewing.gross_weight)}`
+                    : ''}{' '}
                   {viewing.pack_uom}
                 </p>
               </div>
