@@ -1290,16 +1290,14 @@ export function MasterDataTable({
       }
       return opts;
     }
-    if (
-      field.type !== 'select-entity' ||
-      field.dependsOn ||
-      !field.entityEndpoint
-    )
-      return undefined;
-    const loaded =
-      entityOptions[
-        entityOptionsKey(field.entityEndpoint, field.entityIncludeInactive)
-      ];
+    if (field.type !== 'select-entity') return undefined;
+    // filterEndpoint is the field's unscoped list-filter variant — present precisely for a
+    // select-entity field whose form picker depends on another field the filter panel has no
+    // value for (Source GRN depends on the chosen Item; the filter offers every GRN instead).
+    const ep =
+      field.filterEndpoint || (!field.dependsOn ? field.entityEndpoint : undefined);
+    if (!ep) return undefined;
+    const loaded = entityOptions[entityOptionsKey(ep, field.entityIncludeInactive)];
     if (!loaded?.length) return undefined;
     const valueKey = field.entityValueKey || 'id';
     const labelKeys = field.entityLabelKeys || [];
@@ -1798,7 +1796,11 @@ export function MasterDataTable({
     // dropdowns are otherwise never populated because they are not top-level
     // fields.
     const loads = new Map<string, { ep: string; includeInactive: boolean }>();
-    [...config.fields, ...config.fields.flatMap((f) => f.jsonRow || [])]
+    const allFields = [
+      ...config.fields,
+      ...config.fields.flatMap((f) => f.jsonRow || []),
+    ];
+    allFields
       .filter(
         (f) => f.type === 'select-entity' && f.entityEndpoint && !f.dependsOn,
       )
@@ -1806,6 +1808,18 @@ export function MasterDataTable({
         const includeInactive = !!f.entityIncludeInactive;
         loads.set(entityOptionsKey(f.entityEndpoint!, includeInactive), {
           ep: f.entityEndpoint!,
+          includeInactive,
+        });
+      });
+    // A field's filterEndpoint is its unscoped list-filter variant — e.g. Source GRN's form
+    // picker depends on the chosen Item, but the list filter has no Item selected, so it
+    // loads this separately regardless of dependsOn (client, 19 Nov).
+    allFields
+      .filter((f) => f.type === 'select-entity' && f.filterEndpoint)
+      .forEach((f) => {
+        const includeInactive = !!f.entityIncludeInactive;
+        loads.set(entityOptionsKey(f.filterEndpoint!, includeInactive), {
+          ep: f.filterEndpoint!,
           includeInactive,
         });
       });

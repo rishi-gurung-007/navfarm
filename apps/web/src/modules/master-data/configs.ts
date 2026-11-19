@@ -1376,7 +1376,9 @@ const animal: MasterDataConfig = {
       entityValueKey: 'receipt_id',
       entityLabelKeys: ['receipt_no', 'animals_left_label'],
       selectedLabelKey: 'receipt_no',
-      filterEndpoint: '/goods-receipt?status=POSTED',
+      // The list filter has no chosen Item to scope by (unlike the form field above, which does), so it
+      // offers every posted GRN of a living-asset item instead (19 Nov).
+      filterEndpoint: '/goods-receipt?status=POSTED&itemType=LIVING_ASSET',
       entityColumnHeaders: ['GRN No.', 'Animals Left'],
       fills: [
         { key: 'entry_date', rowKeys: ['posting_date'] },
