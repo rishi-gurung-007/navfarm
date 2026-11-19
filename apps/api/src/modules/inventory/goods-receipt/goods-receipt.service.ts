@@ -16,6 +16,7 @@ import { FeedAlertService } from '../feed-alert/feed-alert.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { QcInspectionService } from '../qc-inspection/qc-inspection.service';
 import { itemKindOf } from '../../../common/item-kinds';
+import { itemKindCondition } from '../../master-data/item/item-kind-filter';
 import { bioCodes, bioEventCondition } from '../bio-asset-ledger/bio-asset-ledger.types';
 
 /** The Number Series master's "Applies To" key for GRNs, and the code of the series made when a company has none. */
@@ -482,6 +483,16 @@ export class GoodsReceiptService {
     if (query.companyId) conditions.push(eq(schema.goodsReceipt.company_id, query.companyId));
     if (query.status) conditions.push(eq(schema.goodsReceipt.status, query.status));
     if (query.warehouseId) conditions.push(eq(schema.goodsReceipt.warehouse_id, query.warehouseId));
+    // Animal Register's Source GRN filter (19 Nov): any receipt with at least one line whose item is of
+    // this kind, not just the one item a draft animal is being entered against — animalItemId above.
+    if (query.itemType) {
+      const kindCondition = itemKindCondition(query.itemType, tenantId, this.cls, query.companyId);
+      conditions.push(sql`${schema.goodsReceipt.receipt_id} IN (
+        SELECT ${schema.goodsReceiptLine.receipt_id} FROM ${schema.goodsReceiptLine}
+        INNER JOIN ${schema.itemMaster} ON ${schema.itemMaster.item_id} = ${schema.goodsReceiptLine.item_id}
+        WHERE ${kindCondition}
+      )`);
+    }
     if (query.search) {
       conditions.push(
         or(

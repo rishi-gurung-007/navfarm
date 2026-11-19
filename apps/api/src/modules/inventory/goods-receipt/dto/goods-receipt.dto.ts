@@ -160,6 +160,11 @@ export class QueryGoodsReceiptDto {
   @IsUUID()
   animalItemId?: string;
 
+  @ApiProperty({ description: 'Only receipts with at least one line whose item is of this kind (e.g. LIVING_ASSET) — same `itemType` semantics as GET /item.', required: false })
+  @IsOptional()
+  @IsString()
+  itemType?: string;
+
   @ApiProperty({ description: 'Goods receipts have no is_active flag — findAll already excludes soft-deleted rows unconditionally. Declared so pickers can send the same isActive param every other list endpoint accepts without a 400.', required: false })
   @IsOptional()
   @IsBoolean()
