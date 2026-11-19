@@ -20,6 +20,7 @@ import {
   CalendarClock,
   FileText,
   AlertTriangle,
+  ArrowUpDown,
 } from 'lucide-react';
 import QRCode from 'react-qr-code';
 import { api } from '@/services/api-client';
@@ -122,10 +123,12 @@ export default function BatchPanel() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  // Client, 18 Nov: users pick the order. The list is fetched whole (up to 200) and paged here, so it is sorted here.
-  const [sortOrder, setSortOrder] = useState<
-    'NEWEST' | 'OLDEST' | 'BATCH_ASC' | 'BATCH_DESC'
-  >('NEWEST');
+  // Client, 18 Nov: the list is fetched whole (up to 200) and paged here, so sorting by a clicked
+  // column header — same pattern as the master-data tables — is also done here, not server-side.
+  const [sortKey, setSortKey] = useState<
+    'batch_no' | 'start_date' | 'costing_method' | 'opening_quantity' | 'unit_cost' | 'status'
+  >('start_date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
 
@@ -407,21 +410,40 @@ export default function BatchPanel() {
 
   useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, pageSize, sortOrder]);
-  // Newest/oldest go by Start Date, then by when the batch was created (two batches started the same day).
+  }, [search, statusFilter, pageSize, sortKey, sortDir]);
+  // Start Date ties go by when the batch was created (two batches started the same day).
   const sortedRows = [...rows].sort((a, b) => {
-    if (sortOrder === 'BATCH_ASC' || sortOrder === 'BATCH_DESC') {
-      const cmp = String(a.batch_no ?? '').localeCompare(
-        String(b.batch_no ?? ''),
-        undefined,
-        { numeric: true },
-      );
-      return sortOrder === 'BATCH_ASC' ? cmp : -cmp;
+    let cmp = 0;
+    switch (sortKey) {
+      case 'batch_no':
+        cmp = String(a.batch_no ?? '').localeCompare(
+          String(b.batch_no ?? ''),
+          undefined,
+          { numeric: true },
+        );
+        break;
+      case 'start_date': {
+        const key = (r: Row) =>
+          `${String(r.start_date ?? '').slice(0, 10)}|${String(r.created_at ?? '')}`;
+        cmp = key(a).localeCompare(key(b));
+        break;
+      }
+      case 'costing_method':
+        cmp = String(a.costing_method ?? '').localeCompare(
+          String(b.costing_method ?? ''),
+        );
+        break;
+      case 'opening_quantity':
+        cmp = (Number(a.opening_quantity) || 0) - (Number(b.opening_quantity) || 0);
+        break;
+      case 'unit_cost':
+        cmp = (Number(a.unit_cost) || 0) - (Number(b.unit_cost) || 0);
+        break;
+      case 'status':
+        cmp = String(a.status ?? '').localeCompare(String(b.status ?? ''));
+        break;
     }
-    const key = (r: Row) =>
-      `${String(r.start_date ?? '').slice(0, 10)}|${String(r.created_at ?? '')}`;
-    const cmp = key(a).localeCompare(key(b));
-    return sortOrder === 'OLDEST' ? cmp : -cmp;
+    return sortDir === 'asc' ? cmp : -cmp;
   });
   const pagedRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
 
@@ -1793,6 +1815,35 @@ export default function BatchPanel() {
     }
   };
 
+  const sortableHead = (key: typeof sortKey, label: string, right?: boolean) => {
+    const active = sortKey === key;
+    return (
+      <TableHead className={`whitespace-nowrap${right ? ' text-right' : ''}`}>
+        <button
+          type="button"
+          onClick={() => {
+            if (active) {
+              setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+              return;
+            }
+            setSortKey(key);
+            setSortDir('asc');
+          }}
+          aria-label={t('mdSortBy', { name: label })}
+          className="inline-flex items-center gap-1 font-semibold transition-colors hover:text-(--accent) focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)"
+          style={active ? { color: 'var(--accent)' } : undefined}
+        >
+          {label}
+          <ArrowUpDown
+            className="h-3 w-3 shrink-0"
+            aria-hidden
+            style={{ opacity: active ? 1 : 0.35 }}
+          />
+        </button>
+      </TableHead>
+    );
+  };
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1805,21 +1856,6 @@ export default function BatchPanel() {
           </p>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          <div className="w-44">
-            <SearchableSelect
-              ariaLabel="Sort Batches"
-              value={sortOrder}
-              onChange={(val) =>
-                setSortOrder((val || 'NEWEST') as typeof sortOrder)
-              }
-              options={[
-                { value: 'NEWEST', label: 'Newest to oldest' },
-                { value: 'OLDEST', label: 'Oldest to newest' },
-                { value: 'BATCH_ASC', label: 'Batch No. A to Z' },
-                { value: 'BATCH_DESC', label: 'Batch No. Z to A' },
-              ]}
-            />
-          </div>
           <div className="w-44">
             <SearchableSelect
               ariaLabel="Status Filter"
@@ -1864,22 +1900,12 @@ export default function BatchPanel() {
           <table className="w-full border-collapse text-left text-sm">
             <TableHeader>
               <tr className="border-b border-(--row-border)">
-                <TableHead className="whitespace-nowrap">
-                  {t('blColBatchNo')}
-                </TableHead>
-                <TableHead className="whitespace-nowrap">
-                  {t('blColStartDate')}
-                </TableHead>
-                <TableHead className="whitespace-nowrap">
-                  {t('blColMethod')}
-                </TableHead>
-                <TableHead className="whitespace-nowrap text-right">
-                  {t('blColOpeningQty')}
-                </TableHead>
-                <TableHead className="whitespace-nowrap text-right">
-                  {t('blColUnitCost')}
-                </TableHead>
-                <TableHead className="text-right">{t('blColStatus')}</TableHead>
+                {sortableHead('batch_no', t('blColBatchNo'))}
+                {sortableHead('start_date', t('blColStartDate'))}
+                {sortableHead('costing_method', t('blColMethod'))}
+                {sortableHead('opening_quantity', t('blColOpeningQty'), true)}
+                {sortableHead('unit_cost', t('blColUnitCost'), true)}
+                {sortableHead('status', t('blColStatus'), true)}
                 <TableHead className="text-right">
                   {t('blColActions')}
                 </TableHead>
