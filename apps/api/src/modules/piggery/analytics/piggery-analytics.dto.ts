@@ -11,10 +11,17 @@ export type { BudgetCell, GmBudgetSection } from './gm-budget.dashboard';
 
 export interface QueryPiggeryGmDashboardDto {
   companyId?: string;
-  /** A Reporting Period; the one holding today when left out. */
+  /** A Reporting Period; the one holding today when left out. Ignored when fromDate/toDate are both given. */
   periodId?: string;
   /** One farm; every farm the user may see when left out. */
   farmId?: string;
+  /**
+   * A custom date range (19 Nov), given together: Month and YTD both become
+   * this one window, clamped to today, and carry no budget — a reporting
+   * Period is the only thing a budget line is set against.
+   */
+  fromDate?: string;
+  toDate?: string;
 }
 
 export interface GmDashboardPeriod {

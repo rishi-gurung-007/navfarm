@@ -17,6 +17,8 @@ import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import { useLanguage } from '@/hooks/useLanguage';
 import { Field } from '@/components/ui/field';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { todayStored } from '@/utils/date-input';
+import { PeriodRangeSelect } from './period-range-select';
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/states';
 import {
   Alert,
@@ -279,26 +281,43 @@ export default function PiggeryGmDashboard() {
   const { currency } = useCompanyCurrency(getActiveCompanyId() ?? undefined);
   const [periodId, setPeriodId] = useState('');
   const [farmId, setFarmId] = useState(ALL);
+  // Two ways to choose the window (19 Nov): a Reporting Period, or a custom
+  // from/to range (no later than today) with no budget to compare against.
+  const [periodMode, setPeriodMode] = useState<'reporting' | 'custom'>(
+    'reporting',
+  );
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [data, setData] = useState<GmDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [allAlerts, setAllAlerts] = useState(false);
 
-  const load = async (period: string, farm: string) => {
+  const load = async (
+    period: string,
+    farm: string,
+    range?: { from: string; to: string },
+  ) => {
     setLoading(true);
     setError('');
     try {
       const params = new URLSearchParams();
       const companyId = getActiveCompanyId();
       if (companyId) params.set('companyId', companyId);
-      if (period) params.set('periodId', period);
+      if (range) {
+        params.set('fromDate', range.from);
+        params.set('toDate', range.to);
+      } else if (period) {
+        params.set('periodId', period);
+      }
       if (farm) params.set('farmId', farm);
       const res = await api.get(
         `/piggery/analytics/gm-dashboard?${params.toString()}`,
       );
       const payload: GmDashboardData = res?.data ?? res;
       setData(payload);
-      if (!period && payload.period) setPeriodId(payload.period.period_id);
+      if (!period && !range && payload.period)
+        setPeriodId(payload.period.period_id);
     } catch (err: any) {
       setError(err?.message || t('gmdLoadFailed'));
     } finally {
@@ -310,13 +329,34 @@ export default function PiggeryGmDashboard() {
     void load('', ALL);
   }, []);
 
+  /** Reloads for the chosen farm, keeping whichever window mode is active. */
+  const reload = (farm: string) => {
+    if (periodMode === 'custom' && customFrom && customTo) {
+      void load('', farm, { from: customFrom, to: customTo });
+    } else {
+      void load(periodId, farm);
+    }
+  };
   const choosePeriod = (value: string) => {
     setPeriodId(value);
     void load(value, farmId);
   };
   const chooseFarm = (value: string) => {
     setFarmId(value);
-    void load(periodId, value);
+    reload(value);
+  };
+  const choosePeriodMode = (mode: 'reporting' | 'custom') => {
+    setPeriodMode(mode);
+    if (mode === 'reporting') {
+      void load(periodId, farmId);
+    } else if (customFrom && customTo) {
+      void load('', farmId, { from: customFrom, to: customTo });
+    }
+  };
+  const chooseCustomRange = (from: string, to: string) => {
+    setCustomFrom(from);
+    setCustomTo(to);
+    if (from && to) void load('', farmId, { from, to });
   };
 
   // The response lists only the chosen farm; the picker keeps every farm from the last All Farms load.
@@ -488,9 +528,13 @@ export default function PiggeryGmDashboard() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3 rounded-md border border-(--border) bg-(--surface) p-3">
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold">
-            {farmView ? farmView.farm.farm_name : t('gmdTitle')}
-          </h2>
+          {/* "GM Dashboard" is redundant with the page's own "Dashboard" heading (19 Nov):
+            this title shows only when drilled into one farm, naming it. */}
+          {farmView && (
+            <h2 className="text-lg font-semibold">
+              {farmView.farm.farm_name}
+            </h2>
+          )}
           <p className="text-xs text-(--text-secondary)">
             {farmView
               ? t('gmdSows', { n: farmView.sows.toLocaleString('en-GB') })
@@ -541,17 +585,27 @@ export default function PiggeryGmDashboard() {
         </div>
         <div className="flex flex-wrap items-end gap-3">
           <Field label={t('gmdPeriod')}>
-            <SearchableSelect
+            <PeriodRangeSelect
               ariaLabel={t('gmdPeriod')}
-              value={periodId}
-              onChange={choosePeriod}
-              options={[...(data?.periods ?? [])].reverse()}
-              valueKey="period_id"
-              getLabel={(r) =>
-                `${r.period_code} · ${shortDate(String(r.start_date))} – ${shortDate(String(r.end_date))} (${r.business_year})`
-              }
-              getSelectedLabel={(r) => `${r.period_code} (${r.business_year})`}
-              placeholder={t('gmdSelectPeriod')}
+              options={[...(data?.periods ?? [])].reverse().map((r) => ({
+                period_id: r.period_id,
+                label: `${r.period_code} · ${shortDate(String(r.start_date))} – ${shortDate(String(r.end_date))} (${r.business_year})`,
+                selectedLabel: `${r.period_code} (${r.business_year})`,
+              }))}
+              mode={periodMode}
+              onModeChange={choosePeriodMode}
+              periodId={periodId}
+              onPeriodChange={choosePeriod}
+              from={customFrom}
+              to={customTo}
+              onRangeChange={chooseCustomRange}
+              maxDate={todayStored()}
+              reportingLabel={t('gmdReportingPeriod')}
+              customLabel={t('gmdCustomRange')}
+              selectPeriodPlaceholder={t('gmdSelectPeriod')}
+              chooseRangePlaceholder={t('gmdCustomRange')}
+              searchPlaceholder={t('gmdSearchPeriod')}
+              noMatchesLabel={t('gmdNoMatchingPeriods')}
               disabled={!data?.periods.length}
             />
           </Field>
@@ -570,11 +624,8 @@ export default function PiggeryGmDashboard() {
       </div>
 
       {error ? (
-        <ErrorState
-          message={error}
-          onRetry={() => void load(periodId, farmId)}
-        />
-      ) : loading && !data ? (
+        <ErrorState message={error} onRetry={() => reload(farmId)} />
+      ) : loading ? (
         <GmDashboardSkeleton />
       ) : !period ? (
         <EmptyState

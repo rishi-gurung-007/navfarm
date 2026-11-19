@@ -166,6 +166,130 @@ export const DateInput = React.forwardRef<HTMLInputElement, DateInputProps>(func
   );
 });
 
+/**
+ * A single calendar for a from/to range (19 Nov): the first click starts the
+ * range, hovering previews it, and the second click ends it — never two
+ * independent calendars. `onChange` fires with `to: ''` after the first
+ * click (the range is still being picked) and with both ends once it closes.
+ */
+export function RangeCalendar({
+  from,
+  to,
+  min,
+  max,
+  onChange,
+}: {
+  from: string;
+  to: string;
+  min?: string;
+  max?: string;
+  onChange: (range: { from: string; to: string }) => void;
+}) {
+  const { language } = useLanguage();
+  const today = todayStored();
+  const start = from || to || today;
+  const [view, setView] = React.useState({ year: Number(start.slice(0, 4)), month: Number(start.slice(5, 7)) - 1 });
+  // Set while the first end of a new range has been clicked but not the second.
+  const [anchor, setAnchor] = React.useState<string | null>(null);
+  const [hover, setHover] = React.useState<string | null>(null);
+  const month = new Intl.DateTimeFormat(language, { month: 'long', year: 'numeric' }).format(new Date(view.year, view.month, 1));
+  const weekdays = Array.from({ length: 7 }, (_, i) =>
+    new Intl.DateTimeFormat(language, { weekday: 'narrow' }).format(new Date(2024, 0, 1 + i)),
+  );
+  const weeks = monthGrid(view.year, view.month);
+  const step = (delta: number) => setView((v) => shiftMonth(v.year, v.month, delta));
+
+  const preview = anchor ? (hover ?? anchor) : null;
+  const rangeLo = anchor && preview ? (preview < anchor ? preview : anchor) : from || null;
+  const rangeHi = anchor && preview ? (preview < anchor ? anchor : preview) : to || null;
+
+  const pick = (iso: string) => {
+    if (!anchor) {
+      setAnchor(iso);
+      setHover(iso);
+      onChange({ from: iso, to: '' });
+    } else {
+      const lo = iso < anchor ? iso : anchor;
+      const hi = iso < anchor ? anchor : iso;
+      setAnchor(null);
+      setHover(null);
+      onChange({ from: lo, to: hi });
+    }
+  };
+
+  return (
+    <div className="p-3 w-[17.5rem] select-none" data-testid="date-range-calendar">
+      <div className="flex items-center justify-between mb-2">
+        <button type="button" onClick={() => step(-1)} aria-label="Previous month" className="rounded p-1 hover:bg-[var(--surface-raised)] cursor-pointer">
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <span className="text-sm font-semibold capitalize" style={{ color: 'var(--text-primary)' }} aria-live="polite">
+          {month}
+        </span>
+        <button type="button" onClick={() => step(1)} aria-label="Next month" className="rounded p-1 hover:bg-[var(--surface-raised)] cursor-pointer">
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="grid grid-cols-7 gap-0.5 text-center text-[11px] mb-1" style={{ color: 'var(--text-muted)' }}>
+        {weekdays.map((w, i) => (
+          <span key={i}>{w}</span>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-0.5">
+        {weeks.flat().map((iso, i) => {
+          if (!iso) return <span key={i} />;
+          const ok = withinRange(iso, min, max);
+          const isStart = iso === rangeLo;
+          const isEnd = iso === rangeHi;
+          const inRange = Boolean(rangeLo && rangeHi && iso > rangeLo && iso < rangeHi);
+          return (
+            <button
+              key={iso}
+              type="button"
+              disabled={!ok}
+              aria-label={formatDate(iso)}
+              aria-pressed={isStart || isEnd}
+              onMouseEnter={() => anchor && setHover(iso)}
+              onClick={() => ok && pick(iso)}
+              className="h-8 rounded text-xs transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-30 hover:bg-[var(--surface-raised)]"
+              style={
+                isStart || isEnd
+                  ? { backgroundColor: 'var(--accent)', color: '#fff', fontWeight: 700 }
+                  : inRange
+                    ? { backgroundColor: 'var(--surface-raised)', color: 'var(--text-primary)' }
+                    : iso === today
+                      ? { border: '1px solid var(--accent)', color: 'var(--accent)' }
+                      : { color: 'var(--text-primary)' }
+              }
+            >
+              {Number(iso.slice(8))}
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex items-center justify-between mt-2 text-xs">
+        <span style={{ color: 'var(--text-secondary)' }}>
+          {anchor ? formatDate(anchor) : from ? `${formatDate(from)} – ${to ? formatDate(to) : '…'}` : ''}
+        </span>
+        {(from || to || anchor) && (
+          <button
+            type="button"
+            onClick={() => {
+              setAnchor(null);
+              setHover(null);
+              onChange({ from: '', to: '' });
+            }}
+            className="cursor-pointer"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            Clear
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Calendar({
   value,
   min,

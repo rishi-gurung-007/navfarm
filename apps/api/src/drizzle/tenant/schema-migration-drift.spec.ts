@@ -35,15 +35,17 @@ function migratedColumns(): Map<string, Set<string>> {
     // CREATE TABLE `t` ( `c` type, ... ) — take the backticked name of every
     // line that starts a column definition, skipping CONSTRAINT/KEY lines.
     for (const create of sql.matchAll(
-      /CREATE TABLE\s+(?:IF NOT EXISTS\s+)?`([^`]+)`\s*\(([\s\S]*?)\n\s*\)/gi,
+      /CREATE TABLE\s+(?:IF NOT EXISTS\s+)?`([^`]+)`\s*\(([\s\S]*?)(?:\n\s*\)|\)\s*;)/gi,
     )) {
       const [, table, body] = create;
       const cols = tables.get(table) ?? new Set<string>();
-      for (const line of body.split('\n')) {
-        const trimmed = line.trim();
-        if (/^(CONSTRAINT|PRIMARY KEY|UNIQUE|KEY|INDEX|FOREIGN KEY)\b/i.test(trimmed)) continue;
-        const m = /^`([^`]+)`/.exec(trimmed);
-        if (m) cols.add(m[1]);
+      // Drizzle normally formats every definition on its own line, but its
+      // generated migration SQL may also put the complete CREATE statement on
+      // one line (as 0262_kill_sheets does). A column definition always starts
+      // a comma-delimited segment with a backticked name; constraints start
+      // with CONSTRAINT/PRIMARY/UNIQUE instead.
+      for (const column of body.matchAll(/(?:^|,)\s*`([^`]+)`\s+/g)) {
+        cols.add(column[1]);
       }
       tables.set(table, cols);
     }

@@ -90,6 +90,58 @@ export function ytdBudget(
   return figure(included, metric, missing, ratio);
 }
 
+/** The inclusive day count between two "YYYY-MM-DD" dates, read at UTC midnight so no zone can shift it. */
+const inclusiveDays = (start: string, end: string): number =>
+  Math.round((Date.parse(`${end}T00:00:00.000Z`) - Date.parse(`${start}T00:00:00.000Z`)) / 86400000) + 1;
+
+/**
+ * A custom date range's budget (19 Nov): no line is ever set against a range directly, so each Reporting Period it
+ * overlaps contributes its own daily rate — that period's own budget divided by its own day count — for the days
+ * of overlap. A SUM metric (a total, e.g. Pigs to Slaughter) accumulates those daily contributions; a MEAN metric
+ * (a ratio or average, e.g. Avg CDM) instead time-weights the periods' own budgeted averages by the days each
+ * contributes, since an average has no daily rate to sum. Null — not partial — the moment any overlapping period
+ * itself has no budget line, the same as `monthBudget` already refuses a period missing just one farm's line.
+ */
+export function rangeBudget(
+  lines: BudgetLine[],
+  metric: BudgetMetric,
+  periods: Array<{ period_id: string; period_code: string; start_date: string; end_date: string }>,
+  from: string,
+  to: string,
+  farms: Array<{ farm_id: string; farm_code: string }>,
+): BudgetFigure {
+  const overlapping = periods.filter((p) => p.start_date <= to && p.end_date >= from);
+  if (!overlapping.length) {
+    return { budget: null, tolerance_pct: DEFAULT_TOLERANCE_PCT, missing: farms.map((f) => f.farm_code) };
+  }
+  let sumAccum = 0;
+  let weightedSum = 0;
+  let totalDays = 0;
+  let anyMissing = false;
+  const missing: string[] = [];
+  const tolerances: number[] = [];
+  for (const p of overlapping) {
+    const overlapStart = p.start_date > from ? p.start_date : from;
+    const overlapEnd = p.end_date < to ? p.end_date : to;
+    const overlapDays = inclusiveDays(overlapStart, overlapEnd);
+    const periodFigure = monthBudget(lines, metric, p.period_id, farms);
+    if (periodFigure.tolerance_pct !== null) tolerances.push(periodFigure.tolerance_pct);
+    if (periodFigure.budget === null) {
+      anyMissing = true;
+      periodFigure.missing.forEach((m) => missing.push(`${m} ${p.period_code}`));
+      continue;
+    }
+    const periodDays = inclusiveDays(p.start_date, p.end_date);
+    sumAccum += (periodFigure.budget / periodDays) * overlapDays;
+    weightedSum += periodFigure.budget * overlapDays;
+    totalDays += overlapDays;
+  }
+  const tolerance_pct = round(tolerances.length ? mean(tolerances) : DEFAULT_TOLERANCE_PCT);
+  if (anyMissing || !totalDays) return { budget: null, tolerance_pct, missing };
+  const budget = metric.aggregation === 'SUM' ? sumAccum : weightedSum / totalDays;
+  return { budget: round(budget), tolerance_pct, missing: [] };
+}
+
 export function variance(
   actual: number | null,
   budget: number | null,

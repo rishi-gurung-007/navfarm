@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException } from '@nestjs/common';
+import { Injectable, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
 import { eq, and, asc, inArray, isNull, or, sql, SQL } from 'drizzle-orm';
 import { ClsService } from 'nestjs-cls';
@@ -56,7 +56,7 @@ import {
 } from './gm-dashboard.metrics';
 import { budgetMetric } from '../budget/budget-metrics';
 import { BudgetLine } from './gm-budget.metrics';
-import { budgetActuals, budgetSection } from './gm-budget.dashboard';
+import { budgetActuals, budgetSection, customRangeBudgetSection } from './gm-budget.dashboard';
 
 type Farm = { farm_id: string; farm_code: string; farm_name: string };
 
@@ -279,11 +279,30 @@ export class PiggeryAnalyticsService {
         farm_name,
       }));
 
+    if ((query.fromDate && !query.toDate) || (!query.fromDate && query.toDate)) {
+      throw new BadRequestException('A custom range needs both a from and a to date.');
+    }
+    if (query.fromDate && query.toDate && query.fromDate > query.toDate) {
+      throw new BadRequestException('The custom range\'s from date cannot be after its to date.');
+    }
+
     // With no period asked for, open on the one holding today; when it has no records yet (a new period, or a
     // database whose records stop earlier) step back to the latest period that does, so the page opens on figures.
     let chosen: GmDashboardPeriod | undefined;
     let fallbackFrom: string | null = null;
-    if (query.periodId) {
+    if (query.fromDate && query.toDate) {
+      // A custom range (19 Nov) is not a Reporting Period: it carries no period_id or business_year, so it is read
+      // through rangeBudget/customRangeBudgetSection below instead of monthBudget/ytdBudget — every Period the
+      // range overlaps contributes its own daily rate for the days of overlap, rather than one line matched by id.
+      // Month and YTD become the same window: the range itself.
+      chosen = {
+        period_id: '',
+        period_code: 'CUSTOM',
+        business_year: '',
+        start_date: query.fromDate,
+        end_date: query.toDate > today ? today : query.toDate,
+      };
+    } else if (query.periodId) {
       chosen = periods.find((p) => p.period_id === query.periodId);
     } else {
       const current =
@@ -329,6 +348,7 @@ export class PiggeryAnalyticsService {
       const slaughter = await this.slaughterMetrics(tenantId, companyId, query.farmId, null);
       return { ...empty, slaughter };
     }
+    const isCustomRange = chosen.period_id === '';
     const ytdFrom =
       periods.find((p) => p.business_year === chosen.business_year)
         ?.start_date ?? chosen.start_date;
@@ -577,13 +597,18 @@ export class PiggeryAnalyticsService {
       ),
     }));
 
-    const yearPeriods = periods.filter(
-      (p) => p.business_year === chosen.business_year,
-    );
+    // A custom range reads every Period it overlaps (rangeBudget prorates each by its own days of overlap);
+    // a Reporting Period reads its own business year, the running total by_period already walks.
+    const overlappingPeriods = isCustomRange
+      ? periods.filter((p) => p.start_date <= to && p.end_date >= chosen.start_date)
+      : [];
+    const yearPeriods = isCustomRange
+      ? []
+      : periods.filter((p) => p.business_year === chosen.business_year);
     const budgetLines = await this.budgetLines(
       tenantId,
       farms.map((f) => f.farm_id),
-      yearPeriods.map((p) => p.period_id),
+      isCustomRange ? overlappingPeriods.map((p) => p.period_id) : yearPeriods.map((p) => p.period_id),
     );
     const actualsOf = (
       sales: Record<string, SalesFigures | null>,
@@ -602,16 +627,28 @@ export class PiggeryAnalyticsService {
           ),
         ]),
       );
-    const { budget, financialRows } = budgetSection({
-      lines: budgetLines,
-      farms,
-      yearPeriods,
-      periodId: chosen.period_id,
-      actuals: {
-        month: actualsOf(financial.month, kgMonth, month, slaughterMonth),
-        ytd: actualsOf(financial.ytd, kgYtd, ytd, slaughterYtd),
-      },
-    });
+    const { budget, financialRows } = isCustomRange
+      ? customRangeBudgetSection({
+          lines: budgetLines,
+          farms,
+          periods: overlappingPeriods,
+          from: chosen.start_date,
+          to,
+          actuals: {
+            month: actualsOf(financial.month, kgMonth, month, slaughterMonth),
+            ytd: actualsOf(financial.ytd, kgYtd, ytd, slaughterYtd),
+          },
+        })
+      : budgetSection({
+          lines: budgetLines,
+          farms,
+          yearPeriods,
+          periodId: chosen.period_id,
+          actuals: {
+            month: actualsOf(financial.month, kgMonth, month, slaughterMonth),
+            ytd: actualsOf(financial.ytd, kgYtd, ytd, slaughterYtd),
+          },
+        });
 
     const slaughter = await this.slaughterMetrics(
       tenantId,
