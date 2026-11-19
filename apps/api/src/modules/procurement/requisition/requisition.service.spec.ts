@@ -123,7 +123,7 @@ describe('RequisitionService.create — the specification refuses the document b
     ['a Store requisition whose source is its destination', storeDto({ to_location_id: 'loc-store' }),
       'The source and destination locations must differ.'],
     ['Direct Transfer on a Purchase requisition',
-      storeDto({ doc_type: 'FA', purpose: 'PURCHASE', from_location_id: undefined, to_location_id: undefined, direct_transfer: true, lines: [{ description: 'Tractor', quantity: 1, uom: 'EA' }] }),
+      storeDto({ doc_type: 'FA', purpose: 'PURCHASE', from_location_id: undefined, to_location_id: undefined, direct_transfer: true, lines: [{ item_id: 'item-1', description: 'Tractor', quantity: 1, uom: 'EA' }] }),
       'Direct Transfer applies only to Store Item requisitions.'],
   ];
 

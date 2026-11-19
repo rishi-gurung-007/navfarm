@@ -113,6 +113,8 @@ export interface CommonRequisitionView {
 
 export interface CommonRequisitionOptions {
   items: { item_id: string; item_code: string; item_name: string; uom_primary: string | null; is_lot_tracked?: boolean; is_serial_tracked?: boolean }[];
+  /** FA requests may name a biological Item Master asset; Item/Store requests may not. */
+  fixed_asset_items?: { item_id: string; item_code: string; item_name: string; uom_primary: string | null; is_lot_tracked?: boolean; is_serial_tracked?: boolean }[];
   locations: { location_id: string; location_code: string; location_name: string; location_type: string; farm_id: string | null }[];
   /** Every Farm-type location the user may open — the Main / Farm Location choices (12 Oct). */
   farms?: { location_id: string; location_code: string; location_name: string; location_type: string; farm_id: string | null }[];
@@ -170,7 +172,9 @@ export function toRequisitionPayload(v: CommonRequisitionView): Record<string, u
     justification: s(v.justification),
     remarks: s(v.remarks),
     lines: v.lines.map((l) => ({
-      item_id: v.doc_type === "ITEM" ? s(l.item_id) : undefined,
+      // Fixed Asset lines now name the selected Item Master asset too (Rishi,
+      // 19 Nov); Service remains free description only.
+      item_id: v.doc_type === "SERVICE" ? undefined : s(l.item_id),
       // No resource_id: no line names a Resource (Rishi, 5 Oct — Service lines
       // are Description + Qty only), and the API refuses one on every kind.
       description: s(l.description),

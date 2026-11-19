@@ -70,7 +70,9 @@ function serviceForCompanyB() {
 }
 
 const ADMIN_B = { userId: 'u-b', userType: 'COMPANY_ADMIN' };
-const lines2 = [{ description: 'Scale', quantity: 1, uom: 'EA' }, { description: 'Trough', quantity: 2, uom: 'EA' }];
+// A Fixed Asset line now names an Item Master item too (Rishi, 19 Nov).
+const lines2 = [{ item_id: 'item-1', description: 'Scale', quantity: 1, uom: 'EA' }, { item_id: 'item-1', description: 'Trough', quantity: 2, uom: 'EA' }];
+const FA_ITEM_ROW = [{ item_id: 'item-1', item_code: 'IT-1', is_lot_tracked: false, is_serial_tracked: false, is_biological_asset: false }];
 
 describe('Task 13 fix round 1 — a selected company is a boundary on /requisition', () => {
   it('GET /requisition?company_id=<A> from company B → 403 before any query', async () => {
@@ -155,13 +157,15 @@ describe('P1 e2e — a farm-pinned caller\'s new requisition belongs to its farm
   const header = (rows: unknown[]) => rows.find((r: any) => r && typeof r === 'object' && 'req_no' in r) as any;
 
   it('writes the scope farm when the body names none', async () => {
-    const { service, insertValues } = serviceForFarm('farm-gra');
+    const { service, insertValues, selectResults } = serviceForFarm('farm-gra');
+    selectResults.push(FA_ITEM_ROW);
     await service.create({ company_id: 'co-B', doc_type: 'FA', purpose: 'PURCHASE', lines: lines2 } as any, TENANT).catch(() => undefined);
     expect(header(insertValues)?.farm_id).toBe('farm-gra');
   });
 
   it('keeps a NULL farm for a caller with no farm in scope', async () => {
-    const { service, insertValues } = serviceForFarm(null);
+    const { service, insertValues, selectResults } = serviceForFarm(null);
+    selectResults.push(FA_ITEM_ROW);
     await service.create({ company_id: 'co-B', doc_type: 'FA', purpose: 'PURCHASE', lines: lines2 } as any, TENANT).catch(() => undefined);
     expect(header(insertValues)?.farm_id).toBeNull();
   });

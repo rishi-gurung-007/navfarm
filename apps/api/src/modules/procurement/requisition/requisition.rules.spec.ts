@@ -87,14 +87,14 @@ describe('Item / Fixed Asset / Service line fields', () => {
       .toThrow('Requisition line 1: an Item requisition line cannot reference a Resource.');
   });
 
-  it('requires a Fixed Asset description on FA lines, with neither item nor resource', () => {
-    expect(() => assertRequisitionLines('FA', 'PURCHASE', [{ description: 'Used tractor', quantity: 1, uom: 'EA' }]))
-      .not.toThrow();
-    expect(() => assertRequisitionLines('FA', 'PURCHASE', [{ quantity: 1, uom: 'EA' }]))
-      .toThrow('Requisition line 1 needs a Fixed Asset description.');
+  it('requires an Item Master item and a description on FA lines, and no resource (Rishi, 19 Nov)', () => {
     expect(() => assertRequisitionLines('FA', 'PURCHASE', [itemLine({ description: 'Tractor' })]))
-      .toThrow('Requisition line 1: a Fixed Asset line cannot reference an inventory item.');
-    expect(() => assertRequisitionLines('FA', 'PURCHASE', [{ description: 'Tractor', resource_id: 'res-1', quantity: 1, uom: 'EA' }]))
+      .not.toThrow();
+    expect(() => assertRequisitionLines('FA', 'PURCHASE', [{ description: 'Used tractor', quantity: 1, uom: 'EA' }]))
+      .toThrow('Requisition line 1 needs an Item Master item.');
+    expect(() => assertRequisitionLines('FA', 'PURCHASE', [itemLine({ description: undefined })]))
+      .toThrow('Requisition line 1 needs a Fixed Asset description.');
+    expect(() => assertRequisitionLines('FA', 'PURCHASE', [itemLine({ description: 'Tractor', resource_id: 'res-1' })]))
       .toThrow('Requisition line 1: a Fixed Asset line cannot reference a Resource.');
   });
 
@@ -132,17 +132,20 @@ describe('Item / Fixed Asset / Service line fields', () => {
       .toThrow('Requisition line 1 needs a unit of measure.');
     expect(() => assertLineFields('ITEM', { item_id: 'item-1', resource_id: null, description: null, quantity: '1', uom: 'KG' }, 1))
       .not.toThrow();
-    for (const kind of ['FA', 'SERVICE'] as const) {
-      expect(() => assertLineFields(kind, { item_id: null, resource_id: null, description: 'Tractor', quantity: '1', uom: null }, 1))
-        .not.toThrow();
-      // A unit already stored on an older FA/Service row still round-trips.
-      expect(() => assertLineFields(kind, { item_id: null, resource_id: null, description: 'Tractor', quantity: '1', uom: 'EA' }, 1))
-        .not.toThrow();
-    }
+    // A Fixed Asset line now names an Item Master item too (Rishi, 19 Nov), but still carries no unit.
+    expect(() => assertLineFields('FA', { item_id: 'item-1', resource_id: null, description: 'Tractor', quantity: '1', uom: null }, 1))
+      .not.toThrow();
+    // A unit already stored on an older FA/Service row still round-trips.
+    expect(() => assertLineFields('FA', { item_id: 'item-1', resource_id: null, description: 'Tractor', quantity: '1', uom: 'EA' }, 1))
+      .not.toThrow();
+    expect(() => assertLineFields('SERVICE', { item_id: null, resource_id: null, description: 'Tractor', quantity: '1', uom: null }, 1))
+      .not.toThrow();
+    expect(() => assertLineFields('SERVICE', { item_id: null, resource_id: null, description: 'Tractor', quantity: '1', uom: 'EA' }, 1))
+      .not.toThrow();
   });
 
   it('refuses Fixed Asset / Service lines that carry item tracking assignment', () => {
-    expect(() => assertLineFields('FA', { item_id: null, resource_id: null, description: 'Tractor', quantity: '1', lot_no: 'L-1', serial_no: null }, 1))
+    expect(() => assertLineFields('FA', { item_id: 'item-1', resource_id: null, description: 'Tractor', quantity: '1', lot_no: 'L-1', serial_no: null }, 1))
       .toThrow('Fixed Asset line cannot reference an inventory item');
     expect(() => assertLineFields('SERVICE', { item_id: null, resource_id: null, description: 'Injection service', quantity: '1', lot_no: 'L-1', serial_no: null }, 1))
       .toThrow('Service line cannot reference an inventory item');
@@ -153,7 +156,7 @@ describe('Item / Fixed Asset / Service line fields', () => {
   });
 
   it('keeps shipment quantities off a Purchase line', () => {
-    expect(() => assertRequisitionLines('FA', 'PURCHASE', [{ description: 'Tractor', quantity: 1, uom: 'EA', qty_to_ship: 1 }]))
+    expect(() => assertRequisitionLines('FA', 'PURCHASE', [itemLine({ description: 'Tractor', uom: 'EA', qty_to_ship: 1 })]))
       .toThrow('Requisition line 1: a Purchase line cannot carry shipment quantities.');
     expect(() => assertRequisitionLines('SERVICE', 'PURCHASE', [{ description: 'Vet', quantity: 1, uom: 'EA', qty_to_receive: 1 }]))
       .toThrow(BadRequestException);
