@@ -291,7 +291,6 @@ export default function PiggeryGmDashboard() {
   const [data, setData] = useState<GmDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [allAlerts, setAllAlerts] = useState(false);
 
   const load = async (
     period: string,
@@ -840,12 +839,7 @@ export default function PiggeryGmDashboard() {
                     )}
                     t={t}
                   />
-                  <FarmAlertsPanel
-                    alerts={farmView.alerts}
-                    showAll={allAlerts}
-                    onToggle={() => setAllAlerts((v) => !v)}
-                    t={t}
-                  />
+                  <FarmAlertsPanel alerts={farmView.alerts} t={t} />
                 </>
               ) : (
                 <>
@@ -856,12 +850,7 @@ export default function PiggeryGmDashboard() {
                     ytd={kgYtd}
                     t={t}
                   />
-                  <AlertsPanel
-                    alerts={data!.alerts}
-                    showAll={allAlerts}
-                    onToggle={() => setAllAlerts((v) => !v)}
-                    t={t}
-                  />
+                  <AlertsPanel alerts={data!.alerts} t={t} />
                 </>
               )}
             </div>

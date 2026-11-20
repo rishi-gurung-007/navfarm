@@ -1,6 +1,6 @@
 'use client';
 
-import type { ElementType, ReactNode } from 'react';
+import { useState, type ElementType, type ReactNode } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -19,6 +19,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { Dialog } from '@/components/ui/dialog';
 import { HoverHint } from '@/components/ui/hover-hint';
 import { NA } from '@/utils/na';
 import type { TranslationKeys } from '@/utils/translations';
@@ -642,18 +643,32 @@ export interface Alert {
 
 const ALERTS_SHOWN = 6;
 
-export function AlertsPanel({
-  alerts,
-  showAll,
-  onToggle,
-  t,
-}: {
-  alerts: Alert[];
-  showAll: boolean;
-  onToggle: () => void;
-  t: T;
-}) {
-  const shown = showAll ? alerts : alerts.slice(0, ALERTS_SHOWN);
+function AlertRow({ a, t }: { a: Alert; t: T }) {
+  const above = a.target != null && a.value > a.target;
+  return (
+    <li
+      className="flex items-center gap-2.5 px-4 py-2 text-xs"
+      title={`${fmt(a.value, a.unit)} ${t('gmdVsTarget')} ${fmt(a.target, a.unit)}`}
+    >
+      <CircleAlert
+        className="h-4.5 w-4.5 shrink-0"
+        style={{ color: STATUS_COLOR[a.status] }}
+      />
+      <span className="min-w-0 flex-1">
+        {a.metric} {above ? t('gmdAboveTarget') : t('gmdBelowTarget')} —{' '}
+        {a.farm_name}
+      </span>
+      <span className="shrink-0 font-mono tabular-nums text-(--text-secondary)">
+        {fmt(a.value, a.unit)}
+      </span>
+      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-(--text-secondary)" />
+    </li>
+  );
+}
+
+export function AlertsPanel({ alerts, t }: { alerts: Alert[]; t: T }) {
+  const [open, setOpen] = useState(false);
+  const shown = alerts.slice(0, ALERTS_SHOWN);
   return (
     <section
       className="flex min-w-0 flex-1 flex-col rounded-md border border-(--border) bg-(--surface)"
@@ -668,44 +683,37 @@ export function AlertsPanel({
         {alerts.length > ALERTS_SHOWN && (
           <button
             type="button"
-            onClick={onToggle}
+            onClick={() => setOpen(true)}
             className="nf-press ml-auto text-xs font-semibold text-(--accent)"
           >
-            {showAll ? t('gmdShowFewer') : t('gmdViewAll')}
+            {t('gmdViewAll')}
           </button>
         )}
       </header>
       {shown.length ? (
         <ul className="divide-y divide-(--border)">
-          {shown.map((a, i) => {
-            const above = a.target != null && a.value > a.target;
-            return (
-              <li
-                key={`${a.farm_id}-${a.metric}-${i}`}
-                className="flex items-center gap-2.5 px-4 py-2 text-xs"
-                title={`${fmt(a.value, a.unit)} ${t('gmdVsTarget')} ${fmt(a.target, a.unit)}`}
-              >
-                <CircleAlert
-                  className="h-4.5 w-4.5 shrink-0"
-                  style={{ color: STATUS_COLOR[a.status] }}
-                />
-                <span className="min-w-0 flex-1">
-                  {a.metric} {above ? t('gmdAboveTarget') : t('gmdBelowTarget')}{' '}
-                  — {a.farm_name}
-                </span>
-                <span className="shrink-0 font-mono tabular-nums text-(--text-secondary)">
-                  {fmt(a.value, a.unit)}
-                </span>
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-(--text-secondary)" />
-              </li>
-            );
-          })}
+          {shown.map((a, i) => (
+            <AlertRow key={`${a.farm_id}-${a.metric}-${i}`} a={a} t={t} />
+          ))}
         </ul>
       ) : (
         <p className="px-4 py-3 text-xs text-(--text-secondary)">
           {t('gmdNoAlerts')}
         </p>
       )}
+      <Dialog
+        open={open}
+        onClose={() => setOpen(false)}
+        title={t('gmdAlerts')}
+        presentation="compact"
+        maxWidth="md"
+      >
+        <ul className="divide-y divide-(--border) -mx-5 sm:-mx-6">
+          {alerts.map((a, i) => (
+            <AlertRow key={`${a.farm_id}-${a.metric}-${i}`} a={a} t={t} />
+          ))}
+        </ul>
+      </Dialog>
     </section>
   );
 }
@@ -959,19 +967,41 @@ export interface FarmAlert {
   above: boolean;
 }
 
+function FarmAlertRow({ a, t }: { a: FarmAlert; t: T }) {
+  const Icon = a.status === 'GREEN' ? CircleCheck : CircleAlert;
+  const text =
+    a.status === 'GREEN'
+      ? t('gmdOnTarget')
+      : a.above
+        ? t('gmdAboveTarget')
+        : t('gmdBelowTarget');
+  return (
+    <li
+      className="flex items-center gap-2.5 px-4 py-2 text-xs"
+      title={`${fmt(a.value, a.unit)} ${t('gmdVsTarget')} ${fmt(a.target, a.unit)}`}
+    >
+      <Icon className="h-4.5 w-4.5 shrink-0" style={{ color: STATUS_COLOR[a.status] }} />
+      <span className="min-w-0 flex-1">
+        {a.metric} {text} ({t('gmdThisWeek')})
+      </span>
+      <span className="shrink-0 font-mono tabular-nums text-(--text-secondary)">
+        {fmt(a.value, a.unit)}
+      </span>
+      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-(--text-secondary)" />
+    </li>
+  );
+}
+
 /** This Week's alerts for one farm: misses first, then the metrics on target. */
 export function FarmAlertsPanel({
   alerts,
-  showAll,
-  onToggle,
   t,
 }: {
   alerts: FarmAlert[];
-  showAll: boolean;
-  onToggle: () => void;
   t: T;
 }) {
-  const shown = showAll ? alerts : alerts.slice(0, ALERTS_SHOWN);
+  const [open, setOpen] = useState(false);
+  const shown = alerts.slice(0, ALERTS_SHOWN);
   const misses = alerts.filter((a) => a.status !== 'GREEN').length;
   return (
     <section
@@ -987,49 +1017,37 @@ export function FarmAlertsPanel({
         {alerts.length > ALERTS_SHOWN && (
           <button
             type="button"
-            onClick={onToggle}
+            onClick={() => setOpen(true)}
             className="nf-press ml-auto text-xs font-semibold text-(--accent)"
           >
-            {showAll ? t('gmdShowFewer') : t('gmdViewAll')}
+            {t('gmdViewAll')}
           </button>
         )}
       </header>
       {shown.length ? (
         <ul className="divide-y divide-(--border)">
-          {shown.map((a, i) => {
-            const Icon = a.status === 'GREEN' ? CircleCheck : CircleAlert;
-            const text =
-              a.status === 'GREEN'
-                ? t('gmdOnTarget')
-                : a.above
-                  ? t('gmdAboveTarget')
-                  : t('gmdBelowTarget');
-            return (
-              <li
-                key={`${a.metric}-${i}`}
-                className="flex items-center gap-2.5 px-4 py-2 text-xs"
-                title={`${fmt(a.value, a.unit)} ${t('gmdVsTarget')} ${fmt(a.target, a.unit)}`}
-              >
-                <Icon
-                  className="h-4.5 w-4.5 shrink-0"
-                  style={{ color: STATUS_COLOR[a.status] }}
-                />
-                <span className="min-w-0 flex-1">
-                  {a.metric} {text} ({t('gmdThisWeek')})
-                </span>
-                <span className="shrink-0 font-mono tabular-nums text-(--text-secondary)">
-                  {fmt(a.value, a.unit)}
-                </span>
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-(--text-secondary)" />
-              </li>
-            );
-          })}
+          {shown.map((a, i) => (
+            <FarmAlertRow key={`${a.metric}-${i}`} a={a} t={t} />
+          ))}
         </ul>
       ) : (
         <p className="px-4 py-3 text-xs text-(--text-secondary)">
           {t('gmdNoAlerts')}
         </p>
       )}
+      <Dialog
+        open={open}
+        onClose={() => setOpen(false)}
+        title={t('gmdAlerts')}
+        presentation="compact"
+        maxWidth="md"
+      >
+        <ul className="divide-y divide-(--border) -mx-5 sm:-mx-6">
+          {alerts.map((a, i) => (
+            <FarmAlertRow key={`${a.metric}-${i}`} a={a} t={t} />
+          ))}
+        </ul>
+      </Dialog>
     </section>
   );
 }

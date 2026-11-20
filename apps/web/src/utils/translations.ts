@@ -2964,7 +2964,6 @@ export const translations = {
     gmdPigsToSlaughterProgress: 'Pigs to Slaughter – Progress vs Budget (YTD)',
     gmdPbtProgress: 'PBT – Progress vs Budget (YTD)',
     gmdViewAll: 'View All',
-    gmdShowFewer: 'Show fewer',
     gmdAboveTarget: 'above target',
     gmdBelowTarget: 'below target',
     gmdOnTarget: 'on target',

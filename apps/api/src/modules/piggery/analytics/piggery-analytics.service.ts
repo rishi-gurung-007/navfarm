@@ -9,6 +9,7 @@ import {
   batchScopeConditions,
 } from '../../../common/farm-scope';
 import { loadBatchDeaths, loadHeadMoves } from '../../production/batch-heads';
+import { bioEventSql } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 import { kpiBands, kpiLimits } from '../../production/lifecycle/kpi-limits';
 import { MonthlyOpsService } from '../reports/monthly-ops.service';
 import {
@@ -1053,9 +1054,18 @@ export class PiggeryAnalyticsService {
   }
 
   /**
-   * The sold disposals of the farms' batches between two dates: heads and book value from the bio-asset ledger's
-   * disposal (TRANSFORMATION) entries, proceeds from the "Sale" journal the same batch posted that day. A disposal
-   * with no sale journal (a harvest into the store) is not a sale and is left out.
+   * The sold disposals of the farms' batches, reported on the date their sale journal posted: heads and book value
+   * from the bio-asset ledger's disposal (TRANSFORMATION) entries, proceeds from the matching "Sale" journal. A
+   * disposal with no sale journal (a harvest into the store) is not a sale and is left out. The two are not
+   * necessarily posted on the same day — a Slaughter Transfer Order dispatches on one date and its kill sheet
+   * (where the sale is actually invoiced) lands days later — so they join on document number only, and the
+   * window filter applies to the journal's date, not the dispatch's.
+   *
+   * TRANSFORMATION is an event, not a literal entry_type (bio-asset-ledger.types.ts refactored entry_type down to
+   * POSITIVE/NEGATIVE/TRANSFER/OVERHEAD/DESCRIPTIVE; the event now lives in document_type) — bioEventSql is the
+   * raw-SQL twin of that event lookup, kept here so this cannot drift from it again. The join key is each row's
+   * own document_no rather than the batch number: a Slaughter Transfer Order's dispatch and its kill-sheet sale
+   * journal both carry the Transfer Order's number (to_no), not the batch_no.
    */
   private async soldDisposals(
     tenantId: string,
@@ -1066,36 +1076,35 @@ export class PiggeryAnalyticsService {
   ): Promise<SaleRow[]> {
     if (!farmIds.length) return [];
     const [rows] = (await this.db.execute(sql`
-      SELECT x.farm_id AS farm_id, DATE_FORMAT(x.d, '%Y-%m-%d') AS d,
+      SELECT x.farm_id AS farm_id, DATE_FORMAT(p.d, '%Y-%m-%d') AS d,
              x.heads AS heads, x.cost AS cost, p.proceeds AS revenue
       FROM (
-        SELECT b.farm_id, b.batch_no, bal.posting_date AS d,
+        SELECT b.farm_id, bal.document_no AS doc_key,
                SUM(-bal.quantity) AS heads, SUM(-bal.cost_amount) AS cost
         FROM bio_asset_ledger bal
         JOIN batch_header b ON b.batch_id = bal.batch_id
         WHERE bal.tenant_id = ${tenantId}
           ${companyId ? sql`AND bal.company_id = ${companyId}` : sql``}
-          AND bal.entry_type = 'TRANSFORMATION'
-          AND bal.posting_date BETWEEN ${from} AND ${to}
+          AND ${sql.raw(bioEventSql('TRANSFORMATION', 'bal'))}
           AND b.farm_id IN (${sql.join(
             farmIds.map((id) => sql`${id}`),
             sql`, `,
           )})
-        GROUP BY b.farm_id, b.batch_no, bal.posting_date
+        GROUP BY b.farm_id, bal.document_no
       ) x
       JOIN (
-        SELECT h.source_document_no AS batch_no, h.posting_date AS d,
+        SELECT h.source_document_no AS doc_key, h.posting_date AS d,
                SUM(l.debit_amount) AS proceeds
         FROM journal_header h
         JOIN journal_line l ON l.journal_id = h.journal_id
         WHERE h.tenant_id = ${tenantId}
           ${companyId ? sql`AND h.company_id = ${companyId}` : sql``}
-          AND h.source_document_type = 'BATCH'
+          AND h.source_document_type IN ('BATCH', 'SLAUGHTER_TO')
           AND h.status = 'POSTED'
-          AND h.description LIKE 'Sale%'
+          AND (h.description LIKE 'Sale%' OR h.description LIKE 'Kill sheet%')
           AND h.posting_date BETWEEN ${from} AND ${to}
         GROUP BY h.source_document_no, h.posting_date
-      ) p ON p.batch_no = x.batch_no AND p.d = x.d
+      ) p ON p.doc_key = x.doc_key
     `)) as unknown as [Array<Record<string, unknown>>, unknown];
     return rows.map((r) => ({
       farm_id: String(r.farm_id),

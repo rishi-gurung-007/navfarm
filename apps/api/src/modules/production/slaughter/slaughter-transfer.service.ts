@@ -310,7 +310,7 @@ export class SlaughterTransferService {
       if (invoice >= 0.005) {
         await this.gl.postBatchCostEntry({
           tenantId, companyId: to.company_id, transactionType: 'BIO_SLAUGHTER_SALE', amount: invoice, documentNo: to.to_no, postingDate: dto.kill_sheet_date,
-          description: `Kill sheet ${dto.kill_sheet_ref} ${to.to_no}${dto.invoice_no ? `, invoice ${dto.invoice_no}` : ''}`, sourceDocumentType: 'SLAUGHTER_TO', ...dims, costCenterId, userId: user?.userId,
+          description: `Sale ${to.to_no} (kill sheet ${dto.kill_sheet_ref}${dto.invoice_no ? `, invoice ${dto.invoice_no}` : ''})`, sourceDocumentType: 'SLAUGHTER_TO', ...dims, costCenterId, userId: user?.userId,
         });
       }
       if (cost >= 0.005) {
