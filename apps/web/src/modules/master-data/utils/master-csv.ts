@@ -9,6 +9,25 @@ function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
 }
 
+/** Mirrors MasterDataTable.tsx's own save-time fill: in an operational workspace the live form
+ * hides nob_id/lob_id and sets them from the active area instead of asking for them, so any CSV
+ * import path does the same — overwriting any same-named column the row happened to carry.
+ * Shared by the generic reader and Breed Lifecycle Stage's own bespoke one. */
+export function applyOperationalNobLob(
+  payload: Row,
+  configFields: Pick<MasterDataField, "key">[],
+): void {
+  if (getActiveWorkspaceScope() !== "OPERATIONAL") return;
+  const activeArea = getActiveOperationalArea();
+  if (!activeArea) return;
+  if (configFields.some((f) => f.key === "nob_id") && activeArea.nob_id) {
+    payload.nob_id = activeArea.nob_id;
+  }
+  if (configFields.some((f) => f.key === "lob_id") && activeArea.lob_id) {
+    payload.lob_id = activeArea.lob_id;
+  }
+}
+
 /**
  * Escapes a cell value according to RFC 4180.
  * Wraps in quotes if the string contains a comma, double-quote, or newline.
@@ -726,20 +745,7 @@ export async function parseGenericImportRow(
     }
   }
 
-  // Mirrors MasterDataTable.tsx's own save-time fill: in an operational workspace the live form
-  // hides nob_id/lob_id and sets them from the active area instead of asking for them, so a CSV
-  // import does the same — overwriting any same-named column the row happened to carry.
-  if (getActiveWorkspaceScope() === "OPERATIONAL") {
-    const activeArea = getActiveOperationalArea();
-    if (activeArea) {
-      if (config.fields.some((f) => f.key === "nob_id") && activeArea.nob_id) {
-        payload.nob_id = activeArea.nob_id;
-      }
-      if (config.fields.some((f) => f.key === "lob_id") && activeArea.lob_id) {
-        payload.lob_id = activeArea.lob_id;
-      }
-    }
-  }
+  applyOperationalNobLob(payload, config.fields);
 
   return { payload, errors };
 }

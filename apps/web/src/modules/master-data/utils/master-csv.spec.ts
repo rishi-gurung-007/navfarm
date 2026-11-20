@@ -1,4 +1,4 @@
-import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv, parseCsvText, prefetchGenericEntityOptions, exportMasterRowsToCsv, downloadCsvFile } from './master-csv';
+import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv, parseCsvText, prefetchGenericEntityOptions, exportMasterRowsToCsv, downloadCsvFile, applyOperationalNobLob } from './master-csv';
 import type { MasterDataConfig } from '../types';
 
 jest.mock('@/services/api-client', () => ({ api: { get: jest.fn() } }));
@@ -276,5 +276,24 @@ describe('exportMasterRowsToCsv — only what the edit form shows', () => {
     await exportMasterRowsToCsv(config, [{ location_code: 'MGH6' }]);
     const { rows } = parseCsvText(await readBlobAsText(capturedBlob!));
     expect(rows[0]['Code']).toBe('MGH6');
+  });
+});
+
+describe('applyOperationalNobLob — shared by the generic reader and Breed Lifecycle Stage\'s bespoke one', () => {
+  afterEach(() => localStorage.clear());
+
+  it('fills nob_id/lob_id from the active area when the config (e.g. breed-lifecycle-stage) declares those keys', () => {
+    localStorage.setItem('navfarm_auth_user', JSON.stringify({ userType: 'OPERATIONAL_ADMIN' }));
+    localStorage.setItem('active_workspace_scope', 'OPERATIONAL');
+    localStorage.setItem('active_operational_area', JSON.stringify({ area_id: 'a-1', nob_id: 'nob-livestock', lob_id: 'lob-piggery' }));
+    const payload: Record<string, any> = {};
+    applyOperationalNobLob(payload, [{ key: 'nob_id' }, { key: 'lob_id' }]);
+    expect(payload).toEqual({ nob_id: 'nob-livestock', lob_id: 'lob-piggery' });
+  });
+
+  it('no-ops outside an operational workspace', () => {
+    const payload: Record<string, any> = {};
+    applyOperationalNobLob(payload, [{ key: 'nob_id' }, { key: 'lob_id' }]);
+    expect(payload).toEqual({});
   });
 });

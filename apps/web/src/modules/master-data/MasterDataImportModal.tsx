@@ -31,6 +31,7 @@ import {
   getRawValue,
   prefetchGenericEntityOptions,
   parseGenericImportRow,
+  applyOperationalNobLob,
 } from './utils/master-csv';
 
 function unwrap<T = any>(res: any): T {
@@ -447,6 +448,8 @@ export default function MasterDataImportModal({
             'notes',
           ]);
           if (notes) payload.notes = notes.trim();
+
+          applyOperationalNobLob(payload, config.fields);
         } else {
           // Every other master: one metadata-driven reader, shared with the live create
           // form's own field rules (master-csv.ts's parseGenericImportRow, 19 Nov).
