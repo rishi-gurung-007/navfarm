@@ -196,5 +196,37 @@ describe('CostCenterService', () => {
         .rejects.toThrow(ConflictException);
       expect(mockTransaction).toHaveBeenCalledTimes(2);
     });
+
+    it('rejects a supplied code instead of silently generating one when the series does not allow manual entry', async () => {
+      numberSeries.resolveSeriesFor.mockResolvedValue('COST_CENTER');
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, prefix: 'CC', seq_length: 4 });
+      mockDbSelect.mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])); // company found
+
+      await expect(
+        service.create(
+          { company_id: 'comp-1', cost_center_name: 'Production Dept', cost_center_type: 'DEPARTMENT', cost_center_code: 'CUSTOM' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(numberSeries.generateNext).not.toHaveBeenCalled();
+    });
+
+    it('rejects a supplied code on a child row the same way, before any composite generation runs', async () => {
+      numberSeries.resolveSeriesFor.mockResolvedValue('COST_CENTER');
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, prefix: 'CC', seq_length: 4 });
+      mockDbSelect
+        .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company found
+        .mockReturnValueOnce(makeSelectResult([{ cost_center_id: 'parent-1', cost_center_code: 'CC-0001' }])); // parent found
+
+      await expect(
+        service.create(
+          {
+            company_id: 'comp-1', cost_center_name: 'Sub Dept', cost_center_type: 'DEPARTMENT',
+            cost_center_code: 'CUSTOM', parent_cost_center_id: 'parent-1',
+          },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 });

@@ -189,5 +189,37 @@ describe('ItemCategoryService', () => {
       expect(mockTransaction).toHaveBeenCalledTimes(2);
       expect(numberSeries.generateNext).toHaveBeenCalledTimes(2);
     });
+
+    it('rejects a supplied code instead of silently generating one when the series does not allow manual entry', async () => {
+      numberSeries.resolveSeriesFor.mockResolvedValue('ITEM_CATEGORY');
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, prefix: 'CAT', seq_length: 3 });
+      mockDbSelect.mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])); // company exists
+
+      await expect(
+        service.create(
+          { company_id: 'comp-1', category_name: 'Feed Products', category_code: 'CUSTOM' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(numberSeries.generateNext).not.toHaveBeenCalled();
+    });
+
+    it('rejects a supplied code on a child row the same way, before any composite generation runs', async () => {
+      numberSeries.resolveSeriesFor.mockResolvedValue('ITEM_CATEGORY');
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, prefix: 'CAT', seq_length: 3 });
+      mockDbSelect
+        .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company exists
+        .mockReturnValueOnce(makeSelectResult([{ category_id: 'parent-1', category_code: 'FEED' }])); // findOne(parent)
+
+      await expect(
+        service.create(
+          {
+            company_id: 'comp-1', category_name: 'Sub Feed',
+            category_code: 'CUSTOM', parent_category_id: 'parent-1',
+          },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 });

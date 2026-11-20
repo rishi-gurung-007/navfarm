@@ -184,6 +184,10 @@ export class GlAccountService {
     let accountCode: string;
     if (series.manual_nos && dto.account_code) {
       accountCode = dto.account_code;
+    } else if (dto.account_code) {
+      throw new BadRequestException(
+        'This number series does not allow a manual code for G/L accounts — leave the Code blank to auto-generate one.',
+      );
     } else if (parent) {
       accountCode = await generateCompositeCode({
         parentCode: parent.account_code,

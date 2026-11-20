@@ -181,6 +181,10 @@ export class CostCenterService {
     let costCenterCode: string;
     if (series.manual_nos && dto.cost_center_code) {
       costCenterCode = dto.cost_center_code.toUpperCase();
+    } else if (dto.cost_center_code) {
+      throw new BadRequestException(
+        'This number series does not allow a manual code for cost centres — leave the Code blank to auto-generate one.',
+      );
     } else if (parent) {
       costCenterCode = await generateCompositeCode({
         parentCode: parent.cost_center_code,

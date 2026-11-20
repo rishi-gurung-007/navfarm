@@ -196,5 +196,37 @@ describe('GlAccountService', () => {
         .rejects.toThrow(ConflictException);
       expect(mockTransaction).toHaveBeenCalledTimes(2);
     });
+
+    it('rejects a supplied code instead of silently generating one when the series does not allow manual entry', async () => {
+      numberSeries.resolveSeriesFor.mockResolvedValue('GL_ACCOUNT');
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, prefix: '1', seq_length: 4 });
+      mockDbSelect.mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])); // company found
+
+      await expect(
+        service.create(
+          { company_id: 'comp-1', account_name: 'Cash at Bank', account_type: 'ASSET', account_code: 'CUSTOM' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(numberSeries.generateNext).not.toHaveBeenCalled();
+    });
+
+    it('rejects a supplied code on a child row the same way, before any composite generation runs', async () => {
+      numberSeries.resolveSeriesFor.mockResolvedValue('GL_ACCOUNT');
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false, prefix: '1', seq_length: 4 });
+      mockDbSelect
+        .mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])) // company found
+        .mockReturnValueOnce(makeSelectResult([{ gl_account_id: 'parent-1', account_code: '1000' }])); // parent found
+
+      await expect(
+        service.create(
+          {
+            company_id: 'comp-1', account_name: 'Cash', account_type: 'ASSET',
+            account_code: 'CUSTOM', parent_account_id: 'parent-1',
+          },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 });

@@ -179,6 +179,10 @@ export class ItemCategoryService {
     let categoryCode: string;
     if (series.manual_nos && dto.category_code) {
       categoryCode = dto.category_code.toUpperCase();
+    } else if (dto.category_code) {
+      throw new BadRequestException(
+        'This number series does not allow a manual code for item categories — leave the Code blank to auto-generate one.',
+      );
     } else if (parent) {
       categoryCode = await generateCompositeCode({
         parentCode: parent.category_code,
