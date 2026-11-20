@@ -1,5 +1,7 @@
 import { api } from "@/services/api-client";
+import { getActiveWorkspaceScope } from "@/hooks/useAuth";
 import type { MasterDataConfig, MasterDataField } from "../types";
+import { parentKeys, resolveEndpoint, isFieldRequired, isFieldVisible } from "../field-logic";
 
 type Row = Record<string, any>;
 
@@ -433,6 +435,9 @@ export function generateMasterTemplateCsv(config: MasterDataConfig): string {
       "notes",
     ];
 
+    // Each row must carry one value per header above — feed_form and feed_qty_uom were
+    // missing here (19 Nov), silently shifting every field after feed_item_code by two
+    // columns (e.g. Feed Wastage % received the Std ADG value instead).
     const sampleRow1 = [
       "YORKSHIRE-GESTATION-001",
       "YORKSHIRE",
@@ -444,12 +449,14 @@ export function generateMasterTemplateCsv(config: MasterDataConfig): string {
       "15",
       "ALL",
       "ICAT-001-ITM-0001",
-      "2.50",
-      "5.00",
-      "45.00",
-      "800.00",
-      "2.40",
-      "0.50",
+      "", // feed_form
+      "2.50", // feed_qty_per_head_per_day_kg
+      "", // feed_qty_uom
+      "5.00", // feed_wastage_pct
+      "45.00", // std_body_weight_kg
+      "800.00", // std_adg_gpd
+      "2.40", // std_fcr
+      "0.50", // std_mortality_rate_pct
       "",
       "",
       "",
@@ -467,12 +474,14 @@ export function generateMasterTemplateCsv(config: MasterDataConfig): string {
       "15",
       "ALL",
       "ICAT-001-ITM-0001",
-      "3.00",
-      "5.00",
-      "180.00",
-      "0.00",
-      "0.00",
-      "1.00",
+      "", // feed_form
+      "3.00", // feed_qty_per_head_per_day_kg
+      "", // feed_qty_uom
+      "5.00", // feed_wastage_pct
+      "180.00", // std_body_weight_kg
+      "0.00", // std_adg_gpd
+      "0.00", // std_fcr
+      "1.00", // std_mortality_rate_pct
       "",
       "",
       "",
@@ -493,7 +502,19 @@ export function generateMasterTemplateCsv(config: MasterDataConfig): string {
       f.key !== "deleted_at"
   );
   const headers = fields.map((f: MasterDataField) => f.key);
-  const sample = fields.map((f: MasterDataField) => (f.placeholder ? f.placeholder : f.type === "number" ? "10" : "Sample"));
+  // A select-entity or static-select field needs a real code/name to resolve against, not a
+  // placeholder string that would just fail as "not found" — leave those blank rather than guess.
+  const sample = fields.map((f: MasterDataField) =>
+    f.type === "select-entity" || f.type === "select"
+      ? ""
+      : f.placeholder
+        ? f.placeholder
+        : f.type === "number"
+          ? "10"
+          : f.type === "boolean"
+            ? "false"
+            : "Sample",
+  );
   return [headers.join(","), sample.join(",")].join("\r\n");
 }
 
@@ -517,4 +538,230 @@ export function mergeLifecycleFeedRows<T extends { lifecycle_code?: unknown; fee
     merged.push(copy);
   }
   return merged;
+}
+
+// ── Generic CSV import (19 Nov) ─────────────────────────────────────────────────────────────
+//
+// Breed and Breed Lifecycle Stage have their own hand-written import logic above (each master's
+// foreign keys and cross-field rules are particular enough to earn that). Every other master's
+// fields are declared plainly enough in its MasterDataConfig that one metadata-driven reader can
+// parse a CSV row for any of them — reusing the exact field-visibility/required/FK-endpoint rules
+// the live create form already enforces (field-logic.ts), so a spreadsheet row is held to the same
+// standard as one typed into the dialog.
+
+function normalizeKey(str: string): string {
+  return str.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Reads one field's value off a parsed CSV row, trying its key, its label, then a loose
+ * (punctuation/case/space insensitive) match of either — so a file keyed by `breed_code` and one
+ * headed "Code" both resolve the same field. */
+export function getRawValue(
+  raw: Record<string, string>,
+  fieldKey: string,
+  fieldLabel?: string,
+  aliases?: string[],
+): string | undefined {
+  if (!raw) return undefined;
+
+  if (raw[fieldKey] !== undefined && raw[fieldKey] !== "") return raw[fieldKey].trim();
+  if (fieldLabel && raw[fieldLabel] !== undefined && raw[fieldLabel] !== "") return raw[fieldLabel].trim();
+  if (aliases && aliases.length > 0) {
+    for (const a of aliases) {
+      if (raw[a] !== undefined && raw[a] !== "") return raw[a].trim();
+    }
+  }
+
+  const normKey = normalizeKey(fieldKey);
+  const normLabel = fieldLabel ? normalizeKey(fieldLabel) : "";
+  const normAliases = (aliases || []).map(normalizeKey);
+  for (const [k, v] of Object.entries(raw)) {
+    if (v === undefined || v === "") continue;
+    const nk = normalizeKey(k);
+    if (nk === normKey || (normLabel && nk === normLabel) || normAliases.includes(nk)) {
+      return v.trim();
+    }
+  }
+  return undefined;
+}
+
+/** Field types the generic reader does not attempt: a nested row editor, a map/point picker, or
+ * a JSON array have no sane single-cell CSV representation. A master built entirely from plainer
+ * fields (text/number/boolean/date/select/select-entity/string-list/image) is eligible — "image"
+ * is a plain URL column once it's saved (see `ear_tag_image_url` in Animal Register's DTO), so the
+ * CSV just carries that URL like any other text field. */
+const GENERIC_IMPORT_UNSUPPORTED_TYPES = new Set<MasterDataField["type"]>([
+  "json",
+  "field-list",
+  "map",
+  "latlng",
+]);
+
+/** Fields the live create form actually asks for: not a UI-only filter control, not something the
+ * API computes itself, not excluded from the create form, and not edit-only. */
+function createFormFields(config: MasterDataConfig): MasterDataField[] {
+  return config.fields.filter(
+    (f) => !f.filterOnly && !f.readOnly && !f.hideInForm && !f.editOnly,
+  );
+}
+
+/** Whether this master can use the generic CSV reader at all — Breed and Breed Lifecycle Stage
+ * are excluded because they already have their own; a BC-owned catalog and Number Series are
+ * excluded because neither accepts a plain create the way every other master does. Otherwise a
+ * master is only disqualified by a *required* field of an unsupported type — an optional one
+ * (ear_tag_image_url) is simply left out of the CSV, same as any other skippable field. */
+export function supportsGenericImport(config: MasterDataConfig): boolean {
+  if (config.key === "breed" || config.key === "breed-lifecycle-stage") return false;
+  if (config.owner === "BC") return false;
+  if (config.key === "number-series" || config.key === "no-series") return false;
+  return createFormFields(config).every(
+    (f) => !f.required || !GENERIC_IMPORT_UNSUPPORTED_TYPES.has(f.type),
+  );
+}
+
+/** The real, importable fields of a master: createFormFields, further narrowed to what the
+ * generic reader can actually represent in one CSV cell, and — when the workspace is scoped to
+ * an operational area — without nob_id/lob_id, which the live form also hides there and fills
+ * from the active area instead of asking for (see MasterDataTable.tsx). */
+function genericImportFields(config: MasterDataConfig): MasterDataField[] {
+  const operational = getActiveWorkspaceScope() === "OPERATIONAL";
+  return createFormFields(config).filter(
+    (f) =>
+      !GENERIC_IMPORT_UNSUPPORTED_TYPES.has(f.type) &&
+      !(operational && (f.key === "nob_id" || f.key === "lob_id")),
+  );
+}
+
+async function fetchAndCacheOptions(ep: string, cache: Record<string, Row[]>): Promise<Row[]> {
+  if (cache[ep]) return cache[ep];
+  try {
+    const sep = ep.includes("?") ? "&" : "?";
+    const res = await api.get(`${ep}${sep}limit=1000`);
+    const list = unwrap<Row[]>(res) || [];
+    cache[ep] = list;
+    return list;
+  } catch {
+    cache[ep] = [];
+    return [];
+  }
+}
+
+/** Pre-fetches every select-entity field's option list that does not depend on another field's
+ * value, so most FK lookups during parsing are a cache hit rather than a request per row. */
+export async function prefetchGenericEntityOptions(config: MasterDataConfig): Promise<Record<string, Row[]>> {
+  const cache: Record<string, Row[]> = {};
+  const independent = genericImportFields(config).filter(
+    (f) => f.type === "select-entity" && f.entityEndpoint && parentKeys(f).length === 0,
+  );
+  await Promise.all(independent.map((f) => fetchAndCacheOptions(f.entityEndpoint!, cache)));
+  return cache;
+}
+
+function matchEntityOption(list: Row[], rawValue: string, f: MasterDataField): Row | undefined {
+  const valueKey = f.entityValueKey || "id";
+  const needle = rawValue.trim();
+  const needleUpper = needle.toUpperCase();
+  const labelKeys = f.entityLabelKeys?.length ? f.entityLabelKeys : [valueKey];
+  return list.find(
+    (row) =>
+      String(row[valueKey]) === needle ||
+      labelKeys.some((lk) => row[lk] != null && String(row[lk]).toUpperCase() === needleUpper),
+  );
+}
+
+const GENERIC_BOOLEAN_TRUE = new Set(["1", "true", "yes", "y"]);
+const GENERIC_BOOLEAN_FALSE = new Set(["0", "false", "no", "n"]);
+
+/**
+ * Parses one CSV row into a create payload for any master not using its own hand-written logic
+ * (Breed, Breed Lifecycle Stage). `entityCache` is shared across the whole file's rows — pass the
+ * result of `prefetchGenericEntityOptions` and the same object back in on every call so a
+ * dependent field's lookup (fetched lazily, per distinct parent value) is cached too.
+ */
+export async function parseGenericImportRow(
+  config: MasterDataConfig,
+  raw: Record<string, string>,
+  entityCache: Record<string, Row[]>,
+): Promise<{ payload: Row; errors: string[] }> {
+  const payload: Row = {};
+  const errors: string[] = [];
+  const fields = genericImportFields(config);
+
+  for (const f of fields) {
+    const rawVal = getRawValue(raw, f.key, f.label);
+    if (rawVal === undefined || rawVal === "") continue;
+
+    switch (f.type) {
+      case "boolean": {
+        const norm = rawVal.trim().toLowerCase();
+        if (GENERIC_BOOLEAN_TRUE.has(norm)) payload[f.key] = true;
+        else if (GENERIC_BOOLEAN_FALSE.has(norm)) payload[f.key] = false;
+        else errors.push(`${f.label} must be true/false, yes/no, or 1/0 (got '${rawVal}').`);
+        break;
+      }
+      case "number": {
+        const num = Number(rawVal);
+        if (isNaN(num)) {
+          errors.push(`${f.label} must be a number (got '${rawVal}').`);
+        } else if (f.min !== undefined && num < f.min) {
+          errors.push(`${f.label} must be ${f.min} or more.`);
+        } else if (f.max !== undefined && num > f.max) {
+          errors.push(`${f.label} must be ${f.max} or less.`);
+        } else {
+          payload[f.key] = num;
+        }
+        break;
+      }
+      case "select": {
+        const norm = rawVal.trim().toUpperCase();
+        const opt = (f.options || []).find(
+          (o) => o.value.toUpperCase() === norm || o.label.toUpperCase() === norm,
+        );
+        if (opt) payload[f.key] = opt.value;
+        else
+          errors.push(
+            `${f.label} '${rawVal}' is invalid. Allowed: ${(f.options || []).map((o) => o.value).join(", ")}`,
+          );
+        break;
+      }
+      case "select-entity": {
+        if (!f.entityEndpoint) break;
+        // Resolved against the payload built so far this row — a dependent field (dependsOn) needs
+        // its parent's resolved id, which is why field order in the config matters here the same
+        // way it does for the live form (the parent is declared, and so parsed, first).
+        const ep = resolveEndpoint(f, payload);
+        if (!ep) break; // parent not resolved yet; the required-field pass below will catch it if that matters
+        const list = await fetchAndCacheOptions(ep, entityCache);
+        const match = matchEntityOption(list, rawVal, f);
+        if (match) payload[f.key] = match[f.entityValueKey || "id"];
+        else errors.push(`${f.label} '${rawVal}' was not found.`);
+        break;
+      }
+      case "string-list":
+        payload[f.key] = rawVal
+          .split(/[;|]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        break;
+      default:
+        payload[f.key] = rawVal;
+    }
+  }
+
+  // Drop values for fields that turned out not to apply, and flag anything still missing that
+  // the form would also have required — both read off the payload resolved so far, same as the
+  // live form reads off its own live `form` state.
+  for (const f of fields) {
+    if (!isFieldVisible(f, payload)) {
+      delete payload[f.key];
+      continue;
+    }
+    const v = payload[f.key];
+    const isEmpty = v === undefined || v === null || v === "" || (Array.isArray(v) && !v.length);
+    if (isEmpty && isFieldRequired(f, payload)) {
+      errors.push(`${f.label} is required.`);
+    }
+  }
+
+  return { payload, errors };
 }
