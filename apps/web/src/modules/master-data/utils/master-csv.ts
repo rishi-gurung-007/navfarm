@@ -379,67 +379,6 @@ function templateSampleFor(f: MasterDataField, cache: Record<string, Row[]>): st
  * Generates an official CSV template with field headers, constraints description, and sample rows.
  */
 export async function generateMasterTemplateCsv(config: MasterDataConfig): Promise<string> {
-  if (config.key === "breed") {
-    const headers = [
-      "breed_code",
-      "breed_name",
-      "breed_type",
-      "species_code",
-      "gestation_days",
-      "lactation_days",
-      "productive_life_months",
-      "residual_value_pct",
-      "productive_life_cycles",
-      "avg_litter_size_born",
-      "avg_litter_size_weaned",
-      "avg_weaning_weight_kg",
-      "farrowing_rate_pct",
-      "boar_doses_per_week",
-      "boar_productive_life_months",
-      "is_blocked",
-    ];
-
-    const sampleRow = [
-      "LARGE_WHITE",
-      "Large White",
-      "MEAT",
-      "PIG",
-      "114",
-      "28",
-      "36",
-      "10.00",
-      "7",
-      "11.50",
-      "10.00",
-      "7.00",
-      "85.00",
-      "4.00",
-      "18",
-      "0",
-    ];
-
-    const sampleRow2 = [
-      "LANDRACE",
-      "Landrace",
-      "MEAT",
-      "PIG",
-      "114",
-      "28",
-      "36",
-      "10.00",
-      "7",
-      "11.00",
-      "9.80",
-      "7.20",
-      "86.00",
-      "4.00",
-      "18",
-      "0",
-    ];
-
-    return [headers.join(","), sampleRow.join(","), sampleRow2.join(",")].join("\r\n");
-  }
-
   if (config.key === "breed-lifecycle-stage") {
     const headers = [
       "lifecycle_code",
@@ -624,7 +563,10 @@ function createFormFields(config: MasterDataConfig): MasterDataField[] {
  * master is only disqualified by a *required* field of an unsupported type — an optional one
  * (ear_tag_image_url) is simply left out of the CSV, same as any other skippable field. */
 export function supportsGenericImport(config: MasterDataConfig): boolean {
-  if (config.key === "breed" || config.key === "breed-lifecycle-stage") return false;
+  // Breed Lifecycle Stage keeps its own importer: several CSV rows (one per feed-consumption
+  // line) merge into one stage, which the generic one-row-one-record reader can't express. Breed
+  // itself has no such need — one row per breed is exactly what the generic path already handles.
+  if (config.key === "breed-lifecycle-stage") return false;
   if (config.owner === "BC") return false;
   if (config.key === "number-series" || config.key === "no-series") return false;
   return createFormFields(config).every(

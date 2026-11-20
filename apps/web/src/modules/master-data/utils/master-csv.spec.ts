@@ -40,11 +40,14 @@ describe('supportsGenericImport', () => {
     expect(supportsGenericImport(config)).toBe(true);
   });
 
-  it('stays false for breed/breed-lifecycle-stage/BC-owned/number-series regardless of fields', () => {
-    expect(supportsGenericImport(cfg({ key: 'breed', fields: [] }))).toBe(false);
+  it('stays false for breed-lifecycle-stage/BC-owned/number-series regardless of fields', () => {
     expect(supportsGenericImport(cfg({ key: 'breed-lifecycle-stage', fields: [] }))).toBe(false);
     expect(supportsGenericImport(cfg({ owner: 'BC', fields: [] }))).toBe(false);
     expect(supportsGenericImport(cfg({ key: 'number-series', fields: [] }))).toBe(false);
+  });
+
+  it('is true for breed — one CSV row per breed is exactly what the generic reader already handles', () => {
+    expect(supportsGenericImport(cfg({ key: 'breed', fields: [{ key: 'breed_code', label: 'Code', type: 'text', required: true }] }))).toBe(true);
   });
 });
 

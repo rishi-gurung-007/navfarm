@@ -23,7 +23,6 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { showToast, Toast } from '@/components/ui/toast';
-import { getActiveCompanyId } from '@/hooks/useAuth';
 import type { MasterDataConfig } from './types';
 import {
   parseCsvText,
@@ -116,49 +115,28 @@ export default function MasterDataImportModal({
         throw new Error('The selected CSV file contains no data rows.');
       }
 
-      // Pre-fetch reference entity catalogs for foreign-key resolution
-      const [speciesRes, breedRes, stageRes, itemRes, nobsRes] =
-        await Promise.allSettled([
-          config.key === 'breed'
-            ? api.get(`/species?limit=500`)
-            : Promise.resolve([]),
-          config.key === 'breed-lifecycle-stage'
-            ? api.get(`/breed?limit=500`)
-            : Promise.resolve([]),
-          config.key === 'breed-lifecycle-stage'
-            ? api.get(`/stage?limit=500`)
-            : Promise.resolve([]),
-          config.key === 'breed-lifecycle-stage'
-            ? api.get(`/item?limit=500`)
-            : Promise.resolve([]),
-          config.key === 'breed'
-            ? api.get(`/setup/wizard/nobs`)
-            : Promise.resolve([]),
-        ]);
+      // Pre-fetch reference catalogs Breed Lifecycle Stage's own parser resolves by hand — Breed
+      // now goes through the generic reader below, which prefetches its own (species_id, nob_id, ...).
+      const [breedRes, stageRes, itemRes] = await Promise.allSettled([
+        config.key === 'breed-lifecycle-stage'
+          ? api.get(`/breed?limit=500`)
+          : Promise.resolve([]),
+        config.key === 'breed-lifecycle-stage'
+          ? api.get(`/stage?limit=500`)
+          : Promise.resolve([]),
+        config.key === 'breed-lifecycle-stage'
+          ? api.get(`/item?limit=500`)
+          : Promise.resolve([]),
+      ]);
 
-      const speciesList: any[] =
-        speciesRes.status === 'fulfilled' ? unwrap(speciesRes.value) || [] : [];
       const breedList: any[] =
         breedRes.status === 'fulfilled' ? unwrap(breedRes.value) || [] : [];
       const stageList: any[] =
         stageRes.status === 'fulfilled' ? unwrap(stageRes.value) || [] : [];
       const itemList: any[] =
         itemRes.status === 'fulfilled' ? unwrap(itemRes.value) || [] : [];
-      const nobsList: any[] =
-        nobsRes.status === 'fulfilled' ? unwrap(nobsRes.value) || [] : [];
 
-      let lobsList: any[] = [];
-      if (nobsList.length > 0) {
-        const lobResults = await Promise.allSettled(
-          nobsList.map((n) => api.get(`/setup/wizard/lobs/${n.nob_id}`)),
-        );
-        lobsList = lobResults.flatMap((r) =>
-          r.status === 'fulfilled' ? unwrap(r.value) || [] : [],
-        );
-      }
-
-      const isGeneric =
-        config.key !== 'breed' && config.key !== 'breed-lifecycle-stage';
+      const isGeneric = config.key !== 'breed-lifecycle-stage';
       const genericEntityCache = isGeneric
         ? await prefetchGenericEntityOptions(config)
         : {};
@@ -171,245 +149,7 @@ export default function MasterDataImportModal({
         const errors: string[] = [];
         const payload: Record<string, any> = {};
 
-        if (config.key === 'breed') {
-          const code = (
-            getRawValue(raw, 'breed_code', 'Code', [
-              'code',
-              'breedcode',
-              'Breed Code',
-            ]) || ''
-          )
-            .trim()
-            .toUpperCase();
-          const name = (
-            getRawValue(raw, 'breed_name', 'Name', [
-              'name',
-              'breedname',
-              'Breed Name',
-            ]) || ''
-          ).trim();
-          const type = (
-            getRawValue(raw, 'breed_type', 'Breed Type', [
-              'type',
-              'Type',
-              'breedtype',
-            ]) || 'MEAT'
-          )
-            .trim()
-            .toUpperCase();
-
-          if (!code) errors.push('Breed Code is required.');
-          if (!name) errors.push('Breed Name is required.');
-
-          const validTypes = ['MEAT', 'BREEDER', 'DUAL_PURPOSE'];
-          if (!validTypes.includes(type)) {
-            errors.push(
-              `Breed Type '${type}' is invalid. Allowed: ${validTypes.join(', ')}`,
-            );
-          }
-
-          const activeCompanyId = getActiveCompanyId();
-          if (activeCompanyId) payload.company_id = activeCompanyId;
-
-          // Resolve NOB
-          const nobVal = (
-            getRawValue(raw, 'nob_id', 'Nature of Business', [
-              'nob_code',
-              'nob_name',
-              'nob',
-              'Nature Of Business',
-            ]) || ''
-          ).trim();
-          if (nobVal) {
-            const matchedNob = nobsList.find(
-              (n) =>
-                n.nob_code?.toUpperCase() === nobVal.toUpperCase() ||
-                n.nob_name?.toUpperCase() === nobVal.toUpperCase() ||
-                n.nob_id === nobVal,
-            );
-            if (matchedNob) payload.nob_id = matchedNob.nob_id;
-          }
-
-          // Resolve LOB
-          const lobVal = (
-            getRawValue(raw, 'lob_id', 'Line of Business', [
-              'lob_code',
-              'lob_name',
-              'lob',
-              'Line Of Business',
-            ]) || ''
-          ).trim();
-          if (lobVal) {
-            const matchedLob = lobsList.find(
-              (l) =>
-                l.lob_code?.toUpperCase() === lobVal.toUpperCase() ||
-                l.lob_name?.toUpperCase() === lobVal.toUpperCase() ||
-                l.lob_id === lobVal,
-            );
-            if (matchedLob) payload.lob_id = matchedLob.lob_id;
-          }
-
-          // Resolve species if provided
-          const speciesCode = (
-            getRawValue(raw, 'species_code', 'Species', [
-              'species',
-              'species_name',
-              'species_id',
-            ]) || 'PIG'
-          )
-            .trim()
-            .toUpperCase();
-          const matchedSpecies = speciesList.find(
-            (s) =>
-              s.species_code?.toUpperCase() === speciesCode ||
-              s.species_name?.toUpperCase() === speciesCode,
-          );
-
-          payload.breed_code = code;
-          payload.breed_name = name;
-          payload.breed_type = type;
-          if (matchedSpecies) {
-            payload.species_id = matchedSpecies.species_id;
-            payload.species = matchedSpecies.species_name;
-          }
-
-          // Description
-          const desc = getRawValue(raw, 'description', 'Description', [
-            'breed_description',
-            'desc',
-            'notes',
-          ]);
-          if (desc) payload.description = desc;
-
-          // Blocked
-          const blockedVal = getRawValue(raw, 'is_blocked', 'Blocked', [
-            'blocked',
-            'status',
-            'isblocked',
-          ]);
-          if (blockedVal !== undefined && blockedVal !== '') {
-            payload.is_blocked =
-              blockedVal === '1' || blockedVal.toLowerCase() === 'true';
-          }
-
-          // Integer Numbers
-          const intFields: {
-            key: string;
-            label: string;
-            aliases?: string[];
-          }[] = [
-            {
-              key: 'gestation_days',
-              label: 'Gestation Days',
-              aliases: ['gestation', 'gestationdays'],
-            },
-            {
-              key: 'lactation_days',
-              label: 'Lactation Days',
-              aliases: ['lactation', 'lactationdays'],
-            },
-            {
-              key: 'productive_life_months',
-              label: 'Productive Life (months)',
-              aliases: [
-                'Productive Life (months)_1',
-                'sow_productive_life_months',
-                'productivelifemonths',
-              ],
-            },
-            {
-              key: 'productive_life_cycles',
-              label: 'Productive Life Cycles',
-              aliases: ['productivelifecycles', 'cycles', 'parities'],
-            },
-            {
-              key: 'boar_productive_life_months',
-              label: 'Boar Productive Life (months)',
-              aliases: [
-                'Productive Life (months)_2',
-                'boar_productive_life',
-                'boarproductivelifemonths',
-              ],
-            },
-            {
-              key: 'mature_age_months',
-              label: 'Mature Age (months)',
-              aliases: ['matureagemonths', 'mature_age'],
-            },
-          ];
-          for (const { key, label, aliases } of intFields) {
-            const rawVal = getRawValue(raw, key, label, aliases);
-            if (rawVal !== undefined && rawVal !== '') {
-              const val = parseInt(rawVal, 10);
-              if (isNaN(val) || val < 0)
-                errors.push(`${label} must be a non-negative integer.`);
-              else payload[key] = val;
-            }
-          }
-
-          // Decimals
-          const decFields: {
-            key: string;
-            label: string;
-            aliases?: string[];
-          }[] = [
-            {
-              key: 'avg_growth_rate_g_day',
-              label: 'Avg Growth Rate (g/day)',
-              aliases: ['growth_rate', 'avggrowthrategday'],
-            },
-            { key: 'avg_fcr', label: 'Avg FCR', aliases: ['fcr', 'avgfcr'] },
-            {
-              key: 'avg_mortality_pct',
-              label: 'Avg Mortality %',
-              aliases: ['mortality', 'avgmortality', 'avgmortalitypct'],
-            },
-            {
-              key: 'avg_yield_per_unit',
-              label: 'Avg Yield per Unit',
-              aliases: ['yield', 'avgyieldperunit'],
-            },
-            {
-              key: 'avg_litter_size_born',
-              label: 'Avg Litter Size Born',
-              aliases: ['litter_size_born', 'avglittersizeborn'],
-            },
-            {
-              key: 'avg_litter_size_weaned',
-              label: 'Avg Litter Size Weaned',
-              aliases: ['litter_size_weaned', 'avglittersizeweaned'],
-            },
-            {
-              key: 'avg_weaning_weight_kg',
-              label: 'Avg Weaning Weight (KG)',
-              aliases: ['weaning_weight', 'avgweaningweightkg'],
-            },
-            {
-              key: 'farrowing_rate_pct',
-              label: 'Farrowing Rate %',
-              aliases: ['farrowing_rate', 'farrowingratepct', 'farrowingrate'],
-            },
-            {
-              key: 'boar_doses_per_week',
-              label: 'Doses per Week',
-              aliases: ['doses_per_week', 'boardosesperweek'],
-            },
-            {
-              key: 'residual_value_pct',
-              label: 'Residual Value %',
-              aliases: ['residual_value', 'residualvaluepct', 'residualvalue'],
-            },
-          ];
-          for (const { key, label, aliases } of decFields) {
-            const rawVal = getRawValue(raw, key, label, aliases);
-            if (rawVal !== undefined && rawVal !== '') {
-              const val = parseFloat(rawVal);
-              if (isNaN(val) || val < 0)
-                errors.push(`${label} must be a valid non-negative number.`);
-              else payload[key] = val;
-            }
-          }
-        } else if (config.key === 'breed-lifecycle-stage') {
+        if (config.key === 'breed-lifecycle-stage') {
           const breedCode = (
             getRawValue(raw, 'breed_code', 'Breed', [
               'breed',
@@ -746,9 +486,7 @@ export default function MasterDataImportModal({
 
     try {
       let bulkRes: any;
-      if (config.key === 'breed') {
-        bulkRes = await api.post('/breed/bulk', { items: validItems });
-      } else if (config.key === 'breed-lifecycle-stage') {
+      if (config.key === 'breed-lifecycle-stage') {
         bulkRes = await api.post('/breed-lifecycle-stage/bulk', {
           items: validItems,
         });
@@ -834,7 +572,7 @@ export default function MasterDataImportModal({
 
       if (importedCodes.length > 0) {
         showToast.success(
-          `Successfully imported ${importedCodes.length} ${config.key === 'breed' ? 'breed' : 'record'}(s): ${importedCodes.join(', ')}`,
+          `Successfully imported ${importedCodes.length} record(s): ${importedCodes.join(', ')}`,
         );
       } else {
         showToast.success(
@@ -1038,7 +776,7 @@ export default function MasterDataImportModal({
                   <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
                   <span>
                     Validation Alert: {errorCount}{' '}
-                    {config.key === 'breed' ? 'Breed' : 'Record'}
+                    Record
                     {errorCount > 1 ? 's' : ''} Failed Validation
                   </span>
                 </div>
@@ -1054,8 +792,7 @@ export default function MasterDataImportModal({
               </div>
 
               <p className="text-[11px] text-rose-700 dark:text-rose-300">
-                The following imported{' '}
-                {config.key === 'breed' ? 'breed codes' : 'records'} have
+                The following imported records have
                 validation errors and cannot be saved:
               </p>
 
@@ -1110,7 +847,7 @@ export default function MasterDataImportModal({
                 <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
                 <span>
                   All {stagedRows.length}{' '}
-                  {config.key === 'breed' ? 'breed' : 'record'}
+                  record
                   {stagedRows.length > 1 ? 's' : ''} validated successfully and
                   ready to import.
                 </span>
