@@ -140,6 +140,7 @@ const location: MasterDataConfig = {
       readOnly: true,
       createOnly: true,
       importable: true,
+      aliases: ['Master Code', 'Master Code ID', 'Identifier', 'ID', 'Location Code'],
       helpText:
         'Generated from the selected Location Type prefix and kept permanently.',
       section: 'Identification',
@@ -1183,6 +1184,7 @@ const animal: MasterDataConfig = {
       type: 'text',
       required: true,
       createOnly: true,
+      aliases: ['Master Code', 'Identifier', 'ID', 'Animal ID'],
       section: 'Identification',
     },
     { key: 'company_id', label: 'Company', type: 'text', hideInForm: true },
@@ -1281,6 +1283,7 @@ const animal: MasterDataConfig = {
       label: 'RFID',
       type: 'text',
       maxLength: 50,
+      aliases: ['Ear Tag', 'Tag No', 'RFID Tag'],
       helpText:
         'The only tag an animal carries. Each animal needs its own RFID; a tag already used by another animal is refused.',
       section: 'Identification',
@@ -2531,6 +2534,7 @@ const item: MasterDataConfig = {
       label: 'Code',
       type: 'text',
       createOnly: true,
+      aliases: ['Master Code', 'Identifier', 'ID', 'Item Code'],
       helpText: 'Assigned from the Item number series; can be customized.',
       section: 'Identification',
     },

@@ -55,6 +55,10 @@ export interface MasterDataField {
    */
   subDialog?: boolean | string;
   placeholder?: string;
+  /** Extra CSV header labels the generic importer accepts for this field, beyond its own key and
+   * label (e.g. "Master Code", "ID" for a master's primary identity field). Configuration-only —
+   * never inferred from the field's type or name, so it can't collide with an unrelated field. */
+  aliases?: string[];
   /**
    * The form key holding the longitude. On a `latlng` field this field's own key holds the latitude; on a `map`
    * field `mapLatitudeKey` names it, because the map itself writes no column of its own.

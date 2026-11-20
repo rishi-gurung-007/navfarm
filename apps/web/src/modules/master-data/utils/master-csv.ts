@@ -645,7 +645,10 @@ export async function parseGenericImportRow(
       raw,
       f.key,
       f.label,
-      f.type === "select-entity" ? [templateHeaderFor(f)] : undefined,
+      [
+        ...(f.type === "select-entity" ? [templateHeaderFor(f)] : []),
+        ...(f.aliases ?? []),
+      ],
     );
     if (rawVal === undefined || rawVal === "") continue;
 

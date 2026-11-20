@@ -361,3 +361,30 @@ describe('exportMasterRowsToCsv — select-entity resolution does not depend on 
     expect(rows[0]['Source GRN']).toBe('GR-000001');
   });
 });
+
+describe('parseGenericImportRow — configured aliases', () => {
+  it('resolves a field from its configured alias header', async () => {
+    const config = cfg({
+      fields: [{ key: 'location_code', label: 'Code', type: 'text', aliases: ['Master Code', 'Identifier'] }],
+    });
+    // "Master Code" should resolve via the alias, not via loose matching
+    const { payload, errors } = await parseGenericImportRow(config, { 'Master Code': 'FARM-01' }, {});
+    expect(payload.location_code).toBe('FARM-01');
+    expect(errors).toEqual([]);
+  });
+
+  it('an exact field-key match wins over a same-named alias on another field', async () => {
+    const config = cfg({
+      fields: [
+        { key: 'location_code', label: 'Code', type: 'text', aliases: ['ID'] },
+        { key: 'external_ref', label: 'External Reference', type: 'text', aliases: [] },
+      ],
+    });
+    // The raw row has a real "external_ref" column AND an "ID" column; "ID" must not steal
+    // external_ref's value just because it is location_code's alias — location_code only reads
+    // "ID" when there is no column literally named/labelled location_code/Code.
+    const { payload } = await parseGenericImportRow(config, { location_code: 'LOC-1', ID: 'LOC-2', external_ref: 'REF-1' }, {});
+    expect(payload.location_code).toBe('LOC-1');
+    expect(payload.external_ref).toBe('REF-1');
+  });
+});
