@@ -528,9 +528,9 @@ export async function generateMasterTemplateCsv(config: MasterDataConfig): Promi
   // Generic fallback for any other master — the same field list genericImportFields reads from,
   // so the template can never ask for a column import would then ignore or reject.
   const fields = genericImportFields(config);
-  const headers = fields.map(templateHeaderFor);
+  const headers = fields.map(templateHeaderFor).map(escapeCsvCell);
   const cache = await prefetchGenericEntityOptions(config);
-  const sample = fields.map((f) => templateSampleFor(f, cache));
+  const sample = fields.map((f) => escapeCsvCell(templateSampleFor(f, cache)));
   return [headers.join(","), sample.join(",")].join("\r\n");
 }
 
@@ -704,7 +704,15 @@ export async function parseGenericImportRow(
   const fields = genericImportFields(config);
 
   for (const f of fields) {
-    const rawVal = getRawValue(raw, f.key, f.label);
+    // A select-entity column is headed "<label> Code" in the downloaded template
+    // (templateHeaderFor) — accepted here as an alias so a row filled in under that exact
+    // header, not just one keyed by f.key/f.label, still resolves.
+    const rawVal = getRawValue(
+      raw,
+      f.key,
+      f.label,
+      f.type === "select-entity" ? [templateHeaderFor(f)] : undefined,
+    );
     if (rawVal === undefined || rawVal === "") continue;
 
     switch (f.type) {

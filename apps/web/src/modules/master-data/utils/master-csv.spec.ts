@@ -1,4 +1,4 @@
-import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv } from './master-csv';
+import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv, parseCsvText, prefetchGenericEntityOptions } from './master-csv';
 import type { MasterDataConfig } from '../types';
 
 jest.mock('@/services/api-client', () => ({ api: { get: jest.fn() } }));
@@ -193,5 +193,40 @@ describe('generateMasterTemplateCsv generic fallback — sample row', () => {
     const csv = await generateMasterTemplateCsv(config);
     const [, sampleLine] = csv.split('\r\n');
     expect(sampleLine).toBe('');
+  });
+});
+
+describe('template round-trip — a filled-in downloaded template must re-import cleanly', () => {
+  afterEach(() => jest.resetAllMocks());
+
+  it('a select-entity value typed under its "... Code" header resolves, not just one typed under the raw key/label', async () => {
+    (api.get as jest.Mock).mockResolvedValue({ data: [{ breed_id: 'b-1', breed_code: 'LARGE_WHITE' }] });
+    const config = cfg({
+      fields: [{ key: 'breed_id', label: 'Breed', type: 'select-entity', required: true, entityEndpoint: '/breed', entityValueKey: 'breed_id', entityLabelKeys: ['breed_code'] }],
+    });
+    const csv = await generateMasterTemplateCsv(config);
+    const [headerLine] = csv.split('\r\n');
+    expect(headerLine).toBe('Breed Code'); // the header this test's own row is filled in under
+
+    const { rows } = parseCsvText(`${headerLine}\r\nLARGE_WHITE`);
+    const cache = await prefetchGenericEntityOptions(config);
+    const { payload, errors } = await parseGenericImportRow(config, rows[0], cache);
+
+    expect(errors).toEqual([]);
+    expect(payload.breed_id).toBe('b-1');
+  });
+
+  it('CSV-escapes a header or sample value that itself contains a comma, so columns do not shift', async () => {
+    (api.get as jest.Mock).mockResolvedValue({ data: [{ breed_id: 'b-1', breed_code: 'LARGE, WHITE' }] });
+    const config = cfg({
+      fields: [
+        { key: 'label_template', label: 'Label Template', type: 'text', placeholder: 'Pick a format, or add parts below' },
+        { key: 'breed_id', label: 'Breed', type: 'select-entity', entityEndpoint: '/breed', entityValueKey: 'breed_id', entityLabelKeys: ['breed_code'] },
+      ],
+    });
+    const csv = await generateMasterTemplateCsv(config);
+    const { rows } = parseCsvText(csv);
+    expect(rows[0]['Label Template']).toBe('Pick a format, or add parts below');
+    expect(rows[0]['Breed Code']).toBe('LARGE, WHITE');
   });
 });
