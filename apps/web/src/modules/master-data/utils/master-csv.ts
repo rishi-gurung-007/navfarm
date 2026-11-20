@@ -382,6 +382,41 @@ export function resolveImportCodeDisplay(
   return { text: "", provenance: "none" };
 }
 
+/**
+ * Finds codes that collide within one uploaded file — rows that would otherwise each look valid
+ * on their own but can't all be created, since the backend enforces `codeField` as unique per
+ * master. Normalizes the same way the backend does (`.trim().toUpperCase()`, Tasks 2/3) so a
+ * collision the API would reject is caught here first, before any row is submitted.
+ *
+ * Returns a Map from normalized code to every row index (0-based, into `rows`) that carries it —
+ * only for codes shared by two or more rows; a code appearing once, or a row with no code at all,
+ * is left out. A config with no `codeField` has nothing to collide on, so it's always an empty Map.
+ */
+export function findDuplicateImportCodes(
+  config: MasterDataConfig,
+  rows: Array<{ payload: Record<string, any> }>,
+): Map<string, number[]> {
+  const result = new Map<string, number[]>();
+  const codeField = config.codeField;
+  if (!codeField) return result;
+
+  const byCode = new Map<string, number[]>();
+  rows.forEach((row, idx) => {
+    const raw = row.payload[codeField];
+    if (raw === undefined || raw === null) return;
+    const norm = String(raw).trim().toUpperCase();
+    if (!norm) return;
+    const existing = byCode.get(norm);
+    if (existing) existing.push(idx);
+    else byCode.set(norm, [idx]);
+  });
+
+  for (const [code, indexes] of byCode) {
+    if (indexes.length > 1) result.set(code, indexes);
+  }
+  return result;
+}
+
 /** One real, fillable-looking example per field: every value the valid `select` list holds (so
  * the sheet doubles as its own legend), or the first real row an independent `select-entity`
  * fetched (a dependent one, e.g. Current Stage under Breed, isn't pre-fetched — left blank, same

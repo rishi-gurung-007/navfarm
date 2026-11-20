@@ -33,6 +33,7 @@ import {
   parseGenericImportRow,
   applyOperationalNobLob,
   resolveImportCodeDisplay,
+  findDuplicateImportCodes,
 } from './utils/master-csv';
 
 function unwrap<T = any>(res: any): T {
@@ -466,6 +467,23 @@ export default function MasterDataImportModal({
           isValid: errors.length === 0,
           errors,
         });
+      }
+
+      // A code shared by two rows in the same file would otherwise look valid on its own and
+      // only fail once it hits the backend's uniqueness check — caught here first, against every
+      // staged row (not just the valid ones), so both colliding rows show the problem up front.
+      const dupeCodes = findDuplicateImportCodes(config, staged);
+      for (const [code, dupeIndexes] of dupeCodes) {
+        for (const idx of dupeIndexes) {
+          const row = staged[idx];
+          const otherRows = dupeIndexes
+            .filter((other) => other !== idx)
+            .map((other) => staged[other].index);
+          row.errors.push(
+            `Code '${code}' is duplicated in this file (also on row(s) ${otherRows.join(', ')}).`,
+          );
+          row.isValid = false;
+        }
       }
 
       setStagedRows(staged);

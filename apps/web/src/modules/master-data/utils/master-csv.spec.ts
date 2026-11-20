@@ -1,4 +1,4 @@
-import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv, parseCsvText, prefetchGenericEntityOptions, exportMasterRowsToCsv, downloadCsvFile, applyOperationalNobLob, resolveImportCodeDisplay } from './master-csv';
+import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv, parseCsvText, prefetchGenericEntityOptions, exportMasterRowsToCsv, downloadCsvFile, applyOperationalNobLob, resolveImportCodeDisplay, findDuplicateImportCodes } from './master-csv';
 import type { MasterDataConfig } from '../types';
 
 jest.mock('@/services/api-client', () => ({ api: { get: jest.fn() } }));
@@ -430,5 +430,30 @@ describe('resolveImportCodeDisplay', () => {
     const config = cfg({ key: 'breed', codeField: 'breed_code', fields: [{ key: 'breed_code', label: 'Code', type: 'text' }] });
     const result = resolveImportCodeDisplay(config, { payload: { breed_code: 'YORKSHIRE' }, raw: {}, errors: [] });
     expect(result.text).toBe('YORKSHIRE');
+  });
+});
+
+describe('findDuplicateImportCodes', () => {
+  it('flags two rows sharing a code, case-insensitively', () => {
+    const config = cfg({ codeField: 'stage_code' });
+    const dupes = findDuplicateImportCodes(config, [
+      { payload: { stage_code: 'grower' } },
+      { payload: { stage_code: 'FINISHER' } },
+      { payload: { stage_code: 'GROWER' } },
+    ]);
+    expect(dupes.get('GROWER')).toEqual([0, 2]);
+    expect(dupes.has('FINISHER')).toBe(false);
+  });
+
+  it('is a no-op for a config with no codeField', () => {
+    const config = cfg({});
+    const dupes = findDuplicateImportCodes(config, [{ payload: { stage_code: 'GROWER' } }, { payload: { stage_code: 'GROWER' } }]);
+    expect(dupes.size).toBe(0);
+  });
+
+  it('ignores rows with no code at all (nothing to collide on)', () => {
+    const config = cfg({ codeField: 'stage_code' });
+    const dupes = findDuplicateImportCodes(config, [{ payload: {} }, { payload: {} }]);
+    expect(dupes.size).toBe(0);
   });
 });
