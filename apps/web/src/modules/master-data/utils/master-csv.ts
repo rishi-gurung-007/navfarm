@@ -344,6 +344,12 @@ export async function exportMasterRowsToCsv(
   downloadCsvFile(filename, csvRows.join("\r\n"));
 }
 
+/** A select-entity column is matched against another master's code, not typed freely — the
+ * header says so, so the sheet doesn't read like a place to describe the record instead. */
+function templateHeaderFor(f: MasterDataField): string {
+  return f.type === "select-entity" ? `${f.label} Code` : f.label;
+}
+
 /**
  * Generates an official CSV template with field headers, constraints description, and sample rows.
  */
@@ -491,17 +497,10 @@ export function generateMasterTemplateCsv(config: MasterDataConfig): string {
     return [headers.join(","), sampleRow1.join(","), sampleRow2.join(",")].join("\r\n");
   }
 
-  // Generic fallback for any other master
-  const fields = config.fields.filter(
-    (f: MasterDataField) =>
-      f.type !== "json" &&
-      !f.hideInForm &&
-      f.key !== "company_id" &&
-      f.key !== "created_at" &&
-      f.key !== "updated_at" &&
-      f.key !== "deleted_at"
-  );
-  const headers = fields.map((f: MasterDataField) => f.key);
+  // Generic fallback for any other master — the same field list genericImportFields reads from,
+  // so the template can never ask for a column import would then ignore or reject.
+  const fields = genericImportFields(config);
+  const headers = fields.map(templateHeaderFor);
   // A select-entity or static-select field needs a real code/name to resolve against, not a
   // placeholder string that would just fail as "not found" — leave those blank rather than guess.
   const sample = fields.map((f: MasterDataField) =>

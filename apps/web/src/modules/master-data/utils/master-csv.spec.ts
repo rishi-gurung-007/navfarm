@@ -1,4 +1,4 @@
-import { supportsGenericImport, parseGenericImportRow } from './master-csv';
+import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv } from './master-csv';
 import type { MasterDataConfig } from '../types';
 
 function cfg(overrides: Partial<MasterDataConfig>): MasterDataConfig {
@@ -115,5 +115,32 @@ describe('parseGenericImportRow NOB/LOB auto-fill', () => {
     const config = cfg({ fields: [{ key: 'name', label: 'Name', type: 'text', required: true }] });
     const { payload } = await parseGenericImportRow(config, { name: 'Widget A' }, {});
     expect(payload).toEqual({ name: 'Widget A' });
+  });
+});
+
+describe('generateMasterTemplateCsv generic fallback — field list and headers', () => {
+  it('excludes hideInForm/editOnly fields from the template, same as the create form', async () => {
+    const config = cfg({
+      fields: [
+        { key: 'name', label: 'Name', type: 'text', required: true },
+        { key: 'company_id', label: 'Company', type: 'text', hideInForm: true },
+        { key: 'is_active', label: 'Active', type: 'boolean', editOnly: true },
+      ],
+    });
+    const csv = await generateMasterTemplateCsv(config);
+    const [headerLine] = csv.split('\r\n');
+    expect(headerLine).toBe('Name');
+  });
+
+  it('appends " Code" to a select-entity header, leaves a plain select/text header alone', async () => {
+    const config = cfg({
+      fields: [
+        { key: 'breed_id', label: 'Breed', type: 'select-entity', entityEndpoint: '/breed', entityValueKey: 'breed_id', entityLabelKeys: ['breed_code'] },
+        { key: 'gender', label: 'Gender', type: 'select', options: [{ value: 'M', label: 'Male' }, { value: 'F', label: 'Female' }] },
+      ],
+    });
+    const csv = await generateMasterTemplateCsv(config);
+    const [headerLine] = csv.split('\r\n');
+    expect(headerLine.split(',')).toEqual(['Breed Code', 'Gender']);
   });
 });
