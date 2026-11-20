@@ -297,3 +297,37 @@ describe('applyOperationalNobLob — shared by the generic reader and Breed Life
     expect(payload).toEqual({});
   });
 });
+
+describe('exportMasterRowsToCsv — select-entity resolution does not depend on the record being in the first page of its collection', () => {
+  let capturedBlob: Blob | null = null;
+
+  beforeEach(() => {
+    capturedBlob = null;
+    (globalThis as any).URL.createObjectURL = jest.fn((blob: Blob) => {
+      capturedBlob = blob;
+      return 'blob:mock';
+    });
+    (globalThis as any).URL.revokeObjectURL = jest.fn();
+  });
+
+  afterEach(() => jest.resetAllMocks());
+
+  it('resolves a select-entity value by its own id even when a list fetch of the collection would not include it (e.g. a GRN past the first 500)', async () => {
+    (api.get as jest.Mock).mockImplementation((ep: string) => {
+      // The old approach fetched a flat, capped list of the whole collection — simulate a
+      // collection large enough that the record this row actually references isn't in it.
+      if (ep.startsWith('/goods-receipt?')) return Promise.resolve({ data: [{ receipt_id: 'other-1', receipt_no: 'GR-999999' }] });
+      // The fix: resolve by the record's own id directly.
+      if (ep === '/goods-receipt/0b7ba7c5-grn') return Promise.resolve({ data: { receipt_id: '0b7ba7c5-grn', receipt_no: 'GR-000001' } });
+      return Promise.resolve({ data: [] });
+    });
+    const config = cfg({
+      fields: [
+        { key: 'source_receipt_id', label: 'Source GRN', type: 'select-entity', entityEndpoint: '/goods-receipt', entityValueKey: 'receipt_id', entityLabelKeys: ['receipt_no'], dependsOn: 'item_id', dependsOnMode: 'query' },
+      ],
+    });
+    await exportMasterRowsToCsv(config, [{ source_receipt_id: '0b7ba7c5-grn' }]);
+    const { rows } = parseCsvText(await readBlobAsText(capturedBlob!));
+    expect(rows[0]['Source GRN']).toBe('GR-000001');
+  });
+});

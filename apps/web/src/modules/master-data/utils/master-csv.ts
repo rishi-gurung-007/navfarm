@@ -191,41 +191,21 @@ export function parseCsvText(csvText: string): { headers: string[]; rows: Record
   return { headers: rawHeaders, rows };
 }
 
-function parentKey(f: MasterDataField): string | undefined {
-  if (!f.dependsOn) return undefined;
-  return Array.isArray(f.dependsOn) ? f.dependsOn[0] : f.dependsOn;
-}
-
 /**
  * Resolves a field value for export: translates internal UUIDs to natural business codes where available.
  */
 function resolveExportCellValue(
   f: MasterDataField,
   val: any,
-  row: Row,
   lookupMap?: Record<string, Row[]>
 ): string {
   if (val === null || val === undefined) return "";
 
-  // For select-entity fields, resolve ONLY against this field's entity endpoint
+  // For select-entity fields, resolve against the base-endpoint bucket exportMasterRowsToCsv
+  // fetched by id (see there) — the same key regardless of path-mode vs query-mode dependsOn.
   if (f.type === "select-entity" && lookupMap && f.entityEndpoint) {
-    let targetList: Row[] | undefined;
-
-    const pKey = parentKey(f);
-    if (pKey && row[pKey]) {
-      const ep = f.entityEndpoint.replace("{value}", String(row[pKey]));
-      targetList = lookupMap[ep];
-    }
-
-    if (!targetList) {
-      targetList = lookupMap[f.entityEndpoint];
-    }
-
-    if (!targetList) {
-      const base = f.entityEndpoint.split("?")[0].split("/{")[0];
-      const entry = Object.entries(lookupMap).find(([k]) => k.startsWith(base));
-      if (entry) targetList = entry[1];
-    }
+    const baseEp = f.entityEndpoint.split("?")[0].split("/{")[0];
+    const targetList = lookupMap[baseEp];
 
     if (targetList && Array.isArray(targetList)) {
       const valueKey = f.entityValueKey || "id";
@@ -270,42 +250,38 @@ export async function exportMasterRowsToCsv(
     (f: MasterDataField) => f.type !== "json" && !f.filterOnly && !f.hideInForm
   );
 
-  // Build a lookup map of endpoint -> Row[]
+  // Build a lookup map of base endpoint -> Row[] — keyed by entityEndpoint with any query string
+  // or "{value}" placeholder stripped, since resolution below is by record id, not by list page.
   const lookupMap: Record<string, Row[]> = { ...(entityOptions || {}) };
 
-  // Pre-fetch any entity endpoints needed for exportFields that are missing
+  // Fetching "the first 500 of the collection" silently mis-resolved any field whose true value
+  // wasn't in that page — exactly the "shows a UUID instead of the code" bug (a GRN past the
+  // 500th by default ordering). Fetching the specific records these rows actually reference,
+  // by id, is correct regardless of collection size or how the field depends on another one.
   const selectEntityFields = exportFields.filter(
     (f: MasterDataField) => f.type === "select-entity" && f.entityEndpoint
   );
 
   for (const f of selectEntityFields) {
-    const pKey = parentKey(f);
-    if (pKey) {
-      // Find distinct parent values across rows
-      const parentVals = Array.from(new Set(rows.map((r) => r[pKey]).filter(Boolean)));
-      for (const pVal of parentVals) {
-        const ep = f.entityEndpoint!.replace("{value}", String(pVal));
-        if (!lookupMap[ep]) {
-          try {
-            const res = await api.get(`${ep}${ep.includes("?") ? "&" : "?"}limit=500`);
-            const list = unwrap<Row[]>(res);
-            if (Array.isArray(list)) lookupMap[ep] = list;
-          } catch {
-            lookupMap[ep] = [];
-          }
-        }
-      }
-    } else {
-      const ep = f.entityEndpoint!;
-      if (!lookupMap[ep]) {
-        try {
-          const res = await api.get(`${ep}${ep.includes("?") ? "&" : "?"}limit=500`);
-          const list = unwrap<Row[]>(res);
-          if (Array.isArray(list)) lookupMap[ep] = list;
-        } catch {
-          lookupMap[ep] = [];
-        }
-      }
+    const baseEp = f.entityEndpoint!.split("?")[0].split("/{")[0];
+    const valueKey = f.entityValueKey || "id";
+    const existing = lookupMap[baseEp] || [];
+    const haveIds = new Set(existing.map((r) => String(r[valueKey])));
+    const neededIds = Array.from(
+      new Set(rows.map((r) => r[f.key]).filter(Boolean).map(String)),
+    ).filter((id) => !haveIds.has(id));
+
+    if (neededIds.length) {
+      const fetched = await Promise.allSettled(
+        neededIds.map((id) => api.get(`${baseEp}/${id}`)),
+      );
+      const newRows = fetched
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled")
+        .map((r) => unwrap<Row>(r.value))
+        .filter((row): row is Row => !!row && typeof row === "object");
+      lookupMap[baseEp] = [...existing, ...newRows];
+    } else if (!lookupMap[baseEp]) {
+      lookupMap[baseEp] = [];
     }
   }
 
@@ -343,7 +319,7 @@ export async function exportMasterRowsToCsv(
       const source = line ? { ...r, period_from: line.period_from, period_to: line.period_to } : r;
       const lineCells = exportFields.map((f: MasterDataField) => {
         const rawVal = source[f.key];
-        const resolved = resolveExportCellValue(f, rawVal, source, lookupMap);
+        const resolved = resolveExportCellValue(f, rawVal, lookupMap);
         return escapeCsvCell(resolved);
       });
       if (feedLineExport) {
