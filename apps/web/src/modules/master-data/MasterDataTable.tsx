@@ -67,11 +67,16 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { singularLabel } from './labels';
 import { formatColumnValue } from './column-format';
 import { cn, formatDecimal, toInputNumber } from '@/lib/utils';
-import type {
-  MasterDataConfig,
-  MasterDataField,
-  RequiredCondition,
-} from './types';
+import type { MasterDataConfig, MasterDataField } from './types';
+import {
+  parentKeys,
+  isFieldRequired,
+  isFieldVisible,
+  resolveEndpoint,
+} from './field-logic';
+// Re-exported for callers that still import these from here (pre-dating the move to
+// field-logic.ts) rather than from the shared module directly.
+export { parentKeys, isFieldRequired, isFieldVisible, resolveEndpoint };
 import AnimalDetailPanel from './AnimalDetailPanel';
 import { MASTER_DATA_CONFIGS } from './configs';
 import { codeFieldOf } from './useCodeSeries';
@@ -85,7 +90,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ItemTemplateSelectModal } from './ItemTemplateSelectModal';
 import FairValueRatesDialog from './FairValueRatesDialog';
 import QcSpecDialog, { toApiLines, type QcSpecRow } from './QcSpecDialog';
-import { exportMasterRowsToCsv } from './utils/master-csv';
+import { exportMasterRowsToCsv, supportsGenericImport } from './utils/master-csv';
 import MasterDataImportModal from './MasterDataImportModal';
 import { LabelTemplateField } from './LabelTemplateField';
 
@@ -184,11 +189,6 @@ function entityLabelPartsOf(row: Row, field: MasterDataField): string[] {
     : [String(entityLabel(row, field) ?? '')];
 }
 
-function parentKeys(f: MasterDataField): string[] {
-  if (!f.dependsOn) return [];
-  return Array.isArray(f.dependsOn) ? f.dependsOn : [f.dependsOn];
-}
-
 /** A field's label as it should read right now: `labelWhen` lets it follow another field's
  * value (Tracking No. Series becomes "Lot No. Series" or "Serial No. Series"). */
 function currentLabel(f: MasterDataField, values: Row): string {
@@ -211,111 +211,9 @@ export function rowOpenAction(
   return 'edit';
 }
 
-function matchesCondition(cond: RequiredCondition, form: Row): boolean {
-  const raw = form[cond.key];
-  const depValue = raw === undefined || raw === null ? '' : raw;
-  if (cond.startsWith !== undefined)
-    return String(depValue)
-      .toUpperCase()
-      .startsWith(cond.startsWith.toUpperCase());
-  if (cond.equals !== undefined) {
-    const list = Array.isArray(cond.equals) ? cond.equals : [cond.equals];
-    return list.some((item: any) => {
-      const target = item === undefined || item === null ? '' : item;
-      return target === depValue;
-    });
-  }
-  if (cond.notEquals !== undefined) {
-    const list = Array.isArray(cond.notEquals)
-      ? cond.notEquals
-      : [cond.notEquals];
-    return !list.some((item: any) => {
-      const target = item === undefined || item === null ? '' : item;
-      return target === depValue;
-    });
-  }
-  return depValue !== '' && depValue !== false;
-}
-
-/** Whether `f` is required right now — statically, or via `requiredWhen` against the live form values. */
-function isFieldRequired(f: MasterDataField, form: Row): boolean {
-  if (f.required) return true;
-  if (!f.requiredWhen) return false;
-  if (
-    f.requiredWhen.anyOf &&
-    f.requiredWhen.anyOf.some((cond) => matchesCondition(cond, form))
-  ) {
-    return true;
-  }
-  if (
-    f.requiredWhen.allOf &&
-    f.requiredWhen.allOf.every((cond) => matchesCondition(cond, form))
-  ) {
-    return true;
-  }
-  return false;
-}
-
-/** Whether `f` is visible right now via `visibleWhen` against the live form values. */
-export function isFieldVisible(f: MasterDataField, form: Row): boolean {
-  if (!f.visibleWhen) return true;
-  if (
-    f.visibleWhen.anyOf &&
-    !f.visibleWhen.anyOf.some((cond) => matchesCondition(cond, form))
-  ) {
-    return false;
-  }
-  if (
-    f.visibleWhen.allOf &&
-    !f.visibleWhen.allOf.every((cond) => matchesCondition(cond, form))
-  ) {
-    return false;
-  }
-  return true;
-}
-
-/**
- * Resolves a select-entity field's actual endpoint.
- * - "path" mode (default, single parent): substitutes "{value}" with the parent's current
- *   value; returns null (blocking the field) while that parent is unset.
- * - "query" mode (one or more parents): appends each set parent as a query param via
- *   queryParams; unset parents are simply omitted rather than blocking the fetch.
- */
 /** Where a picker's options are cached: an opted-in field (entityIncludeInactive) never shares the active-only list. */
 function entityOptionsKey(ep: string, includeInactive?: boolean): string {
   return includeInactive ? `${ep}#inactive` : ep;
-}
-
-function resolveEndpoint(f: MasterDataField, form: Row): string | null {
-  if (!f.entityEndpoint) return null;
-  const parents = parentKeys(f);
-  if (parents.length === 0) return f.entityEndpoint;
-
-  if (f.dependsOnMode === 'query') {
-    const params = new URLSearchParams();
-    for (const key of parents) {
-      const raw = form[key];
-      const paramName = f.queryParams?.[key];
-      // A field may translate the parent's value before sending it — item_type
-      // LIVING_ASSET narrows the UOM list to COUNT, not to "LIVING_ASSET". An
-      // unmapped value omits the param and leaves the list unfiltered.
-      const map = f.queryValueMap?.[key];
-      const val = map ? (raw ? map[String(raw)] : undefined) : raw;
-      if (val && paramName) params.set(paramName, val);
-    }
-    const qs = params.toString();
-    // entityEndpoint may already carry a query string (e.g.
-    // "/item-category?rootOnly=true"), so append rather than assume — the same
-    // rule the option-fetch effects use. Hardcoding "?" here would produce
-    // "...?rootOnly=true?itemType=X" and the first value would swallow the rest.
-    return qs
-      ? `${f.entityEndpoint}${f.entityEndpoint.includes('?') ? '&' : '?'}${qs}`
-      : f.entityEndpoint;
-  }
-
-  const parentVal = form[parents[0]];
-  if (!parentVal) return null;
-  return f.entityEndpoint.replace('{value}', parentVal);
 }
 
 function displayValue(
@@ -5009,7 +4907,8 @@ export function MasterDataTable({
 
               {!readOnly &&
                 (config.key === 'breed' ||
-                  config.key === 'breed-lifecycle-stage') && (
+                  config.key === 'breed-lifecycle-stage' ||
+                  supportsGenericImport(config)) && (
                   <button
                     type="button"
                     onClick={() => setImportModalOpen(true)}
@@ -5345,7 +5244,8 @@ export function MasterDataTable({
                 </button>
                 {!readOnly &&
                   (config.key === 'breed' ||
-                    config.key === 'breed-lifecycle-stage') && (
+                    config.key === 'breed-lifecycle-stage' ||
+                    supportsGenericImport(config)) && (
                     <button
                       type="button"
                       onClick={() => setImportModalOpen(true)}

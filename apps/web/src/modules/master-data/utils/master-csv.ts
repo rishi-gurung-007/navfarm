@@ -1,10 +1,31 @@
 import { api } from "@/services/api-client";
+import { getActiveWorkspaceScope, getActiveOperationalArea } from "@/hooks/useAuth";
 import type { MasterDataConfig, MasterDataField } from "../types";
+import { parentKeys, resolveEndpoint, isFieldRequired, isFieldVisible } from "../field-logic";
 
 type Row = Record<string, any>;
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : res?.data ?? res) as T;
+}
+
+/** Mirrors MasterDataTable.tsx's own save-time fill: in an operational workspace the live form
+ * hides nob_id/lob_id and sets them from the active area instead of asking for them, so any CSV
+ * import path does the same — overwriting any same-named column the row happened to carry.
+ * Shared by the generic reader and Breed Lifecycle Stage's own bespoke one. */
+export function applyOperationalNobLob(
+  payload: Row,
+  configFields: Pick<MasterDataField, "key">[],
+): void {
+  if (getActiveWorkspaceScope() !== "OPERATIONAL") return;
+  const activeArea = getActiveOperationalArea();
+  if (!activeArea) return;
+  if (configFields.some((f) => f.key === "nob_id") && activeArea.nob_id) {
+    payload.nob_id = activeArea.nob_id;
+  }
+  if (configFields.some((f) => f.key === "lob_id") && activeArea.lob_id) {
+    payload.lob_id = activeArea.lob_id;
+  }
 }
 
 /**
@@ -170,41 +191,21 @@ export function parseCsvText(csvText: string): { headers: string[]; rows: Record
   return { headers: rawHeaders, rows };
 }
 
-function parentKey(f: MasterDataField): string | undefined {
-  if (!f.dependsOn) return undefined;
-  return Array.isArray(f.dependsOn) ? f.dependsOn[0] : f.dependsOn;
-}
-
 /**
  * Resolves a field value for export: translates internal UUIDs to natural business codes where available.
  */
 function resolveExportCellValue(
   f: MasterDataField,
   val: any,
-  row: Row,
   lookupMap?: Record<string, Row[]>
 ): string {
   if (val === null || val === undefined) return "";
 
-  // For select-entity fields, resolve ONLY against this field's entity endpoint
+  // For select-entity fields, resolve against the base-endpoint bucket exportMasterRowsToCsv
+  // fetched by id (see there) — the same key regardless of path-mode vs query-mode dependsOn.
   if (f.type === "select-entity" && lookupMap && f.entityEndpoint) {
-    let targetList: Row[] | undefined;
-
-    const pKey = parentKey(f);
-    if (pKey && row[pKey]) {
-      const ep = f.entityEndpoint.replace("{value}", String(row[pKey]));
-      targetList = lookupMap[ep];
-    }
-
-    if (!targetList) {
-      targetList = lookupMap[f.entityEndpoint];
-    }
-
-    if (!targetList) {
-      const base = f.entityEndpoint.split("?")[0].split("/{")[0];
-      const entry = Object.entries(lookupMap).find(([k]) => k.startsWith(base));
-      if (entry) targetList = entry[1];
-    }
+    const baseEp = f.entityEndpoint.split("?")[0].split("/{")[0];
+    const targetList = lookupMap[baseEp];
 
     if (targetList && Array.isArray(targetList)) {
       const valueKey = f.entityValueKey || "id";
@@ -241,53 +242,46 @@ export async function exportMasterRowsToCsv(
   rows: Row[],
   entityOptions?: Record<string, Row[]>
 ): Promise<void> {
-  // Select fields to export: non-json, non-hidden unless identifier
+  // Export reflects the edit form, not the list table: a field the form never shows
+  // (hideInForm — company_id, a computed bio-asset figure) has no business in the sheet even if
+  // it happens to render as a table column, and a filterOnly control isn't a stored column at
+  // all. A read-only or edit-only field stays — the form still shows it, just not editable there.
   const exportFields = config.fields.filter(
-    (f: MasterDataField) =>
-      f.type !== "json" &&
-      !f.hideInTable &&
-      f.key !== "company_id" &&
-      f.key !== "created_at" &&
-      f.key !== "updated_at" &&
-      f.key !== "deleted_at"
+    (f: MasterDataField) => f.type !== "json" && !f.filterOnly && !f.hideInForm
   );
 
-  // Build a lookup map of endpoint -> Row[]
+  // Build a lookup map of base endpoint -> Row[] — keyed by entityEndpoint with any query string
+  // or "{value}" placeholder stripped, since resolution below is by record id, not by list page.
   const lookupMap: Record<string, Row[]> = { ...(entityOptions || {}) };
 
-  // Pre-fetch any entity endpoints needed for exportFields that are missing
+  // Fetching "the first 500 of the collection" silently mis-resolved any field whose true value
+  // wasn't in that page — exactly the "shows a UUID instead of the code" bug (a GRN past the
+  // 500th by default ordering). Fetching the specific records these rows actually reference,
+  // by id, is correct regardless of collection size or how the field depends on another one.
   const selectEntityFields = exportFields.filter(
     (f: MasterDataField) => f.type === "select-entity" && f.entityEndpoint
   );
 
   for (const f of selectEntityFields) {
-    const pKey = parentKey(f);
-    if (pKey) {
-      // Find distinct parent values across rows
-      const parentVals = Array.from(new Set(rows.map((r) => r[pKey]).filter(Boolean)));
-      for (const pVal of parentVals) {
-        const ep = f.entityEndpoint!.replace("{value}", String(pVal));
-        if (!lookupMap[ep]) {
-          try {
-            const res = await api.get(`${ep}${ep.includes("?") ? "&" : "?"}limit=500`);
-            const list = unwrap<Row[]>(res);
-            if (Array.isArray(list)) lookupMap[ep] = list;
-          } catch {
-            lookupMap[ep] = [];
-          }
-        }
-      }
-    } else {
-      const ep = f.entityEndpoint!;
-      if (!lookupMap[ep]) {
-        try {
-          const res = await api.get(`${ep}${ep.includes("?") ? "&" : "?"}limit=500`);
-          const list = unwrap<Row[]>(res);
-          if (Array.isArray(list)) lookupMap[ep] = list;
-        } catch {
-          lookupMap[ep] = [];
-        }
-      }
+    const baseEp = f.entityEndpoint!.split("?")[0].split("/{")[0];
+    const valueKey = f.entityValueKey || "id";
+    const existing = lookupMap[baseEp] || [];
+    const haveIds = new Set(existing.map((r) => String(r[valueKey])));
+    const neededIds = Array.from(
+      new Set(rows.map((r) => r[f.key]).filter(Boolean).map(String)),
+    ).filter((id) => !haveIds.has(id));
+
+    if (neededIds.length) {
+      const fetched = await Promise.allSettled(
+        neededIds.map((id) => api.get(`${baseEp}/${id}`)),
+      );
+      const newRows = fetched
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled")
+        .map((r) => unwrap<Row>(r.value))
+        .filter((row): row is Row => !!row && typeof row === "object");
+      lookupMap[baseEp] = [...existing, ...newRows];
+    } else if (!lookupMap[baseEp]) {
+      lookupMap[baseEp] = [];
     }
   }
 
@@ -325,7 +319,7 @@ export async function exportMasterRowsToCsv(
       const source = line ? { ...r, period_from: line.period_from, period_to: line.period_to } : r;
       const lineCells = exportFields.map((f: MasterDataField) => {
         const rawVal = source[f.key];
-        const resolved = resolveExportCellValue(f, rawVal, source, lookupMap);
+        const resolved = resolveExportCellValue(f, rawVal, lookupMap);
         return escapeCsvCell(resolved);
       });
       if (feedLineExport) {
@@ -342,71 +336,44 @@ export async function exportMasterRowsToCsv(
   downloadCsvFile(filename, csvRows.join("\r\n"));
 }
 
+/** A select-entity column is matched against another master's code, not typed freely — the
+ * header says so, so the sheet doesn't read like a place to describe the record instead. */
+function templateHeaderFor(f: MasterDataField): string {
+  return f.type === "select-entity" ? `${f.label} Code` : f.label;
+}
+
+/** One real, fillable-looking example per field: every value the valid `select` list holds (so
+ * the sheet doubles as its own legend), or the first real row an independent `select-entity`
+ * fetched (a dependent one, e.g. Current Stage under Breed, isn't pre-fetched — left blank, same
+ * as today). Looks up a label the same way `matchEntityOption` matches one back, so a cell left
+ * untouched round-trips on import. */
+function templateSampleFor(f: MasterDataField, cache: Record<string, Row[]>): string {
+  if (f.type === "select") {
+    return (f.options || []).map((o) => o.value).join(" / ");
+  }
+  if (f.type === "select-entity") {
+    if (!f.entityEndpoint) return "";
+    const first = (cache[f.entityEndpoint] || [])[0];
+    if (!first) return "";
+    const valueKey = f.entityValueKey || "id";
+    const labelKeys = f.entityLabelKeys?.length ? f.entityLabelKeys : [valueKey];
+    for (const lk of labelKeys) {
+      if (first[lk] !== undefined && first[lk] !== null && String(first[lk]).trim() !== "") {
+        return String(first[lk]);
+      }
+    }
+    return String(first[valueKey] ?? "");
+  }
+  if (f.placeholder) return f.placeholder;
+  if (f.type === "number") return "10";
+  if (f.type === "boolean") return "false";
+  return "Sample";
+}
+
 /**
  * Generates an official CSV template with field headers, constraints description, and sample rows.
  */
-export function generateMasterTemplateCsv(config: MasterDataConfig): string {
-  if (config.key === "breed") {
-    const headers = [
-      "breed_code",
-      "breed_name",
-      "breed_type",
-      "species_code",
-      "gestation_days",
-      "lactation_days",
-      "productive_life_months",
-      "residual_value_pct",
-      "productive_life_cycles",
-      "avg_litter_size_born",
-      "avg_litter_size_weaned",
-      "avg_weaning_weight_kg",
-      "farrowing_rate_pct",
-      "boar_doses_per_week",
-      "boar_productive_life_months",
-      "is_blocked",
-    ];
-
-    const sampleRow = [
-      "LARGE_WHITE",
-      "Large White",
-      "MEAT",
-      "PIG",
-      "114",
-      "28",
-      "36",
-      "10.00",
-      "7",
-      "11.50",
-      "10.00",
-      "7.00",
-      "85.00",
-      "4.00",
-      "18",
-      "0",
-    ];
-
-    const sampleRow2 = [
-      "LANDRACE",
-      "Landrace",
-      "MEAT",
-      "PIG",
-      "114",
-      "28",
-      "36",
-      "10.00",
-      "7",
-      "11.00",
-      "9.80",
-      "7.20",
-      "86.00",
-      "4.00",
-      "18",
-      "0",
-    ];
-
-    return [headers.join(","), sampleRow.join(","), sampleRow2.join(",")].join("\r\n");
-  }
-
+export async function generateMasterTemplateCsv(config: MasterDataConfig): Promise<string> {
   if (config.key === "breed-lifecycle-stage") {
     const headers = [
       "lifecycle_code",
@@ -433,6 +400,9 @@ export function generateMasterTemplateCsv(config: MasterDataConfig): string {
       "notes",
     ];
 
+    // Each row must carry one value per header above — feed_form and feed_qty_uom were
+    // missing here (19 Nov), silently shifting every field after feed_item_code by two
+    // columns (e.g. Feed Wastage % received the Std ADG value instead).
     const sampleRow1 = [
       "YORKSHIRE-GESTATION-001",
       "YORKSHIRE",
@@ -444,12 +414,14 @@ export function generateMasterTemplateCsv(config: MasterDataConfig): string {
       "15",
       "ALL",
       "ICAT-001-ITM-0001",
-      "2.50",
-      "5.00",
-      "45.00",
-      "800.00",
-      "2.40",
-      "0.50",
+      "", // feed_form
+      "2.50", // feed_qty_per_head_per_day_kg
+      "", // feed_qty_uom
+      "5.00", // feed_wastage_pct
+      "45.00", // std_body_weight_kg
+      "800.00", // std_adg_gpd
+      "2.40", // std_fcr
+      "0.50", // std_mortality_rate_pct
       "",
       "",
       "",
@@ -467,12 +439,14 @@ export function generateMasterTemplateCsv(config: MasterDataConfig): string {
       "15",
       "ALL",
       "ICAT-001-ITM-0001",
-      "3.00",
-      "5.00",
-      "180.00",
-      "0.00",
-      "0.00",
-      "1.00",
+      "", // feed_form
+      "3.00", // feed_qty_per_head_per_day_kg
+      "", // feed_qty_uom
+      "5.00", // feed_wastage_pct
+      "180.00", // std_body_weight_kg
+      "0.00", // std_adg_gpd
+      "0.00", // std_fcr
+      "1.00", // std_mortality_rate_pct
       "",
       "",
       "",
@@ -482,18 +456,12 @@ export function generateMasterTemplateCsv(config: MasterDataConfig): string {
     return [headers.join(","), sampleRow1.join(","), sampleRow2.join(",")].join("\r\n");
   }
 
-  // Generic fallback for any other master
-  const fields = config.fields.filter(
-    (f: MasterDataField) =>
-      f.type !== "json" &&
-      !f.hideInForm &&
-      f.key !== "company_id" &&
-      f.key !== "created_at" &&
-      f.key !== "updated_at" &&
-      f.key !== "deleted_at"
-  );
-  const headers = fields.map((f: MasterDataField) => f.key);
-  const sample = fields.map((f: MasterDataField) => (f.placeholder ? f.placeholder : f.type === "number" ? "10" : "Sample"));
+  // Generic fallback for any other master — the same field list genericImportFields reads from,
+  // so the template can never ask for a column import would then ignore or reject.
+  const fields = genericImportFields(config);
+  const headers = fields.map(templateHeaderFor).map(escapeCsvCell);
+  const cache = await prefetchGenericEntityOptions(config);
+  const sample = fields.map((f) => escapeCsvCell(templateSampleFor(f, cache)));
   return [headers.join(","), sample.join(",")].join("\r\n");
 }
 
@@ -517,4 +485,243 @@ export function mergeLifecycleFeedRows<T extends { lifecycle_code?: unknown; fee
     merged.push(copy);
   }
   return merged;
+}
+
+// ── Generic CSV import (19 Nov) ─────────────────────────────────────────────────────────────
+//
+// Breed and Breed Lifecycle Stage have their own hand-written import logic above (each master's
+// foreign keys and cross-field rules are particular enough to earn that). Every other master's
+// fields are declared plainly enough in its MasterDataConfig that one metadata-driven reader can
+// parse a CSV row for any of them — reusing the exact field-visibility/required/FK-endpoint rules
+// the live create form already enforces (field-logic.ts), so a spreadsheet row is held to the same
+// standard as one typed into the dialog.
+
+function normalizeKey(str: string): string {
+  return str.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Reads one field's value off a parsed CSV row, trying its key, its label, then a loose
+ * (punctuation/case/space insensitive) match of either — so a file keyed by `breed_code` and one
+ * headed "Code" both resolve the same field. */
+export function getRawValue(
+  raw: Record<string, string>,
+  fieldKey: string,
+  fieldLabel?: string,
+  aliases?: string[],
+): string | undefined {
+  if (!raw) return undefined;
+
+  if (raw[fieldKey] !== undefined && raw[fieldKey] !== "") return raw[fieldKey].trim();
+  if (fieldLabel && raw[fieldLabel] !== undefined && raw[fieldLabel] !== "") return raw[fieldLabel].trim();
+  if (aliases && aliases.length > 0) {
+    for (const a of aliases) {
+      if (raw[a] !== undefined && raw[a] !== "") return raw[a].trim();
+    }
+  }
+
+  const normKey = normalizeKey(fieldKey);
+  const normLabel = fieldLabel ? normalizeKey(fieldLabel) : "";
+  const normAliases = (aliases || []).map(normalizeKey);
+  for (const [k, v] of Object.entries(raw)) {
+    if (v === undefined || v === "") continue;
+    const nk = normalizeKey(k);
+    if (nk === normKey || (normLabel && nk === normLabel) || normAliases.includes(nk)) {
+      return v.trim();
+    }
+  }
+  return undefined;
+}
+
+/** Field types the generic reader does not attempt: a nested row editor, a map/point picker, or
+ * a JSON array have no sane single-cell CSV representation. A master built entirely from plainer
+ * fields (text/number/boolean/date/select/select-entity/string-list/image) is eligible — "image"
+ * is a plain URL column once it's saved (see `ear_tag_image_url` in Animal Register's DTO), so the
+ * CSV just carries that URL like any other text field. */
+const GENERIC_IMPORT_UNSUPPORTED_TYPES = new Set<MasterDataField["type"]>([
+  "json",
+  "field-list",
+  "map",
+  "latlng",
+]);
+
+/** Fields the live create form actually asks for: not a UI-only filter control, not something the
+ * API computes itself, not excluded from the create form, and not edit-only. */
+function createFormFields(config: MasterDataConfig): MasterDataField[] {
+  return config.fields.filter(
+    (f) => !f.filterOnly && !f.readOnly && !f.hideInForm && !f.editOnly,
+  );
+}
+
+/** Whether this master can use the generic CSV reader at all — Breed and Breed Lifecycle Stage
+ * are excluded because they already have their own; a BC-owned catalog and Number Series are
+ * excluded because neither accepts a plain create the way every other master does. Otherwise a
+ * master is only disqualified by a *required* field of an unsupported type — an optional one
+ * (ear_tag_image_url) is simply left out of the CSV, same as any other skippable field. */
+export function supportsGenericImport(config: MasterDataConfig): boolean {
+  // Breed Lifecycle Stage keeps its own importer: several CSV rows (one per feed-consumption
+  // line) merge into one stage, which the generic one-row-one-record reader can't express. Breed
+  // itself has no such need — one row per breed is exactly what the generic path already handles.
+  if (config.key === "breed-lifecycle-stage") return false;
+  if (config.owner === "BC") return false;
+  if (config.key === "number-series" || config.key === "no-series") return false;
+  return createFormFields(config).every(
+    (f) => !f.required || !GENERIC_IMPORT_UNSUPPORTED_TYPES.has(f.type),
+  );
+}
+
+/** The real, importable fields of a master: createFormFields, further narrowed to what the
+ * generic reader can actually represent in one CSV cell, and — when the workspace is scoped to
+ * an operational area — without nob_id/lob_id, which the live form also hides there and fills
+ * from the active area instead of asking for (see MasterDataTable.tsx). */
+function genericImportFields(config: MasterDataConfig): MasterDataField[] {
+  const operational = getActiveWorkspaceScope() === "OPERATIONAL";
+  return createFormFields(config).filter(
+    (f) =>
+      !GENERIC_IMPORT_UNSUPPORTED_TYPES.has(f.type) &&
+      !(operational && (f.key === "nob_id" || f.key === "lob_id")),
+  );
+}
+
+async function fetchAndCacheOptions(ep: string, cache: Record<string, Row[]>): Promise<Row[]> {
+  if (cache[ep]) return cache[ep];
+  try {
+    const sep = ep.includes("?") ? "&" : "?";
+    const res = await api.get(`${ep}${sep}limit=1000`);
+    const list = unwrap<Row[]>(res) || [];
+    cache[ep] = list;
+    return list;
+  } catch {
+    cache[ep] = [];
+    return [];
+  }
+}
+
+/** Pre-fetches every select-entity field's option list that does not depend on another field's
+ * value, so most FK lookups during parsing are a cache hit rather than a request per row. */
+export async function prefetchGenericEntityOptions(config: MasterDataConfig): Promise<Record<string, Row[]>> {
+  const cache: Record<string, Row[]> = {};
+  const independent = genericImportFields(config).filter(
+    (f) => f.type === "select-entity" && f.entityEndpoint && parentKeys(f).length === 0,
+  );
+  await Promise.all(independent.map((f) => fetchAndCacheOptions(f.entityEndpoint!, cache)));
+  return cache;
+}
+
+function matchEntityOption(list: Row[], rawValue: string, f: MasterDataField): Row | undefined {
+  const valueKey = f.entityValueKey || "id";
+  const needle = rawValue.trim();
+  const needleUpper = needle.toUpperCase();
+  const labelKeys = f.entityLabelKeys?.length ? f.entityLabelKeys : [valueKey];
+  return list.find(
+    (row) =>
+      String(row[valueKey]) === needle ||
+      labelKeys.some((lk) => row[lk] != null && String(row[lk]).toUpperCase() === needleUpper),
+  );
+}
+
+const GENERIC_BOOLEAN_TRUE = new Set(["1", "true", "yes", "y"]);
+const GENERIC_BOOLEAN_FALSE = new Set(["0", "false", "no", "n"]);
+
+/**
+ * Parses one CSV row into a create payload for any master not using its own hand-written logic
+ * (Breed, Breed Lifecycle Stage). `entityCache` is shared across the whole file's rows — pass the
+ * result of `prefetchGenericEntityOptions` and the same object back in on every call so a
+ * dependent field's lookup (fetched lazily, per distinct parent value) is cached too.
+ */
+export async function parseGenericImportRow(
+  config: MasterDataConfig,
+  raw: Record<string, string>,
+  entityCache: Record<string, Row[]>,
+): Promise<{ payload: Row; errors: string[] }> {
+  const payload: Row = {};
+  const errors: string[] = [];
+  const fields = genericImportFields(config);
+
+  for (const f of fields) {
+    // A select-entity column is headed "<label> Code" in the downloaded template
+    // (templateHeaderFor) — accepted here as an alias so a row filled in under that exact
+    // header, not just one keyed by f.key/f.label, still resolves.
+    const rawVal = getRawValue(
+      raw,
+      f.key,
+      f.label,
+      f.type === "select-entity" ? [templateHeaderFor(f)] : undefined,
+    );
+    if (rawVal === undefined || rawVal === "") continue;
+
+    switch (f.type) {
+      case "boolean": {
+        const norm = rawVal.trim().toLowerCase();
+        if (GENERIC_BOOLEAN_TRUE.has(norm)) payload[f.key] = true;
+        else if (GENERIC_BOOLEAN_FALSE.has(norm)) payload[f.key] = false;
+        else errors.push(`${f.label} must be true/false, yes/no, or 1/0 (got '${rawVal}').`);
+        break;
+      }
+      case "number": {
+        const num = Number(rawVal);
+        if (isNaN(num)) {
+          errors.push(`${f.label} must be a number (got '${rawVal}').`);
+        } else if (f.min !== undefined && num < f.min) {
+          errors.push(`${f.label} must be ${f.min} or more.`);
+        } else if (f.max !== undefined && num > f.max) {
+          errors.push(`${f.label} must be ${f.max} or less.`);
+        } else {
+          payload[f.key] = num;
+        }
+        break;
+      }
+      case "select": {
+        const norm = rawVal.trim().toUpperCase();
+        const opt = (f.options || []).find(
+          (o) => o.value.toUpperCase() === norm || o.label.toUpperCase() === norm,
+        );
+        if (opt) payload[f.key] = opt.value;
+        else
+          errors.push(
+            `${f.label} '${rawVal}' is invalid. Allowed: ${(f.options || []).map((o) => o.value).join(", ")}`,
+          );
+        break;
+      }
+      case "select-entity": {
+        if (!f.entityEndpoint) break;
+        // Resolved against the payload built so far this row — a dependent field (dependsOn) needs
+        // its parent's resolved id, which is why field order in the config matters here the same
+        // way it does for the live form (the parent is declared, and so parsed, first).
+        const ep = resolveEndpoint(f, payload);
+        if (!ep) break; // parent not resolved yet; the required-field pass below will catch it if that matters
+        const list = await fetchAndCacheOptions(ep, entityCache);
+        const match = matchEntityOption(list, rawVal, f);
+        if (match) payload[f.key] = match[f.entityValueKey || "id"];
+        else errors.push(`${f.label} '${rawVal}' was not found.`);
+        break;
+      }
+      case "string-list":
+        payload[f.key] = rawVal
+          .split(/[;|]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        break;
+      default:
+        payload[f.key] = rawVal;
+    }
+  }
+
+  // Drop values for fields that turned out not to apply, and flag anything still missing that
+  // the form would also have required — both read off the payload resolved so far, same as the
+  // live form reads off its own live `form` state.
+  for (const f of fields) {
+    if (!isFieldVisible(f, payload)) {
+      delete payload[f.key];
+      continue;
+    }
+    const v = payload[f.key];
+    const isEmpty = v === undefined || v === null || v === "" || (Array.isArray(v) && !v.length);
+    if (isEmpty && isFieldRequired(f, payload)) {
+      errors.push(`${f.label} is required.`);
+    }
+  }
+
+  applyOperationalNobLob(payload, config.fields);
+
+  return { payload, errors };
 }

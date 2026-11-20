@@ -1108,6 +1108,35 @@ export class BreedService {
         const item = await this.createLifecycleStage(dtos[i], tenantId, userPayload);
         results.push(item);
       } catch (err: any) {
+        // Re-importing the same code re-covers the same days it already covers, so the overlap guard
+        // (or a direct code conflict) rejects it — update the existing row instead, same as Breed's own
+        // bulk create (19 Nov).
+        if (dtos[i]?.lifecycle_code) {
+          try {
+            const [existing] = await this.db
+              .select({ lifecycle_id: schema.breedLifecycleStages.lifecycle_id })
+              .from(schema.breedLifecycleStages)
+              .where(and(
+                eq(schema.breedLifecycleStages.tenant_id, tenantId),
+                eq(schema.breedLifecycleStages.lifecycle_code, dtos[i].lifecycle_code!),
+                isNull(schema.breedLifecycleStages.retired_at),
+              ))
+              .limit(1);
+            if (existing) {
+              const updated = await this.updateLifecycleStage(existing.lifecycle_id, dtos[i] as any, tenantId, userPayload);
+              results.push(updated);
+              continue;
+            }
+          } catch (updateErr: any) {
+            errors.push({
+              index: i,
+              code: dtos[i]?.lifecycle_code,
+              error: updateErr?.message || err?.message || 'Failed to update existing lifecycle stage',
+            });
+            continue;
+          }
+        }
+
         errors.push({
           index: i,
           code: dtos[i]?.lifecycle_code,

@@ -1,6 +1,5 @@
 'use client';
 
-import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { mergeLifecycleFeedRows } from './utils/master-csv';
 import { useState, useRef } from 'react';
@@ -24,63 +23,19 @@ import {
   TableCell,
 } from '@/components/ui/table';
 import { showToast, Toast } from '@/components/ui/toast';
-import { getActiveCompanyId } from '@/hooks/useAuth';
 import type { MasterDataConfig } from './types';
 import {
   parseCsvText,
   downloadCsvFile,
   generateMasterTemplateCsv,
+  getRawValue,
+  prefetchGenericEntityOptions,
+  parseGenericImportRow,
+  applyOperationalNobLob,
 } from './utils/master-csv';
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
-}
-
-function normalizeKey(str: string): string {
-  return str.toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
-function getRawValue(
-  raw: Record<string, string>,
-  fieldKey: string,
-  fieldLabel?: string,
-  aliases?: string[],
-): string | undefined {
-  if (!raw) return undefined;
-
-  // 1. Direct key match
-  if (raw[fieldKey] !== undefined && raw[fieldKey] !== '')
-    return raw[fieldKey].trim();
-
-  // 2. Direct label match
-  if (fieldLabel && raw[fieldLabel] !== undefined && raw[fieldLabel] !== '')
-    return raw[fieldLabel].trim();
-
-  // 3. Direct aliases match
-  if (aliases && aliases.length > 0) {
-    for (const a of aliases) {
-      if (raw[a] !== undefined && raw[a] !== '') return raw[a].trim();
-    }
-  }
-
-  // 4. Normalized match (strip all punctuation, spaces, parens, symbols, lowercase)
-  const normKey = normalizeKey(fieldKey);
-  const normLabel = fieldLabel ? normalizeKey(fieldLabel) : '';
-  const normAliases = (aliases || []).map(normalizeKey);
-
-  for (const [k, v] of Object.entries(raw)) {
-    if (v === undefined || v === '') continue;
-    const nk = normalizeKey(k);
-    if (
-      nk === normKey ||
-      (normLabel && nk === normLabel) ||
-      normAliases.includes(nk)
-    ) {
-      return v.trim();
-    }
-  }
-
-  return undefined;
 }
 
 interface MasterDataImportModalProps {
@@ -98,6 +53,21 @@ interface ParsedStagedRow {
   errors: string[];
 }
 
+/** The per-row create loop below only POSTs the valid staged rows, so a backend error naming
+ * validItems[i] names the i-th *valid* row, not the i-th staged row overall. The error-matching
+ * pass further down reads backend errors against the full staged list (so an invalid row keeps
+ * its place in the preview table), so each valid item's loop position has to be translated back
+ * to its real position among every staged row before it's attached to one. */
+export function mapValidItemIndexesToStagedIndexes(
+  stagedRows: { isValid: boolean }[],
+): number[] {
+  const out: number[] = [];
+  stagedRows.forEach((r, idx) => {
+    if (r.isValid) out.push(idx);
+  });
+  return out;
+}
+
 export default function MasterDataImportModal({
   config,
   isOpen,
@@ -107,6 +77,7 @@ export default function MasterDataImportModal({
   const [file, setFile] = useState<File | null>(null);
   const [parsing, setParsing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [generalError, setGeneralError] = useState('');
   const [stagedRows, setStagedRows] = useState<ParsedStagedRow[]>([]);
   const [viewFilter, setViewFilter] = useState<'all' | 'errors' | 'valid'>(
@@ -114,10 +85,15 @@ export default function MasterDataImportModal({
   );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const handleDownloadTemplate = () => {
-    const csvContent = generateMasterTemplateCsv(config);
-    const filename = `${config.key}_template.csv`;
-    downloadCsvFile(filename, csvContent);
+  const handleDownloadTemplate = async () => {
+    setDownloadingTemplate(true);
+    try {
+      const csvContent = await generateMasterTemplateCsv(config);
+      const filename = `${config.key}_template.csv`;
+      downloadCsvFile(filename, csvContent);
+    } finally {
+      setDownloadingTemplate(false);
+    }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -140,46 +116,31 @@ export default function MasterDataImportModal({
         throw new Error('The selected CSV file contains no data rows.');
       }
 
-      // Pre-fetch reference entity catalogs for foreign-key resolution
-      const [speciesRes, breedRes, stageRes, itemRes, nobsRes] =
-        await Promise.allSettled([
-          config.key === 'breed'
-            ? api.get(`/species?limit=500`)
-            : Promise.resolve([]),
-          config.key === 'breed-lifecycle-stage'
-            ? api.get(`/breed?limit=500`)
-            : Promise.resolve([]),
-          config.key === 'breed-lifecycle-stage'
-            ? api.get(`/stage?limit=500`)
-            : Promise.resolve([]),
-          config.key === 'breed-lifecycle-stage'
-            ? api.get(`/item?limit=500`)
-            : Promise.resolve([]),
-          config.key === 'breed'
-            ? api.get(`/setup/wizard/nobs`)
-            : Promise.resolve([]),
-        ]);
+      // Pre-fetch reference catalogs Breed Lifecycle Stage's own parser resolves by hand — Breed
+      // now goes through the generic reader below, which prefetches its own (species_id, nob_id, ...).
+      const [breedRes, stageRes, itemRes] = await Promise.allSettled([
+        config.key === 'breed-lifecycle-stage'
+          ? api.get(`/breed?limit=500`)
+          : Promise.resolve([]),
+        config.key === 'breed-lifecycle-stage'
+          ? api.get(`/stage?limit=500`)
+          : Promise.resolve([]),
+        config.key === 'breed-lifecycle-stage'
+          ? api.get(`/item?limit=500`)
+          : Promise.resolve([]),
+      ]);
 
-      const speciesList: any[] =
-        speciesRes.status === 'fulfilled' ? unwrap(speciesRes.value) || [] : [];
       const breedList: any[] =
         breedRes.status === 'fulfilled' ? unwrap(breedRes.value) || [] : [];
       const stageList: any[] =
         stageRes.status === 'fulfilled' ? unwrap(stageRes.value) || [] : [];
       const itemList: any[] =
         itemRes.status === 'fulfilled' ? unwrap(itemRes.value) || [] : [];
-      const nobsList: any[] =
-        nobsRes.status === 'fulfilled' ? unwrap(nobsRes.value) || [] : [];
 
-      let lobsList: any[] = [];
-      if (nobsList.length > 0) {
-        const lobResults = await Promise.allSettled(
-          nobsList.map((n) => api.get(`/setup/wizard/lobs/${n.nob_id}`)),
-        );
-        lobsList = lobResults.flatMap((r) =>
-          r.status === 'fulfilled' ? unwrap(r.value) || [] : [],
-        );
-      }
+      const isGeneric = config.key !== 'breed-lifecycle-stage';
+      const genericEntityCache = isGeneric
+        ? await prefetchGenericEntityOptions(config)
+        : {};
 
       // Validate & stage rows
       const staged: ParsedStagedRow[] = [];
@@ -189,245 +150,7 @@ export default function MasterDataImportModal({
         const errors: string[] = [];
         const payload: Record<string, any> = {};
 
-        if (config.key === 'breed') {
-          const code = (
-            getRawValue(raw, 'breed_code', 'Code', [
-              'code',
-              'breedcode',
-              'Breed Code',
-            ]) || ''
-          )
-            .trim()
-            .toUpperCase();
-          const name = (
-            getRawValue(raw, 'breed_name', 'Name', [
-              'name',
-              'breedname',
-              'Breed Name',
-            ]) || ''
-          ).trim();
-          const type = (
-            getRawValue(raw, 'breed_type', 'Breed Type', [
-              'type',
-              'Type',
-              'breedtype',
-            ]) || 'MEAT'
-          )
-            .trim()
-            .toUpperCase();
-
-          if (!code) errors.push('Breed Code is required.');
-          if (!name) errors.push('Breed Name is required.');
-
-          const validTypes = ['MEAT', 'BREEDER', 'DUAL_PURPOSE'];
-          if (!validTypes.includes(type)) {
-            errors.push(
-              `Breed Type '${type}' is invalid. Allowed: ${validTypes.join(', ')}`,
-            );
-          }
-
-          const activeCompanyId = getActiveCompanyId();
-          if (activeCompanyId) payload.company_id = activeCompanyId;
-
-          // Resolve NOB
-          const nobVal = (
-            getRawValue(raw, 'nob_id', 'Nature of Business', [
-              'nob_code',
-              'nob_name',
-              'nob',
-              'Nature Of Business',
-            ]) || ''
-          ).trim();
-          if (nobVal) {
-            const matchedNob = nobsList.find(
-              (n) =>
-                n.nob_code?.toUpperCase() === nobVal.toUpperCase() ||
-                n.nob_name?.toUpperCase() === nobVal.toUpperCase() ||
-                n.nob_id === nobVal,
-            );
-            if (matchedNob) payload.nob_id = matchedNob.nob_id;
-          }
-
-          // Resolve LOB
-          const lobVal = (
-            getRawValue(raw, 'lob_id', 'Line of Business', [
-              'lob_code',
-              'lob_name',
-              'lob',
-              'Line Of Business',
-            ]) || ''
-          ).trim();
-          if (lobVal) {
-            const matchedLob = lobsList.find(
-              (l) =>
-                l.lob_code?.toUpperCase() === lobVal.toUpperCase() ||
-                l.lob_name?.toUpperCase() === lobVal.toUpperCase() ||
-                l.lob_id === lobVal,
-            );
-            if (matchedLob) payload.lob_id = matchedLob.lob_id;
-          }
-
-          // Resolve species if provided
-          const speciesCode = (
-            getRawValue(raw, 'species_code', 'Species', [
-              'species',
-              'species_name',
-              'species_id',
-            ]) || 'PIG'
-          )
-            .trim()
-            .toUpperCase();
-          const matchedSpecies = speciesList.find(
-            (s) =>
-              s.species_code?.toUpperCase() === speciesCode ||
-              s.species_name?.toUpperCase() === speciesCode,
-          );
-
-          payload.breed_code = code;
-          payload.breed_name = name;
-          payload.breed_type = type;
-          if (matchedSpecies) {
-            payload.species_id = matchedSpecies.species_id;
-            payload.species = matchedSpecies.species_name;
-          }
-
-          // Description
-          const desc = getRawValue(raw, 'description', 'Description', [
-            'breed_description',
-            'desc',
-            'notes',
-          ]);
-          if (desc) payload.description = desc;
-
-          // Blocked
-          const blockedVal = getRawValue(raw, 'is_blocked', 'Blocked', [
-            'blocked',
-            'status',
-            'isblocked',
-          ]);
-          if (blockedVal !== undefined && blockedVal !== '') {
-            payload.is_blocked =
-              blockedVal === '1' || blockedVal.toLowerCase() === 'true';
-          }
-
-          // Integer Numbers
-          const intFields: {
-            key: string;
-            label: string;
-            aliases?: string[];
-          }[] = [
-            {
-              key: 'gestation_days',
-              label: 'Gestation Days',
-              aliases: ['gestation', 'gestationdays'],
-            },
-            {
-              key: 'lactation_days',
-              label: 'Lactation Days',
-              aliases: ['lactation', 'lactationdays'],
-            },
-            {
-              key: 'productive_life_months',
-              label: 'Productive Life (months)',
-              aliases: [
-                'Productive Life (months)_1',
-                'sow_productive_life_months',
-                'productivelifemonths',
-              ],
-            },
-            {
-              key: 'productive_life_cycles',
-              label: 'Productive Life Cycles',
-              aliases: ['productivelifecycles', 'cycles', 'parities'],
-            },
-            {
-              key: 'boar_productive_life_months',
-              label: 'Boar Productive Life (months)',
-              aliases: [
-                'Productive Life (months)_2',
-                'boar_productive_life',
-                'boarproductivelifemonths',
-              ],
-            },
-            {
-              key: 'mature_age_months',
-              label: 'Mature Age (months)',
-              aliases: ['matureagemonths', 'mature_age'],
-            },
-          ];
-          for (const { key, label, aliases } of intFields) {
-            const rawVal = getRawValue(raw, key, label, aliases);
-            if (rawVal !== undefined && rawVal !== '') {
-              const val = parseInt(rawVal, 10);
-              if (isNaN(val) || val < 0)
-                errors.push(`${label} must be a non-negative integer.`);
-              else payload[key] = val;
-            }
-          }
-
-          // Decimals
-          const decFields: {
-            key: string;
-            label: string;
-            aliases?: string[];
-          }[] = [
-            {
-              key: 'avg_growth_rate_g_day',
-              label: 'Avg Growth Rate (g/day)',
-              aliases: ['growth_rate', 'avggrowthrategday'],
-            },
-            { key: 'avg_fcr', label: 'Avg FCR', aliases: ['fcr', 'avgfcr'] },
-            {
-              key: 'avg_mortality_pct',
-              label: 'Avg Mortality %',
-              aliases: ['mortality', 'avgmortality', 'avgmortalitypct'],
-            },
-            {
-              key: 'avg_yield_per_unit',
-              label: 'Avg Yield per Unit',
-              aliases: ['yield', 'avgyieldperunit'],
-            },
-            {
-              key: 'avg_litter_size_born',
-              label: 'Avg Litter Size Born',
-              aliases: ['litter_size_born', 'avglittersizeborn'],
-            },
-            {
-              key: 'avg_litter_size_weaned',
-              label: 'Avg Litter Size Weaned',
-              aliases: ['litter_size_weaned', 'avglittersizeweaned'],
-            },
-            {
-              key: 'avg_weaning_weight_kg',
-              label: 'Avg Weaning Weight (KG)',
-              aliases: ['weaning_weight', 'avgweaningweightkg'],
-            },
-            {
-              key: 'farrowing_rate_pct',
-              label: 'Farrowing Rate %',
-              aliases: ['farrowing_rate', 'farrowingratepct', 'farrowingrate'],
-            },
-            {
-              key: 'boar_doses_per_week',
-              label: 'Doses per Week',
-              aliases: ['doses_per_week', 'boardosesperweek'],
-            },
-            {
-              key: 'residual_value_pct',
-              label: 'Residual Value %',
-              aliases: ['residual_value', 'residualvaluepct', 'residualvalue'],
-            },
-          ];
-          for (const { key, label, aliases } of decFields) {
-            const rawVal = getRawValue(raw, key, label, aliases);
-            if (rawVal !== undefined && rawVal !== '') {
-              const val = parseFloat(rawVal);
-              if (isNaN(val) || val < 0)
-                errors.push(`${label} must be a valid non-negative number.`);
-              else payload[key] = val;
-            }
-          }
-        } else if (config.key === 'breed-lifecycle-stage') {
+        if (config.key === 'breed-lifecycle-stage') {
           const breedCode = (
             getRawValue(raw, 'breed_code', 'Breed', [
               'breed',
@@ -725,16 +448,14 @@ export default function MasterDataImportModal({
             'notes',
           ]);
           if (notes) payload.notes = notes.trim();
+
+          applyOperationalNobLob(payload, config.fields);
         } else {
-          // Generic master fallback
-          for (const f of config.fields) {
-            const rawVal = getRawValue(raw, f.key, f.label);
-            if (rawVal !== undefined && rawVal !== '') {
-              payload[f.key] = rawVal;
-            } else if (f.required) {
-              errors.push(`${f.label || f.key} is required.`);
-            }
-          }
+          // Every other master: one metadata-driven reader, shared with the live create
+          // form's own field rules (master-csv.ts's parseGenericImportRow, 19 Nov).
+          const generic = await parseGenericImportRow(config, raw, genericEntityCache);
+          Object.assign(payload, generic.payload);
+          errors.push(...generic.errors);
         }
 
         staged.push({
@@ -768,17 +489,41 @@ export default function MasterDataImportModal({
 
     try {
       let bulkRes: any;
-      if (config.key === 'breed') {
-        bulkRes = await api.post('/breed/bulk', { items: validItems });
-      } else if (config.key === 'breed-lifecycle-stage') {
+      if (config.key === 'breed-lifecycle-stage') {
         bulkRes = await api.post('/breed-lifecycle-stage/bulk', {
           items: validItems,
         });
       } else {
-        // Fallback: sequential inserts
-        for (const item of validItems) {
-          await api.post(config.apiBase, item);
+        // Every other master has no bulk endpoint of its own — create sequentially through the
+        // same single-record endpoint the live "Add" dialog uses, one request per row, so one
+        // row's rejection doesn't lose the rows around it (19 Nov).
+        const created: any[] = [];
+        const itemErrors: { index: number; error: string }[] = [];
+        const stagedIndexes = mapValidItemIndexesToStagedIndexes(stagedRows);
+        for (let idx = 0; idx < validItems.length; idx++) {
+          try {
+            const res = await api.post(config.apiBase, validItems[idx]);
+            created.push(unwrap(res));
+          } catch (err: any) {
+            const msg =
+              err?.response?.data?.error?.message ||
+              err?.response?.data?.message ||
+              err?.data?.message ||
+              err?.message ||
+              'Failed to create record.';
+            itemErrors.push({
+              index: stagedIndexes[idx],
+              error: Array.isArray(msg) ? msg.join(' ') : String(msg),
+            });
+          }
         }
+        bulkRes = {
+          data: {
+            createdCount: created.length,
+            items: created,
+            errors: itemErrors.length ? itemErrors : undefined,
+          },
+        };
       }
 
       const resData = unwrap(bulkRes);
@@ -807,6 +552,17 @@ export default function MasterDataImportModal({
           }),
         );
         setViewFilter('errors');
+        // A 200 with errors means some items DID save (the backend only throws outright when every
+        // item fails) — refresh the table behind the modal and say so, instead of leaving the user
+        // thinking nothing happened while rows they can't see were actually created (19 Nov).
+        const createdCount =
+          resData?.createdCount ?? validItems.length - backendErrors.length;
+        if (createdCount > 0) {
+          showToast.success(
+            `Imported ${createdCount} record(s); ${backendErrors.length} failed — see details below.`,
+          );
+          onSuccess();
+        }
         setGeneralError(
           `Backend validation failed for ${backendErrors.length} item(s). Review the alert list below.`,
         );
@@ -819,7 +575,7 @@ export default function MasterDataImportModal({
 
       if (importedCodes.length > 0) {
         showToast.success(
-          `Successfully imported ${importedCodes.length} ${config.key === 'breed' ? 'breed' : 'record'}(s): ${importedCodes.join(', ')}`,
+          `Successfully imported ${importedCodes.length} record(s): ${importedCodes.join(', ')}`,
         );
       } else {
         showToast.success(
@@ -961,10 +717,15 @@ export default function MasterDataImportModal({
             size="sm"
             variant="outline"
             onClick={handleDownloadTemplate}
+            disabled={downloadingTemplate}
             className="flex items-center gap-1.5 text-xs font-semibold"
           >
-            <Download className="h-3.5 w-3.5 text-(--accent)" /> Download CSV
-            Template
+            {downloadingTemplate ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-(--accent)" />
+            ) : (
+              <Download className="h-3.5 w-3.5 text-(--accent)" />
+            )}
+            {downloadingTemplate ? 'Preparing…' : 'Download CSV Template'}
           </Button>
         </div>
 
@@ -1018,7 +779,7 @@ export default function MasterDataImportModal({
                   <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
                   <span>
                     Validation Alert: {errorCount}{' '}
-                    {config.key === 'breed' ? 'Breed' : 'Record'}
+                    Record
                     {errorCount > 1 ? 's' : ''} Failed Validation
                   </span>
                 </div>
@@ -1034,8 +795,7 @@ export default function MasterDataImportModal({
               </div>
 
               <p className="text-[11px] text-rose-700 dark:text-rose-300">
-                The following imported{' '}
-                {config.key === 'breed' ? 'breed codes' : 'records'} have
+                The following imported records have
                 validation errors and cannot be saved:
               </p>
 
@@ -1090,7 +850,7 @@ export default function MasterDataImportModal({
                 <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
                 <span>
                   All {stagedRows.length}{' '}
-                  {config.key === 'breed' ? 'breed' : 'record'}
+                  record
                   {stagedRows.length > 1 ? 's' : ''} validated successfully and
                   ready to import.
                 </span>
@@ -1237,8 +997,8 @@ export default function MasterDataImportModal({
                           <span>
                             {r.payload.breed_code || r.raw.breed_code} ➔{' '}
                             {r.payload.stage_code || r.raw.stage_code} (
-                            {r.payload.category || NA}, {formatDate(r.payload.period_from)}-
-                            {formatDate(r.payload.period_to)} {r.payload.calc_unit})
+                            {r.payload.category || NA}, {r.payload.calc_unit}{' '}
+                            {r.payload.period_from}-{r.payload.period_to})
                           </span>
                         ) : (
                           <span>
