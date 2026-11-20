@@ -243,15 +243,12 @@ export async function exportMasterRowsToCsv(
   rows: Row[],
   entityOptions?: Record<string, Row[]>
 ): Promise<void> {
-  // Select fields to export: non-json, non-hidden unless identifier
+  // Export reflects the edit form, not the list table: a field the form never shows
+  // (hideInForm — company_id, a computed bio-asset figure) has no business in the sheet even if
+  // it happens to render as a table column, and a filterOnly control isn't a stored column at
+  // all. A read-only or edit-only field stays — the form still shows it, just not editable there.
   const exportFields = config.fields.filter(
-    (f: MasterDataField) =>
-      f.type !== "json" &&
-      !f.hideInTable &&
-      f.key !== "company_id" &&
-      f.key !== "created_at" &&
-      f.key !== "updated_at" &&
-      f.key !== "deleted_at"
+    (f: MasterDataField) => f.type !== "json" && !f.filterOnly && !f.hideInForm
   );
 
   // Build a lookup map of endpoint -> Row[]

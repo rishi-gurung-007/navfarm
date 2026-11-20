@@ -1,4 +1,4 @@
-import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv, parseCsvText, prefetchGenericEntityOptions } from './master-csv';
+import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv, parseCsvText, prefetchGenericEntityOptions, exportMasterRowsToCsv, downloadCsvFile } from './master-csv';
 import type { MasterDataConfig } from '../types';
 
 jest.mock('@/services/api-client', () => ({ api: { get: jest.fn() } }));
@@ -228,5 +228,50 @@ describe('template round-trip — a filled-in downloaded template must re-import
     const { rows } = parseCsvText(csv);
     expect(rows[0]['Label Template']).toBe('Pick a format, or add parts below');
     expect(rows[0]['Breed Code']).toBe('LARGE, WHITE');
+  });
+});
+
+function readBlobAsText(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
+}
+
+describe('exportMasterRowsToCsv — only what the edit form shows', () => {
+  let capturedBlob: Blob | null = null;
+
+  beforeEach(() => {
+    capturedBlob = null;
+    (globalThis as any).URL.createObjectURL = jest.fn((blob: Blob) => {
+      capturedBlob = blob;
+      return 'blob:mock';
+    });
+    (globalThis as any).URL.revokeObjectURL = jest.fn();
+  });
+
+  it('excludes a field the edit form never shows (hideInForm), even though it is a real stored column', async () => {
+    const config = cfg({
+      fields: [
+        { key: 'name', label: 'Name', type: 'text', required: true },
+        { key: 'book_value', label: 'Book Value', type: 'number', hideInForm: true },
+      ],
+    });
+    await exportMasterRowsToCsv(config, [{ name: 'Widget A', book_value: 42 }]);
+    const { rows } = parseCsvText(await readBlobAsText(capturedBlob!));
+    expect(Object.keys(rows[0])).toEqual(['Name']);
+  });
+
+  it('keeps a read-only field the edit form still shows, just not editable', async () => {
+    const config = cfg({
+      fields: [
+        { key: 'location_code', label: 'Code', type: 'text', readOnly: true, createOnly: true },
+      ],
+    });
+    await exportMasterRowsToCsv(config, [{ location_code: 'MGH6' }]);
+    const { rows } = parseCsvText(await readBlobAsText(capturedBlob!));
+    expect(rows[0]['Code']).toBe('MGH6');
   });
 });
