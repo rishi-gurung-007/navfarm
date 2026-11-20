@@ -53,6 +53,21 @@ interface ParsedStagedRow {
   errors: string[];
 }
 
+/** The per-row create loop below only POSTs the valid staged rows, so a backend error naming
+ * validItems[i] names the i-th *valid* row, not the i-th staged row overall. The error-matching
+ * pass further down reads backend errors against the full staged list (so an invalid row keeps
+ * its place in the preview table), so each valid item's loop position has to be translated back
+ * to its real position among every staged row before it's attached to one. */
+export function mapValidItemIndexesToStagedIndexes(
+  stagedRows: { isValid: boolean }[],
+): number[] {
+  const out: number[] = [];
+  stagedRows.forEach((r, idx) => {
+    if (r.isValid) out.push(idx);
+  });
+  return out;
+}
+
 export default function MasterDataImportModal({
   config,
   isOpen,
@@ -743,6 +758,7 @@ export default function MasterDataImportModal({
         // row's rejection doesn't lose the rows around it (19 Nov).
         const created: any[] = [];
         const itemErrors: { index: number; error: string }[] = [];
+        const stagedIndexes = mapValidItemIndexesToStagedIndexes(stagedRows);
         for (let idx = 0; idx < validItems.length; idx++) {
           try {
             const res = await api.post(config.apiBase, validItems[idx]);
@@ -755,7 +771,7 @@ export default function MasterDataImportModal({
               err?.message ||
               'Failed to create record.';
             itemErrors.push({
-              index: idx,
+              index: stagedIndexes[idx],
               error: Array.isArray(msg) ? msg.join(' ') : String(msg),
             });
           }
