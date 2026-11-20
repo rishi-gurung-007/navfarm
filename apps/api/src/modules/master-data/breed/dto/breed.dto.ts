@@ -631,6 +631,28 @@ export class KpiThresholdRowDto {
   @IsOptional()
   @IsIn(KPI_TOLERANCE_TYPES)
   tolerance_type?: string | null;
+
+  // Written directly into this JSON column by apply-gm-dashboard-bands.ts (the
+  // GM dashboard's colour cut-offs), read by kpi-limits.ts / gm-dashboard.metrics.ts.
+  // Not form-edited, but must be declared so the global whitelist pipe doesn't
+  // 400 a save of a row the script has touched.
+  @ApiProperty({ required: false, nullable: true, description: 'GM dashboard red cut-off (apply-gm-dashboard-bands.ts)' })
+  @Transform(blankToNull)
+  @IsNumber()
+  @IsOptional()
+  red_at?: number | null;
+
+  @ApiProperty({ required: false, nullable: true, description: 'GM dashboard yellow cut-off (apply-gm-dashboard-bands.ts)' })
+  @Transform(blankToNull)
+  @IsNumber()
+  @IsOptional()
+  yellow_at?: number | null;
+
+  @ApiProperty({ required: false, nullable: true, description: 'GM dashboard green cut-off (apply-gm-dashboard-bands.ts)' })
+  @Transform(blankToNull)
+  @IsNumber()
+  @IsOptional()
+  green_at?: number | null;
 }
 
 export const KPI_ALERT_PERIODS = ['DAILY', 'WEEKLY'] as const;
