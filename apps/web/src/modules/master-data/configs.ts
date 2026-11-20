@@ -139,6 +139,7 @@ const location: MasterDataConfig = {
       type: 'text',
       readOnly: true,
       createOnly: true,
+      importable: true,
       helpText:
         'Generated from the selected Location Type prefix and kept permanently.',
       section: 'Identification',

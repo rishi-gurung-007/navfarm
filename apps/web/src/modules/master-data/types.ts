@@ -283,6 +283,10 @@ export interface MasterDataField {
   hideInForm?: boolean;
   /** Visible for context but never editable or included in a save payload. */
   readOnly?: boolean;
+  /** Include this field in the generic CSV importer/template even though it's readOnly on the
+   * manual form — for a code that the live form hides (normally auto-generated) but that create
+   * still accepts explicitly, e.g. Location's location_code. No effect unless readOnly is set. */
+  importable?: boolean;
   /**
    * A display-only age worked out live from two date fields on this form: whole weeks, the days
    * past the last whole week ("11 weeks 6 days" is 11 and 6), both as one reading ("11 weeks 6 days"),

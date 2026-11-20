@@ -298,6 +298,36 @@ describe('applyOperationalNobLob — shared by the generic reader and Breed Life
   });
 });
 
+describe('createFormFields / genericImportFields — importable override', () => {
+  it('still excludes a readOnly field with no importable flag (regression)', () => {
+    const config = cfg({
+      fields: [{ key: 'system_note', label: 'System Note', type: 'text', readOnly: true }],
+    });
+    expect(supportsGenericImport(config)).toBe(true); // optional unsupported-type field, not required
+    // excluded from the template/parse field list: no column shows up for it
+    return generateMasterTemplateCsv(config).then((csv) => {
+      expect(csv.split('\r\n')[0]).toBe('');
+    });
+  });
+
+  it('includes a readOnly field marked importable', async () => {
+    const config = cfg({
+      fields: [{ key: 'location_code', label: 'Code', type: 'text', readOnly: true, importable: true }],
+    });
+    const csv = await generateMasterTemplateCsv(config);
+    expect(csv.split('\r\n')[0]).toBe('Code');
+  });
+});
+
+describe('Location config — location_code is importable', () => {
+  it('location_code is included in genericImportFields for the real Location config', async () => {
+    const { getConfig } = await import('../configs');
+    const location = getConfig('location');
+    const csv = await generateMasterTemplateCsv(location!);
+    expect(csv.split('\r\n')[0].split(',')).toContain('Code');
+  });
+});
+
 describe('exportMasterRowsToCsv — select-entity resolution does not depend on the record being in the first page of its collection', () => {
   let capturedBlob: Blob | null = null;
 

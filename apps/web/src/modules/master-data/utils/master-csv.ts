@@ -548,7 +548,7 @@ const GENERIC_IMPORT_UNSUPPORTED_TYPES = new Set<MasterDataField["type"]>([
  * API computes itself, not excluded from the create form, and not edit-only. */
 function createFormFields(config: MasterDataConfig): MasterDataField[] {
   return config.fields.filter(
-    (f) => !f.filterOnly && !f.readOnly && !f.hideInForm && !f.editOnly,
+    (f) => !f.filterOnly && (!f.readOnly || f.importable) && !f.hideInForm && !f.editOnly,
   );
 }
 
