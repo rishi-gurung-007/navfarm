@@ -417,6 +417,54 @@ export function findDuplicateImportCodes(
   return result;
 }
 
+/**
+ * Complements `findDuplicateImportCodes` (which catches collisions within the uploaded file
+ * itself) by catching the other half: a staged row whose code already belongs to a record that
+ * exists in the backend for this scope. One batched list call per file — not one per row — same
+ * normalization as the backend's own uniqueness check (`.trim().toUpperCase()`) so a collision
+ * it would reject is caught here first. A config with no `codeField` has nothing to collide on
+ * and makes no call. A failed fetch (network error, etc.) degrades to "no conflicts found" rather
+ * than blocking the import — the backend's own check at submit time is the real backstop, this is
+ * only a pre-flight courtesy — mirroring `fetchAndCacheOptions`'s try/catch-to-empty pattern.
+ *
+ * Returns the 0-based indexes (into `rows`) of every row whose normalized code already exists.
+ */
+export async function findExistingImportCodeConflicts(
+  config: MasterDataConfig,
+  rows: Array<{ payload: Record<string, any> }>,
+): Promise<Set<number>> {
+  const conflicts = new Set<number>();
+  const codeField = config.codeField;
+  if (!codeField) return conflicts;
+
+  let existing: Row[] = [];
+  try {
+    const res = await api.get(`${config.apiBase}?limit=5000`);
+    existing = unwrap<Row[]>(res) || [];
+  } catch {
+    return conflicts;
+  }
+
+  const existingCodes = new Set(
+    existing
+      .map((r) => r[codeField])
+      .filter((v) => v !== undefined && v !== null)
+      .map((v) => String(v).trim().toUpperCase())
+      .filter((v) => v !== ""),
+  );
+  if (existingCodes.size === 0) return conflicts;
+
+  rows.forEach((row, idx) => {
+    const raw = row.payload[codeField];
+    if (raw === undefined || raw === null) return;
+    const norm = String(raw).trim().toUpperCase();
+    if (!norm) return;
+    if (existingCodes.has(norm)) conflicts.add(idx);
+  });
+
+  return conflicts;
+}
+
 /** One real, fillable-looking example per field: every value the valid `select` list holds (so
  * the sheet doubles as its own legend), or the first real row an independent `select-entity`
  * fetched (a dependent one, e.g. Current Stage under Breed, isn't pre-fetched — left blank, same

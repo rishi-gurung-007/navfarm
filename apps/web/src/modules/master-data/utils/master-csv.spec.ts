@@ -1,4 +1,4 @@
-import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv, parseCsvText, prefetchGenericEntityOptions, exportMasterRowsToCsv, downloadCsvFile, applyOperationalNobLob, resolveImportCodeDisplay, findDuplicateImportCodes } from './master-csv';
+import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv, parseCsvText, prefetchGenericEntityOptions, exportMasterRowsToCsv, downloadCsvFile, applyOperationalNobLob, resolveImportCodeDisplay, findDuplicateImportCodes, findExistingImportCodeConflicts } from './master-csv';
 import type { MasterDataConfig } from '../types';
 
 jest.mock('@/services/api-client', () => ({ api: { get: jest.fn() } }));
@@ -455,5 +455,27 @@ describe('findDuplicateImportCodes', () => {
     const config = cfg({ codeField: 'stage_code' });
     const dupes = findDuplicateImportCodes(config, [{ payload: {} }, { payload: {} }]);
     expect(dupes.size).toBe(0);
+  });
+});
+
+describe('findExistingImportCodeConflicts', () => {
+  afterEach(() => jest.resetAllMocks());
+
+  it('flags a staged row whose code already exists in this scope', async () => {
+    (api.get as jest.Mock).mockResolvedValue({ data: [{ stage_code: 'GROWER' }] });
+    const config = cfg({ codeField: 'stage_code', apiBase: '/stage' });
+    const conflicts = await findExistingImportCodeConflicts(config, [
+      { payload: { stage_code: 'grower' } },
+      { payload: { stage_code: 'FINISHER' } },
+    ]);
+    expect(conflicts).toEqual(new Set([0]));
+    expect(api.get).toHaveBeenCalledWith('/stage?limit=5000');
+  });
+
+  it('makes no API call for a config with no codeField', async () => {
+    const config = cfg({ apiBase: '/stage' });
+    const conflicts = await findExistingImportCodeConflicts(config, [{ payload: { stage_code: 'GROWER' } }]);
+    expect(conflicts.size).toBe(0);
+    expect(api.get).not.toHaveBeenCalled();
   });
 });

@@ -34,6 +34,7 @@ import {
   applyOperationalNobLob,
   resolveImportCodeDisplay,
   findDuplicateImportCodes,
+  findExistingImportCodeConflicts,
 } from './utils/master-csv';
 
 function unwrap<T = any>(res: any): T {
@@ -484,6 +485,19 @@ export default function MasterDataImportModal({
           );
           row.isValid = false;
         }
+      }
+
+      // Complements the within-file check above: a staged row's code might not collide with any
+      // other row in this file but could still already belong to a record that exists in the
+      // backend for this scope — caught here with one batched list call, before submission hits
+      // the backend's own uniqueness check. Additive with the within-file check: a row can be
+      // invalid for both reasons at once.
+      const existingConflicts = await findExistingImportCodeConflicts(config, staged);
+      for (const idx of existingConflicts) {
+        const row = staged[idx];
+        const code = config.codeField ? row.payload[config.codeField] : undefined;
+        row.errors.push(`Code '${code}' already exists.`);
+        row.isValid = false;
       }
 
       setStagedRows(staged);
