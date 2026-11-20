@@ -32,6 +32,7 @@ import {
   prefetchGenericEntityOptions,
   parseGenericImportRow,
   applyOperationalNobLob,
+  resolveImportCodeDisplay,
 } from './utils/master-csv';
 
 function unwrap<T = any>(res: any): T {
@@ -535,9 +536,7 @@ export default function MasterDataImportModal({
             const be = backendErrors.find(
               (e: any) =>
                 e.index === idx ||
-                (e.code &&
-                  (e.code === r.payload.breed_code ||
-                    e.code === r.payload.lifecycle_code)),
+                (e.code && e.code === resolveImportCodeDisplay(config, r).text),
             );
             if (be) {
               const errMsg =
@@ -570,7 +569,7 @@ export default function MasterDataImportModal({
       }
 
       const importedCodes = validItems
-        .map((it) => it.breed_code || it.lifecycle_code)
+        .map((it) => resolveImportCodeDisplay(config, { payload: it, raw: {}, errors: [] }).text)
         .filter(Boolean);
 
       if (importedCodes.length > 0) {
@@ -600,9 +599,7 @@ export default function MasterDataImportModal({
             const be = backendErrors.find(
               (e) =>
                 e.index === idx ||
-                (e.code &&
-                  (e.code === r.payload.breed_code ||
-                    e.code === r.payload.lifecycle_code)),
+                (e.code && e.code === resolveImportCodeDisplay(config, r).text),
             );
             if (be) {
               const errMsg = be.error || be.reason || 'Validation failed';
@@ -802,11 +799,7 @@ export default function MasterDataImportModal({
               <div className="max-h-44 overflow-y-auto space-y-1.5 rounded border border-rose-200 bg-white/80 p-2.5 text-[11px] dark:border-rose-900/60 dark:bg-black/40">
                 {invalidRows.map((r) => {
                   const itemCode =
-                    r.payload.breed_code ||
-                    r.raw.breed_code ||
-                    r.raw.Code ||
-                    r.payload.lifecycle_code ||
-                    r.raw.lifecycle_code ||
+                    resolveImportCodeDisplay(config, r).text ||
                     `Row #${r.index}`;
                   const itemName =
                     r.payload.breed_name || r.raw.breed_name || r.raw.Name;
@@ -858,10 +851,7 @@ export default function MasterDataImportModal({
               <div className="font-mono text-[10px] text-emerald-700 dark:text-emerald-300">
                 Codes:{' '}
                 {stagedRows
-                  .map(
-                    (r) =>
-                      r.payload.breed_code || r.raw.breed_code || r.raw.Code,
-                  )
+                  .map((r) => resolveImportCodeDisplay(config, r).text)
                   .filter(Boolean)
                   .join(', ')}
               </div>
@@ -952,11 +942,7 @@ export default function MasterDataImportModal({
                         )}
                       </TableCell>
                       <TableCell className="px-3 py-2 font-mono font-semibold text-(--text-primary)">
-                        {r.payload.breed_code ||
-                          r.payload.lifecycle_code ||
-                          r.raw.breed_code ||
-                          r.raw.lifecycle_code ||
-                          NA}
+                        {resolveImportCodeDisplay(config, r).text || NA}
                       </TableCell>
                       <TableCell className="px-3 py-2 text-(--text-secondary)">
                         {config.key === 'breed' ? (

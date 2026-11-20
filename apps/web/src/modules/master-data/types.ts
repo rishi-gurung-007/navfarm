@@ -511,6 +511,13 @@ export interface MasterDataConfig {
   description?: string;
   apiBase: string;
   idKey: string;
+  /** The field key holding this master's own primary identity code (e.g. "location_code",
+   * "lifecycle_code") — drives the generic import preview's Code column and duplicate checks.
+   * Not inferred from field order or naming; every master that wants these must set it. */
+  codeField?: string;
+  /** Whether leaving codeField blank on create causes the backend to auto-generate it via a
+   * configured Number Series (vs. simply staying unset). Only meaningful with codeField set. */
+  codeFieldGenerated?: boolean;
   fields: MasterDataField[];
   /** Frontend-only BC references. Never part of creation/edit payloads. */
   bcFields?: { key: string; label: string }[];

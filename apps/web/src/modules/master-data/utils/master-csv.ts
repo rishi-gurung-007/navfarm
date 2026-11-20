@@ -342,6 +342,44 @@ function templateHeaderFor(f: MasterDataField): string {
   return f.type === "select-entity" ? `${f.label} Code` : f.label;
 }
 
+/**
+ * What the import preview's Code column (and the success/error messaging around it) should show
+ * for one staged row — driven by `config.codeField` instead of a master-by-master hardcoded
+ * chain, so every generically-imported master gets a real Code column, not just Breed and Breed
+ * Lifecycle Stage (the two that used to have their display wired by hand).
+ *
+ * "uploaded" wins over everything else — the row carries the code it will actually be created
+ * with. "invalid" is for a code typed in the sheet that a validation error then dropped from the
+ * payload (so it never reached "uploaded"), surfaced so the row doesn't read as blank when
+ * something was clearly attempted. "generated" only applies once there is truly nothing to show
+ * and the backend would mint one itself; otherwise "none" — nothing uploaded, nothing invalid,
+ * nothing to generate.
+ */
+export function resolveImportCodeDisplay(
+  config: MasterDataConfig,
+  row: { payload: Record<string, any>; raw: Record<string, string>; errors: string[] },
+): { text: string; provenance: "uploaded" | "generated" | "invalid" | "none" } {
+  const codeField = config.codeField;
+  if (!codeField) return { text: "", provenance: "none" };
+
+  const uploaded = row.payload[codeField];
+  if (uploaded !== undefined && uploaded !== null && String(uploaded).trim() !== "") {
+    return { text: String(uploaded), provenance: "uploaded" };
+  }
+
+  const field = config.fields.find((f) => f.key === codeField);
+  const rawAttempt = getRawValue(row.raw, codeField, field?.label, field?.aliases);
+  if (rawAttempt && row.errors.some((e) => e.includes(rawAttempt))) {
+    return { text: rawAttempt, provenance: "invalid" };
+  }
+
+  if (config.codeFieldGenerated) {
+    return { text: "Will be generated on import", provenance: "generated" };
+  }
+
+  return { text: "", provenance: "none" };
+}
+
 /** One real, fillable-looking example per field: every value the valid `select` list holds (so
  * the sheet doubles as its own legend), or the first real row an independent `select-entity`
  * fetched (a dependent one, e.g. Current Stage under Breed, isn't pre-fetched — left blank, same

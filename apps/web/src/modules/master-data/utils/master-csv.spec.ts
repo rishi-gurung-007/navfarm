@@ -1,4 +1,4 @@
-import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv, parseCsvText, prefetchGenericEntityOptions, exportMasterRowsToCsv, downloadCsvFile, applyOperationalNobLob } from './master-csv';
+import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv, parseCsvText, prefetchGenericEntityOptions, exportMasterRowsToCsv, downloadCsvFile, applyOperationalNobLob, resolveImportCodeDisplay } from './master-csv';
 import type { MasterDataConfig } from '../types';
 
 jest.mock('@/services/api-client', () => ({ api: { get: jest.fn() } }));
@@ -386,5 +386,41 @@ describe('parseGenericImportRow — configured aliases', () => {
     const { payload } = await parseGenericImportRow(config, { location_code: 'LOC-1', ID: 'LOC-2', external_ref: 'REF-1' }, {});
     expect(payload.location_code).toBe('LOC-1');
     expect(payload.external_ref).toBe('REF-1');
+  });
+});
+
+describe('resolveImportCodeDisplay', () => {
+  it('shows the uploaded code when present in the payload', () => {
+    const config = cfg({ codeField: 'stage_code', fields: [{ key: 'stage_code', label: 'Code', type: 'text' }] });
+    const result = resolveImportCodeDisplay(config, { payload: { stage_code: 'GROWER' }, raw: {}, errors: [] });
+    expect(result).toEqual({ text: 'GROWER', provenance: 'uploaded' });
+  });
+
+  it('shows the generated-on-import marker when blank and codeFieldGenerated is set', () => {
+    const config = cfg({ codeField: 'stage_code', codeFieldGenerated: true, fields: [{ key: 'stage_code', label: 'Code', type: 'text' }] });
+    const result = resolveImportCodeDisplay(config, { payload: {}, raw: {}, errors: [] });
+    expect(result.provenance).toBe('generated');
+  });
+
+  it('shows the raw attempted value as invalid when a validation error dropped it', () => {
+    const config = cfg({ codeField: 'stage_code', codeFieldGenerated: true, fields: [{ key: 'stage_code', label: 'Code', type: 'text' }] });
+    const result = resolveImportCodeDisplay(config, {
+      payload: {},
+      raw: { Code: 'BAD CODE' },
+      errors: ["Code 'BAD CODE' is invalid."],
+    });
+    expect(result).toEqual({ text: 'BAD CODE', provenance: 'invalid' });
+  });
+
+  it('is a no-op (provenance "none") for a config with no codeField', () => {
+    const config = cfg({ fields: [{ key: 'x', label: 'X', type: 'text' }] });
+    const result = resolveImportCodeDisplay(config, { payload: { x: '1' }, raw: {}, errors: [] });
+    expect(result.provenance).toBe('none');
+  });
+
+  it('matches today\'s Breed preview behavior when driven by codeField', () => {
+    const config = cfg({ key: 'breed', codeField: 'breed_code', fields: [{ key: 'breed_code', label: 'Code', type: 'text' }] });
+    const result = resolveImportCodeDisplay(config, { payload: { breed_code: 'YORKSHIRE' }, raw: {}, errors: [] });
+    expect(result.text).toBe('YORKSHIRE');
   });
 });
