@@ -402,6 +402,14 @@ describe('resolveImportCodeDisplay', () => {
     expect(result.provenance).toBe('generated');
   });
 
+  it('does not claim a code is coming for a row that already has an unrelated error', () => {
+    // A row invalid for any reason (including the code field itself being required and left
+    // blank) shouldn't also say "Will be generated on import" next to its own error text.
+    const config = cfg({ codeField: 'stage_code', codeFieldGenerated: true, fields: [{ key: 'stage_code', label: 'Code', type: 'text', required: true }] });
+    const result = resolveImportCodeDisplay(config, { payload: {}, raw: {}, errors: ['Name is required.'] });
+    expect(result).toEqual({ text: '', provenance: 'none' });
+  });
+
   it('shows the raw attempted value as invalid when a validation error dropped it', () => {
     const config = cfg({ codeField: 'stage_code', codeFieldGenerated: true, fields: [{ key: 'stage_code', label: 'Code', type: 'text' }] });
     const result = resolveImportCodeDisplay(config, {

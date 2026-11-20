@@ -351,9 +351,11 @@ function templateHeaderFor(f: MasterDataField): string {
  * "uploaded" wins over everything else — the row carries the code it will actually be created
  * with. "invalid" is for a code typed in the sheet that a validation error then dropped from the
  * payload (so it never reached "uploaded"), surfaced so the row doesn't read as blank when
- * something was clearly attempted. "generated" only applies once there is truly nothing to show
- * and the backend would mint one itself; otherwise "none" — nothing uploaded, nothing invalid,
- * nothing to generate.
+ * something was clearly attempted. "generated" only applies once there is truly nothing to show,
+ * the backend would mint one itself, AND the row has no error of its own — a row already invalid
+ * for some other reason (or because this very code field was required and left blank) should not
+ * also claim a code is coming, right next to the error explaining why it won't be created at all.
+ * Otherwise "none" — nothing uploaded, nothing invalid, nothing to generate.
  */
 export function resolveImportCodeDisplay(
   config: MasterDataConfig,
@@ -373,7 +375,7 @@ export function resolveImportCodeDisplay(
     return { text: rawAttempt, provenance: "invalid" };
   }
 
-  if (config.codeFieldGenerated) {
+  if (config.codeFieldGenerated && row.errors.length === 0) {
     return { text: "Will be generated on import", provenance: "generated" };
   }
 

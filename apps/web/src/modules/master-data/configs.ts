@@ -5866,6 +5866,8 @@ export const departmentMaster: MasterDataConfig = {
   singular: 'Department',
   apiBase: '/cost-center',
   idKey: 'cost_center_id',
+  codeField: 'cost_center_code',
+  codeFieldGenerated: true,
   group: 'Finance',
   hideGroupBadge: true,
   fixedFilter: {

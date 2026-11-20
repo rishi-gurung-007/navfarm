@@ -536,7 +536,11 @@ export default function MasterDataImportModal({
             const be = backendErrors.find(
               (e: any) =>
                 e.index === idx ||
-                (e.code && e.code === resolveImportCodeDisplay(config, r).text),
+                (e.code &&
+                  (() => {
+                    const resolved = resolveImportCodeDisplay(config, r);
+                    return resolved.provenance === 'uploaded' && e.code === resolved.text;
+                  })()),
             );
             if (be) {
               const errMsg =
@@ -569,7 +573,10 @@ export default function MasterDataImportModal({
       }
 
       const importedCodes = validItems
-        .map((it) => resolveImportCodeDisplay(config, { payload: it, raw: {}, errors: [] }).text)
+        .map((it) => {
+          const resolved = resolveImportCodeDisplay(config, { payload: it, raw: {}, errors: [] });
+          return resolved.provenance === 'uploaded' ? resolved.text : '';
+        })
         .filter(Boolean);
 
       if (importedCodes.length > 0) {
@@ -599,7 +606,11 @@ export default function MasterDataImportModal({
             const be = backendErrors.find(
               (e) =>
                 e.index === idx ||
-                (e.code && e.code === resolveImportCodeDisplay(config, r).text),
+                (e.code &&
+                  (() => {
+                    const resolved = resolveImportCodeDisplay(config, r);
+                    return resolved.provenance === 'uploaded' && e.code === resolved.text;
+                  })()),
             );
             if (be) {
               const errMsg = be.error || be.reason || 'Validation failed';
@@ -851,7 +862,10 @@ export default function MasterDataImportModal({
               <div className="font-mono text-[10px] text-emerald-700 dark:text-emerald-300">
                 Codes:{' '}
                 {stagedRows
-                  .map((r) => resolveImportCodeDisplay(config, r).text)
+                  .map((r) => {
+                    const resolved = resolveImportCodeDisplay(config, r);
+                    return resolved.provenance === 'uploaded' ? resolved.text : '';
+                  })
                   .filter(Boolean)
                   .join(', ')}
               </div>
