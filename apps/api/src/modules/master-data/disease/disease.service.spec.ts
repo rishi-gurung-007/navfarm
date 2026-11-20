@@ -138,5 +138,16 @@ describe('DiseaseService', () => {
       expect(numberSeries.generateNext).not.toHaveBeenCalled();
       expect(result.disease_code).toBe('CUSTOM');
     });
+
+    it('rejects a supplied code instead of silently generating a different one when the series does not allow manual entry', async () => {
+      numberSeries.resolveSeriesFor.mockResolvedValue('DISEASE');
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false });
+      mockDbSelect.mockReturnValueOnce(makeSelectResult([{ company_id: 'comp-1' }])); // company found
+
+      await expect(
+        service.create({ company_id: 'comp-1', disease_name: 'Newcastle Disease', disease_code: 'CUSTOM' }, 'tenant-123'),
+      ).rejects.toThrow(BadRequestException);
+      expect(numberSeries.generateNext).not.toHaveBeenCalled();
+    });
   });
 });

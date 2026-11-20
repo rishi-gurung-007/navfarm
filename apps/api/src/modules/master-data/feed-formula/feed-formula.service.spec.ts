@@ -245,5 +245,30 @@ describe('FeedFormulaService', () => {
       expect(numberSeries.generateNext).toHaveBeenCalledWith('FEED_FORMULA', 'tenant-123', 'comp-1', undefined, expect.any(Object));
       expect(result.formula_code).toBe('FF-001');
     });
+
+    it('rejects a supplied code instead of silently generating a different one when the series does not allow manual entry', async () => {
+      numberSeries.resolveSeriesFor.mockResolvedValue('FEED_FORMULA');
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false });
+
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ company_id: 'comp-1' }]) }) }) }) // company
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ item_id: 'item-target' }]) }) }) }); // target item
+
+      await expect(
+        service.create(
+          {
+            company_id: 'comp-1',
+            formula_name: 'Broiler Starter',
+            formula_code: 'CUSTOM',
+            target_item_id: 'item-target',
+            batch_size: 1000,
+            batch_unit: 'KG',
+            ingredients: [{ item_id: 'raw-1', quantity: 500, unit: 'KG' }],
+          },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(numberSeries.generateNext).not.toHaveBeenCalled();
+    });
   });
 });

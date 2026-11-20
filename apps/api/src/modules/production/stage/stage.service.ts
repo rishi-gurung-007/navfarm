@@ -66,6 +66,11 @@ export class StageService {
     if (series.manual_nos && dto.stage_code) {
       return dto.stage_code.toUpperCase();
     }
+    if (dto.stage_code) {
+      throw new BadRequestException(
+        'This number series does not allow a manual code for stages — leave the Code blank to auto-generate one.',
+      );
+    }
     return this.numberSeriesService.generateNext(
       seriesCode,
       tenantId,

@@ -216,6 +216,22 @@ describe('StageService', () => {
       expect(result.stage_code).toBe('STG-001');
     });
 
+    it('rejects a supplied code instead of silently generating a different one when the series does not allow manual entry', async () => {
+      numberSeries.resolveSeriesFor.mockResolvedValue('STAGE_PRE_PRODUCTIVE');
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false });
+      mockDbSelect
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ nob_id: 'nob-1' }]) }) }) })
+        .mockReturnValueOnce({ from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ lob_id: 'lob-1' }]) }) }) });
+
+      await expect(
+        service.create(
+          { nob_id: 'nob-1', lob_id: 'lob-1', stage_code: 'CUSTOM', stage_name: 'Quarantine', stage_category: 'PRE_PRODUCTIVE', stage_sequence: 1, transition_trigger: 'MANUAL' },
+          'tenant-123',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(numberSeries.generateNext).not.toHaveBeenCalled();
+    });
+
     it('rejects with a clear error when NOB/LOB cannot be derived and none was supplied', async () => {
       nobLobResolution.resolve.mockResolvedValue({ nob_id: 'nob-1', lob_id: null });
 

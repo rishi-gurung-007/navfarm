@@ -246,5 +246,15 @@ describe('ItemTypeService', () => {
       expect(numberSeries.generateNext).not.toHaveBeenCalled();
       expect(result.type_code).toBe('CUSTOM');
     });
+
+    it('rejects a supplied code instead of silently generating a different one when the series does not allow manual entry', async () => {
+      numberSeries.resolveSeriesFor.mockResolvedValue('ITEM_TYPE');
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false });
+
+      await expect(
+        service.create({ type_name: 'Raw Material', type_code: 'CUSTOM' }, 'tenant-123'),
+      ).rejects.toThrow(BadRequestException);
+      expect(numberSeries.generateNext).not.toHaveBeenCalled();
+    });
   });
 });

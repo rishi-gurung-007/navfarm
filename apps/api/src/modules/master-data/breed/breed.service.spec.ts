@@ -286,6 +286,21 @@ describe('BreedService', () => {
         { nob_id: 'livestock', breed_name: 'Yorkshire', species_id: 'pig', breed_type: 'SOW' });
     });
 
+    it('rejects a supplied code instead of silently generating a different one when the series does not allow manual entry', async () => {
+      numberSeries.resolveSeriesFor.mockResolvedValue('BREED_SOW');
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false });
+      const returning = (rows: any[]) => ({ from: () => ({ where: () => Object.assign(Promise.resolve(rows), { limit: async () => rows }) }) });
+      mockDbSelect.mockReturnValueOnce(returning([{ species_id: 'pig', species_name: 'Pig' }]));
+
+      await expect(
+        service.createBreed(
+          { nob_id: 'livestock', breed_name: 'Yorkshire', breed_code: 'CUSTOM', species_id: 'pig', breed_type: 'SOW' },
+          'tenant',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(numberSeries.generateNext).not.toHaveBeenCalled();
+    });
+
     it('rejects when neither a series nor a manual breed_code is supplied', async () => {
       mockDbSelect.mockReturnValueOnce({
         from: jest.fn().mockReturnValue({ where: jest.fn().mockReturnValue({ limit: jest.fn().mockResolvedValue([{ species_id: 'spec-1', species_name: 'Chicken' }]) }) }),

@@ -182,6 +182,16 @@ describe('UomService', () => {
       await expect(service.create({ uom_name: 'Weight unit', uom_type: 'WEIGHT' } as any, 'tenant-123'))
         .rejects.toThrow(BadRequestException);
     });
+
+    it('rejects a supplied code instead of silently generating a different one when the series does not allow manual entry', async () => {
+      numberSeries.resolveSeriesFor.mockResolvedValue('UOM_WEIGHT');
+      numberSeries.lockSeries.mockResolvedValue({ manual_nos: false });
+
+      await expect(
+        service.create({ uom_name: 'Weight unit', uom_type: 'WEIGHT', uom_code: 'CUSTOM' }, 'tenant-123'),
+      ).rejects.toThrow(BadRequestException);
+      expect(numberSeries.generateNext).not.toHaveBeenCalled();
+    });
   });
 
   describe('findOne', () => {

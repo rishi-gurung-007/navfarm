@@ -73,6 +73,11 @@ export class BreedService {
     if (series.manual_nos && dto.breed_code) {
       return dto.breed_code.toUpperCase();
     }
+    if (dto.breed_code) {
+      throw new BadRequestException(
+        'This number series does not allow a manual code for breeds — leave the Code blank to auto-generate one.',
+      );
+    }
     // The record goes to the generator so a series configured with
     // code_segments / prefix_field can read its own fields — breed_name is the
     // one Rishi named, giving LARGEWHITE-0001 rather than BRD-0001.

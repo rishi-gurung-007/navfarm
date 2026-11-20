@@ -45,6 +45,11 @@ export class FeedFormulaService {
     if (series.manual_nos && dto.formula_code) {
       return dto.formula_code.toUpperCase();
     }
+    if (dto.formula_code) {
+      throw new BadRequestException(
+        'This number series does not allow a manual code for feed formulas — leave the Code blank to auto-generate one.',
+      );
+    }
     return this.numberSeriesService.generateNext(seriesCode, tenantId, dto.company_id, undefined, dto as unknown as Record<string, unknown>);
   }
 

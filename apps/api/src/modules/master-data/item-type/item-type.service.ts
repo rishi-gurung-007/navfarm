@@ -44,6 +44,11 @@ export class ItemTypeService {
     if (series.manual_nos && dto.type_code) {
       return dto.type_code.toUpperCase();
     }
+    if (dto.type_code) {
+      throw new BadRequestException(
+        'This number series does not allow a manual code for item types — leave the Code blank to auto-generate one.',
+      );
+    }
     return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, undefined, dto as unknown as Record<string, unknown>);
   }
 

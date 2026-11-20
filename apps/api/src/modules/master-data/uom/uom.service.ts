@@ -53,6 +53,11 @@ export class UomService {
     if (series.manual_nos && dto.uom_code) {
       return dto.uom_code.toUpperCase();
     }
+    if (dto.uom_code) {
+      throw new BadRequestException(
+        'This number series does not allow a manual code for units of measure — leave the Code blank to auto-generate one.',
+      );
+    }
     return this.numberSeriesService.generateNext(seriesCode, tenantId, companyId, undefined, dto as unknown as Record<string, unknown>);
   }
 
