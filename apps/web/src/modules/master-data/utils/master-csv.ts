@@ -350,10 +350,38 @@ function templateHeaderFor(f: MasterDataField): string {
   return f.type === "select-entity" ? `${f.label} Code` : f.label;
 }
 
+/** One real, fillable-looking example per field: every value the valid `select` list holds (so
+ * the sheet doubles as its own legend), or the first real row an independent `select-entity`
+ * fetched (a dependent one, e.g. Current Stage under Breed, isn't pre-fetched — left blank, same
+ * as today). Looks up a label the same way `matchEntityOption` matches one back, so a cell left
+ * untouched round-trips on import. */
+function templateSampleFor(f: MasterDataField, cache: Record<string, Row[]>): string {
+  if (f.type === "select") {
+    return (f.options || []).map((o) => o.value).join(" / ");
+  }
+  if (f.type === "select-entity") {
+    if (!f.entityEndpoint) return "";
+    const first = (cache[f.entityEndpoint] || [])[0];
+    if (!first) return "";
+    const valueKey = f.entityValueKey || "id";
+    const labelKeys = f.entityLabelKeys?.length ? f.entityLabelKeys : [valueKey];
+    for (const lk of labelKeys) {
+      if (first[lk] !== undefined && first[lk] !== null && String(first[lk]).trim() !== "") {
+        return String(first[lk]);
+      }
+    }
+    return String(first[valueKey] ?? "");
+  }
+  if (f.placeholder) return f.placeholder;
+  if (f.type === "number") return "10";
+  if (f.type === "boolean") return "false";
+  return "Sample";
+}
+
 /**
  * Generates an official CSV template with field headers, constraints description, and sample rows.
  */
-export function generateMasterTemplateCsv(config: MasterDataConfig): string {
+export async function generateMasterTemplateCsv(config: MasterDataConfig): Promise<string> {
   if (config.key === "breed") {
     const headers = [
       "breed_code",
@@ -501,19 +529,8 @@ export function generateMasterTemplateCsv(config: MasterDataConfig): string {
   // so the template can never ask for a column import would then ignore or reject.
   const fields = genericImportFields(config);
   const headers = fields.map(templateHeaderFor);
-  // A select-entity or static-select field needs a real code/name to resolve against, not a
-  // placeholder string that would just fail as "not found" — leave those blank rather than guess.
-  const sample = fields.map((f: MasterDataField) =>
-    f.type === "select-entity" || f.type === "select"
-      ? ""
-      : f.placeholder
-        ? f.placeholder
-        : f.type === "number"
-          ? "10"
-          : f.type === "boolean"
-            ? "false"
-            : "Sample",
-  );
+  const cache = await prefetchGenericEntityOptions(config);
+  const sample = fields.map((f) => templateSampleFor(f, cache));
   return [headers.join(","), sample.join(",")].join("\r\n");
 }
 

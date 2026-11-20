@@ -1,6 +1,5 @@
 'use client';
 
-import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { mergeLifecycleFeedRows } from './utils/master-csv';
 import { useState, useRef } from 'react';
@@ -30,57 +29,13 @@ import {
   parseCsvText,
   downloadCsvFile,
   generateMasterTemplateCsv,
+  getRawValue,
+  prefetchGenericEntityOptions,
+  parseGenericImportRow,
 } from './utils/master-csv';
 
 function unwrap<T = any>(res: any): T {
   return (Array.isArray(res) ? res : (res?.data ?? res)) as T;
-}
-
-function normalizeKey(str: string): string {
-  return str.toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
-function getRawValue(
-  raw: Record<string, string>,
-  fieldKey: string,
-  fieldLabel?: string,
-  aliases?: string[],
-): string | undefined {
-  if (!raw) return undefined;
-
-  // 1. Direct key match
-  if (raw[fieldKey] !== undefined && raw[fieldKey] !== '')
-    return raw[fieldKey].trim();
-
-  // 2. Direct label match
-  if (fieldLabel && raw[fieldLabel] !== undefined && raw[fieldLabel] !== '')
-    return raw[fieldLabel].trim();
-
-  // 3. Direct aliases match
-  if (aliases && aliases.length > 0) {
-    for (const a of aliases) {
-      if (raw[a] !== undefined && raw[a] !== '') return raw[a].trim();
-    }
-  }
-
-  // 4. Normalized match (strip all punctuation, spaces, parens, symbols, lowercase)
-  const normKey = normalizeKey(fieldKey);
-  const normLabel = fieldLabel ? normalizeKey(fieldLabel) : '';
-  const normAliases = (aliases || []).map(normalizeKey);
-
-  for (const [k, v] of Object.entries(raw)) {
-    if (v === undefined || v === '') continue;
-    const nk = normalizeKey(k);
-    if (
-      nk === normKey ||
-      (normLabel && nk === normLabel) ||
-      normAliases.includes(nk)
-    ) {
-      return v.trim();
-    }
-  }
-
-  return undefined;
 }
 
 interface MasterDataImportModalProps {
@@ -107,6 +62,7 @@ export default function MasterDataImportModal({
   const [file, setFile] = useState<File | null>(null);
   const [parsing, setParsing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [generalError, setGeneralError] = useState('');
   const [stagedRows, setStagedRows] = useState<ParsedStagedRow[]>([]);
   const [viewFilter, setViewFilter] = useState<'all' | 'errors' | 'valid'>(
@@ -114,10 +70,15 @@ export default function MasterDataImportModal({
   );
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const handleDownloadTemplate = () => {
-    const csvContent = generateMasterTemplateCsv(config);
-    const filename = `${config.key}_template.csv`;
-    downloadCsvFile(filename, csvContent);
+  const handleDownloadTemplate = async () => {
+    setDownloadingTemplate(true);
+    try {
+      const csvContent = await generateMasterTemplateCsv(config);
+      const filename = `${config.key}_template.csv`;
+      downloadCsvFile(filename, csvContent);
+    } finally {
+      setDownloadingTemplate(false);
+    }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -180,6 +141,12 @@ export default function MasterDataImportModal({
           r.status === 'fulfilled' ? unwrap(r.value) || [] : [],
         );
       }
+
+      const isGeneric =
+        config.key !== 'breed' && config.key !== 'breed-lifecycle-stage';
+      const genericEntityCache = isGeneric
+        ? await prefetchGenericEntityOptions(config)
+        : {};
 
       // Validate & stage rows
       const staged: ParsedStagedRow[] = [];
@@ -726,15 +693,11 @@ export default function MasterDataImportModal({
           ]);
           if (notes) payload.notes = notes.trim();
         } else {
-          // Generic master fallback
-          for (const f of config.fields) {
-            const rawVal = getRawValue(raw, f.key, f.label);
-            if (rawVal !== undefined && rawVal !== '') {
-              payload[f.key] = rawVal;
-            } else if (f.required) {
-              errors.push(`${f.label || f.key} is required.`);
-            }
-          }
+          // Every other master: one metadata-driven reader, shared with the live create
+          // form's own field rules (master-csv.ts's parseGenericImportRow, 19 Nov).
+          const generic = await parseGenericImportRow(config, raw, genericEntityCache);
+          Object.assign(payload, generic.payload);
+          errors.push(...generic.errors);
         }
 
         staged.push({
@@ -775,10 +738,35 @@ export default function MasterDataImportModal({
           items: validItems,
         });
       } else {
-        // Fallback: sequential inserts
-        for (const item of validItems) {
-          await api.post(config.apiBase, item);
+        // Every other master has no bulk endpoint of its own — create sequentially through the
+        // same single-record endpoint the live "Add" dialog uses, one request per row, so one
+        // row's rejection doesn't lose the rows around it (19 Nov).
+        const created: any[] = [];
+        const itemErrors: { index: number; error: string }[] = [];
+        for (let idx = 0; idx < validItems.length; idx++) {
+          try {
+            const res = await api.post(config.apiBase, validItems[idx]);
+            created.push(unwrap(res));
+          } catch (err: any) {
+            const msg =
+              err?.response?.data?.error?.message ||
+              err?.response?.data?.message ||
+              err?.data?.message ||
+              err?.message ||
+              'Failed to create record.';
+            itemErrors.push({
+              index: idx,
+              error: Array.isArray(msg) ? msg.join(' ') : String(msg),
+            });
+          }
         }
+        bulkRes = {
+          data: {
+            createdCount: created.length,
+            items: created,
+            errors: itemErrors.length ? itemErrors : undefined,
+          },
+        };
       }
 
       const resData = unwrap(bulkRes);
@@ -807,6 +795,17 @@ export default function MasterDataImportModal({
           }),
         );
         setViewFilter('errors');
+        // A 200 with errors means some items DID save (the backend only throws outright when every
+        // item fails) — refresh the table behind the modal and say so, instead of leaving the user
+        // thinking nothing happened while rows they can't see were actually created (19 Nov).
+        const createdCount =
+          resData?.createdCount ?? validItems.length - backendErrors.length;
+        if (createdCount > 0) {
+          showToast.success(
+            `Imported ${createdCount} record(s); ${backendErrors.length} failed — see details below.`,
+          );
+          onSuccess();
+        }
         setGeneralError(
           `Backend validation failed for ${backendErrors.length} item(s). Review the alert list below.`,
         );
@@ -961,10 +960,15 @@ export default function MasterDataImportModal({
             size="sm"
             variant="outline"
             onClick={handleDownloadTemplate}
+            disabled={downloadingTemplate}
             className="flex items-center gap-1.5 text-xs font-semibold"
           >
-            <Download className="h-3.5 w-3.5 text-(--accent)" /> Download CSV
-            Template
+            {downloadingTemplate ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-(--accent)" />
+            ) : (
+              <Download className="h-3.5 w-3.5 text-(--accent)" />
+            )}
+            {downloadingTemplate ? 'Preparing…' : 'Download CSV Template'}
           </Button>
         </div>
 
@@ -1237,8 +1241,8 @@ export default function MasterDataImportModal({
                           <span>
                             {r.payload.breed_code || r.raw.breed_code} ➔{' '}
                             {r.payload.stage_code || r.raw.stage_code} (
-                            {r.payload.category || NA}, {formatDate(r.payload.period_from)}-
-                            {formatDate(r.payload.period_to)} {r.payload.calc_unit})
+                            {r.payload.category || NA}, {r.payload.calc_unit}{' '}
+                            {r.payload.period_from}-{r.payload.period_to})
                           </span>
                         ) : (
                           <span>

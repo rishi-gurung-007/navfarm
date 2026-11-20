@@ -1,6 +1,9 @@
 import { supportsGenericImport, parseGenericImportRow, generateMasterTemplateCsv } from './master-csv';
 import type { MasterDataConfig } from '../types';
 
+jest.mock('@/services/api-client', () => ({ api: { get: jest.fn() } }));
+import { api } from '@/services/api-client';
+
 function cfg(overrides: Partial<MasterDataConfig>): MasterDataConfig {
   return {
     key: 'widget', label: 'Widgets', apiBase: '/widget', idKey: 'widget_id',
@@ -142,5 +145,53 @@ describe('generateMasterTemplateCsv generic fallback — field list and headers'
     const csv = await generateMasterTemplateCsv(config);
     const [headerLine] = csv.split('\r\n');
     expect(headerLine.split(',')).toEqual(['Breed Code', 'Gender']);
+  });
+});
+
+describe('generateMasterTemplateCsv generic fallback — sample row', () => {
+  afterEach(() => jest.resetAllMocks());
+
+  it('shows the real option list for a select field', async () => {
+    const config = cfg({
+      fields: [{ key: 'animal_type', label: 'Animal Type', type: 'select', options: ['SOW', 'BOAR', 'GILT'].map((v) => ({ value: v, label: v })) }],
+    });
+    const csv = await generateMasterTemplateCsv(config);
+    const [, sampleLine] = csv.split('\r\n');
+    expect(sampleLine).toBe('SOW / BOAR / GILT');
+  });
+
+  it('shows a real existing code for an independent select-entity field', async () => {
+    (api.get as jest.Mock).mockResolvedValue({ data: [{ breed_id: 'b-1', breed_code: 'LARGE_WHITE' }] });
+    const config = cfg({
+      fields: [{ key: 'breed_id', label: 'Breed', type: 'select-entity', entityEndpoint: '/breed', entityValueKey: 'breed_id', entityLabelKeys: ['breed_code'] }],
+    });
+    const csv = await generateMasterTemplateCsv(config);
+    const [, sampleLine] = csv.split('\r\n');
+    expect(sampleLine).toBe('LARGE_WHITE');
+  });
+
+  it('leaves a dependent select-entity field blank (its options aren\'t pre-fetched)', async () => {
+    (api.get as jest.Mock).mockResolvedValue({ data: [{ stage_id: 's-1', stage_code: 'GROWER' }] });
+    const config = cfg({
+      fields: [
+        { key: 'breed_id', label: 'Breed', type: 'select-entity', entityEndpoint: '/breed', entityValueKey: 'breed_id', entityLabelKeys: ['breed_code'] },
+        { key: 'current_stage_id', label: 'Current Stage', type: 'select-entity', entityEndpoint: '/stage?breedId={value}', entityValueKey: 'stage_id', entityLabelKeys: ['stage_code'], dependsOn: 'breed_id' },
+      ],
+    });
+    const csv = await generateMasterTemplateCsv(config);
+    const [, sampleLine] = csv.split('\r\n');
+    expect(sampleLine.split(',')[1]).toBe('');
+  });
+
+  it('falls back to a blank sample when the entity fetch fails, without throwing', async () => {
+    (api.get as jest.Mock).mockRejectedValue(new Error('network down'));
+    const config = cfg({
+      fields: [{ key: 'breed_id', label: 'Breed', type: 'select-entity', entityEndpoint: '/breed', entityValueKey: 'breed_id', entityLabelKeys: ['breed_code'] }],
+    });
+    // generateMasterTemplateCsv must resolve rather than reject when an entity fetch fails —
+    // awaiting it is itself the proof: a throw/rejection here would fail this test.
+    const csv = await generateMasterTemplateCsv(config);
+    const [, sampleLine] = csv.split('\r\n');
+    expect(sampleLine).toBe('');
   });
 });
