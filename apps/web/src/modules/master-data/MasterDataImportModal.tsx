@@ -843,6 +843,10 @@ export default function MasterDataImportModal({
                 {invalidRows.map((r) => {
                   const itemCode =
                     resolveImportCodeDisplay(config, r).text ||
+                    // Not every generically-importable master declares a codeField, but one with an
+                    // unambiguous "Code" header still typed a real value worth naming here instead
+                    // of a bare row number.
+                    r.raw.Code ||
                     `Row #${r.index}`;
                   const itemName =
                     r.payload.breed_name || r.raw.breed_name || r.raw.Name;

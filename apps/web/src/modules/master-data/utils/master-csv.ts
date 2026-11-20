@@ -390,7 +390,9 @@ export function resolveImportCodeDisplay(
  *
  * Returns a Map from normalized code to every row index (0-based, into `rows`) that carries it —
  * only for codes shared by two or more rows; a code appearing once, or a row with no code at all,
- * is left out. A config with no `codeField` has nothing to collide on, so it's always an empty Map.
+ * is left out. A config with no `codeField` has nothing to collide on, so it's always an empty Map —
+ * as is one whose import shape legitimately repeats a code across rows
+ * (`codeFieldSkipDuplicateChecks`, e.g. Breed Lifecycle Stage's several feed lines per stage).
  */
 export function findDuplicateImportCodes(
   config: MasterDataConfig,
@@ -398,7 +400,7 @@ export function findDuplicateImportCodes(
 ): Map<string, number[]> {
   const result = new Map<string, number[]>();
   const codeField = config.codeField;
-  if (!codeField) return result;
+  if (!codeField || config.codeFieldSkipDuplicateChecks) return result;
 
   const byCode = new Map<string, number[]>();
   rows.forEach((row, idx) => {
@@ -423,9 +425,12 @@ export function findDuplicateImportCodes(
  * exists in the backend for this scope. One batched list call per file — not one per row — same
  * normalization as the backend's own uniqueness check (`.trim().toUpperCase()`) so a collision
  * it would reject is caught here first. A config with no `codeField` has nothing to collide on
- * and makes no call. A failed fetch (network error, etc.) degrades to "no conflicts found" rather
- * than blocking the import — the backend's own check at submit time is the real backstop, this is
- * only a pre-flight courtesy — mirroring `fetchAndCacheOptions`'s try/catch-to-empty pattern.
+ * and makes no call — nor does one whose import shape treats an already-existing code as a
+ * deliberate update rather than a collision (`codeFieldSkipDuplicateChecks`, e.g. Breed Lifecycle
+ * Stage, whose bulk create upserts on a repeat `lifecycle_code`). A failed fetch (network error,
+ * etc.) degrades to "no conflicts found" rather than blocking the import — the backend's own check
+ * at submit time is the real backstop, this is only a pre-flight courtesy — mirroring
+ * `fetchAndCacheOptions`'s try/catch-to-empty pattern.
  *
  * Returns the 0-based indexes (into `rows`) of every row whose normalized code already exists.
  */
@@ -435,7 +440,17 @@ export async function findExistingImportCodeConflicts(
 ): Promise<Set<number>> {
   const conflicts = new Set<number>();
   const codeField = config.codeField;
-  if (!codeField) return conflicts;
+  if (!codeField || config.codeFieldSkipDuplicateChecks) return conflicts;
+
+  // Nothing to compare against: every staged row left the code blank (the ordinary case for a
+  // master whose code auto-generates, e.g. Location), so the list call would be paid for and
+  // then thrown away. Any single row carrying a code still triggers the full check.
+  const anyCodeStaged = rows.some((row) => {
+    const raw = row.payload[codeField];
+    if (raw === undefined || raw === null) return false;
+    return String(raw).trim() !== "";
+  });
+  if (!anyCodeStaged) return conflicts;
 
   let existing: Row[] = [];
   try {

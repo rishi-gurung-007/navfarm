@@ -518,6 +518,12 @@ export interface MasterDataConfig {
   /** Whether leaving codeField blank on create causes the backend to auto-generate it via a
    * configured Number Series (vs. simply staying unset). Only meaningful with codeField set. */
   codeFieldGenerated?: boolean;
+  /** codeField names the field for the generic preview resolver, but this master's import shape
+   * doesn't support the usual "one code = one row" assumption the duplicate/existing-record checks
+   * are built on (e.g. several CSV rows legitimately share one code before merging into one record,
+   * or re-uploading an existing code is a deliberate upsert, not an error). Set true to keep codeField
+   * driving the preview display while skipping both blocking checks entirely. */
+  codeFieldSkipDuplicateChecks?: boolean;
   fields: MasterDataField[];
   /** Frontend-only BC references. Never part of creation/edit payloads. */
   bcFields?: { key: string; label: string }[];

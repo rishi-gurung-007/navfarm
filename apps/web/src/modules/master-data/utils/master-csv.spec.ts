@@ -433,6 +433,24 @@ describe('resolveImportCodeDisplay', () => {
   });
 });
 
+describe('resolveImportCodeDisplay — unaffected by codeFieldSkipDuplicateChecks', () => {
+  // The flag skips the two *blocking* checks only; the preview's Code column must still show the
+  // uploaded lifecycle_code for Breed Lifecycle Stage exactly as it did before.
+  it('still shows the uploaded code for a config that skips the duplicate checks', () => {
+    const config = cfg({
+      codeField: 'lifecycle_code',
+      codeFieldSkipDuplicateChecks: true,
+      fields: [{ key: 'lifecycle_code', label: 'Code', type: 'text' }],
+    });
+    const result = resolveImportCodeDisplay(config, {
+      payload: { lifecycle_code: 'BLS-0001' },
+      raw: { Code: 'BLS-0001' },
+      errors: [],
+    });
+    expect(result).toEqual({ text: 'BLS-0001', provenance: 'uploaded' });
+  });
+});
+
 describe('findDuplicateImportCodes', () => {
   it('flags two rows sharing a code, case-insensitively', () => {
     const config = cfg({ codeField: 'stage_code' });
@@ -456,6 +474,19 @@ describe('findDuplicateImportCodes', () => {
     const dupes = findDuplicateImportCodes(config, [{ payload: {} }, { payload: {} }]);
     expect(dupes.size).toBe(0);
   });
+
+  // Breed Lifecycle Stage exports one stage's several Feed Consumption lines as several CSV rows
+  // sharing one lifecycle_code — mergeLifecycleFeedRows re-joins them after staging. Flagging
+  // those rows as duplicates would drop every one of them before the merge ever ran, so any
+  // stage with 2+ feed lines would import zero rows.
+  it('is a no-op for a config that opted out via codeFieldSkipDuplicateChecks', () => {
+    const config = cfg({ codeField: 'lifecycle_code', codeFieldSkipDuplicateChecks: true });
+    const dupes = findDuplicateImportCodes(config, [
+      { payload: { lifecycle_code: 'BLS-0001' } },
+      { payload: { lifecycle_code: 'BLS-0001' } },
+    ]);
+    expect(dupes.size).toBe(0);
+  });
 });
 
 describe('findExistingImportCodeConflicts', () => {
@@ -477,5 +508,60 @@ describe('findExistingImportCodeConflicts', () => {
     const conflicts = await findExistingImportCodeConflicts(config, [{ payload: { stage_code: 'GROWER' } }]);
     expect(conflicts.size).toBe(0);
     expect(api.get).not.toHaveBeenCalled();
+  });
+
+  // Re-uploading a Breed Lifecycle Stage CSV whose lifecycle_code already exists is a deliberate
+  // upsert (createLifecycleStagesBulk updates the existing row, 24ea5173) — flagging it as an
+  // existing-record conflict would make that update path unreachable from the UI.
+  it('makes no API call and finds no conflict for a config that opted out via codeFieldSkipDuplicateChecks', async () => {
+    (api.get as jest.Mock).mockResolvedValue({ data: [{ lifecycle_code: 'BLS-0001' }] });
+    const config = cfg({
+      codeField: 'lifecycle_code',
+      codeFieldSkipDuplicateChecks: true,
+      apiBase: '/breed-lifecycle-stage',
+    });
+    const conflicts = await findExistingImportCodeConflicts(config, [
+      { payload: { lifecycle_code: 'BLS-0001' } },
+    ]);
+    expect(conflicts.size).toBe(0);
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  // The common case for a master whose code auto-generates (e.g. Location): every row leaves the
+  // code blank, so there is nothing to compare and no reason to pay for the list call.
+  it('makes no API call when no staged row carries a code at all', async () => {
+    (api.get as jest.Mock).mockResolvedValue({ data: [{ stage_code: 'GROWER' }] });
+    const config = cfg({ codeField: 'stage_code', apiBase: '/stage' });
+    const conflicts = await findExistingImportCodeConflicts(config, [
+      { payload: {} },
+      { payload: { stage_code: '' } },
+      { payload: { stage_code: '   ' } },
+      { payload: { stage_code: null } },
+      { payload: { stage_name: 'Grower' } },
+    ]);
+    expect(conflicts.size).toBe(0);
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it('still makes the call when only some rows carry a code', async () => {
+    (api.get as jest.Mock).mockResolvedValue({ data: [{ stage_code: 'GROWER' }] });
+    const config = cfg({ codeField: 'stage_code', apiBase: '/stage' });
+    const conflicts = await findExistingImportCodeConflicts(config, [
+      { payload: {} },
+      { payload: { stage_code: 'grower' } },
+    ]);
+    expect(conflicts).toEqual(new Set([1]));
+    expect(api.get).toHaveBeenCalledWith('/stage?limit=5000');
+  });
+
+  // A failed pre-flight must degrade to "no conflicts found", never block the whole import — the
+  // backend's own uniqueness check at submit is the authoritative one.
+  it('resolves to no conflicts when the list call rejects', async () => {
+    (api.get as jest.Mock).mockRejectedValue(new Error('network down'));
+    const config = cfg({ codeField: 'stage_code', apiBase: '/stage' });
+    await expect(
+      findExistingImportCodeConflicts(config, [{ payload: { stage_code: 'GROWER' } }]),
+    ).resolves.toEqual(new Set());
+    expect(api.get).toHaveBeenCalledWith('/stage?limit=5000');
   });
 });

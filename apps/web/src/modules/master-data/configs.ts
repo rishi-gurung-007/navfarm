@@ -3472,6 +3472,11 @@ const breedLifecycleStage: MasterDataConfig = {
   apiBase: '/breed-lifecycle-stage',
   idKey: 'lifecycle_id',
   codeField: 'lifecycle_code',
+  // One stage's several Feed Consumption lines export (and re-import) as several CSV rows sharing
+  // one lifecycle_code, re-joined by mergeLifecycleFeedRows after staging; and re-uploading an
+  // existing lifecycle_code is a deliberate upsert, not an error. Both break the duplicate checks'
+  // "one code = one new row" assumption, so this master keeps the preview display and skips them.
+  codeFieldSkipDuplicateChecks: true,
   group: 'Livestock & Health',
   tabOf: 'breed',
   tabLabel: 'Lifecycle Stages',
