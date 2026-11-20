@@ -1,5 +1,5 @@
 import { api } from "@/services/api-client";
-import { getActiveWorkspaceScope } from "@/hooks/useAuth";
+import { getActiveWorkspaceScope, getActiveOperationalArea } from "@/hooks/useAuth";
 import type { MasterDataConfig, MasterDataField } from "../types";
 import { parentKeys, resolveEndpoint, isFieldRequired, isFieldVisible } from "../field-logic";
 
@@ -760,6 +760,21 @@ export async function parseGenericImportRow(
     const isEmpty = v === undefined || v === null || v === "" || (Array.isArray(v) && !v.length);
     if (isEmpty && isFieldRequired(f, payload)) {
       errors.push(`${f.label} is required.`);
+    }
+  }
+
+  // Mirrors MasterDataTable.tsx's own save-time fill: in an operational workspace the live form
+  // hides nob_id/lob_id and sets them from the active area instead of asking for them, so a CSV
+  // import does the same — overwriting any same-named column the row happened to carry.
+  if (getActiveWorkspaceScope() === "OPERATIONAL") {
+    const activeArea = getActiveOperationalArea();
+    if (activeArea) {
+      if (config.fields.some((f) => f.key === "nob_id") && activeArea.nob_id) {
+        payload.nob_id = activeArea.nob_id;
+      }
+      if (config.fields.some((f) => f.key === "lob_id") && activeArea.lob_id) {
+        payload.lob_id = activeArea.lob_id;
+      }
     }
   }
 

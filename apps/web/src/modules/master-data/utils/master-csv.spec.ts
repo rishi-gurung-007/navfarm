@@ -78,3 +78,42 @@ describe('genericImportFields (via parseGenericImportRow)', () => {
     expect(errors).toEqual(['Nature of Business is required.']);
   });
 });
+
+describe('parseGenericImportRow NOB/LOB auto-fill', () => {
+  afterEach(() => localStorage.clear());
+
+  it('fills nob_id/lob_id from the active operational area when OPERATIONAL', async () => {
+    localStorage.setItem('navfarm_auth_user', JSON.stringify({ userType: 'OPERATIONAL_ADMIN' }));
+    localStorage.setItem('active_workspace_scope', 'OPERATIONAL');
+    localStorage.setItem('active_operational_area', JSON.stringify({ area_id: 'a-1', nob_id: 'nob-livestock', lob_id: 'lob-piggery' }));
+    const config = cfg({
+      fields: [
+        { key: 'nob_id', label: 'Nature of Business', type: 'select-entity', required: true, entityEndpoint: '/setup/wizard/nobs' },
+        { key: 'lob_id', label: 'Line of Business', type: 'select-entity', required: true, entityEndpoint: '/setup/wizard/lobs' },
+      ],
+    });
+    const { payload, errors } = await parseGenericImportRow(config, {}, {});
+    expect(payload).toMatchObject({ nob_id: 'nob-livestock', lob_id: 'lob-piggery' });
+    expect(errors).toEqual([]);
+  });
+
+  it('the active area wins even when the CSV row names an nob_id/lob_id-looking column', async () => {
+    localStorage.setItem('navfarm_auth_user', JSON.stringify({ userType: 'OPERATIONAL_ADMIN' }));
+    localStorage.setItem('active_workspace_scope', 'OPERATIONAL');
+    localStorage.setItem('active_operational_area', JSON.stringify({ area_id: 'a-1', nob_id: 'nob-livestock', lob_id: 'lob-piggery' }));
+    const config = cfg({
+      fields: [{ key: 'nob_id', label: 'Nature of Business', type: 'select-entity', required: true, entityEndpoint: '/setup/wizard/nobs' }],
+    });
+    const { payload } = await parseGenericImportRow(config, { nob_id: 'some-other-id' }, {});
+    expect(payload.nob_id).toBe('nob-livestock');
+  });
+
+  it('no-ops for a config with no nob_id/lob_id fields', async () => {
+    localStorage.setItem('navfarm_auth_user', JSON.stringify({ userType: 'OPERATIONAL_ADMIN' }));
+    localStorage.setItem('active_workspace_scope', 'OPERATIONAL');
+    localStorage.setItem('active_operational_area', JSON.stringify({ area_id: 'a-1', nob_id: 'nob-livestock', lob_id: 'lob-piggery' }));
+    const config = cfg({ fields: [{ key: 'name', label: 'Name', type: 'text', required: true }] });
+    const { payload } = await parseGenericImportRow(config, { name: 'Widget A' }, {});
+    expect(payload).toEqual({ name: 'Widget A' });
+  });
+});
