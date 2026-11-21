@@ -1,13 +1,48 @@
 /**
- * Imports the 20 Nov 2026 CCC showcase workbooks into nf_cccshow only.
+ * Imports a new client's real farm/breeding master data — Location Master,
+ * Sows, Boars — from NAVFarm's standard workbook templates into any
+ * registered tenant. Nothing in this file is specific to one farm, breed, or
+ * company: only the workbook paths and farm codes below are, and those come
+ * entirely from configuration.
+ *
+ * cccshow's sales-demo embellishments (synthetic grower batches, invented
+ * feed stock, silo/shed links reverse-engineered from a reference tenant)
+ * live separately in seed-cccshow-demo-extras.ts and must never be run
+ * against a real client's tenant.
+ *
+ * Configuration (environment variables):
+ *   TARGET_TENANT_CODE   tenant_code to import into (required). SHOWCASE_TENANT_CODE
+ *                        is accepted as an older alias.
+ *   LOCATION_WORKBOOKS   one or more Location Master Template workbook paths,
+ *                        semicolon-separated. At least one is required.
+ *   SOW_WORKBOOKS        one or more "FARM_CODE=path" pairs, semicolon-separated.
+ *                        A farm with several sow workbooks (e.g. inseminated /
+ *                        not-inseminated) repeats its farm code with a
+ *                        different path. At least one is required; FARM_CODE
+ *                        must match a Location Code the location workbook(s)
+ *                        import as a FARM row.
+ *   BOAR_WORKBOOK        one boar workbook path (optional — boars are not
+ *                        assigned to a single farm).
+ *   BREED_CODE_HINT      a substring matched against breed_code/breed_name
+ *                        (optional; required only when the company has more
+ *                        than one active breed, since there is then no
+ *                        unambiguous default).
  *
  * Default: read-only plan.
  * --verify: run the writes in a transaction and roll them back.
  * --apply: commit the writes.
  *
- *   pnpm nx run api:db-seed-new-client-data
+ * Bash:
+ *   TARGET_TENANT_CODE=acme \
+ *   LOCATION_WORKBOOKS="/path/Location Master.xlsx" \
+ *   SOW_WORKBOOKS="FARM01=/path/Farm1 Sows.xlsx;FARM02=/path/Farm2 Sows.xlsx" \
+ *     pnpm nx run api:db-seed-new-client-data -- --verify
+ *
+ * PowerShell:
+ *   $env:TARGET_TENANT_CODE = "acme"
+ *   $env:LOCATION_WORKBOOKS = "C:\path\Location Master.xlsx"
+ *   $env:SOW_WORKBOOKS = "FARM01=C:\path\Farm1 Sows.xlsx;FARM02=C:\path\Farm2 Sows.xlsx"
  *   pnpm nx run api:db-seed-new-client-data -- --verify
- *   pnpm nx run api:db-seed-new-client-data -- --apply
  */
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -16,37 +51,52 @@ import * as mysql from 'mysql2/promise';
 import * as XLSX from 'xlsx';
 
 const MASTER_DB = process.env.DATABASE_NAME || 'nf_master';
-const TENANT_CODE = process.env.SHOWCASE_TENANT_CODE || 'cccshow';
+const TENANT_CODE = process.env.TARGET_TENANT_CODE || process.env.SHOWCASE_TENANT_CODE;
+
 const workbookPath = (value: string) => {
   const candidates = [
     resolve(process.cwd(), value),
     resolve(process.cwd(), '../..', value),
   ];
   const found = candidates.find((path) => fs.existsSync(path));
-  if (!found)
-    throw new Error(`Workbook not found: ${value}`);
+  if (!found) throw new Error(`Workbook not found: ${value}`);
   return found;
 };
-const LOCATION_FILE = workbookPath(
-  process.env.NEW_LOCATION_WORKBOOK ||
-    'scripts/new data to seed/PORTA Location Master Template11Nov2026..xlsx',
-);
-const PORTA_SOW_FILE = workbookPath(
-  process.env.NEW_PORTA_SOW_WORKBOOK ||
-    'scripts/new data to seed/Fw__UPDATED_FILES_FOR_YOUR_ACTION/PORTA PRESENT SOWS19112026 - UPDATED.xlsx',
-);
-const MULTIPLIER_1_SOW_FILE = workbookPath(
-  process.env.NEW_MULTIPLIER_1_WORKBOOK ||
-    'scripts/new data to seed/Fw__UPDATED_FILES_FOR_YOUR_ACTION/MULTIPLIER_1 PRESENT SOWS19112026-UPDATED INSEMINATED.xlsx',
-);
-const MULTIPLIER_2_SOW_FILE = workbookPath(
-  process.env.NEW_MULTIPLIER_2_WORKBOOK ||
-    'scripts/new data to seed/Fw__UPDATED_FILES_FOR_YOUR_ACTION/MULTIPLIER_2 PRESENT SOWS19112026-UPDATED NOT INSEMINATED.xlsx',
-);
-const BOAR_FILE = workbookPath(
-  process.env.NEW_BOAR_WORKBOOK ||
-    'scripts/new data to seed/Fw__UPDATED_FILES_FOR_YOUR_ACTION/BOARS.xlsx',
-);
+
+function parsePathList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(';')
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map(workbookPath);
+}
+
+interface FarmWorkbook {
+  farmCode: string;
+  path: string;
+}
+
+function parseFarmWorkbooks(value: string | undefined): FarmWorkbook[] {
+  if (!value) return [];
+  return value
+    .split(';')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const idx = entry.indexOf('=');
+      if (idx < 0) throw new Error(`Malformed entry "${entry}" in SOW_WORKBOOKS — expected FARM_CODE=path.`);
+      const farmCode = entry.slice(0, idx).trim();
+      const path = entry.slice(idx + 1).trim();
+      if (!farmCode || !path) throw new Error(`Malformed entry "${entry}" in SOW_WORKBOOKS — expected FARM_CODE=path.`);
+      return { farmCode, path: workbookPath(path) };
+    });
+}
+
+const LOCATION_WORKBOOKS = parsePathList(process.env.LOCATION_WORKBOOKS);
+const SOW_WORKBOOKS = parseFarmWorkbooks(process.env.SOW_WORKBOOKS);
+const BOAR_WORKBOOK = process.env.BOAR_WORKBOOK ? workbookPath(process.env.BOAR_WORKBOOK) : null;
+const BREED_CODE_HINT = process.env.BREED_CODE_HINT?.trim() || null;
 
 const host = process.env.DATABASE_HOST || '127.0.0.1';
 const port = Number(process.env.DATABASE_PORT || 3306);
@@ -75,16 +125,6 @@ function addDays(date: string, days: number): string {
   return value.toISOString().slice(0, 10);
 }
 
-function workbookRows(path: string, sheetName: string): Array<Record<string, unknown>> {
-  const wb = XLSX.readFile(path, { type: 'file', cellDates: true });
-  const ws = wb.Sheets[sheetName];
-  if (!ws) throw new Error(`Workbook ${path} has no sheet ${sheetName}.`);
-  return XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
-    defval: null,
-    range: 5,
-  });
-}
-
 function sowRows(path: string): Array<Record<string, unknown>> {
   const wb = XLSX.readFile(path, { type: 'file', cellDates: true });
   const ws = wb.Sheets.Sows;
@@ -94,10 +134,10 @@ function sowRows(path: string): Array<Record<string, unknown>> {
   });
 }
 
-function boarRows(): Array<Record<string, unknown>> {
-  const wb = XLSX.readFile(BOAR_FILE, { type: 'file', cellDates: true });
+function boarRows(path: string): Array<Record<string, unknown>> {
+  const wb = XLSX.readFile(path, { type: 'file', cellDates: true });
   const ws = wb.Sheets.Sheet1;
-  if (!ws) throw new Error(`Workbook ${BOAR_FILE} has no Sheet1 sheet.`);
+  if (!ws) throw new Error(`Workbook ${path} has no Sheet1 sheet.`);
   return XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
     defval: null,
   });
@@ -111,6 +151,13 @@ async function run() {
     (apply && verify)
   )
     throw new Error('Use no flags (read-only), --verify, or --apply.');
+
+  if (!TENANT_CODE)
+    throw new Error('Set TARGET_TENANT_CODE to the tenant you are importing into.');
+  if (!LOCATION_WORKBOOKS.length)
+    throw new Error('Set LOCATION_WORKBOOKS to at least one Location Master Template workbook path.');
+  if (!SOW_WORKBOOKS.length)
+    throw new Error('Set SOW_WORKBOOKS to at least one "FARM_CODE=path" pair.');
 
   const master = await mysql.createConnection({
     host,
@@ -149,6 +196,11 @@ async function run() {
     );
     let scope = scopeRow;
     if (!scope) {
+      // A brand-new tenant has no location rows yet. Fall back to the
+      // company's own record and NAVFarm's fixed system taxonomy — "Livestock"
+      // (NOB) / "Piggery" (LOB) are global rows seeded identically in every
+      // tenant (nob_master/lob_master carry no tenant_id or company_id at
+      // all), not anything specific to this client.
       const [[companyScope]] = await db.query<mysql.RowDataPacket[]>(
         `SELECT c.tenant_id, c.company_id,
           '50000000-5000-5000-5000-000000000002' nob_id,
@@ -166,19 +218,7 @@ async function run() {
       mode: apply ? 'APPLY' : verify ? 'VERIFY' : 'READ-ONLY',
     };
 
-    // ---- Location Master -------------------------------------------------
-    const wb = XLSX.readFile(LOCATION_FILE, { type: 'file', cellDates: true });
-    const ws = wb.Sheets['Location Master Template'];
-    if (!ws)
-      throw new Error(
-        `Workbook ${LOCATION_FILE} has no Location Master Template sheet.`,
-      );
-    const locationRows = XLSX.utils.sheet_to_json<Array<unknown>>(ws, {
-      header: 1,
-      defval: null,
-      range: 5,
-    });
-
+    // ---- Location Master ---------------------------------------------------
     const level: Record<string, number> = {
       FARM: 1,
       SHED: 2,
@@ -190,87 +230,143 @@ async function run() {
       MILL: 2,
       BIN: 3,
     };
-    let lastFarmId: string | null = null;
-    let lastShedId: string | null = null;
-    const idByCode = new Map<string, string>();
     let locationsInserted = 0;
     let locationsUpdated = 0;
+    let locationWorkbookRows = 0;
 
-    for (const row of locationRows) {
-      const code = String(row[2] ?? '').trim();
-      if (!code) continue;
-      const rawType = String(row[1] ?? '').trim().toUpperCase();
-      if (!rawType) continue;
-      const type =
-        rawType === 'MAIN FARM'
-          ? 'FARM'
-          : rawType === 'SHED/HOUSE'
-            ? 'SHED'
-            : rawType;
-      if (!level[type]) continue;
+    for (const locationFile of LOCATION_WORKBOOKS) {
+      const wb = XLSX.readFile(locationFile, { type: 'file', cellDates: true });
+      const ws = wb.Sheets['Location Master Template'];
+      if (!ws)
+        throw new Error(
+          `Workbook ${locationFile} has no Location Master Template sheet.`,
+        );
+      const locationRows = XLSX.utils.sheet_to_json<Array<unknown>>(ws, {
+        header: 1,
+        defval: null,
+        range: 5,
+      });
+      locationWorkbookRows += locationRows.filter((r) => r[2]).length;
 
-      const mainName = String(row[3] ?? '').trim();
-      const subLoc = String(row[5] ?? '').trim();
-      const subSubLoc = String(row[6] ?? '').trim();
-      const name =
-        subSubLoc || subLoc
-          ? `${mainName}${subLoc ? ` - ${subLoc}` : ''}${subSubLoc ? ` - ${subSubLoc}` : ''}`
-          : mainName || code;
+      // Each workbook's own farm/shed chain — a farm or shed in one workbook
+      // never becomes the implicit parent of a farm/shed in another.
+      let lastFarmId: string | null = null;
+      let lastShedId: string | null = null;
 
-      let parentId: string | null = null;
-      if (type === 'FARM') {
-        parentId = null;
-      } else if (['SILO', 'STORE', 'MILL'].includes(type)) {
-        parentId = lastFarmId;
-      } else if (['SHED'].includes(type)) {
-        parentId = lastFarmId;
-      } else {
-        parentId = lastShedId || lastFarmId;
-      }
-      if (type !== 'FARM' && !parentId)
-        throw new Error(`Location ${code} has no resolvable parent.`);
+      for (const row of locationRows) {
+        const code = String(row[2] ?? '').trim();
+        if (!code) continue;
+        const rawType = String(row[1] ?? '').trim().toUpperCase();
+        if (!rawType) continue;
+        const type =
+          rawType === 'MAIN FARM'
+            ? 'FARM'
+            : rawType === 'SHED/HOUSE'
+              ? 'SHED'
+              : rawType;
+        if (!level[type]) continue;
 
-      const [existing] = await db.query<mysql.RowDataPacket[]>(
-        'SELECT location_id FROM location_master WHERE tenant_id = ? AND location_code = ? LIMIT 1',
-        [scope.tenant_id, code],
-      );
-      const id =
-        (existing[0]?.location_id as string | undefined) || randomUUID();
-      idByCode.set(code, id);
+        const mainName = String(row[3] ?? '').trim();
+        const subLoc = String(row[5] ?? '').trim();
+        const subSubLoc = String(row[6] ?? '').trim();
+        const name =
+          subSubLoc || subLoc
+            ? `${mainName}${subLoc ? ` - ${subLoc}` : ''}${subSubLoc ? ` - ${subSubLoc}` : ''}`
+            : mainName || code;
 
-      const address = String(row[4] ?? '').trim() || null;
-      const areaSize = num(row[7]);
-      const rawAreaUnit = String(row[8] ?? '').trim();
-      const areaUnit =
-        rawAreaUnit === 'M2-Square Meter'
-          ? 'M2'
-          : rawAreaUnit === 'HECTARE'
-            ? 'HECTARE'
-            : rawAreaUnit.slice(0, 10) || null;
-      const maxCapacity = num(row[9]);
-      const capacityUom = String(row[10] ?? '').trim() || null;
-      const storageType = String(row[11] ?? '').trim() || null;
-      const storageName = String(row[12] ?? '').trim() || null;
-      const siloCapacity = num(row[13]);
-      const siloReorderDays = num(row[14]) === null ? null : Math.trunc(num(row[14])!);
-      const downtime = num(row[15]) === null ? null : Math.trunc(num(row[15])!);
-      const feedInBags =
-        String(row[16] ?? '').toUpperCase().trim() === 'YES' ? 1 : 0;
+        let parentId: string | null = null;
+        if (type === 'FARM') {
+          parentId = null;
+        } else if (['SILO', 'STORE', 'MILL'].includes(type)) {
+          parentId = lastFarmId;
+        } else if (['SHED'].includes(type)) {
+          parentId = lastFarmId;
+        } else {
+          parentId = lastShedId || lastFarmId;
+        }
+        if (type !== 'FARM' && !parentId)
+          throw new Error(`Location ${code} has no resolvable parent.`);
 
-      if (existing.length) {
-        if (write) {
+        const [existing] = await db.query<mysql.RowDataPacket[]>(
+          'SELECT location_id FROM location_master WHERE tenant_id = ? AND location_code = ? LIMIT 1',
+          [scope.tenant_id, code],
+        );
+        const id =
+          (existing[0]?.location_id as string | undefined) || randomUUID();
+
+        const address = String(row[4] ?? '').trim() || null;
+        const areaSize = num(row[7]);
+        const rawAreaUnit = String(row[8] ?? '').trim();
+        const areaUnit =
+          rawAreaUnit === 'M2-Square Meter'
+            ? 'M2'
+            : rawAreaUnit === 'HECTARE'
+              ? 'HECTARE'
+              : rawAreaUnit.slice(0, 10) || null;
+        const maxCapacity = num(row[9]);
+        const capacityUom = String(row[10] ?? '').trim() || null;
+        const storageType = String(row[11] ?? '').trim() || null;
+        const storageName = String(row[12] ?? '').trim() || null;
+        const siloCapacity = num(row[13]);
+        const siloReorderDays = num(row[14]) === null ? null : Math.trunc(num(row[14])!);
+        const downtime = num(row[15]) === null ? null : Math.trunc(num(row[15])!);
+        const feedInBags =
+          String(row[16] ?? '').toUpperCase().trim() === 'YES' ? 1 : 0;
+
+        if (existing.length) {
+          if (write) {
+            await db.query(
+              `UPDATE location_master SET company_id=?, nob_id=?, lob_id=?, location_name=?,
+                 location_address=?, location_type=?, parent_location_id=?, location_level=?,
+                 area_size=?, area_unit=?, max_capacity=?, capacity_uom=?, storage_type=?,
+                 storage_name=?, silo_capacity_kg=?, silo_capacity_uom=?,
+                 silo_reorder_days=?, downtime_days_required=?, feed_in_bags=?,
+                 farm_id=?, shed_id=?, is_active=1, status='ACTIVE', deleted_at=NULL, updated_at=NOW()
+               WHERE location_id=?`,
+              [
+                scope.company_id,
+                scope.nob_id,
+                scope.lob_id,
+                name,
+                address,
+                type,
+                parentId,
+                level[type],
+                areaSize,
+                areaUnit,
+                maxCapacity,
+                capacityUom,
+                storageType,
+                storageName,
+                siloCapacity,
+                siloCapacity ? 'KG' : null,
+                siloReorderDays,
+                downtime,
+                feedInBags,
+                type === 'FARM' ? null : lastFarmId,
+                type === 'SHED' ? id : lastShedId,
+                id,
+              ],
+            );
+          }
+          locationsUpdated++;
+        } else if (write) {
           await db.query(
-            `UPDATE location_master SET company_id=?, nob_id=?, lob_id=?, location_name=?,
-               location_address=?, location_type=?, parent_location_id=?, location_level=?,
-               area_size=?, area_unit=?, max_capacity=?, capacity_uom=?, storage_type=?,
-               storage_name=?, silo_capacity_kg=?, silo_capacity_uom=?,
-               silo_reorder_days=?, downtime_days_required=?, feed_in_bags=?,
-               farm_id=?, shed_id=?, is_active=1, status='ACTIVE', deleted_at=NULL, updated_at=NOW()
-             WHERE location_id=?`,
+            `INSERT INTO location_master
+               (location_id, tenant_id, company_id, nob_id, lob_id, location_code,
+                location_name, location_address, location_type, parent_location_id,
+                location_level, area_size, area_unit, max_capacity, capacity_uom,
+                storage_type, storage_name, silo_capacity_kg, silo_capacity_uom,
+                silo_reorder_days, downtime_days_required, feed_in_bags,
+                farm_id, shed_id, is_active, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE', NOW(), NOW())`,
             [
+              id,
+              scope.tenant_id,
               scope.company_id,
               scope.nob_id,
               scope.lob_id,
+              code,
               name,
               address,
               type,
@@ -289,165 +385,30 @@ async function run() {
               feedInBags,
               type === 'FARM' ? null : lastFarmId,
               type === 'SHED' ? id : lastShedId,
-              id,
             ],
           );
+          locationsInserted++;
         }
-        locationsUpdated++;
-      } else if (write) {
-        await db.query(
-          `INSERT INTO location_master
-             (location_id, tenant_id, company_id, nob_id, lob_id, location_code,
-              location_name, location_address, location_type, parent_location_id,
-              location_level, area_size, area_unit, max_capacity, capacity_uom,
-              storage_type, storage_name, silo_capacity_kg, silo_capacity_uom,
-              silo_reorder_days, downtime_days_required, feed_in_bags,
-              farm_id, shed_id, is_active, status, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'ACTIVE', NOW(), NOW())`,
-          [
-            id,
-            scope.tenant_id,
-            scope.company_id,
-            scope.nob_id,
-            scope.lob_id,
-            code,
-            name,
-            address,
-            type,
-            parentId,
-            level[type],
-            areaSize,
-            areaUnit,
-            maxCapacity,
-            capacityUom,
-            storageType,
-            storageName,
-            siloCapacity,
-            siloCapacity ? 'KG' : null,
-            siloReorderDays,
-            downtime,
-            feedInBags,
-            type === 'FARM' ? null : lastFarmId,
-            type === 'SHED' ? id : lastShedId,
-          ],
-        );
-        locationsInserted++;
-      }
 
-      if (type === 'FARM') {
-        lastFarmId = id;
-        lastShedId = null;
-      } else if (type === 'SHED') {
-        lastShedId = id;
+        if (type === 'FARM') {
+          lastFarmId = id;
+          lastShedId = null;
+        } else if (type === 'SHED') {
+          lastShedId = id;
+        }
       }
     }
     plan.locations = {
-      workbookRows: locationRows.filter((r) => r[2]).length,
+      workbooks: LOCATION_WORKBOOKS,
+      workbookRows: locationWorkbookRows,
       inserted: locationsInserted,
       updated: locationsUpdated,
       retainedExistingCodes: true,
     };
 
-    // ---- Silo <-> Shed links -----------------------------------------------
-    // Neither workbook encodes a clean, unambiguous silo-to-shed mapping (the
-    // "Storage Location"/"Storage Name" columns are inconsistent: e.g. every
-    // Porta dry-sow shed lists the same literal silo name, and the Multiplier
-    // workbook was never imported as locations at all). Pairs below are taken
-    // from the working `nf_ccc` ("Triple C") tenant's own silo_shed_link table,
-    // which uses the same standardised silo code set, as the ground truth for
-    // which silo feeds which shed. Porta's 11 Nov workbook import also created
-    // a second, differently-coded set of shed rows for sheds that already
-    // existed under an older code (e.g. PGH1 alongside PGH 01... / PWH1
-    // alongside PWH01): both code variants are linked so either one works.
-    // Dry-sow/double-stock/farrowing groups with no confident match in the
-    // reference tenant (Multiplier dry sow and double stock) are left
-    // unlinked rather than guessed.
-    const siloShedPairs: Array<[string, string]> = [
-      // Porta grower: 1:1
-      ...Array.from({ length: 10 }, (_, i) => [`PG${i + 1}`, `PGH${i + 1}`] as [string, string]),
-      // Porta weaner: one silo feeds all weaner houses (both code variants)
-      ...['PWH1', 'PWH2', 'PWH3', 'PWH4', 'PWH5', 'PWH6', 'PWH01', 'PWH02', 'PWH03', 'PWH04', 'PWH05', 'PWH06']
-        .map((shed) => ['PW-1', shed] as [string, string]),
-      // Porta double stock: one silo feeds all double-stock sheds (both code variants)
-      ...['PGDST-1', 'PGDST-2', 'PGDST-3', 'PGDST-4', 'PDST01', 'PDST02', 'PDST03', 'PDST04']
-        .map((shed) => ['PDST -1', shed] as [string, string]),
-      // Porta service line
-      ['PSL FS - 01', 'PSL'],
-      // Porta dry sow (both code variants; PD2/PDS-02 have no confident match)
-      ['PDGD-01', 'PD1'], ['PDGD-01', 'PDS1'],
-      ['PDSD-01', 'PD1'], ['PDSD-01', 'PDS1'],
-      ['PDSD-03', 'PD3'], ['PDSD-03', 'PDS3'],
-      ['PDSD-04', 'PD4'], ['PDSD-04', 'PDS4'],
-      ['PDSD-05', 'PD5'], ['PDSD-05', 'PDS5'],
-      ['PDSD-06', 'PD6'], ['PDSD-06', 'PDS6'],
-      // Porta farrowing: lactation + transition silo per house pair (both code variants)
-      ['PFHLG - 1&2', 'PFH1'], ['PFHLG - 1&2', 'PFH2'], ['PFHLG - 1&2', 'PDFH1'], ['PFHLG - 1&2', 'PDFH2'],
-      ['PFHLG - 3 & 4', 'PFH3'], ['PFHLG - 3 & 4', 'PFH4'], ['PFHLG - 3 & 4', 'PDFH3'], ['PFHLG - 3 & 4', 'PDFH4'],
-      ['PFHLG - 5', 'PFH5'], ['PFHLG - 5', 'PDFH5'],
-      ['PFHTRANS - 1&2', 'PFH1'], ['PFHTRANS - 1&2', 'PFH2'], ['PFHTRANS - 1&2', 'PDFH1'], ['PFHTRANS - 1&2', 'PDFH2'],
-      ['PFHTRANS - 3 & 4', 'PFH3'], ['PFHTRANS - 3 & 4', 'PFH4'], ['PFHTRANS - 3 & 4', 'PDFH3'], ['PFHTRANS - 3 & 4', 'PDFH4'],
-      ['PFHTRANS - 5', 'PFH5'], ['PFHTRANS - 5', 'PDFH5'],
-      // Multiplier grower: 1:1
-      ...Array.from({ length: 10 }, (_, i) => [`MGH${i + 1}`, `MUGR${i + 1}`] as [string, string]),
-      // Multiplier weaner: 1:1
-      ...Array.from({ length: 6 }, (_, i) => [`MWH${i + 1}`, `MUWN${i + 1}`] as [string, string]),
-      // Multiplier service line
-      ['MSL1', 'MU1'],
-      // Multiplier farrowing: two silos feed all three farrowing houses
-      ...['MUFHE1', 'MUFHE2', 'MUFHE3'].flatMap((shed) => [
-        ['MFH TRANS - 1', shed] as [string, string],
-        ['MFHLZ - 1 & 2', shed] as [string, string],
-      ]),
-      // Multiplier double stock: 1:1, with the 3rd silo also covering the 4th shed (one more shed than silo)
-      ['MDST1', 'MUDST1P1'], ['MDST2', 'MUDST2P1'], ['MDST3', 'MUDST3P1'], ['MDST3', 'MUDST4P1'],
-    ];
-
-    const [allLocations] = await db.query<mysql.RowDataPacket[]>(
-      `SELECT location_id, location_code, location_type, company_id FROM location_master WHERE tenant_id = ?`,
-      [scope.tenant_id],
-    );
-    const locationByCode = new Map(allLocations.map((r) => [r.location_code as string, r]));
-    const [existingLinks] = await db.query<mysql.RowDataPacket[]>(
-      `SELECT silo_id, shed_id FROM silo_shed_link WHERE tenant_id = ?`,
-      [scope.tenant_id],
-    );
-    const existingLinkKeys = new Set(existingLinks.map((r) => `${r.silo_id}|${r.shed_id}`));
-    let siloShedLinksInserted = 0;
-    let siloShedLinksSkippedExisting = 0;
-    const siloShedUnresolved: string[] = [];
-
-    for (const [siloCode, shedCode] of siloShedPairs) {
-      const silo = locationByCode.get(siloCode);
-      const shed = locationByCode.get(shedCode);
-      if (!silo || silo.location_type !== 'SILO' || !shed || shed.location_type !== 'SHED') {
-        siloShedUnresolved.push(`${siloCode} -> ${shedCode}`);
-        continue;
-      }
-      const key = `${silo.location_id}|${shed.location_id}`;
-      if (existingLinkKeys.has(key)) {
-        siloShedLinksSkippedExisting++;
-        continue;
-      }
-      existingLinkKeys.add(key);
-      if (write) {
-        await db.query(
-          `INSERT INTO silo_shed_link (link_id, tenant_id, company_id, silo_id, shed_id, created_at)
-           VALUES (?, ?, ?, ?, ?, NOW())`,
-          [randomUUID(), scope.tenant_id, shed.company_id ?? scope.company_id, silo.location_id, shed.location_id],
-        );
-      }
-      siloShedLinksInserted++;
-    }
-    plan.siloShedLinks = {
-      pairsDefined: siloShedPairs.length,
-      inserted: siloShedLinksInserted,
-      alreadyLinked: siloShedLinksSkippedExisting,
-      unresolved: siloShedUnresolved,
-    };
-
-    // ---- Item and breed lookups ------------------------------------------
-    // NAVFarm's standard biological Item Master records are BIO-SWINE-SOW and
-    // BIO-SWINE-BOAR. TN70 is a breed/line identity, not an item code.
+    // ---- Item and breed lookups ---------------------------------------------
+    // NAVFarm's standard biological Item Master records — BIO-SWINE-SOW,
+    // BIO-SWINE-BOAR, BIO-SWINE-GILT — not anything specific to this client.
     const standardItems = [
       {
         code: 'BIO-SWINE-SOW',
@@ -553,39 +514,48 @@ async function run() {
        WHERE tenant_id=? AND company_id=? AND is_active=1`,
       [scope.tenant_id, scope.company_id],
     );
-    const tn70 =
-      breeds.find((r) =>
-        String(r.breed_code).toUpperCase().replace(/[^A-Z0-9]/g, '').includes('TN70'),
-      ) ||
-      breeds.find((r) =>
-        String(r.breed_name).toUpperCase().replace(/[^A-Z0-9]/g, '').includes('TN70'),
+    const normalize = (v: unknown) => String(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    let breed: mysql.RowDataPacket | undefined;
+    if (BREED_CODE_HINT) {
+      const needle = normalize(BREED_CODE_HINT);
+      breed =
+        breeds.find((r) => normalize(r.breed_code).includes(needle)) ||
+        breeds.find((r) => normalize(r.breed_name).includes(needle));
+      if (!breed) throw new Error(`No active breed matches BREED_CODE_HINT "${BREED_CODE_HINT}".`);
+    } else if (breeds.length === 1) {
+      breed = breeds[0];
+    } else {
+      throw new Error(
+        breeds.length === 0
+          ? 'No active breed exists for this company; seed the breed master first.'
+          : `Company has ${breeds.length} active breeds; set BREED_CODE_HINT to pick one (matched against breed_code or breed_name).`,
       );
-    if (!tn70)
-      throw new Error('Required TN70 breed is missing; seed the breed master first.');
+    }
 
-    const [farms] = await db.query<mysql.RowDataPacket[]>(
-      `SELECT location_id, location_code FROM location_master
+    // ---- Farms referenced by SOW_WORKBOOKS -----------------------------------
+    const [farmRows] = await db.query<mysql.RowDataPacket[]>(
+      `SELECT location_id, location_code, company_id FROM location_master
        WHERE tenant_id=? AND location_type='FARM' AND is_active=1`,
       [scope.tenant_id],
     );
-    const portaFarm =
-      farms.find((r) => r.location_code === 'POR100')?.location_id || null;
-    const multiplierFarm =
-      farms.find((r) => r.location_code === 'MUL100')?.location_id || null;
+    const farmIdByCode = new Map(farmRows.map((r) => [r.location_code as string, r.location_id as string]));
+    for (const { farmCode } of SOW_WORKBOOKS) {
+      if (!farmIdByCode.has(farmCode))
+        throw new Error(
+          `Farm "${farmCode}" (from SOW_WORKBOOKS) was not found among imported locations — check it matches a FARM row's Location Code in LOCATION_WORKBOOKS.`,
+        );
+    }
 
     const sourceBatches = new Map<string, string>();
-    for (const [farmName, farmId] of [
-      ['MULTIPLIER', multiplierFarm],
-      ['PORTA', portaFarm],
-    ] as const) {
-      if (!farmId) continue;
-      const batchNo = `SHOWCASE-${farmName}-SOURCE`;
+    for (const farmCode of new Set(SOW_WORKBOOKS.map((f) => f.farmCode))) {
+      const farmId = farmIdByCode.get(farmCode)!;
+      const batchNo = `${farmCode}-IMPORT-SOURCE`;
       const [existing] = await db.query<mysql.RowDataPacket[]>(
         'SELECT batch_id FROM batch_header WHERE tenant_id=? AND batch_no=? LIMIT 1',
         [scope.tenant_id, batchNo],
       );
       if (existing.length) {
-        sourceBatches.set(farmName, existing[0].batch_id as string);
+        sourceBatches.set(farmCode, existing[0].batch_id as string);
         continue;
       }
       if (!write) continue;
@@ -596,9 +566,9 @@ async function run() {
             costing_method, breed_id, farm_id, start_date, status,
             opening_quantity, uom, animal_tracking, tracking_mode,
             is_litter_lot, remarks, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, 'BIO_ASSET', ?, ?, '2026-11-20',
+         VALUES (?, ?, ?, ?, ?, ?, 'BIO_ASSET', ?, ?, CURDATE(),
                  'ACTIVE', 0, 'HEAD', 'REGISTERED', 'ANIMAL_WISE',
-                 0, 'SHOWCASE SYNTHETIC SOURCE BATCH - workbook import; no real purchase traceability', NOW(), NOW())`,
+                 0, 'Workbook import synthetic source batch; no real acquisition/purchase traceability available from the import.', NOW(), NOW())`,
         [
           batchId,
           scope.tenant_id,
@@ -606,11 +576,11 @@ async function run() {
           batchNo,
           scope.lob_id,
           scope.nob_id,
-          tn70.breed_id,
+          breed.breed_id,
           farmId,
         ],
       );
-      sourceBatches.set(farmName, batchId);
+      sourceBatches.set(farmCode, batchId);
     }
 
     let sowsInserted = 0;
@@ -620,10 +590,7 @@ async function run() {
     let boarsInserted = 0;
     let boarsUpdated = 0;
 
-    const importSows = async (
-      path: string,
-      farmName: 'Porta' | 'Multiplier',
-    ) => {
+    const importSows = async (path: string, farmCode: string) => {
       const wb = XLSX.readFile(path, { type: 'file', cellDates: true });
       const cyclesSheet = wb.Sheets.Cycles;
       const cycleIds = new Set<string>();
@@ -639,6 +606,7 @@ async function run() {
         }
       }
 
+      const farmId = farmIdByCode.get(farmCode)!;
       for (const row of sowRows(path)) {
         const code = String(row['Sow ID'] ?? '').trim();
         if (!code) continue;
@@ -648,20 +616,15 @@ async function run() {
         const teats = num(row['Teats']);
         const damSerial = String(row['Dam'] ?? '').trim() || null;
         const sireSerial = String(row['Sire'] ?? '').trim() || null;
-        const farmId =
-          farmName === 'Porta' ? portaFarm : multiplierFarm;
-        if (!farmId) {
-          if (write)
-            throw new Error(`Required ${farmName.toUpperCase()} farm location is missing.`);
-          continue;
-        }
         if (!sowItem) continue;
-        const isGilt = farmName === 'Porta' && !cycleIds.has(code);
+        // A gilt is a young female with no recorded breeding cycle yet —
+        // true regardless of which farm she is on.
+        const isGilt = !cycleIds.has(code);
         if (isGilt && !giltItem) continue;
-        const animalItem = isGilt ? giltItem : sowItem;
+        // sowItem is checked above; giltItem is checked just above when isGilt.
+        const animalItem = (isGilt ? giltItem : sowItem)!;
         const animalType = isGilt ? 'GILT' : 'SOW';
-        const sourceBatchId =
-          sourceBatches.get(farmName.toUpperCase()) || null;
+        const sourceBatchId = sourceBatches.get(farmCode) || null;
 
         const [existing] = await db.query<mysql.RowDataPacket[]>(
           'SELECT animal_id FROM animal_register WHERE tenant_id=? AND animal_code=? LIMIT 1',
@@ -681,7 +644,7 @@ async function run() {
                 scope.company_id,
                 scope.nob_id,
                 scope.lob_id,
-                tn70.breed_id,
+                breed.breed_id,
                 animalType,
                 dob,
                 productiveStart,
@@ -719,11 +682,11 @@ async function run() {
               scope.lob_id,
               code,
               animalType,
-              tn70.breed_id,
+              breed.breed_id,
               'F',
               dob,
               'BORN_ON_FARM',
-              productiveStart || dob || '2026-11-20',
+              productiveStart || dob || new Date().toISOString().slice(0, 10),
               sourceBatchId,
               animalItem.item_id,
               sireSerial,
@@ -747,9 +710,7 @@ async function run() {
       }
     };
 
-    await importSows(PORTA_SOW_FILE, 'Porta');
-    await importSows(MULTIPLIER_1_SOW_FILE, 'Multiplier');
-    await importSows(MULTIPLIER_2_SOW_FILE, 'Multiplier');
+    for (const { farmCode, path } of SOW_WORKBOOKS) await importSows(path, farmCode);
 
     plan.sows = {
       inserted: sowsInserted,
@@ -765,79 +726,86 @@ async function run() {
       },
     };
 
-    // ---- Boars -----------------------------------------------------------
-    for (const row of boarRows()) {
-      const code = String(row['Boar'] ?? '').trim();
-      if (!code || code.startsWith('#')) continue;
-      if (!boarItem) continue;
-      const dob = dateValue(row['DoB']);
-      const tsi = num(row['TSI']);
-      const [existing] = await db.query<mysql.RowDataPacket[]>(
-        'SELECT animal_id FROM animal_register WHERE tenant_id=? AND animal_code=? LIMIT 1',
-        [scope.tenant_id, code],
-      );
-      if (existing.length) {
-        if (write) {
+    // ---- Boars ---------------------------------------------------------------
+    // Boars are not assigned to a single farm (AI semen typically serves
+    // several); they land on the first configured farm and source batch.
+    const anyFarmCode = SOW_WORKBOOKS[0]?.farmCode;
+    const anyFarmId = anyFarmCode ? farmIdByCode.get(anyFarmCode) ?? null : null;
+    const anySourceBatchId = anyFarmCode ? sourceBatches.get(anyFarmCode) ?? null : null;
+    if (BOAR_WORKBOOK) {
+      for (const row of boarRows(BOAR_WORKBOOK)) {
+        const code = String(row['Boar'] ?? '').trim();
+        if (!code || code.startsWith('#')) continue;
+        if (!boarItem) continue;
+        const dob = dateValue(row['DoB']);
+        const tsi = num(row['TSI']);
+        const [existing] = await db.query<mysql.RowDataPacket[]>(
+          'SELECT animal_id FROM animal_register WHERE tenant_id=? AND animal_code=? LIMIT 1',
+          [scope.tenant_id, code],
+        );
+        if (existing.length) {
+          if (write) {
+            await db.query(
+              `UPDATE animal_register SET company_id=?, nob_id=?, lob_id=?, breed_id=?,
+                 dob=?, entry_type='BORN_ON_FARM',
+                 source_batch_id=?, item_id=?, current_batch_id=?,
+                 tsi=?, current_location_id=?, is_active=1, status='ACTIVE', updated_at=NOW()
+               WHERE animal_id=?`,
+              [
+                scope.company_id,
+                scope.nob_id,
+                scope.lob_id,
+                breed.breed_id,
+                dob,
+                anySourceBatchId,
+                boarItem.item_id,
+                anySourceBatchId,
+                tsi,
+                anyFarmId,
+                existing[0].animal_id,
+              ],
+            );
+          }
+          boarsUpdated++;
+        } else if (write) {
           await db.query(
-            `UPDATE animal_register SET company_id=?, nob_id=?, lob_id=?, breed_id=?,
-               dob=?, entry_type='BORN_ON_FARM',
-               source_batch_id=?, item_id=?, current_batch_id=?,
-               tsi=?, current_location_id=?, is_active=1, status='ACTIVE', updated_at=NOW()
-             WHERE animal_id=?`,
+            `INSERT INTO animal_register
+               (animal_id, tenant_id, company_id, nob_id, lob_id, animal_code,
+                animal_type, breed_id, gender, dob, entry_type, entry_date,
+                source_batch_id, item_id, acquisition_cost, total_opening_asset_value,
+                current_batch_id, current_location_id, tsi, parity_count,
+                total_piglets_born_live, total_piglets_weaned, status,
+                is_active, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
             [
+              randomUUID(),
+              scope.tenant_id,
               scope.company_id,
               scope.nob_id,
               scope.lob_id,
-              tn70.breed_id,
+              code,
+              'BOAR',
+              breed.breed_id,
+              'M',
               dob,
-              sourceBatches.get('MULTIPLIER') || sourceBatches.get('PORTA') || null,
+              'BORN_ON_FARM',
+              dob || new Date().toISOString().slice(0, 10),
+              anySourceBatchId,
               boarItem.item_id,
-              sourceBatches.get('MULTIPLIER') || sourceBatches.get('PORTA') || null,
+              0,
+              0,
+              anySourceBatchId,
+              anyFarmId,
               tsi,
-              multiplierFarm || portaFarm,
-              existing[0].animal_id,
+              0,
+              0,
+              0,
+              'ACTIVE',
+              1,
             ],
           );
+          boarsInserted++;
         }
-        boarsUpdated++;
-      } else if (write) {
-        await db.query(
-          `INSERT INTO animal_register
-             (animal_id, tenant_id, company_id, nob_id, lob_id, animal_code,
-              animal_type, breed_id, gender, dob, entry_type, entry_date,
-              source_batch_id, item_id, acquisition_cost, total_opening_asset_value,
-              current_batch_id, current_location_id, tsi, parity_count,
-              total_piglets_born_live, total_piglets_weaned, status,
-              is_active, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-          [
-            randomUUID(),
-            scope.tenant_id,
-            scope.company_id,
-            scope.nob_id,
-            scope.lob_id,
-            code,
-            'BOAR',
-            tn70.breed_id,
-            'M',
-            dob,
-            'BORN_ON_FARM',
-            dob || '2026-11-20',
-            sourceBatches.get('MULTIPLIER') || sourceBatches.get('PORTA') || null,
-            boarItem.item_id,
-            0,
-            0,
-            sourceBatches.get('MULTIPLIER') || sourceBatches.get('PORTA') || null,
-            multiplierFarm || portaFarm,
-            tsi,
-            0,
-            0,
-            0,
-            'ACTIVE',
-            1,
-          ],
-        );
-        boarsInserted++;
       }
     }
     plan.boars = {
@@ -847,9 +815,10 @@ async function run() {
       itemCode: 'BIO-SWINE-BOAR',
       itemName: 'Mature Herd Sire Boar',
       blocker: boarItem ? null : 'BIO-SWINE-BOAR item master row could not be validated',
+      skipped: BOAR_WORKBOOK ? null : 'BOAR_WORKBOOK not set',
     };
 
-    // ---- Breeding cycles, matings, farrowings and weaning ----------------
+    // ---- Breeding cycles, matings, farrowings and weaning --------------------
     let breedingInserted = 0;
     let breedingUpdated = 0;
     let farrowingInserted = 0;
@@ -857,13 +826,7 @@ async function run() {
     let pigletDeathRowsSeen = 0;
     let sowIndicatorsSeen = 0;
 
-    const cycleFiles = [
-      ['Multiplier', MULTIPLIER_1_SOW_FILE],
-      ['Multiplier', MULTIPLIER_2_SOW_FILE],
-      ['Porta', PORTA_SOW_FILE],
-    ] as const;
-
-    for (const [farmName, path] of cycleFiles) {
+    for (const { farmCode, path } of SOW_WORKBOOKS) {
       const wb = XLSX.readFile(path, { type: 'file', cellDates: true });
       const cyclesSheet = wb.Sheets.Cycles;
       const deathsSheet = wb.Sheets['Piglet Deaths'];
@@ -934,7 +897,7 @@ async function run() {
                updated_at=NOW()
              WHERE animal_id=?`,
             [
-              `SHOWCASE sow indicators: ${fields}`,
+              `Workbook sow indicators: ${fields}`,
               animal[0].animal_id,
             ],
           );
@@ -945,8 +908,7 @@ async function run() {
         defval: null,
         range: 1,
       });
-      const sourceBatchId =
-        sourceBatches.get(farmName.toUpperCase()) || null;
+      const sourceBatchId = sourceBatches.get(farmCode) || null;
 
       for (const cycle of cycleRows) {
         const sowCode = String(cycle[0] ?? '').trim();
@@ -995,7 +957,7 @@ async function run() {
                 pregnancyConfirmed ? 1 : 0,
                 pregnancyConfirmed ? 'CONFIRMED' : 'PENDING',
                 Math.trunc(cycleNo),
-                `SHOWCASE workbook cycle ${Math.trunc(cycleNo)}; Boar 1=${String(cycle[4] ?? '') || 'N/A'}; Boar 2=${String(cycle[6] ?? '') || 'N/A'}`,
+                `Workbook cycle ${Math.trunc(cycleNo)}; Boar 1=${String(cycle[4] ?? '') || 'N/A'}; Boar 2=${String(cycle[6] ?? '') || 'N/A'}`,
                 breedingId,
               ],
             );
@@ -1022,7 +984,7 @@ async function run() {
               pregnancyConfirmed ? 1 : 0,
               pregnancyConfirmed ? 'CONFIRMED' : 'PENDING',
               Math.trunc(cycleNo),
-              `SHOWCASE workbook cycle ${Math.trunc(cycleNo)}; Boar 1=${String(cycle[4] ?? '') || 'N/A'}; Boar 2=${String(cycle[6] ?? '') || 'N/A'}`,
+              `Workbook cycle ${Math.trunc(cycleNo)}; Boar 1=${String(cycle[4] ?? '') || 'N/A'}; Boar 2=${String(cycle[6] ?? '') || 'N/A'}`,
             ],
           );
           breedingInserted++;
@@ -1037,7 +999,7 @@ async function run() {
         const pigletsWeaned = num(cycle[16]);
         const avgWeanWeight = num(cycle[20]);
         const farrowingNote =
-          `SHOWCASE workbook cycle ${Math.trunc(cycleNo)}${
+          `Workbook cycle ${Math.trunc(cycleNo)}${
             deathNotes.get(`${sowCode}|${Math.trunc(cycleNo)}`)?.length
               ? `\n${deathNotes.get(`${sowCode}|${Math.trunc(cycleNo)}`)!.join('\n')}`
               : ''
@@ -1109,233 +1071,21 @@ async function run() {
           farrowingInserted++;
         }
       }
-
     }
 
     plan.breedingRecords = {
       inserted: breedingInserted,
       updated: breedingUpdated,
       matingType: 'AI',
-      source: 'updated workbook Cycles + Matings sheets',
+      source: 'Cycles + Matings sheets of each configured sow workbook',
     };
     plan.farrowingRecords = {
       inserted: farrowingInserted,
       updated: farrowingUpdated,
-      source: 'updated workbook Cycles sheet',
+      source: 'Cycles sheet of each configured sow workbook',
     };
     plan.pigletDeathRowsSeen = pigletDeathRowsSeen;
     plan.sowIndicatorRowsSeen = sowIndicatorsSeen;
-
-    // ---- Porta commercial grower batches ------------------------------------
-    // Porta had no weaner/grower/finisher lot at all (only the breeding-stock
-    // placeholder batch), so it could never appear on a Slaughter Transfer
-    // Order or in the Feed Forecast. Mirrors the existing Multiplier demo
-    // batch BATCH-000012 (COUNT_ONLY/BATCH_WISE — this tenant's grower stock
-    // is tracked by head count, not individual animal_register rows).
-    // BATCH-000014 was fully dispatched through a Slaughter Transfer Order
-    // (20 Nov showcase) — its closing_quantity is correctly 0, so it has
-    // nothing left to feed. BATCH-000015 is a second, undispatched batch so
-    // Porta's Feed Forecast still has live animals to calculate for.
-    const GROWER_STAGE_ID = '1cf0587c-a1e5-48c5-93f3-0aee7927665c';
-    const portaGrowerBatches = [
-      { batchNo: 'BATCH-000014', shedCode: 'PGH1', headCount: 187 }, // matches the Porta kill sheet's headcount; fully dispatched
-      { batchNo: 'BATCH-000015', shedCode: 'PGH2', headCount: 165 }, // kept live, for Feed Forecast demo data
-    ];
-    const portaGrowerBatchIds: string[] = [];
-    plan.portaGrowerBatches = [];
-    for (const spec of portaGrowerBatches) {
-      const [[existing]] = await db.query<mysql.RowDataPacket[]>(
-        'SELECT batch_id FROM batch_header WHERE tenant_id = ? AND batch_no = ? LIMIT 1',
-        [scope.tenant_id, spec.batchNo],
-      );
-      if (existing) {
-        portaGrowerBatchIds.push(existing.batch_id as string);
-        (plan.portaGrowerBatches as unknown[]).push({ batchNo: spec.batchNo, action: 'already-exists', batchId: existing.batch_id });
-        continue;
-      }
-      const [[template]] = await db.query<mysql.RowDataPacket[]>(
-        `SELECT * FROM batch_header WHERE tenant_id = ? AND batch_no = 'BATCH-000012' LIMIT 1`,
-        [scope.tenant_id],
-      );
-      const shed = locationByCode.get(spec.shedCode);
-      const growerItemRow = (
-        await db.query<mysql.RowDataPacket[]>(
-          `SELECT item_id FROM item_master WHERE tenant_id = ? AND item_code = 'BIO-SWINE-GROWER' LIMIT 1`,
-          [scope.tenant_id],
-        )
-      )[0][0];
-      if (!template || !shed || shed.location_type !== 'SHED' || !growerItemRow) {
-        (plan.portaGrowerBatches as unknown[]).push({
-          batchNo: spec.batchNo,
-          action: 'skipped',
-          reason: !template
-            ? 'template batch BATCH-000012 not found'
-            : !shed
-              ? `shed ${spec.shedCode} not found`
-              : 'BIO-SWINE-GROWER item not found',
-        });
-        continue;
-      }
-      const newBatchId = randomUUID();
-      const portaFarmRow = locationByCode.get('POR100');
-      if (write) {
-        await db.query(
-          `INSERT INTO batch_header
-             (batch_id, tenant_id, company_id, batch_no, lob_id, nob_id, costing_method, breed_id,
-              shed_id, location_id, start_date, expected_end_date, status, opening_quantity, uom,
-              closing_quantity, current_stage_code, stage_id, operational_area_id, animal_tracking,
-              farm_id, tracking_mode, is_litter_lot, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-08-01', '2026-11-15', 'ACTIVE', ?, 'HEAD',
-                   ?, ?, ?, ?, ?, ?, ?, 0, NOW(), NOW())`,
-          [
-            newBatchId, scope.tenant_id, portaFarmRow?.company_id ?? scope.company_id, spec.batchNo,
-            template.lob_id, template.nob_id, template.costing_method, template.breed_id, shed.location_id,
-            shed.location_id, spec.headCount, spec.headCount, template.current_stage_code,
-            template.stage_id, template.operational_area_id, template.animal_tracking,
-            portaFarmRow?.location_id, template.tracking_mode,
-          ],
-        );
-        await db.query(
-          `INSERT INTO batch_bio_asset_state (state_id, batch_id, stage, current_quantity, nca_book_value, updated_at)
-           VALUES (?, ?, 'PREMATURE', ?, 0, NOW())`,
-          [randomUUID(), newBatchId, spec.headCount],
-        );
-        await db.query(
-          `INSERT INTO batch_input_line (line_id, batch_id, line_no, item_id, quantity, uom, rate)
-           VALUES (?, ?, 1, ?, ?, 'HEAD', 0)`,
-          [randomUUID(), newBatchId, growerItemRow.item_id, spec.headCount],
-        );
-      }
-      portaGrowerBatchIds.push(newBatchId);
-      (plan.portaGrowerBatches as unknown[]).push({ batchNo: spec.batchNo, action: 'insert', batchId: newBatchId });
-    }
-
-    // ---- Demo batch lifecycle freshness ------------------------------------
-    // The Feed Forecast engine computes each batch's day-of-stage from its
-    // scheduler_header.effective_from (or batch_header.start_date when no
-    // scheduler row exists). Hardcoded past dates age out of the breed
-    // lifecycle's feed-rate coverage (a few weeks per stage), so the showcase
-    // batches go dateless-looking and the Calculation page shows nothing.
-    // Re-anchor them relative to "today" every time this script runs, so a
-    // reseed on any date still lands inside a covered diet window.
-    const todayDate = new Date();
-    const daysAgo = (n: number) => {
-      const d = new Date(todayDate);
-      d.setUTCDate(d.getUTCDate() - n);
-      return d.toISOString().slice(0, 10);
-    };
-    const daysAhead = (n: number) => daysAgo(-n);
-    const WEANER_STAGE_ID = 'ac910233-061c-4ec6-a3fa-acf77f21d7ab';
-    const DOUBLE_STOCK_STAGE_ID = '0520d561-05ef-4665-a3fc-677b701d2e53';
-    const freshness: Array<{ batchId: string; stageId: string; daysAgoCount: number }> = [
-      { batchId: '24363faf-345a-44bd-aa35-8b56b2ce5028', stageId: WEANER_STAGE_ID, daysAgoCount: 19 }, // BATCH-000009
-      { batchId: 'c36576c6-ba9d-4ecd-8266-31584a3a5256', stageId: WEANER_STAGE_ID, daysAgoCount: 15 }, // BATCH-000011
-      { batchId: '6dc992db-8177-42a9-ae06-1b2f739965a6', stageId: GROWER_STAGE_ID, daysAgoCount: 19 }, // BATCH-000012
-      { batchId: 'f3052ec9-4d71-477c-9afb-6dd47bfeb778', stageId: DOUBLE_STOCK_STAGE_ID, daysAgoCount: 5 }, // BATCH-000010
-    ];
-    for (const batchId of portaGrowerBatchIds) freshness.push({ batchId, stageId: GROWER_STAGE_ID, daysAgoCount: 19 });
-    let freshnessUpdated = 0;
-    let freshnessCreated = 0;
-    for (const f of freshness) {
-      const effectiveFrom = daysAgo(f.daysAgoCount);
-      const [[scheduler]] = await db.query<mysql.RowDataPacket[]>(
-        'SELECT scheduler_id FROM scheduler_header WHERE batch_id = ? AND stage_id = ? LIMIT 1',
-        [f.batchId, f.stageId],
-      );
-      if (scheduler) {
-        if (write) {
-          await db.query(
-            'UPDATE scheduler_header SET effective_from = ?, updated_at = NOW() WHERE scheduler_id = ?',
-            [effectiveFrom, scheduler.scheduler_id],
-          );
-        }
-        freshnessUpdated++;
-      } else if (portaGrowerBatchIds.includes(f.batchId)) {
-        const [[batch]] = await db.query<mysql.RowDataPacket[]>(
-          'SELECT batch_id, batch_no, company_id, lob_id, nob_id, breed_id, shed_id, operational_area_id FROM batch_header WHERE batch_id = ?',
-          [f.batchId],
-        );
-        const [[headCount]] = await db.query<mysql.RowDataPacket[]>(
-          'SELECT current_quantity FROM batch_bio_asset_state WHERE batch_id = ?',
-          [f.batchId],
-        );
-        if (batch && write) {
-          await db.query(
-            `INSERT INTO scheduler_header
-               (scheduler_id, tenant_id, company_id, batch_id, stage_id, breed_id, lob_id, nob_id, location_id,
-                data_entry_level, scheduler_status, effective_from, effective_to, animal_count, auto_generated,
-                created_by, created_at, updated_at, scheduler_no)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SHED', 'ACTIVE', ?, ?, ?, 1, NULL, NOW(), NOW(), ?)`,
-            [
-              randomUUID(), scope.tenant_id, batch.company_id, batch.batch_id, f.stageId, batch.breed_id,
-              batch.lob_id, batch.nob_id, batch.shed_id, effectiveFrom, daysAhead(75),
-              headCount?.current_quantity ?? 0, `SCH-SHOWCASE-${batch.batch_no}`,
-            ],
-          );
-        }
-        freshnessCreated++;
-      }
-    }
-    plan.batchLifecycleFreshness = { batchesUpdated: freshnessUpdated, batchesCreated: freshnessCreated };
-
-    // ---- Demo feed stock ----------------------------------------------------
-    // Opening stock the Feed Forecast engine actually reads for the batches
-    // above. Only the two (store, item) pairs genuinely needed: the Creep
-    // stage has no dedicated silo on this farm, so BATCH-000009/011 draw it
-    // from the Multiplier store (MST1); Porta has no silo stocked with the
-    // Grower item yet, so BATCH-000015 draws it from the Porta store (PST1).
-    // (Grower/Weaner/Double-Stock on Multiplier already resolve to their own
-    // linked silos via silo_shed_link, so they need no store-side stock.)
-    // One POSITIVE inventory_ledger row per pair, written directly (mirrors
-    // what POST /stock-adjustment + /post would write) and skipped if a row
-    // with the same synthetic document_no already exists.
-    const demoFeedStock: Array<{ storeCode: string; itemCode: string; quantity: number; rate: number; postingDate: string }> = [
-      { storeCode: 'MST1', itemCode: 'FEED000007', quantity: 275, rate: 26.5, postingDate: '2026-11-15' }, // Creep 2 Nosilac
-      { storeCode: 'PST1', itemCode: 'FEED000001', quantity: 1650, rate: 26.5, postingDate: '2026-11-15' }, // Grower1
-    ];
-    let feedStockInserted = 0;
-    let feedStockSkipped = 0;
-    const feedStockUnresolved: string[] = [];
-    for (const s of demoFeedStock) {
-      const documentNo = `SHOWCASE-STOCK-${s.storeCode}-${s.itemCode}`;
-      const store = locationByCode.get(s.storeCode);
-      const [[item]] = await db.query<mysql.RowDataPacket[]>(
-        'SELECT item_id, item_code, item_name, category_id FROM item_master WHERE tenant_id = ? AND item_code = ? LIMIT 1',
-        [scope.tenant_id, s.itemCode],
-      );
-      if (!store || !item) {
-        feedStockUnresolved.push(`${s.storeCode} ${s.itemCode}`);
-        continue;
-      }
-      // Idempotent against any prior stock for this (warehouse, item) — not just this script's own
-      // synthetic document_no — since this exact pair was first posted by hand through the Stock
-      // Adjustment API before this section existed.
-      const [[existingStock]] = await db.query<mysql.RowDataPacket[]>(
-        'SELECT ledger_id FROM inventory_ledger WHERE tenant_id = ? AND warehouse_id = ? AND item_id = ? AND quantity > 0 LIMIT 1',
-        [scope.tenant_id, store.location_id, item.item_id],
-      );
-      if (existingStock) {
-        feedStockSkipped++;
-        continue;
-      }
-      if (write) {
-        await db.query(
-          `INSERT INTO inventory_ledger
-             (ledger_id, tenant_id, company_id, item_id, item_code, item_description, document_type, document_no,
-              posting_date, entry_type, transaction_type, quantity, remaining_quantity, uom, rate, amount,
-              lot_no, warehouse_id, nob_id, lob_id, category_id, created_by, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'STOCK_ADJUSTMENT', ?, ?, 'POSITIVE', 'VARIANCE_POSITIVE', ?, ?, 'KG', ?, ?,
-                   ?, ?, ?, ?, ?, NULL, NOW())`,
-          [
-            randomUUID(), scope.tenant_id, store.company_id ?? scope.company_id, item.item_id, item.item_code, item.item_name,
-            documentNo, s.postingDate, s.quantity, s.quantity, s.rate, s.quantity * s.rate,
-            `LOT-SHOWCASE-${s.storeCode}-${s.itemCode}`, store.location_id, scope.nob_id, scope.lob_id, item.category_id,
-          ],
-        );
-      }
-      feedStockInserted++;
-    }
-    plan.demoFeedStock = { inserted: feedStockInserted, alreadySeeded: feedStockSkipped, unresolved: feedStockUnresolved };
 
     console.log(JSON.stringify(plan, null, 2));
     if (apply) {

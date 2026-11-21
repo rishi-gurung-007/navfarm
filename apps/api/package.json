@@ -1131,6 +1131,14 @@
           "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-new-client-data.ts",
           "cwd": "apps/api"
         }
+      },
+      "db-seed-cccshow-demo-extras": {
+        "executor": "nx:run-commands",
+        "cache": false,
+        "options": {
+          "command": "node --env-file-if-exists=.env --import tsx src/scripts/seed-cccshow-demo-extras.ts",
+          "cwd": "apps/api"
+        }
       }
     }
   },
