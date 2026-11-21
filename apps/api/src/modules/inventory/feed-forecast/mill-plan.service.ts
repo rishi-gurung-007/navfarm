@@ -132,6 +132,17 @@ export class MillPlanService {
             from,
             to,
           ),
+          silos: (await this.forecast.planningSilos([farm.farmId], tenantId))
+            .get(farm.farmId)
+            ?.filter((silo) => silo.status === 'ACTIVE')
+            .map((silo) => ({
+              locationId: silo.locationId,
+              code: silo.code,
+              name: silo.name,
+              itemName: silo.feedItemName,
+              stockKg: silo.onHandKg ?? 0,
+              capacityKg: silo.capacityKg,
+            })),
           sourceBalances: report.sourceBalances,
           dietChanges: report.dietChanges,
           flags: report.flags,

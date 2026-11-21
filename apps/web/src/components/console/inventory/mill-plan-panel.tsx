@@ -156,6 +156,7 @@ interface MillPlan {
     capacityKg: number | null;
     fillPct: number | null;
     runOutDate: string | null;
+    inUse: boolean;
   }>;
   failedFarms: Array<{
     farmId: string;
@@ -440,19 +441,19 @@ function DueFigure({
   );
 }
 
-/** A day column's head: the date, and the weekday under it. */
+/** A day column's head: the weekday, and the date under it, centred. */
 function DayHead({ date }: { date: string }) {
   // Day and month only, so seven days fit beside the Farm / Shed column (Rishi, 4 Nov); the full date is on hover.
   return (
     <div
       data-day-head
       title={formatDateShort(date)}
-      className="flex flex-col items-end leading-tight"
+      className="flex flex-col items-center text-center leading-tight"
     >
-      <span className="whitespace-nowrap">{`${date.slice(8, 10)}/${date.slice(5, 7)}`}</span>
       <span className="text-[10px] font-normal text-(--text-muted)">
         {weekday(date)}
       </span>
+      <span className="whitespace-nowrap">{`${date.slice(8, 10)}/${date.slice(5, 7)}`}</span>
     </div>
   );
 }
@@ -1247,7 +1248,10 @@ export default function MillPlanPanel() {
                       {t('mplFarmShed')}
                     </th>
                     {plan.dates.map((date) => (
-                      <th key={date} className={`${TH_DAY} ${NUM}`}>
+                      <th
+                        key={date}
+                        className={`${TH_DAY} whitespace-nowrap text-center tabular-nums`}
+                      >
                         <DayHead date={date} />
                       </th>
                     ))}
@@ -1649,6 +1653,14 @@ export default function MillPlanPanel() {
                           >
                             {card.sourceCode}
                           </p>
+                          {card.inUse && (
+                            <span
+                              data-silo-in-use
+                              className="shrink-0 rounded-full bg-(--surface-secondary) px-2 py-0.5 text-[10px] font-medium text-(--text-secondary)"
+                            >
+                              {t('mplSiloInUse')}
+                            </span>
+                          )}
                           {pct !== null && (
                             <span className="shrink-0 text-sm font-semibold tabular-nums text-(--text-primary)">
                               {card.fillPct}%

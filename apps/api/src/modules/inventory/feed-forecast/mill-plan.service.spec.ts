@@ -60,6 +60,7 @@ function setup(getForecast?: jest.Mock) {
   const forecast = {
     listFarms: jest.fn(async () => farms),
     getForecast: getForecast ?? jest.fn(async (q: any) => report(q.farmId)),
+    planningSilos: jest.fn(async () => new Map()),
   };
   const millCapacity = {
     mills: jest.fn(async () => mills),

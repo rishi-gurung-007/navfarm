@@ -37,6 +37,15 @@ export interface MillPlanFarmInput {
     }
   >;
   dietChanges: DietChange[];
+  /** Every active silo of the farm, so the Silo Levels list shows idle ones too. */
+  silos?: Array<{
+    locationId: string;
+    code: string;
+    name: string;
+    itemName: string | null;
+    stockKg: number;
+    capacityKg: number | null;
+  }>;
   /**
    * Registered animals in each batch by Animal Type (animal_register.current_batch_id), keyed by the real batch id.
    * A batch not here is count-only: its heads are typed by stage (animalTypeOfStage).
@@ -102,6 +111,8 @@ export interface MillPlanSiloCard {
   capacityKg: number | null;
   fillPct: number | null;
   runOutDate: string | null;
+  /** The silo feeds animals in the week: a shed with animals draws on it in the forecast. */
+  inUse: boolean;
 }
 
 export type DayStatus = 'OK' | 'WARN' | 'OVER' | 'NO_CAPACITY';
@@ -624,6 +635,27 @@ export function buildMillPlan(input: MillPlanInput): MillPlan {
                 0,
               ) <= 0,
           ) ?? null,
+        inUse: points.some((p) => p.dailyUseKg > 0),
+      });
+    }
+    // Silos the forecast does not draw on (not linked to a shed, or its animals are gone): listed as not in use.
+    for (const silo of f.silos ?? []) {
+      if (bySilo.has(silo.code)) continue;
+      siloCards.push({
+        farmId: f.farm.id,
+        farmCode: f.farm.code,
+        farmName: f.farm.name,
+        sourceCode: silo.code,
+        sourceName: silo.name,
+        items: silo.itemName ? [silo.itemName] : [],
+        stockKg: roundKg(silo.stockKg),
+        capacityKg: silo.capacityKg,
+        fillPct:
+          silo.capacityKg && silo.capacityKg > 0
+            ? Math.round((silo.stockKg / silo.capacityKg) * 100)
+            : null,
+        runOutDate: null,
+        inUse: false,
       });
     }
 

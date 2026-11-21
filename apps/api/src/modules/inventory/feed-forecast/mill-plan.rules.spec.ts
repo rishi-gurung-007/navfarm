@@ -447,6 +447,7 @@ describe('buildMillPlan', () => {
         capacityKg: 10000,
         fillPct: 40,
         runOutDate: null,
+        inUse: false,
       },
       {
         farmId: 'farm-1',
@@ -459,6 +460,7 @@ describe('buildMillPlan', () => {
         capacityKg: null,
         fillPct: null,
         runOutDate: dates[1],
+        inUse: false,
       },
     ]);
   });

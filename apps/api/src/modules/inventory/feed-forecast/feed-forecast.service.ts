@@ -201,6 +201,8 @@ export interface FeedPlanningSilo {
   /** What it is holding now — read-only; null when it is empty. */
   feedItemCode: string | null;
   feedItemName: string | null;
+  /** Kg of that feed on hand now (0 when empty or not held in KG). */
+  onHandKg?: number;
   capacityKg: number | null;
   lowLevelKg: number | null;
   highLevelKg: number | null;
@@ -1479,7 +1481,12 @@ export class FeedForecastService {
     // The feed held, per company, only for the silos there are.
     const held = new Map<
       string,
-      { item_code: string; item_description: string | null } | null
+      {
+        item_code: string;
+        item_description: string | null;
+        on_hand_qty: number;
+        uoms: string[];
+      } | null
     >();
     const byCompany = new Map<string, string[]>();
     for (const row of rows) {
@@ -1511,6 +1518,10 @@ export class FeedForecastService {
         feedType: row.feed_in_bags === true ? 'BAGGED' : 'BULK',
         feedItemCode: current?.item_code ?? null,
         feedItemName: current?.item_description ?? null,
+        onHandKg:
+          current && current.uoms.every((u) => u.toUpperCase() === 'KG')
+            ? Number(current.on_hand_qty)
+            : 0,
         capacityKg: num(row.silo_capacity_kg),
         lowLevelKg: num(row.low_level_kg),
         highLevelKg: num(row.high_level_kg),
@@ -1520,6 +1531,14 @@ export class FeedForecastService {
       byFarm.set(key, [...(byFarm.get(key) ?? []), silo]);
     }
     return byFarm;
+  }
+
+  /** Every active silo of the farm with what it holds now; Mill Planning lists them all, used or not. */
+  async planningSilos(
+    farmIds: string[],
+    tenantId: string,
+  ): Promise<Map<string, FeedPlanningSilo[]>> {
+    return this.siloPlanningRows(farmIds, tenantId);
   }
 
   /** Which farms this caller may be offered (farmPickerConditions), shared by GET /feed-forecast/farms and D32's list. */
