@@ -163,8 +163,8 @@ export function CostingCalculation({
       {!c.matches && (
         <InlineAlert variant="warning">
           The cost posted ({formatMoney(c.total_cost)}) is not what the
-          item&apos;s current method gives ({formatMoney(c.recomputed_cost)}) —
-          the costing method may have been changed after this entry was posted.
+          item&apos;s current method gives ({formatMoney(c.recomputed_cost)}).
+          The costing method may have been changed after this entry was posted.
           The amounts below are what was actually posted.
         </InlineAlert>
       )}

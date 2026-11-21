@@ -265,7 +265,7 @@ export default function KillSheetDetailPage({
       await api.post(`/kill-sheets/${id}/confirm`, {
         override_reason: overrideReason.trim() || undefined,
       });
-      showToast.success('Kill sheet confirmed and imported successfully!');
+      showToast.success('Kill sheet confirmed and imported.');
       fetchDetail();
       fetchCarcasses();
     } catch (err: any) {

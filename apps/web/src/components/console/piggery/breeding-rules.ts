@@ -50,13 +50,13 @@ export function openMatingOf(sowId: string, matings: Row[]): Row | undefined {
  */
 export function whyNotServed(sow: Row, matings: Row[], stages?: Row[]): string | null {
   const open = openMatingOf(sow.animal_id, matings);
-  if (open) return `open service ${formatDate(open.mating_date)} — not farrowed`;
+  if (open) return `open service ${formatDate(open.mating_date)}, not farrowed`;
   if (sow.status === "PREGNANT") return "pregnant";
-  if (sow.status === "LACTATING") return "nursing — wean first";
+  if (sow.status === "LACTATING") return "nursing, wean first";
   if (stages?.length) {
     const stage = stages.find((st) => st.stage_id === sow.current_stage_id);
-    if (!stage) return "no stage — move to Insemination first";
-    if (String(stage.stage_code).toUpperCase() !== "INSEMINATION") return `in ${stage.stage_name} — move to Insemination first`;
+    if (!stage) return "no stage, move to Insemination first";
+    if (String(stage.stage_code).toUpperCase() !== "INSEMINATION") return `in ${stage.stage_name}, move to Insemination first`;
   }
   return null;
 }
@@ -89,7 +89,7 @@ export function maturityOf(
 
 /** Why a sow cannot farrow now (no open service to farrow from, or she is already nursing), or null. */
 export function whyNotFarrowing(sow: Row, matings: Row[]): string | null {
-  if (sow.status === "LACTATING") return "already nursing a litter — wean it first";
+  if (sow.status === "LACTATING") return "already nursing a litter, wean it first";
   if (!openMatingOf(sow.animal_id, matings)) return "no open mating recorded";
   return null;
 }

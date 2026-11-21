@@ -665,7 +665,7 @@ const stage: MasterDataConfig = {
   key: 'stage',
   label: 'Stages',
   description:
-    'Production lifecycle stages per NOB/LOB (e.g. piggery: Quarantine → Gilt Grower → ... → Disposed) — sequencing and transition rules for batches.',
+    'Production stages for each NOB/LOB, with the order and transition rules for batches. For piggery: Quarantine → Gilt Grower → ... → Disposed.',
   apiBase: '/stage',
   idKey: 'stage_id',
   codeField: 'stage_code',
@@ -1150,7 +1150,7 @@ const animal: MasterDataConfig = {
   key: 'animal',
   label: 'Animal Register',
   description:
-    'Individual animal lifetime identity — lineage, entry, cost, current stage/location. Never physically deleted; use Dispose to record sale/slaughter/death.',
+    'One record per animal for its whole life: lineage, entry, cost, current stage and location. Animals are never deleted. Use Dispose to record a sale, slaughter or death.',
   apiBase: '/animal',
   idKey: 'animal_id',
   codeField: 'animal_code',
@@ -2020,7 +2020,7 @@ const uomConversion: MasterDataConfig = {
   key: 'uom-conversion',
   label: 'UOM Conversions',
   description:
-    'Multiplier factors between units — From × Factor = To. Used to price data entry.',
+    'Conversion factors between units: From × Factor = To. Used to price data entry.',
   apiBase: '/uom/conversion',
   idKey: 'conversion_id',
   group: 'Inventory',
@@ -2258,7 +2258,7 @@ const itemTemplateConfig: MasterDataConfig = {
   label: 'Item Templates',
   singular: 'Item Template',
   description:
-    'Templates to standardize item card creation and pre-populate accounting and tracking defaults.',
+    'Templates for creating items, with accounting and tracking defaults filled in.',
   apiBase: '/item-template',
   idKey: 'id',
   group: 'Inventory',
@@ -2461,7 +2461,7 @@ const BIO_AMORT = bioWhen(['AMORTIZATION']);
 const bioLock: Pick<MasterDataField, 'lockWhenRowFlag' | 'lockReason'> = {
   lockWhenRowFlag: 'bio_costing_locked',
   lockReason: () =>
-    'an animal of this item has been charged by a costing run — its costing terms are fixed',
+    'an animal of this item has been charged by a costing run, so its costing terms are fixed',
 };
 const item: MasterDataConfig = {
   key: 'item',
@@ -2678,8 +2678,8 @@ const item: MasterDataConfig = {
       lockWhenRowFlag: 'valuation_locked',
       lockReason: (row) =>
         row.is_biological_asset
-          ? 'a biological asset keeps its normal costing method — its costing is on the Bio Asset Costing tab'
-          : 'this item already has inventory entries — create a new item for a different valuation method',
+          ? 'a biological asset keeps its normal costing method. Its costing is on the Bio Asset Costing tab'
+          : 'this item already has inventory entries. Create a new item for a different valuation method',
       entityEndpoint: '/costing-method',
       entityValueKey: 'method_code',
       entityLabelKeys: ['method_code', 'method_name'],
@@ -3228,7 +3228,7 @@ const species: MasterDataConfig = {
 const breed: MasterDataConfig = {
   key: 'breed',
   label: 'Breeds',
-  description: 'Breed benchmarks — growth, FCR, mortality, reproduction.',
+  description: 'Breed benchmarks for growth, FCR, mortality and reproduction.',
   apiBase: '/breed',
   idKey: 'breed_id',
   codeField: 'breed_code',
@@ -3468,7 +3468,7 @@ const breedLifecycleStage: MasterDataConfig = {
   key: 'breed-lifecycle-stage',
   label: 'Breed Lifecycle Stages',
   description:
-    'Per-breed, per-stage production standards — feed rate, ADG, FCR, mortality, expected output — for a period range within that stage.',
+    'Production standards for each breed and stage over a period range within that stage: feed rate, ADG, FCR, mortality and expected output.',
   apiBase: '/breed-lifecycle-stage',
   idKey: 'lifecycle_id',
   codeField: 'lifecycle_code',
@@ -3482,6 +3482,7 @@ const breedLifecycleStage: MasterDataConfig = {
   tabLabel: 'Lifecycle Stages',
   columns: [
     { key: 'lifecycle_code', label: 'Code' },
+    { key: 'breed_id', label: 'Breed' },
     { key: 'stage', label: 'Stage' },
     { key: 'calc_unit', label: 'Unit' },
     { key: 'period_from', label: 'Effective From' },
@@ -3999,7 +4000,7 @@ const kpiMetric: MasterDataConfig = {
   supportsRestore: true,
   supportsNobLobFilter: true,
   description:
-    "The KPI vocabulary Breed Lifecycle Stage thresholds and a Scheduler DESCRIPTIVE line both name their metric from, so a threshold and the daily entry it bounds mean the same value. Add one here — or from the KPI picker on a lifecycle stage's own New button — the moment a metric this list doesn't have comes up.",
+    "The KPI vocabulary Breed Lifecycle Stage thresholds and a Scheduler DESCRIPTIVE line both name their metric from, so a threshold and the daily entry it bounds mean the same value. Add one here, or from the KPI picker on a lifecycle stage's own New button, when you need a metric that isn't on this list.",
   columns: [
     { key: 'metric_code', label: 'Code' },
     { key: 'metric_name', label: 'Name' },
@@ -4073,7 +4074,7 @@ const reason: MasterDataConfig = {
   isPrimary: true,
   businessAdminOnly: true,
   description:
-    "Shared company reasons for mortality, culling, returns, selection, disposal, transfers, scans, adjustments and requisitions — the client's Reason Master Template: Reason Code, Category, Sub-Category, Description, Stage Filter and Mandatory Comment.",
+    "Company-wide reasons for mortality, culling, returns, selection, disposal, transfers, scans, adjustments and requisitions. Fields follow the client's Reason Master Template: Reason Code, Category, Sub-Category, Description, Stage Filter and Mandatory Comment.",
   columns: [
     { key: 'reason_code', label: 'Code' },
     { key: 'category', label: 'Category' },
@@ -4421,7 +4422,7 @@ const reportingPeriod: MasterDataConfig = {
   },
   statusActiveValues: ['ACTIVE'],
   description:
-    'Review and edit inactive July–June draft periods, then activate them explicitly for forecasting.',
+    'Review and edit inactive July–June draft periods, then activate them to use in forecasting.',
   columns: [
     { key: 'period_code', label: 'Code' },
     { key: 'business_year', label: 'Business Year' },
@@ -5930,7 +5931,7 @@ const country: MasterDataConfig = {
   label: 'Countries',
   singular: 'Country',
   description:
-    'Countries the business deals with — used by currencies, suppliers and customers.',
+    'Countries the business deals with. Used by currencies, suppliers and customers.',
   apiBase: '/country',
   idKey: 'country_id',
   group: 'Finance',

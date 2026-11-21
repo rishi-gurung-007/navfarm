@@ -234,6 +234,9 @@ function displayValue(
   ) {
     return String(row.stage || row.stage_name || row.stage_code);
   }
+  // Breed Lifecycle Stages: the breed column filters on breed_id but shows the joined breed code.
+  if (key === 'breed_id' && row.breed_code && row.stage !== undefined)
+    return String(row.breed_code);
   const v = row[key];
   if (v === null || v === undefined || v === '') {
     if (key === 'stage' || key === 'stage_id') {
@@ -806,7 +809,7 @@ export function MasterDataTable({
         ...f,
         readOnly: true,
         required: false,
-        helpText: `From ${f.derivedFrom.endpoint.replace(/^\//, '')} — the stored factor for these units.`,
+        helpText: `From ${f.derivedFrom.endpoint.replace(/^\//, '')}: the stored factor for these units.`,
       };
     if (state === 'missing')
       return {
@@ -3380,12 +3383,12 @@ export function MasterDataTable({
             value={String(value ?? '')}
             onChange={(next) => setField(f.key, next)}
             options={[
-              { value: '', label: f.placeholder || 'None — use the prefix' },
+              { value: '', label: f.placeholder || 'None, use the prefix' },
               ...choices,
             ]}
             valueKey="value"
             labelKey="label"
-            placeholder={f.placeholder || 'None — use the prefix'}
+            placeholder={f.placeholder || 'None, use the prefix'}
             searchPlaceholder={t('searchPlaceholder')}
             noMatchesLabel={t('mdNoMatches')}
             disabled={fieldDisabled}

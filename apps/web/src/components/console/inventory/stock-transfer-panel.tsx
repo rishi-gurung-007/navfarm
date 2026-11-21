@@ -2084,7 +2084,7 @@ export default function StockTransferPanel({
                         onClick={() => handleSave(true)}
                         disabled={saving}
                         className="nf-btn-primary flex items-center gap-1.5 text-xs font-semibold shadow-2xs"
-                        title="Create Transfer Order and immediately dispatch outbound shipment with Qty. to Ship"
+                        title="Create the Transfer Order and dispatch the shipment now, using Qty. to Ship"
                       >
                         {savingAndShipping ? (
                           <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
@@ -3878,7 +3878,7 @@ export default function StockTransferPanel({
                           <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
                             <Truck className="h-3.5 w-3.5" />
                             <span>
-                              Outbound Dispatches (Shipments) —{' '}
+                              Outbound Dispatches (Shipments):{' '}
                               {shipments.length}
                             </span>
                           </div>
@@ -4036,7 +4036,7 @@ export default function StockTransferPanel({
                                 <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
                                   <PackageCheck className="h-3.5 w-3.5" />
                                   <span>
-                                    Inbound Receipts &amp; GRNs —{' '}
+                                    Inbound Receipts &amp; GRNs:{' '}
                                     {receipts.length}
                                   </span>
                                 </div>
@@ -4722,7 +4722,7 @@ export default function StockTransferPanel({
               !resolvingDiscrepancy && setDiscrepancyModalOpen(false)
             }
             title="Resolve In-Transit Stock Discrepancy"
-            description="Manage stranded, damaged, or unreceived in-transit inventory to balance the transit account and close the transfer order."
+            description="Deal with in-transit stock that is stranded, damaged or not received, so the transit account balances and the transfer order can close."
             maxWidth="md"
             footer={
               <div className="flex w-full items-center justify-between gap-2">

@@ -3943,8 +3943,8 @@ export default function OperationalBatchDataEntry() {
             </div>
           ) : noScheduler ? (
             <InlineAlert variant="info">
-              No scheduler is linked to this batch&apos;s current stage —
-              activities will appear here once one is created in the Scheduler
+              No scheduler is linked to this batch&apos;s current stage.
+              Activities will appear here once one is created in the Scheduler
               module.
             </InlineAlert>
           ) : dataEntryLoading ? null : (

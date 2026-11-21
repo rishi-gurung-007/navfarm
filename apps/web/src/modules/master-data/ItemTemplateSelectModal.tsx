@@ -120,7 +120,7 @@ export function ItemTemplateSelectModal({
       open={open}
       onClose={onClose}
       title="Select Item Template"
-      description="Choose an active template to auto-generate the next Item Number and initialize defaults."
+      description="Choose an active template. It gives the next Item Number and fills in the defaults."
       maxWidth="lg"
       footer={
         <div className="flex w-full items-center justify-end gap-2">

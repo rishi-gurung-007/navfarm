@@ -100,7 +100,7 @@ function matingTimelineEvent(m: Row, isMale: boolean): TimelineEvent {
         : `Served by ${partner || (m.semen_lot_no ? `pooled lot ${m.semen_lot_no}` : 'a boar')}`,
     summary: [
       human(m.mating_type),
-      m.pooled ? 'pooled — sire not one boar' : '',
+      m.pooled ? 'pooled, sire not one boar' : '',
       fmt(m.batch_no),
       fmt(m.parity_number) ? `parity ${m.parity_number}` : '',
     ]

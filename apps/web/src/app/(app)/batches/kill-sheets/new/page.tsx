@@ -283,7 +283,7 @@ export default function NewKillSheetPage() {
         }
       );
 
-      showToast.success('Kill sheet successfully confirmed and imported!');
+      showToast.success('Kill sheet confirmed and imported.');
       router.push(`/batches/kill-sheets/${previewResult.import_id}`);
     } catch (err: any) {
       const msg = err?.message || 'Failed to confirm kill sheet.';

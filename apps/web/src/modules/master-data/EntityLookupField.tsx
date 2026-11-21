@@ -314,7 +314,7 @@ export function EntityLookupField({
     !multiple && selectedRows[0]
       ? selectedRows[0].row
         ? selectedRowLabel(selectedRows[0].row, labelKeys, valueKey)
-        : `${selectedRows[0].value} — unavailable in active catalog`
+        : `${selectedRows[0].value} (unavailable in active catalog)`
       : '';
 
   return (
@@ -328,7 +328,7 @@ export function EntityLookupField({
             >
               {selected.row
                 ? selectedRowLabel(selected.row, labelKeys, valueKey)
-                : `${selected.value} — unavailable in active catalog`}
+                : `${selected.value} (unavailable in active catalog)`}
               {!disabled && (
                 <button
                   type="button"

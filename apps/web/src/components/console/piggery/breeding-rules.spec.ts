@@ -54,7 +54,7 @@ describe("who a breeding form offers", () => {
       { stage_id: "st-gr", stage_code: "GILT_REARING", stage_name: "Gilt Rearing" },
     ];
     expect(whyNotServed({ ...sow, current_stage_id: "st-ins" }, [], stages)).toBeNull();
-    expect(whyNotServed({ ...sow, current_stage_id: "st-gr" }, [], stages)).toBe("in Gilt Rearing — move to Insemination first");
+    expect(whyNotServed({ ...sow, current_stage_id: "st-gr" }, [], stages)).toBe("in Gilt Rearing, move to Insemination first");
     expect(whyNotServed({ ...sow, current_stage_id: null }, [], stages)).toMatch(/no stage/);
     expect(whyNotFarrowing(sow, [])).toMatch(/no open mating/);
     expect(whyNotFarrowing({ ...sow, status: "LACTATING" }, [{ sow_id: "s1", mating_date: "2026-06-01" }])).toMatch(/nursing/);

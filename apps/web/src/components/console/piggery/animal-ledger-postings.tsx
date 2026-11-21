@@ -282,7 +282,7 @@ export function AnimalLedgerPostings({
                             <span
                               title={
                                 entry.expensed
-                                  ? `${entry.item_name ?? ''} — charged to expense, not part of her book value`.trim()
+                                  ? `${entry.item_name ?? ''}: charged to expense, not part of her book value`.trim()
                                   : `${formatEntryType(entry.entry_type)} · ${formatTransactionType(entry.transaction_type)} · ${BIO_DOCUMENT_LABEL[entry.document_type] ?? entry.document_type}`
                               }
                             >

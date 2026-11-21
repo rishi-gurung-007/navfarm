@@ -655,7 +655,7 @@ function AlertRow({ a, t }: { a: Alert; t: T }) {
         style={{ color: STATUS_COLOR[a.status] }}
       />
       <span className="min-w-0 flex-1">
-        {a.metric} {above ? t('gmdAboveTarget') : t('gmdBelowTarget')} —{' '}
+        {a.metric} {above ? t('gmdAboveTarget') : t('gmdBelowTarget')},{' '}
         {a.farm_name}
       </span>
       <span className="shrink-0 font-mono tabular-nums text-(--text-secondary)">

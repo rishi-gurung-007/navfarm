@@ -2862,13 +2862,13 @@ export default function BatchPanel() {
                   {selectableFilteredCandidates.length} selected)
                   {showAllAnimals ? (
                     <span className="ml-2 font-normal lowercase tracking-normal text-(--text-muted)">
-                      — all animals
+                      (all animals)
                     </span>
                   ) : header.shed_id ? (
                     <span className="ml-2 font-normal lowercase tracking-normal text-(--text-muted)">
-                      — in{' '}
+                      (in{' '}
                       {sheds.find((s) => s.shed_id === header.shed_id)
-                        ?.shed_name || 'selected shed'}
+                        ?.shed_name || 'selected shed'})
                     </span>
                   ) : null}
                 </p>
@@ -3148,8 +3148,8 @@ export default function BatchPanel() {
                 </div>
               )}
               <p className="text-[11px]" style={S.muted}>
-                Each selected animal keeps its own current stage and location —
-                a scheduler is created for every distinct stage among them.
+                Each selected animal keeps its own current stage and location.
+                A scheduler is created for every distinct stage among them.
               </p>
             </div>
           )}

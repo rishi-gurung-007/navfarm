@@ -3105,7 +3105,7 @@ export function BreedingPanel({
                   style={S.surface}
                 >
                   <p className="text-xs font-semibold" style={S.primary}>
-                    Litter {selectedFarrow.piglet_lot_no} — with{' '}
+                    Litter {selectedFarrow.piglet_lot_no}: with{' '}
                     {selectedFarrow.sow_code} until weaning
                   </p>
                   <p className="text-[11px]" style={S.sub}>

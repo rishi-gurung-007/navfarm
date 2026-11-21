@@ -264,7 +264,7 @@ export const translations = {
     admAdminPassword: 'Administrator Password *',
     admSignOut: 'Sign out',
     tapManageDesc:
-      'Manage companies, members and plan capacity using tenant-scoped backend data.',
+      'Manage companies, members and plan capacity for this tenant.',
     tapCompanyPortfolio: 'Company portfolio',
     tapCompanyPortfolioDesc: 'Active companies returned by the API.',
     tapNoCompanies:
@@ -404,7 +404,7 @@ export const translations = {
       'Add a reporting or accounting currency to the system catalogue.',
     wzStep1Title: 'Step 1: Register Company Profile',
     wzStep1Desc:
-      'Provide registration names, company logo and brand details. Limits set by your pricing plan are applied.',
+      'Enter the registered names, logo and brand details. Your pricing plan sets the limits.',
     wzCompanyBrandLogo: 'Company Brand Logo',
     wzLogoFormats: 'Supported formats: PNG, JPG, SVG, WebP (max 5 MB).',
     wzRemove: 'Remove',
@@ -425,7 +425,7 @@ export const translations = {
     wzPhTaxpayerId: 'e.g. 07AAAAA1111A1Z1',
     wzStep2Title: 'Step 2: Operating Addresses',
     wzStep2Desc:
-      'Provide the physical operating addresses used for billing and tax allocation.',
+      'Enter the operating addresses used for billing and tax allocation.',
     wzLocationType: 'Location Type',
     wzLocHeadOffice: 'Head Office',
     wzLocFarmLocation: 'Farm Location',
@@ -440,7 +440,7 @@ export const translations = {
     wzPostalCode: 'Postal Code',
     wzStep3Title: 'Step 3: Primary Contact Details',
     wzStep3Desc:
-      'Provide the contact profile used for administrative alerts and reporting.',
+      'Enter the contact details used for administrative alerts and reporting.',
     wzReceiveExecEmails:
       'Receive periodic executive report emails (weekly P&L, batch metrics)',
     wzPhContactName: 'Amit Sharma',
@@ -487,7 +487,7 @@ export const translations = {
     oaActiveUnit: 'Active Unit',
     oaOpenWorkspace: 'Open Workspace',
     oaCreateAreaDesc:
-      "Establish a new line-of-business farm unit. It uses its company\'s master data for that line of business.",
+      "Add a new farm unit for a line of business. It uses its company\'s master data for that line of business.",
     oaAreaCodeRequired: 'Area Code *',
     oaAreaNameRequired: 'Area Name *',
     oaNobRequired: 'Nature of Business (NOB) *',
@@ -526,7 +526,7 @@ export const translations = {
     owCompanySetup: 'Company setup',
     owErpSetupWizard: 'ERP Setup Wizard',
     owErpSetupWizardDesc:
-      'Configure your company settings to activate agricultural management.',
+      'Finish your company settings to turn on farm management.',
     dyBreedJerseyCross: 'Jersey Cross',
     dyRegisterDairyCow: 'Register Dairy Cow',
     dyEarTagAndName: 'Ear Tag & Name',
@@ -572,7 +572,7 @@ export const translations = {
     dyClinicalFacilityNotes: 'Clinical & Facility Notes',
     dyLifecycleTitle: 'Dairy Herd Production Lifecycle (9 Standard Stages)',
     dyLifecycleDesc:
-      'Standard biological lifecycle from calf rearing through peak lactation and the 60-day dry period.',
+      'The standard cycle from calf rearing through peak lactation to the 60-day dry period.',
     swHoursLogged: 'Hours Logged',
     swNoLabourLogged:
       'No direct farm labour hours logged yet. Add labour records via daily batch entry.',
@@ -1321,7 +1321,7 @@ export const translations = {
     authTagline: 'Farm management,',
     authTaglineLine2: 'simplified.',
     authSubheading:
-      'Manage your livestock, crops, and operations from one clean dashboard.',
+      'Livestock, crops and operations on one dashboard.',
     authAllRightsReserved: 'All rights reserved.',
     authShowPassword: 'Show password',
     authHidePassword: 'Hide password',
@@ -1440,7 +1440,7 @@ export const translations = {
       "No labour hours logged today. Click '+ Add Labour Resource' to record.",
     bdeNoOverheadsToday:
       "No overheads allocated today. Click '+ Add Overhead Expense' to record.",
-    bdeLoadingBatches: 'Loading active production batches from database...',
+    bdeLoadingBatches: 'Loading active production batches...',
     bdeScopeEntryTo: "Scope today's entry to",
     bdeClearAllAnimals: 'Clear (all animals)',
     bdeWipSummaryTitle: 'Daily Batch WIP Financial & Operational Summary',
@@ -1536,7 +1536,7 @@ export const translations = {
     invLedgerTitle: 'Inventory Ledger',
     invBioAssetLedger: 'Assets Ledger',
     invOperationalDesc:
-      'Operational stock, daily feed/med allocations, and dispatches for {{lob}} Unit.',
+      'Stock, daily feed and medicine allocations, and dispatches for {{lob}} Unit.',
     invCompanyDesc:
       'Company-wide location stock, GRN receipts, inter-site movements, and FIFO inventory valuation.',
     invFeedForecast: 'Feed Forecast',
@@ -3371,7 +3371,7 @@ export const translations = {
     bcrAnimalPicker: 'Animal',
     bcrAllAnimalsInBatch: 'Select an animal to inspect',
     bcrInspectAnimalTitle: 'Bio-asset ledger (every posting on this animal)',
-    bcrInspectAnimalSubtitle: 'Track amortisation write-down, residual value floor, and monthly accounting journals for this individual breeding animal.',
+    bcrInspectAnimalSubtitle: 'Amortisation, residual value floor and monthly journals for this breeding animal.',
     bcrCapitalisedCost: 'Capitalised Cost',
     bcrResidualFloor: 'Residual Floor',
     bcrCurrentBookValue: 'Current Book Value',
@@ -3479,7 +3479,7 @@ export const translations = {
     pigAnimalRegisterDesc: ' ',
     dairyCowHerdRegisterTitle: 'Dairy Cow & Herd Register',
     dairyCowHerdRegisterDesc:
-      'Individual cattle identification, RFID ear tags, DIM (days in milk), lactation curve, and daily milking yields.',
+      'Cattle IDs, RFID ear tags, days in milk (DIM), lactation curve and daily milk yields.',
 
     accessDeniedContactAdmin:
       'Contact your company administrator if you need access to this section.',
@@ -3495,7 +3495,7 @@ export const translations = {
     // Console — Approvals page chrome
     apTitle: 'Operational Approvals & Sign-Offs',
     apDesc:
-      'Multi-tier authorization inbox for feed ration changes, GRN receipts, stock requisitions, and batch stage transitions.',
+      'Multi-level approval inbox for feed ration changes, GRN receipts, stock requisitions and batch stage transitions.',
     apSearchPlaceholder: 'Search approvals…',
     apNewRequest: 'New Request',
     apTabPending: 'Action Required (Pending)',
@@ -3635,7 +3635,7 @@ export const translations = {
     ntTestSentSuccess: 'Test notification sent successfully!',
     ntSaveFailedDefault: 'Failed to save.',
     ntConfigureSmtpFirst:
-      'Please configure and save SMTP details first before sending a test notification.',
+      'Save your SMTP details before sending a test notification.',
     ntTestSendFailedDefault: 'Failed to send test.',
     ntLoadFailedDefault: 'Failed to load notification config.',
 
@@ -3646,7 +3646,7 @@ export const translations = {
     dashCompanyTitle: '{{company}} Performance',
     dashAreaOperationsTitle: '{{area}} Operations',
     dashTenantDesc:
-      'Consolidated multi-entity livestock inventory, live batch WIP valuations, and entity matrix.',
+      'Livestock inventory across all entities, live batch WIP valuations and the entity matrix.',
     dashCompanyDesc:
       'Commercial operations, active batches, headcount records, and operational areas.',
     dashDairyDesc:
@@ -3756,7 +3756,7 @@ export const translations = {
     dashBiologicalAssetValuation: 'Biological Asset Valuation',
     dashDairyBatchesByStage: 'Dairy Batches by Stage',
     dashDairyBatchesByStageDesc:
-      'Distribution of every dairy batch in this area across the lifecycle.',
+      'How the dairy batches in this area are spread across the stages.',
     dashNoDairyBatchesRecorded: 'No dairy batches recorded yet.',
     dashTodaysMilkingSessionBreakdown: "Today's Milking Session Breakdown",
     dashMorningSession: 'Morning Session',
@@ -3947,7 +3947,7 @@ export const translations = {
     // --- New panel translations (auto-added) ---
     alrtPageTitle: 'Alert Center',
     alrtPageSubtitle:
-      'KPI deviations detected on batch daily entries against their attached Scheduler.',
+      'Batch daily entries that miss the KPI limits set on their Scheduler.',
     alrtAllSeverities: 'All severities',
     alrtSeverityWarning: 'Warning',
     alrtSeverityCritical: 'Critical',
@@ -4032,7 +4032,7 @@ export const translations = {
     bulkNoEntriesError:
       'Please enter daily feed, mortality, or observations for at least one batch.',
     bulkSaveSuccess:
-      'Daily log recorded successfully! ({{count}} transaction entries processed).',
+      'Daily log saved. {{count}} transaction entries recorded.',
     bulkSubmitError: 'Failed to submit bulk daily entries.',
     bulkLogEntryDate: 'Log Entry Date',
     bulkDefaultFeedRation: 'Default Feed Ration / Item',
@@ -4164,7 +4164,7 @@ export const translations = {
     pkFailedToVoidPack: 'Failed to void pack.',
     pkPacks: 'Packs',
     pkPacksDescription:
-      'Generated traceability packs (QR codes) for batch output, showing farm-to-pack lineage.',
+      'Traceability packs (QR codes) for batch output, showing the path from farm to pack.',
     pkSearchPackLotPlaceholder: 'Search pack / lot…',
     pkLoading: 'Loading…',
     pkNoPacksGeneratedYet: 'No packs generated yet.',
@@ -4370,7 +4370,7 @@ export const translations = {
     ppsAccessDeniedDesc:
       'Contact your company administrator if you need access to this section.',
     ppsPageDescription:
-      '{{lob}} Operational Area: lifecycle tracking, batch feed and health logs, and cost-allocated closing.',
+      '{{lob}} operational area: stage tracking, batch feed and health logs, and closing with cost allocation.',
     gipWarehouse: 'Location',
     grpTitle: 'GRN',
     grpSubtitle:
@@ -4826,7 +4826,7 @@ export const translations = {
     fopFailedToLoad: 'Failed to load facility occupancy.',
     fopTitle: 'Facility & Pen Live Occupancy Tracker',
     fopSubtitle:
-      'Real-time pen headcount, utilization gauges, and biosecurity isolation tracking',
+      'Live pen headcount, how full each pen is, and biosecurity isolation',
     fopTotalCapacity: 'Total Capacity',
     fopHead: 'head',
     fopConfiguredLocationsPens: '{{count}} configured locations/pens',
@@ -4856,8 +4856,8 @@ export const translations = {
     hapAllBatches: 'All Batches',
     hapTitle: 'Herd Analytics & Demographics',
     hapSubtitle:
-      'Real-time census, parity distribution curve, and biological asset valuation',
-    hapLoadingMessage: 'Analyzing herd demographics and productivity metrics…',
+      'Live headcount, parity distribution and biological asset valuation',
+    hapLoadingMessage: 'Loading herd and productivity figures…',
     hapActiveHerdSize: 'Active Herd Size',
     hapHeadUnit: 'head',
     hapGenderSplit: '{{female}} Females · {{male}} Males',
@@ -4915,7 +4915,7 @@ export const translations = {
     pbsStatusUpcoming: 'Upcoming',
     pbsEdit: 'Edit',
     pbsFooterNote:
-      'Note: Stage durations are standard baselines. Actual production dates and KPI telemetry accumulate from Batch Start Date ({{startDate}}).',
+      'Note: stage durations are standard figures. Actual production dates and KPI readings count from the Batch Start Date ({{startDate}}).',
     pbsEditTimelineTitle: 'Edit Timeline: {{name}}',
     pbsCancel: 'Cancel',
     pbsSaveDuration: 'Save Duration',
@@ -4936,7 +4936,7 @@ export const translations = {
     rfmFailedToUpdateStatus: 'Failed to update animal status.',
     rfmScannerTitle: 'RFID & Ear-Tag Fast Scanner',
     rfmScannerDescription:
-      'Scan with an RFID wand or barcode reader (auto-Enter) to instantly inspect and update animals.',
+      'Scan with an RFID wand or barcode reader (auto-Enter) to open and update an animal.',
     rfmNextScanClear: 'Next Scan (Clear)',
     rfmScanPlaceholder: 'Scan RFID wand or enter Visual Ear Tag / Code…',
     rfmFemale: 'Female',
@@ -5073,7 +5073,7 @@ export const translations = {
     bsDairyStagesNotAvailableTitle:
       "Dairy stage management isn't available yet",
     bsDairyStagesNotAvailableDesc:
-      'Piggery is the only domain with full lifecycle-stage tracking today. Dairy stage management will be added later.',
+      'Only piggery tracks every lifecycle stage today. Dairy stage management will be added later.',
     baapAnimalAssignedToast: '✓ Animal assigned to batch {{code}}.',
     anpSearchPlaceholder: 'Search code, RFID, ear tag…',
     anpAllStatuses: 'All statuses',
@@ -5478,7 +5478,7 @@ export const translations = {
     blDataEntryActiveOnly:
       'Data Entry is only available while the batch is ACTIVE.',
     blDetailDescFallback:
-      'Production batch metadata, performance telemetry, daily operations, and transactions ledger.',
+      'Batch details, performance, daily operations and the transactions ledger.',
     blDetailTitle: 'Batch: {{batchNo}}',
     blDetailTitleFallback: 'Batch Details',
     blDisposalHarvest: 'Harvest',
@@ -5922,7 +5922,7 @@ export const translations = {
     blPackQcRequiredWarning:
       'This LOB requires QC. Select a QC record below with result PASS to generate a pack.',
     blPageSubtitle:
-      'Batch lifecycle: input placement, daily consumption/mortality/output, and closing to finished inventory.',
+      'Batch: placing inputs, entering daily consumption, mortality and output, and closing to finished inventory.',
     blPageTitle: 'Batches',
     blParameterResultsTitle: 'Parameter Results',
     blPassTrue: 'Pass (true)',
@@ -5973,7 +5973,7 @@ export const translations = {
     blStdCostCarriedForwardNote:
       ' (standard-cost assumptions carried forward too)',
     blStdCostSubtitle:
-      'Optional. Set these to get Price/Usage/Output/Overhead variance calculated when the batch closes.',
+      'Optional. Set these to get Price, Usage, Output and Overhead variance calculated when the batch closes.',
     blStdCostTitle: 'Standard Cost Assumptions',
     blSubmitInspection: 'Submit Inspection',
     blTabCurves: 'Performance & Curves',
