@@ -27,6 +27,16 @@
 #
 # Find the target tenant_id first:
 #   mysql -u root -p -e "SELECT tenant_id, db_name FROM nf_master.tenant_master WHERE tenant_code='<code>';"
+#
+# To regenerate the dump itself (run on whichever machine actually hosts the
+# source tenant's database): --skip-triggers is required, since triggers are
+# standard/identical across every tenant and are not a DML INSERT IGNORE can
+# skip, unlike --no-create-info which only suppresses CREATE TABLE.
+#   mysqldump -h 127.0.0.1 -u root \
+#     --no-create-info --complete-insert --insert-ignore --single-transaction \
+#     --set-gtid-purged=OFF --skip-triggers \
+#     --ignore-table=nf_cccshow.__drizzle_migrations \
+#     nf_cccshow > cccshow-data-only.sql
 
 set -euo pipefail
 
