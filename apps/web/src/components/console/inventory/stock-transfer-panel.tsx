@@ -1954,7 +1954,7 @@ export default function StockTransferPanel({
             }
             description={
               editingTransfer
-                ? 'Transfer Order document card — track route, dispatch shipment, and post inbound receipt.'
+                ? 'Transfer Order document card. Track the route, dispatch the shipment and post the inbound receipt.'
                 : 'Create a transfer order between locations with quantity lifecycle, shipment dispatch, and item tracking.'
             }
             maxWidth="xl"

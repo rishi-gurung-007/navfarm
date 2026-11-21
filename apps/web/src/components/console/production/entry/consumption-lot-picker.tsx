@@ -103,12 +103,12 @@ export function ConsumptionLotPicker({
             ))}
             {plan.totalCost != null && <div className="mt-0.5 flex justify-between font-mono font-semibold"><span>Total</span><span>{plan.totalCost.toFixed(2)}</span></div>}
             {plan.parts.length > 1 && <div className="mt-0.5" style={{ color: "var(--text-muted)" }}>Cost follows the item's costing method, not the lot.</div>}
-            {plan.shortBy > 0 && <div className="mt-0.5 font-semibold" style={{ color: "var(--danger)" }}>Short by {plan.shortBy} — tick another lot or lower the quantity.</div>}
+            {plan.shortBy > 0 && <div className="mt-0.5 font-semibold" style={{ color: "var(--danger)" }}>Short by {plan.shortBy}. Tick another lot or lower the quantity.</div>}
           </div>
         );
       })()}
       <div className="mt-0.5 text-[10px] text-[var(--text-muted)]" title={source.message ?? undefined}>
-        {source.warehouse_code ? `Draws from ${source.warehouse_code}` : source.message ? "Stock location not found — posting will say why" : ""}
+        {source.warehouse_code ? `Draws from ${source.warehouse_code}` : source.message ? "Stock location not found. Posting will say why" : ""}
       </div>
     </>
   );

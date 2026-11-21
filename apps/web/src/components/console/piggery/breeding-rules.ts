@@ -142,7 +142,7 @@ export function checkMating({ form, sow, boar, lot, matings, gestationDays }: Ma
 
   const isAi = form.mating_type === "AI";
   if (!isAi && !form.boar_animal_id) err("boar_animal_id", "A natural mating needs the boar.");
-  if (isAi && !form.semen_lot_id) err("semen_lot_id", "Choose the semen lot — its doses leave stock and it names the sire.");
+  if (isAi && !form.semen_lot_id) err("semen_lot_id", "Choose the semen lot. Its doses leave stock and it names the sire.");
   if (boar && boar.is_active === false) err("boar_animal_id", `${boar.animal_code} is no longer active.`);
 
   if (isAi) {
@@ -189,8 +189,8 @@ export function checkFarrowing({ form, sow, mating }: FarrowingCheck): Issue[] {
 
   if (!form.batch_id) err("batch_id", "Choose the batch first.");
   if (!form.sow_animal_id) err("sow_animal_id", "Choose the sow.");
-  else if (sow && sow.status === "LACTATING") err("sow_animal_id", `${sow.animal_code} is already nursing a litter — wean it first.`);
-  if (form.sow_animal_id && sow && !mating) err("breeding_id", `${sow.animal_code} has no open mating — record her mating before her farrowing.`);
+  else if (sow && sow.status === "LACTATING") err("sow_animal_id", `${sow.animal_code} is already nursing a litter. Wean it first.`);
+  if (form.sow_animal_id && sow && !mating) err("breeding_id", `${sow.animal_code} has no open mating. Record her mating before her farrowing.`);
 
   if (!form.farrowing_date) err("farrowing_date", "Enter the farrowing date.");
   else {
@@ -201,7 +201,7 @@ export function checkFarrowing({ form, sow, mating }: FarrowingCheck): Issue[] {
       else {
         // Guidance: a sow normally farrows at 114–116 days; well outside 105–122 deserves a second look.
         const gestation = daysBetween(served, form.farrowing_date);
-        if (gestation < 105 || gestation > 122) warn("farrowing_date", `${gestation} days after the mating — a sow normally farrows about 114–116 days after service. Check the date and the mating chosen.`);
+        if (gestation < 105 || gestation > 122) warn("farrowing_date", `${gestation} days after the mating. A sow normally farrows about 114–116 days after service. Check the date and the mating chosen.`);
       }
     }
   }
@@ -223,23 +223,23 @@ export function checkFarrowing({ form, sow, mating }: FarrowingCheck): Issue[] {
   if (form.piglets_total_born !== "" && form.piglets_total_born != null && !Number.isNaN(live) && num(form.piglets_total_born) !== live + still + mummy) {
     err("piglets_total_born", `Total born must equal born alive + born dead + mummified (${live + still + mummy}).`);
   }
-  if (!Number.isNaN(live) && live + still + mummy === 0) err("piglets_born_live", "A farrowing needs at least one piglet born — live, stillborn or mummified.");
+  if (!Number.isNaN(live) && live + still + mummy === 0) err("piglets_born_live", "A farrowing needs at least one piglet born: live, stillborn or mummified.");
   if (!Number.isNaN(live) && fout > live + fin) err("fostered_out", `Only ${live + fin} piglets are there to foster out (${live} born alive + ${fin} received).`);
   if (live + still + mummy > 0) {
     const total = live + still + mummy;
-    if (total > 25) warn("piglets_born_live", `${total} born is an exceptionally large litter — check the counts.`);
-    if (still + mummy > total * 0.3) warn("piglets_stillborn", `${Math.round(((still + mummy) / total) * 100)}% of the litter was born dead — check the counts.`);
+    if (total > 25) warn("piglets_born_live", `${total} born is an exceptionally large litter. Check the counts.`);
+    if (still + mummy > total * 0.3) warn("piglets_stillborn", `${Math.round(((still + mummy) / total) * 100)}% of the litter was born dead. Check the counts.`);
   }
 
   const netLitter = Math.max(0, (Number.isNaN(live) ? 0 : live) + (fin || 0) - (fout || 0));
   if (netLitter > 0 && !form.piglet_item_id) {
-    err("piglet_item_id", "Choose the piglet item — the litter is held as a lot of it. Without it the piglets exist nowhere and cannot be weaned or moved.");
+    err("piglet_item_id", "Choose the piglet item. The litter is held as a lot of it. Without it the piglets exist nowhere and cannot be weaned or moved.");
   }
 
   const avg = num(form.avg_birth_weight_kg);
   const total = num(form.total_litter_weight_kg);
   if (!Number.isNaN(avg) && avg <= 0) err("avg_birth_weight_kg", "Average birth weight must be above 0.");
-  else if (!Number.isNaN(avg) && (avg < 0.8 || avg > 2.5)) warn("avg_birth_weight_kg", "Newborn piglets are usually about 1.0–1.8 kg — check the weight.");
+  else if (!Number.isNaN(avg) && (avg < 0.8 || avg > 2.5)) warn("avg_birth_weight_kg", "Newborn piglets are usually about 1.0–1.8 kg. Check the weight.");
   if (!Number.isNaN(total) && total <= 0) err("total_litter_weight_kg", "Total litter weight must be above 0.");
   if (!Number.isNaN(avg) && !Number.isNaN(total) && live > 0 && Math.abs(avg * live - total) > Math.max(0.5, total * 0.1)) {
     warn("total_litter_weight_kg", `${live} × ${avg} kg is ${(avg * live).toFixed(1)} kg, not ${total} kg.`);
@@ -410,7 +410,7 @@ export function checkSemen({ form, boars, lots, rules, lineBoarIds }: SemenCheck
     if (!Number.isNaN(motility) && (motility < 0 || motility > 100)) err(at("motility_pct"), "Motility is a percentage, 0–100.");
   }
   if (!form.output_item_id) {
-    err("output_item_id", "Choose the semen item — it is what puts the doses into inventory and makes them usable for AI. Without it the collection is only a note.");
+    err("output_item_id", "Choose the semen item. It is what puts the doses into inventory and makes them usable for AI. Without it the collection is only a note.");
   }
 
   for (const k of ["amortisation_period", "feed_cost_period", "drug_cost_period", "overhead_cost_period"]) {

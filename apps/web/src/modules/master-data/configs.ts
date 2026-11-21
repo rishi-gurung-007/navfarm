@@ -57,7 +57,7 @@ const locationType: MasterDataConfig = {
       placeholder: 'FARM',
       createOnly: true,
       helpText:
-        "The type's own identity code. Fixed after create — locations reference it by this code.",
+        "The type's own identity code. Fixed after create. Locations reference it by this code.",
     },
     {
       key: 'type_name',
@@ -438,7 +438,7 @@ const location: MasterDataConfig = {
       visibleWhen: { anyOf: [{ key: 'storage_type', equals: 'SILO' }] },
       requiredWhen: { anyOf: [{ key: 'storage_type', equals: 'SILO' }] },
       helpText:
-        'The unit the capacity above is entered in. The capacity is stored in kilograms whichever unit is chosen — a tonne figure is converted on save.',
+        'The unit the capacity above is entered in. The capacity is stored in kilograms whichever unit is chosen. A tonne figure is converted on save.',
       section: 'Identification',
     },
     // I4 (final whole-branch review, 4 Oct): this field used to drive a Feed
@@ -456,7 +456,7 @@ const location: MasterDataConfig = {
       visibleWhen: { anyOf: [{ key: 'storage_type', equals: 'SILO' }] },
       requiredWhen: { anyOf: [{ key: 'storage_type', equals: 'SILO' }] },
       helpText:
-        'How many days before this silo reaches its low stock level it must be refilled. A Location Master record only — the Feed Forecast does not read it. Standard 2.',
+        'How many days before this silo reaches its low stock level it must be refilled. A Location Master record only. The Feed Forecast does not read it. Standard 2.',
       section: 'Identification',
     },
     // Master Setup §1 rows 10 and 12 (spec D10) — alongside Silo Reorder
@@ -1906,7 +1906,7 @@ const itemType: MasterDataConfig = {
       placeholder: 'RAW_MATERIAL',
       createOnly: true,
       helpText:
-        'Leave blank to derive from the type name via the number series. After create, the code follows the series when the name changes — refused while an item still uses the old code.',
+        'Leave blank to derive from the type name via the number series. After create, the code follows the series when the name changes. This is refused while an item still uses the old code.',
     },
     {
       key: 'type_name',
@@ -1977,7 +1977,7 @@ const uom: MasterDataConfig = {
       createOnly: true,
       required: true,
       helpText:
-        'Leave blank to derive from the unit name via the number series — or type a standard symbol such as KG.',
+        'Leave blank to derive from the unit name via the number series, or type a standard symbol such as KG.',
       placeholder: 'KG',
     },
     {
@@ -2002,7 +2002,7 @@ const uom: MasterDataConfig = {
       // attempted: one base unit per type is what makes From × Factor = To
       // resolvable (uom.service.ts refuses a second base for the same type).
       helpText:
-        'Classifies the unit — WEIGHT, VOLUME, COUNT, AREA, TIME or OTHER. Conversions always land on the base unit of the same type, and each type keeps exactly one base unit.',
+        'Classifies the unit: WEIGHT, VOLUME, COUNT, AREA, TIME or OTHER. Conversions always land on the base unit of the same type, and each type keeps exactly one base unit.',
     },
     { key: 'decimal_places', label: 'Decimal Places', type: 'number', min: 0 },
     { key: 'is_base_uom', label: 'Is Base Unit', type: 'boolean' },
@@ -2216,7 +2216,7 @@ const itemAttribute: MasterDataConfig = {
       step: '0.0001',
       min: 0,
       helpText:
-        'Optional default/example value — informational only. The actual value for each item is still entered on the Item form.',
+        'Optional default/example value. Informational only. The actual value for each item is still entered on the Item form.',
     },
     // Data Type and Unit are off the form (data_type defaults to NUMBER at
     // create; unit is superseded by uom_id above) but kept for any row that
@@ -2431,14 +2431,14 @@ const trackingLockReason = (
   const parts: string[] = [];
   if (onHand > 0)
     parts.push(
-      `${onHand} ${String(row.uom_primary ?? '')} on hand — consume it or adjust it out first`.replace(
+      `${onHand} ${String(row.uom_primary ?? '')} on hand. Consume it or adjust it out first`.replace(
         '  ',
         ' ',
       ),
     );
   if (open > 0)
     parts.push(
-      `${open} open document${open === 1 ? '' : 's'} name this item — post or cancel ${open === 1 ? 'it' : 'them'} first`,
+      `${open} open document${open === 1 ? '' : 's'} name this item. Post or cancel ${open === 1 ? 'it' : 'them'} first`,
     );
   return parts.join(' · ') || undefined;
 };
@@ -2621,7 +2621,7 @@ const item: MasterDataConfig = {
       requiresParent: true,
       section: 'Identification',
       helpText:
-        "Optional. Lists categories whose parent is the selected Category above — create one there first if the subcategory you need doesn't exist yet.",
+        "Optional. Lists categories whose parent is the selected Category above. Create one there first if the subcategory you need doesn't exist yet.",
     },
     // Left unfiltered: an item's primary/secondary UOM legitimately spans every
     // uom_type — KG for feed, LITER for medicine, BAG or HEAD for others — there is
@@ -2666,7 +2666,7 @@ const item: MasterDataConfig = {
         params: { uom_primary: 'fromUom', uom_secondary: 'toUom' },
         valueKey: 'conversion_factor',
         missingHelpText:
-          'No conversion exists for these units yet — enter it once and it is saved to UOM Conversion.',
+          'No conversion exists for these units yet. Enter it once and it is saved to UOM Conversion.',
       },
       helpText:
         'Choose a Primary and Secondary UOM; the factor comes from UOM Conversion.',
@@ -2917,7 +2917,7 @@ const item: MasterDataConfig = {
         anyOf: [{ key: 'item_type', equals: ['MEDICINE', 'VACCINE'] }],
       },
       helpText:
-        'Up to 99 days. Required for MEDICINE/VACCINE items — minimum days after last administration before an animal treated with this item may be slaughtered.',
+        'Up to 99 days. Required for MEDICINE/VACCINE items. Minimum days after last administration before an animal treated with this item may be slaughtered.',
     },
     {
       key: 'is_qr_enabled',
@@ -3418,7 +3418,7 @@ const breed: MasterDataConfig = {
       type: 'number',
       step: '0.01',
       min: 0,
-      helpText: 'Semen doses collected per week — a male KPI.',
+      helpText: 'Semen doses collected per week. A male KPI.',
       section: 'Reproduction — Male (Boar)',
     },
     {
@@ -3427,7 +3427,7 @@ const breed: MasterDataConfig = {
       type: 'number',
       min: 0,
       helpText:
-        'How long a boar stays productive — amortisation input for a male.',
+        'How long a boar stays productive. Amortisation input for a male.',
       section: 'Reproduction — Male (Boar)',
     },
     {
@@ -3444,7 +3444,7 @@ const breed: MasterDataConfig = {
       step: '0.01',
       min: 0,
       helpText:
-        'Salvage value as percent of opening asset value — amortisation input.',
+        'Salvage value as percent of opening asset value. Amortisation input.',
       section: 'Productive Life',
     },
     // Stage Age Labels (age_labels) is not offered (Rishi, 20 Oct): it asked for JSON and nothing in the app reads it.
@@ -3550,7 +3550,7 @@ const breedLifecycleStage: MasterDataConfig = {
       label: 'Category',
       type: 'select',
       helpText:
-        'The class of animal this standard is written for — the same list the Animal Register uses.',
+        'The class of animal this standard is written for. It is the same list the Animal Register uses.',
       options: ['SOW', 'GILT', 'BOAR', 'PIGLET', 'COMMERCIAL_PIG'].map((v) => ({
         value: v,
         label: v.replace(/_/g, ' '),
@@ -3571,7 +3571,7 @@ const breedLifecycleStage: MasterDataConfig = {
       type: 'number',
       min: 0,
       helpText:
-        "Stage day numbers, counted from the day the batch or animal entered this stage — not calendar dates. Only for a stage without feed lines; with feed lines the range is the lines' first Effective From to last Effective To.",
+        "Stage day numbers, counted from the day the batch or animal entered this stage, not calendar dates. Only for a stage without feed lines; with feed lines the range is the lines' first Effective From to last Effective To.",
     },
     {
       key: 'period_to',
@@ -3579,7 +3579,7 @@ const breedLifecycleStage: MasterDataConfig = {
       type: 'number',
       min: 0,
       helpText:
-        "Stage day numbers, counted from the day the batch or animal entered this stage — not calendar dates. Only for a stage without feed lines; with feed lines the range is the lines' first Effective From to last Effective To.",
+        "Stage day numbers, counted from the day the batch or animal entered this stage, not calendar dates. Only for a stage without feed lines; with feed lines the range is the lines' first Effective From to last Effective To.",
     },
     // Breed Master Template, Lifecycle sheet: "Teats" (mandatory). The standard
     // for the stage; BBP §6 hard-blocks gilt selection below 15. Shown only for
@@ -3919,7 +3919,7 @@ const breedLifecycleStage: MasterDataConfig = {
         },
       ],
       helpText:
-        "One row per vaccination. Triggered by tells the scheduler what to count from — the animal's age, weeks pregnant, or every pregnancy cycle.",
+        "One row per vaccination. Triggered by tells the scheduler what to count from: the animal's age, weeks pregnant, or every pregnancy cycle.",
     },
     {
       key: 'medication_protocol',
@@ -4041,7 +4041,7 @@ const kpiMetric: MasterDataConfig = {
       createOnly: true,
       placeholder: 'EAR_LENGTH',
       helpText:
-        "Uppercase letters, digits and underscore. This is what a lifecycle threshold and a Scheduler DESCRIPTIVE line both reference — pick something they'll recognize.",
+        "Uppercase letters, digits and underscore. This is what a lifecycle threshold and a Scheduler DESCRIPTIVE line both reference. Pick something they'll recognize.",
     },
     {
       key: 'metric_name',
@@ -4058,7 +4058,7 @@ const kpiMetric: MasterDataConfig = {
       entityValueKey: 'uom_code',
       entityLabelKeys: ['uom_code', 'uom_name'],
       helpText:
-        "The unit this metric is normally recorded in — from the UOM master. Add a RATIO/PCT/HEAD unit there first if this metric needs one that isn't in the list yet.",
+        "The unit this metric is normally recorded in, from the UOM master. Add a RATIO/PCT/HEAD unit there first if this metric needs one that isn't in the list yet.",
     },
   ],
 };
@@ -4713,7 +4713,7 @@ const feedFormula: MasterDataConfig = {
       entityLabelKeys: ['nob_code', 'nob_name'],
       filterOnly: true,
       helpText:
-        "Scopes the Produced Item picker below — feed formulas aren't NOB/LOB-scoped themselves.",
+        "Scopes the Produced Item picker below. Feed formulas aren't NOB/LOB-scoped themselves.",
     },
     {
       key: 'lob_id',
@@ -5000,7 +5000,7 @@ const supplier: MasterDataConfig = {
       type: 'text',
       maxLength: 50,
       helpText:
-        'Required for ANIMAL_SUPPLIER — checked before a GRN from this vendor can post.',
+        'Required for ANIMAL_SUPPLIER. Checked before a GRN from this vendor can post.',
       section: 'Compliance',
     },
     {
@@ -5386,7 +5386,7 @@ const resource: MasterDataConfig = {
       key: 'license_expiry',
       label: 'License Expiry',
       type: 'date',
-      helpText: 'License/certification expiry — alert 30 days before.',
+      helpText: 'License/certification expiry. Alert 30 days before.',
       section: 'Maintenance',
       visibleWhen: { anyOf: [{ key: 'resource_type', equals: 'EQUIPMENT' }] },
     },

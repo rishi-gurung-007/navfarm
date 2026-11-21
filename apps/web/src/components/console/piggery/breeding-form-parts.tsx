@@ -108,7 +108,7 @@ export function EntryModal({
             {blocking.length
               ? engaged
                 ? `${blocking.length} thing${blocking.length === 1 ? "" : "s"} to fix before saving`
-                : "Fill in the steps, then Save — anything missing is shown then."
+                : "Fill in the steps, then Save. Anything missing is shown then."
               : "Everything the system checks is in order."}
           </p>
           <div className="flex gap-2">

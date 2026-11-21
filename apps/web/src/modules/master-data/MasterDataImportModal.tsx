@@ -594,7 +594,7 @@ export default function MasterDataImportModal({
           resData?.createdCount ?? validItems.length - backendErrors.length;
         if (createdCount > 0) {
           showToast.success(
-            `Imported ${createdCount} record(s); ${backendErrors.length} failed — see details below.`,
+            `Imported ${createdCount} record(s); ${backendErrors.length} failed. See details below.`,
           );
           onSuccess();
         }
@@ -793,7 +793,7 @@ export default function MasterDataImportModal({
               <CheckCircle2 className="h-7 w-7 text-emerald-500" />
               <p className="font-semibold text-(--text-primary)">{file.name}</p>
               <p className="text-[11px] text-(--text-muted)">
-                {(file.size / 1024).toFixed(1)} KB — Click to choose a different
+                {(file.size / 1024).toFixed(1)} KB. Click to choose a different
                 CSV file
               </p>
             </div>

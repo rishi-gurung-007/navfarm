@@ -248,7 +248,7 @@ export default function OperationalBatchDataEntry() {
   const [batchPatches, setBatchPatches] = useState<Record<string, Partial<BatchMeta>>>({});
   const batchesLoading = !!companyIdForBatches && !pagedBatches.ready;
   const batchesError = !companyIdForBatches
-    ? 'No active company — please select a company workspace first.'
+    ? 'No active company. Please select a company workspace first.'
     : pagedBatches.error
       ? `Failed to load batches: ${pagedBatches.error || 'API unavailable'}`
       : '';
@@ -1519,7 +1519,7 @@ export default function OperationalBatchDataEntry() {
     try {
       const savedCount = await saveDraftEntries();
       if (!savedCount) {
-        setSaveErrorMsg('Nothing to save — enter at least one value first.');
+        setSaveErrorMsg('Nothing to save. Enter at least one value first.');
         return;
       }
       setSaveSuccessMsg(
@@ -2130,7 +2130,7 @@ export default function OperationalBatchDataEntry() {
             })()}
           {outputForAll && (
             <span className="block text-[10px] font-normal" style={S.muted}>
-              Enter outputs one animal at a time — pick the animal above.
+              Enter outputs one animal at a time. Pick the animal above.
             </span>
           )}
         </TableCell>
@@ -3455,7 +3455,7 @@ export default function OperationalBatchDataEntry() {
                 {lockInfo.lockedAt
                   ? ` (${String(lockInfo.lockedAt).slice(0, 16).replace('T', ' ')})`
                   : ''}
-                . Fields below are read-only — pick a different date to enter
+                . Fields below are read-only. Pick a different date to enter
                 new data.
               </span>
             </div>
@@ -3631,7 +3631,7 @@ export default function OperationalBatchDataEntry() {
                     variant={reopenNotice?.kept.length ? 'warning' : 'success'}
                     message={
                       reopenNotice
-                        ? `${reopenNotice.unposted} entr${reopenNotice.unposted === 1 ? 'y' : 'ies'} reversed and back to draft — stock returned, cost and journals reversed.` +
+                        ? `${reopenNotice.unposted} entr${reopenNotice.unposted === 1 ? 'y' : 'ies'} reversed and back to draft. Stock returned, cost and journals reversed.` +
                           (reopenNotice.kept.length > 0
                             ? ` Left posted: ${reopenNotice.kept.map((k) => `${k.activity_name} (${k.reason})`).join('; ')}.`
                             : '')
@@ -3675,9 +3675,9 @@ export default function OperationalBatchDataEntry() {
                               className="w-full text-[11px] sm:max-w-xs"
                               style={S.muted}
                             >
-                              Reopening reverses what this day posted — stock is
-                              returned and cost and journals are reversed — and
-                              puts the entries back to drafts so you can correct
+                              Reopening reverses what this day posted. Stock is
+                              returned and cost and journals are reversed. It
+                              also puts the entries back to drafts so you can correct
                               and post again. Transfers and recorded deaths stay
                               posted.
                             </p>

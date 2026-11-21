@@ -289,7 +289,7 @@ export default function AnimalStageTransitionModal({
           <Field
             label="Batch"
             className="sm:col-span-6"
-            tooltip="Defaults to the animal's current batch. Pick a different one only if this move should also move the animal to that batch — it carries the animal's cost across and the animal takes on that batch's own stage, so Destination Stage no longer applies."
+            tooltip="Defaults to the animal's current batch. Pick a different one only if this move should also move the animal to that batch. It carries the animal's cost across and the animal takes on that batch's own stage, so Destination Stage no longer applies."
           >
             <SearchableSelect
               ariaLabel="Batch"

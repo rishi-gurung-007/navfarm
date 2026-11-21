@@ -1039,7 +1039,7 @@ export default function CreateSchedulerModal({
                     </p>
                     <p className="text-[11px] mt-1" style={S.muted}>
                       A scheduler's activities are filled in from the batch's
-                      breed lifecycle stage — its feed, resources, vaccinations,
+                      breed lifecycle stage: its feed, resources, vaccinations,
                       medication and KPIs. Add them to the stage in Breed
                       Master, or click <strong>Add Activity</strong> above to
                       schedule one here. They are fixed once the scheduler is
@@ -1284,7 +1284,7 @@ export default function CreateSchedulerModal({
             <span className="text-[11px]" style={S.muted}>
               {prefilling
                 ? "Filling in the stage's activities…"
-                : `${lines.length} ${lines.length === 1 ? 'activity' : 'activities'} configured — filled in from the stage; change them here, they are fixed once the scheduler is created`}
+                : `${lines.length} ${lines.length === 1 ? 'activity' : 'activities'} configured. Filled in from the stage. Change them here, as they are fixed once the scheduler is created`}
             </span>
             <div className="flex items-center gap-2">
               <Button

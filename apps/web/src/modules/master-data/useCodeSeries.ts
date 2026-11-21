@@ -259,7 +259,7 @@ export function useCodeSeries(key: string, form: Record<string, unknown>, enable
           ? "Pre-filled with the next series number. Edit if you need a different code."
           : awaitingLocationType
           ? "The selected Location Type determines the numbering series."
-          : "Live preview — allocated when saved. Another user's save may change the final number.",
+          : "Live preview. Allocated when saved. Another user's save may change the final number.",
       };
     },
   };

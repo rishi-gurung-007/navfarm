@@ -15,6 +15,6 @@ import type { MasterDataConfig } from "./types";
  */
 export function BcOwnershipNotice({ config }: { config: MasterDataConfig }) {
   return <p role="note" title={config.bcNote} className="text-sm text-(--text-secondary)">
-    Owned by Business Central — held locally until the integration is connected.
+    Managed in Business Central. Held locally until the integration is connected.
   </p>;
 }

@@ -1046,7 +1046,7 @@ export default function InventoryLedgerDetail({
               style={{ ...S.muted, borderColor: 'var(--border)' }}
             >
               Which lot left is physical. The price of each issue comes from the
-              item's costing method — see the cost entries below.
+              item's costing method. See the cost entries below.
             </p>
           </div>
         )}
@@ -1065,7 +1065,7 @@ export default function InventoryLedgerDetail({
             <h3 className="text-sm font-semibold" style={S.primary}>
               {isPositive
                 ? 'Item Application Entries (Downstream Consumptions & Issues)'
-                : "Costing — Receipts Consumed (priced by the item's costing method)"}
+                : "Costing: Receipts Consumed (priced by the item's costing method)"}
             </h3>
           </div>
           <div className="flex items-center gap-3">

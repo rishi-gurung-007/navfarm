@@ -1129,7 +1129,7 @@ export default function AnimalDetailsModal({
                   <div className="mb-3 flex items-center justify-between border-b border-[var(--border)] pb-2">
                     <h4 className="font-bold text-[var(--text-primary)] uppercase tracking-wider text-[11px] flex items-center gap-1.5">
                       <Dna className="h-3.5 w-3.5 text-[var(--accent)]" />{' '}
-                      Progeny — litters and registered offspring
+                      Progeny: litters and registered offspring
                     </h4>
                     <span className="rounded-full bg-[var(--accent-muted)] px-2 py-0.5 text-[10px] font-bold font-mono text-[var(--accent)]">
                       {(lineage.litters || []).length}{' '}
@@ -1571,7 +1571,7 @@ export default function AnimalDetailsModal({
                                     {human(m.mating_type)}
                                     {m.pooled && (
                                       <span className="block text-[10px] text-[var(--text-muted)]">
-                                        pooled lot {m.semen_lot_no || ''} — sire
+                                        pooled lot {m.semen_lot_no || ''}, sire
                                         not one boar
                                       </span>
                                     )}

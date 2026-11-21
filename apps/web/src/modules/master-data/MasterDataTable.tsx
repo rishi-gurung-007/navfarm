@@ -3367,8 +3367,8 @@ export function MasterDataTable({
         return (
           <p className="py-2 text-xs" style={S.sub}>
             {masterKey
-              ? 'This master has no fields a code can be built from — it uses the prefix and number only.'
-              : "Choose what this series applies to first — the fields offered here are that master's own."}
+              ? 'This master has no fields a code can be built from. It uses the prefix and number only.'
+              : "Choose what this series applies to first. The fields offered here are that master's own."}
           </p>
         );
       }

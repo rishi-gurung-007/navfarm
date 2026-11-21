@@ -1968,7 +1968,7 @@ export function BreedingPanel({
           <Step
             n={1}
             title="Batch"
-            hint="Breeding is recorded batch by batch — pick the batch, then its sow."
+            hint="Breeding is recorded batch by batch. Pick the batch, then its sow."
             done={!!matingForm.batch_id}
           >
             <BatchPicker
@@ -2213,7 +2213,7 @@ export function BreedingPanel({
                 label={t('brpLabelSecondInsemination')}
                 issues={matingIssues}
                 name="second_mating_date"
-                hint="Optional — within a week of the first."
+                hint="Optional. Within a week of the first."
               >
                 <DateInput
                   className="nf-input w-full text-sm"
@@ -2239,7 +2239,7 @@ export function BreedingPanel({
           <Step
             n={4}
             title="Dates and result"
-            hint="Filled in from the sow's breed — change any of them if you know better."
+            hint="Filled in from the sow's breed. Change any of them if you know better."
           >
             <div className="grid grid-cols-2 gap-3">
               <Field
@@ -3653,7 +3653,7 @@ export function BreedingPanel({
               issues={semenIssues}
               name="output_item_id"
               required
-              hint="The doses are posted to the boar's farm store as a lot of this item, with a QR (boar, batch, lot number, collection date, doses, expiry) — that is what an AI mating later draws from."
+              hint="The doses are posted to the boar's farm store as a lot of this item, with a QR (boar, batch, lot number, collection date, doses, expiry). That is what an AI mating later draws from."
             >
               <SearchableSelect
                 id="semen-item"

@@ -769,7 +769,7 @@ function TransferLines({
       <EmptyState
         title={
           headcount
-            ? 'Moved by head count — no individual animals'
+            ? 'Moved by head count, no individual animals'
             : t('btNoLines')
         }
       />

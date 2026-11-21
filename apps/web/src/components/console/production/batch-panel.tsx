@@ -957,7 +957,7 @@ export default function BatchPanel() {
       setCsvImportResult({
         matched: 0,
         errors: [
-          "The file needs an 'animal_code' (or 'rfid_tag') column — export the current list to see the expected format.",
+          "The file needs an 'animal_code' (or 'rfid_tag') column. Export the current list to see the expected format.",
         ],
       });
       return;

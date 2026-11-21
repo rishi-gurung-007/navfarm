@@ -31,7 +31,7 @@ export const translations = {
     dyDaysShort: '{{n}} d',
     dyBreedRequired: 'Choose a breed.',
     dyBreedMissingLob:
-      'That breed has no nature or line of business set — fix it in Master Data first.',
+      'That breed has no nature or line of business set. Fix it in Master Data first.',
     dyCowRegistered: 'Registered {{code}}.',
     dyFailedToRegister: 'Could not register the cow.',
     dySelectBreed: 'Select a breed',
@@ -278,7 +278,7 @@ export const translations = {
     tapOrganization: 'Organization',
     admConfigureSectorAccess: 'Configure Sector Access',
     admFullSectorAccess:
-      'Full unrestricted sector access — every nature of business and line of business is permitted for this tenant.',
+      'Full sector access. Every nature of business and line of business is allowed for this tenant.',
     admSubscriptionPlan: 'Subscription plan',
     admChangePlan: 'Change plan',
     admNewPlan: 'New plan',
@@ -337,7 +337,7 @@ export const translations = {
     admPhMaharashtra: 'Maharashtra',
     admAddCostingTitle: 'Add costing method',
     admAddCostingDesc:
-      'Add an extensible costing method to the system catalogue — no code change is needed to use it as reference data.',
+      'Add a costing method to the system catalogue. No code change is needed to use it as reference data.',
     admMethodCode: 'Method Code',
     admMethodName: 'Method Name',
     admPhWeightedAverage: 'Weighted Average Costing',
@@ -494,7 +494,7 @@ export const translations = {
     oaLobRequired: 'Line of Business (LOB) *',
     oaDescriptionNotes: 'Description / Facility Notes',
     oaPageDescription:
-      'Operational areas under this company — farm sites, breeding units and crop sectors, grouped by line of business.',
+      'Operational areas under this company: farm sites, breeding units and crop sectors, grouped by line of business.',
     oaPhAreaCode: 'e.g. PIG-UNIT-01',
     oaPhAreaName: 'e.g. Piggery Breeding Unit',
     oaPhDescription: 'Optional unit description…',
@@ -609,7 +609,7 @@ export const translations = {
     swItemDescFormula: 'Item Name / Formula',
     swStandardRateCost: 'Standard Rate / Cost',
     swSpecificAnimalsSplitQty:
-      'Specific animal(s) — optional; splits Quantity evenly across them',
+      'Specific animal(s), optional. Splits Quantity evenly across them.',
     swLogStageConsumption: 'Log Operational Stage Consumption',
     swPhFifty: 'e.g. 50',
     swPhThirtyFive: 'e.g. 35.00',
@@ -634,14 +634,14 @@ export const translations = {
     obStandardRateUom: 'Standard Rate (per UOM)',
     obConsumed: 'Consumed *',
     obSpecificAnimalsSplit:
-      'Specific animal(s) — optional; splits Consumed evenly across them',
+      'Specific animal(s), optional. Splits Consumed evenly across them.',
     obAddMedication: 'Add Medication',
     obMedicineName: 'Medicine Name / Vaccine *',
     obAddMortality: 'Add Mortality Record',
     obCauseOfDeath: 'Cause of Death / Diagnosis *',
     obRemarksVetPm: 'Remarks & Vet Post-Mortem',
     obSpecificAnimalsOverride:
-      'Specific animal(s) — optional; overrides Head Count above',
+      'Specific animal(s), optional. Overrides Head Count above.',
     obAddLabour: 'Add Labour',
     obResourceWorkerRole: 'Resource / Worker Role *',
     obHourlyRate: 'Hourly Rate',
@@ -815,7 +815,7 @@ export const translations = {
     ctSecLocaleDesc:
       'Language, currency, timezone and country for everyone working in this company.',
     ctSecFeedDesc:
-      'Forecast horizons, schedules, reminders and escalation thresholds owned by this company.',
+      'Forecast horizons, schedules, reminders and escalation thresholds for this company.',
     ctSecFiscalDesc:
       'The financial year this company reports on, and how its periods are cut.',
     ctSecSectorsDesc:
@@ -952,7 +952,7 @@ export const translations = {
     asSaved: 'Settings saved.',
     asIdentityHeader: 'Unit identity',
     asIdentityNote:
-      'Identity is owned by the Operational Areas master — edit it there so every screen stays consistent.',
+      'Identity comes from the Operational Areas master. Edit it there.',
     asManageInMaster: 'Manage in Operational Areas',
     asAreaName: 'Area name',
     asAreaCode: 'Area code',
@@ -983,9 +983,9 @@ export const translations = {
     asCostingHeader: 'Costing & alarm thresholds',
     asCostingSubhead: 'Drives variance alerts',
     asCostingMethod: 'Costing method',
-    asCostingStandard: 'STANDARD — daily standard WIP',
-    asCostingFifo: 'FIFO — first in, first out',
-    asCostingBioAsset: 'BIO_ASSET — IAS 41 fair value',
+    asCostingStandard: 'STANDARD: daily standard WIP',
+    asCostingFifo: 'FIFO: first in, first out',
+    asCostingBioAsset: 'BIO_ASSET: IAS 41 fair value',
     asDefaultFeedUom: 'Default feed UOM',
     asMortalityThreshold: 'Mortality alert benchmark',
     asTempMin: 'Barn min temperature alert',
@@ -1022,18 +1022,18 @@ export const translations = {
     amsSearchPlaceholder: 'Search ear tag / ID…',
     amsNoMatches: 'No matches.',
     amsSelectedNote:
-      '{{n}} animal(s) selected — overrides the whole-batch quantity above (split evenly).',
+      '{{n}} animal(s) selected. This overrides the whole-batch quantity above (split evenly).',
     batchTransfers: 'Batch Transfers',
     navBatchTransfers: 'Batch Transfers',
     btIntro:
-      'Move a whole batch, or selected animals, to another batch. Transferred animals stay operable — from the transfer date they simply belong to the destination batch.',
+      'Move a whole batch, or selected animals, to another batch. Transferred animals stay active. From the transfer date they belong to the destination batch.',
     btNewTransfer: 'New transfer',
     btLoading: 'Loading transfers…',
     btFailedToLoad: 'Could not load transfers.',
     btFailedToSave: 'Could not record the transfer.',
     btNoTransfers: 'No animal transfers recorded yet.',
     btNoTransfersHint:
-      'When a cycle ends — or when a few head move early — record the movement here so both batches stay accurate.',
+      'When a cycle ends, or when a few head move early, record the movement here so both batches stay accurate.',
     btStatTransfers: 'Transfers',
     btStatHeadMoved: 'Head moved',
     btStatValueMoved: 'Value moved',
@@ -1050,7 +1050,7 @@ export const translations = {
     btColAnimalType: 'Type',
     btColBookValue: 'Book value',
     btDialogDescription:
-      'Animals keep their history and stay operable after the move.',
+      'Animals keep their history and stay active after the move.',
     btFromBatch: 'From batch',
     btToBatch: 'To batch',
     btSelectSource: 'Select a source batch',
@@ -1073,7 +1073,7 @@ export const translations = {
     btRemarks: 'Remarks',
     btSubmit: 'Record transfer',
     btSubmitting: 'Recording…',
-    btSuccess: 'Transfer {{no}} recorded — {{n}} animal(s) moved.',
+    btSuccess: 'Transfer {{no}} recorded. {{n}} animal(s) moved.',
     btErrorNoSource: 'Choose the batch the animals are leaving.',
     btErrorNoDestination: 'Choose the batch the animals are joining.',
     btErrorNoAnimals: 'Select at least one animal to transfer.',
@@ -1202,9 +1202,9 @@ export const translations = {
     mdRemoveRow: 'Remove',
     selectPlaceholder: 'Select…',
     selectXFirst: 'Select {{name}} first…',
-    mdNoParentForType: 'This is a root type — no parent location needed.',
+    mdNoParentForType: 'This is a root type. No parent location needed.',
     mdNoOptionsForParent:
-      'None exist for the selected {{name}} yet — create one first.',
+      'None exist for the selected {{name}} yet. Create one first.',
     mdSortBy: 'Sort by {{name}}',
     mdFilterBy: 'Filter {{name}}',
     mdFilterAll: 'All',
@@ -1252,7 +1252,7 @@ export const translations = {
     masterDataAccessDeniedDesc:
       "Your account ({{type}}) doesn't have access to this section. Contact your company administrator if you need a change made here.",
     masterDataPageDescription:
-      'Operational reference data for your company — farms, inventory, livestock, partners and finance dimensions.',
+      'Operational reference data for your company: farms, inventory, livestock, partners and finance dimensions.',
 
     // Console — Dashboard
     loadingDashboard: 'Loading dashboard…',
@@ -1303,7 +1303,7 @@ export const translations = {
     authSignInLink: 'Sign in',
     authGetStarted: "Let's get you set up",
     authGetStartedBody:
-      "NAVFarm workspaces are configured individually — we'll walk through your farms, business lines, and first administrator account together. Reach out and our team will get you started.",
+      "NAVFarm workspaces are set up individually. We'll go through your farms, business lines and first administrator account together. Get in touch and our team will get you started.",
     authContactUs: 'Contact NAVFarm',
     authEnterEmail: 'Please enter your email',
     authCheckEmail: 'Check your email',
@@ -1737,8 +1737,8 @@ export const translations = {
     rqNewPurposeFaHint: 'Request a fixed asset to be bought.',
     rqNewPurposeService: 'Service',
     rqNewPurposeServiceHint: 'Request a service to be bought.',
-    rqNewItemStore: 'Store — transfer from a store',
-    rqNewItemPurchase: 'Purchase — buy it',
+    rqNewItemStore: 'Store: transfer from a store',
+    rqNewItemPurchase: 'Purchase: buy it',
     // Gap #16 (audit, Req r43-r56): the workbook's own words for the manual
     // line's silo, feed item, quantity and date — this screen used to use
     // its own shorter words ("Silo or store", "Feed", "Kg", "Deliver by").
@@ -1763,7 +1763,7 @@ export const translations = {
     rqnAssignedOnSave: 'Assigned on save',
     rqnDerivedOnSave: 'Derived on save',
     rqnSetOnSave: 'Set on save',
-    rqnFromLines: 'Earliest line date — set from the lines below',
+    rqnFromLines: 'Earliest line date: set from the lines below',
     rqNotYetAvailable: 'Not yet available',
     rqNoRemarks: 'No remarks provided',
     rqnColException: 'Exception reason',
@@ -1841,7 +1841,7 @@ export const translations = {
     rqdUnrounded: 'need {{kg}}',
     rqdCapacityWarning: 'Order plus opening stock exceeds the silo capacity',
     rqdCapacityUnknown:
-      'Not yet calculated for this silo — rerun the forecast or re-check after changing the destination or item',
+      'Not yet calculated for this silo. Rerun the forecast, or check again after changing the destination or item.',
     rqdSiloFor: 'Silo Code, line {{line}}',
     rqdItemFor: 'Item No., line {{line}}',
     rqdRequestedFor: 'Requested Qty KG, line {{line}}',
@@ -1918,7 +1918,7 @@ export const translations = {
     loadStatusDispatched: 'Dispatched',
     loadStatusReceived: 'Received',
     reqIntegrationNone: 'Not applicable',
-    reqIntegrationBcPending: 'Pending — Business Central not connected',
+    reqIntegrationBcPending: 'Pending: Business Central not connected',
     // Approvals → Requisitions hub (Part E Task 13): every requisition kind.
     rhType: 'Type',
     rhStatus: 'Status',
@@ -2185,7 +2185,7 @@ export const translations = {
     ffProjectedClosingWeek:
       'Projected Closing Balance at the end of the week {{date}}',
     ffBalanceExplainAria: 'Explain projected closing balance on {{date}}',
-    ffBalanceExplainTitle: 'Projected balance — {{date}}',
+    ffBalanceExplainTitle: 'Projected balance: {{date}}',
     ffBalanceExplainBody:
       'This is one silo/feed-item stock movement. The balance carries forward to the next date; shared batch rows do not add another physical delivery.',
     ffBalanceOpening: 'System Balance (opening): {{kg}} KG',
@@ -2280,7 +2280,7 @@ export const translations = {
     mplColFeedChange: 'Feed Change',
     mplColHead: 'Head',
     mplNoFeedRows: '{{count}} batch(es) with no lifecycle feed row',
-    mplNoFeedRowLine: '{{batch}} — from day {{day}}, {{date}}',
+    mplNoFeedRowLine: '{{batch}}: from day {{day}}, {{date}}',
     mplNoFeedRowsTitle: 'No lifecycle feed row for:',
     mplNotScheduledHint:
       'No mill bin is assigned to this feed on this day (BIN Diet Assignment), so the mill has no capacity set aside for it.',
@@ -2327,7 +2327,7 @@ export const translations = {
     mplCardWeek: 'Week',
     mplCardDayUse: '{{used}} t of {{cap}} t ({{pct}}%)',
     mplCardRunsOut: 'Runs out {{day}}',
-    mplFarmFailed: '{{farm}}: forecast not available — {{error}}',
+    mplFarmFailed: '{{farm}}: forecast not available: {{error}}',
     mplProduction: 'Production by Feed Type',
     mplProductionInfo:
       "Tonnes the mill must make of each feed on each day.\nApproved feed requisitions not yet produced.\nPlus what the forecast says the farms will still need, after their stock, open orders and incoming feed.\nHover a figure for the split in KG.\nThe line under a figure is the feed's bin capacity at the mill that day.",
@@ -2349,7 +2349,7 @@ export const translations = {
     mplNoDietChanges: 'No feed type changes this week.',
     mplDietChangeLine:
       'Batch {{batch}} changes on {{date}}: {{from}} → {{to}}, {{heads}} head',
-    mplGrid: 'Weekly Feed Requirement — Farm × Shed × Day',
+    mplGrid: 'Weekly Feed Requirement: Farm × Shed × Day',
     mplFarmShed: 'Farm / Shed',
     mplMillTotal: 'Mill Total',
     mplFarmSub: '{{sheds}} sheds · {{silos}} silos',
@@ -2396,6 +2396,7 @@ export const translations = {
     mplSiloStockLabel: 'Stock',
     mplSiloSpace: 'Space left',
     mplSiloFillLabel: 'Fill',
+    mplSiloInUse: 'In use',
     mplSiloRunOut: 'Run-out',
     mplSiloNoRunOut: 'Not this week',
     mplGridNote:
@@ -2462,8 +2463,8 @@ export const translations = {
     fsdTitle: 'Silo dashboard',
     fsdDescription:
       'Stock, days of feed left and the recommended order for one silo over the selected range.',
-    fsdStatusShortfall: 'Critical — under 3 days',
-    fsdStatusLow: 'Warning — under 7 days',
+    fsdStatusShortfall: 'Critical: under 3 days',
+    fsdStatusLow: 'Warning: under 7 days',
     fsdStatusOk: '7 days or more',
     fsdLoadFailed: 'The silo dashboard could not be loaded.',
     fsdEmpty: 'No silos on this farm.',
@@ -2494,7 +2495,7 @@ export const translations = {
     fsdYes: 'Yes',
     fsdNo: 'No',
     fsdNonKg: 'Non-KG stock excluded',
-    fsdAlertCritical: 'Critical — first priority',
+    fsdAlertCritical: 'Critical: first priority',
     fsdAlertInfo: 'Above threshold',
     fftTabFeedRequisition: 'Feed Requisition',
     fftTabPhysicalCount: 'Physical Stock Count',
@@ -2634,7 +2635,7 @@ export const translations = {
     flsColLoaded: 'KG loaded',
     flsColStatus: 'Status',
     flsColActions: 'Actions',
-    flsShipmentPending: 'Shipment pending — post shipment from the requisition',
+    flsShipmentPending: 'Shipment pending. Post the shipment from the requisition.',
     flsNoDestination: 'No destination',
     flsBin: 'BIN',
     flsNotConfigured: 'Not configured',
@@ -2819,7 +2820,7 @@ export const translations = {
     ffCalculating: 'Calculating…',
     ffReturnToCurrent: 'Return to current calculation',
     ffCoveredByRequisition:
-      'Not offered for a new requisition — an open requisition would already cover the shortage: {{lines}}.',
+      'Not offered for a new requisition. An open requisition already covers the shortage: {{lines}}.',
     ffCoveredLine: '{{silo}} · {{item}} by {{by}}',
     ffSavedRunPast:
       'This saved calculation was planned as of {{date}}, so its earlier days have passed. Delete it and calculate again to plan from today.',
@@ -2863,7 +2864,7 @@ export const translations = {
     ffNoteHeads: 'Head counts',
     ffNoteNegativeBalance: 'Negative balance in the ledger (shown as 0)',
     ffNoteNegativeBalanceItem:
-      'System balance for {{sourceCode}} ({{itemName}}) was {{kg}} KG in the ledger on {{date}} — stock was used before it was received; check the postings.',
+      'System balance for {{sourceCode}} ({{itemName}}) was {{kg}} KG in the ledger on {{date}}. Stock was used before it was received, so check the postings.',
     ffNoteDayRange: '{{batchNo}} {{stageCode}} day {{days}} ({{dates}})',
     ffNoteShedItem: '{{shedCode}}: {{itemName}}',
     ffNoteStageChangeItem:
@@ -3460,7 +3461,7 @@ export const translations = {
     bcvTotal: 'Total across {{count}} batch(es)',
     bcvLoading: 'Loading variances…',
     bcvNoClosedBatches:
-      'No variances yet — they are posted when a standard-costed batch is closed.',
+      'No variances yet. They are posted when a standard-costed batch is closed.',
     bcvNoMatch: 'No batch matches that search.',
     bcvFailedToLoad: 'Could not load the batch cost variance report.',
     finPageDescription:
@@ -3486,7 +3487,7 @@ export const translations = {
     // Console — Master Data page chrome
     mdMasterScope: 'Master Scope:',
     mdTenantScopeNote:
-      'Master data is managed inside a company or operational area — switch workspace.',
+      'Master data is managed inside a company or operational area. Switch workspace to manage it.',
     mdCompanyRecordsSuffix: '(Company Records)',
     mdYes: 'Yes',
     mdNo: 'No',
@@ -3600,14 +3601,14 @@ export const translations = {
     ntSmtpPort: 'SMTP Port',
     ntSmtpUser: 'SMTP Username',
     ntAppPassword: 'App Password',
-    ntAppPasswordConfigured: ' (configured — leave blank to keep)',
+    ntAppPasswordConfigured: ' (configured, leave blank to keep)',
     ntFromEmail: 'From Email',
     ntFromName: 'From Name',
     ntSaveEmailConfig: 'Save Email Config',
     ntWebhookConfig: 'Webhook Configuration',
     ntWebhookUrl: 'Webhook URL',
     ntSecretKeyOptional: 'Secret Key (Optional)',
-    ntSecretConfigured: ' — configured, leave blank to keep',
+    ntSecretConfigured: ': configured, leave blank to keep',
     ntSaveWebhookConfig: 'Save Webhook Config',
     ntTestSetupTitle: 'Test your notification setup',
     ntTestSetupDesc:
@@ -3827,7 +3828,7 @@ export const translations = {
     roleNoCustomRoles: 'No custom roles configured yet.',
     roleCustomOperatorScopes: 'Custom operator scopes',
     roleEditName: 'Edit Name',
-    roleSystemLocked: 'System role — locked',
+    roleSystemLocked: 'System role: locked',
     roleDeleteAction: 'Delete',
     roleAccessMatrix: 'Access Matrix: {{name}}',
     roleIdLabel: 'Role ID: {{id}}',
@@ -3932,7 +3933,7 @@ export const translations = {
     edmWillBeDeactivated: 'Will be deactivated',
     edmRoleAssignment: 'Role Assignment',
     edmNoRolesYet: 'No roles assigned yet.',
-    edmSelectRoleToAssign: '— Select a role to assign —',
+    edmSelectRoleToAssign: 'Select a role to assign',
     edmAssigning: 'Assigning…',
     edmAssignRole: 'Assign Role',
     edmNoRolesDefined: 'No roles defined yet.',
@@ -3941,7 +3942,7 @@ export const translations = {
     edmHomeSuffix: '(Home)',
     edmRemoveFromCompany: 'Remove from company',
     edmOnlyHomeCompany: 'Only assigned to home company.',
-    edmAssignToAnotherCompany: '— Assign to another company —',
+    edmAssignToAnotherCompany: 'Assign to another company',
 
     // --- New panel translations (auto-added) ---
     alrtPageTitle: 'Alert Center',
@@ -4061,7 +4062,7 @@ export const translations = {
     bulkScopeWholeBatch: 'Whole batch',
     bulkScopeSpecificCount: '{{count}} animal(s)',
     bulkScopeExceptCount: 'All except {{count}}',
-    bulkScopeModalTitle: 'Entry Scope — {{code}}',
+    bulkScopeModalTitle: 'Entry Scope: {{code}}',
     bulkScopeModeWhole: 'Whole batch',
     bulkScopeModeSpecific: 'Specific animals',
     bulkScopeModeExcept: 'All except selected',
@@ -4163,7 +4164,7 @@ export const translations = {
     pkFailedToVoidPack: 'Failed to void pack.',
     pkPacks: 'Packs',
     pkPacksDescription:
-      'Generated traceability packs (QR codes) for batch output — farm-to-pack lineage.',
+      'Generated traceability packs (QR codes) for batch output, showing farm-to-pack lineage.',
     pkSearchPackLotPlaceholder: 'Search pack / lot…',
     pkLoading: 'Loading…',
     pkNoPacksGeneratedYet: 'No packs generated yet.',
@@ -4266,8 +4267,8 @@ export const translations = {
     qcpSelectEllipsis: 'Select…',
     qcpLineOfBusiness: 'Line of Business',
     qcpSelectNatureOfBusinessFirst: 'Select Nature of Business first…',
-    qcpMandatoryYesOption: 'Yes — must pass for overall QC to pass',
-    qcpMandatoryNoOption: 'No — informational only',
+    qcpMandatoryYesOption: 'Yes: must pass for overall QC to pass',
+    qcpMandatoryNoOption: 'No: informational only',
     qcpMinValue: 'Min Value',
     qcpMaxValue: 'Max Value',
     qcpTargetValue: 'Target Value',
@@ -4307,9 +4308,9 @@ export const translations = {
     schedSaving: 'Saving…',
     schedSave: 'Save',
     schedLockedWarning:
-      "This scheduler is locked — at least one ACTIVE batch is using it, so its plan must stay fixed while that batch is being KPI-tracked against it. Everything below is read-only. It unlocks automatically once every batch using it has closed or been cancelled, or you can create a new scheduler now if you don't want to wait.",
+      "This scheduler is locked because at least one ACTIVE batch is using it. Its plan has to stay fixed while that batch is tracked against it, so everything below is read-only. It unlocks once every batch using it has closed or been cancelled. If you don't want to wait, create a new scheduler.",
     schedLockedFieldsNote:
-      'Nature of Business, Line of Business, Code, Duration and Breed are locked after creation — create a new scheduler to change them.',
+      'Nature of Business, Line of Business, Code, Duration and Breed are locked after creation. Create a new scheduler to change them.',
     schedNob: 'Nature of Business',
     schedLob: 'Line of Business',
     schedCode: 'Code',
@@ -4343,7 +4344,7 @@ export const translations = {
     schedColCritical: 'Critical %',
     schedColStage: 'Stage',
     schedWholeBatch: 'Whole batch',
-    schedMixedStages: 'Mixed — set per line below',
+    schedMixedStages: 'Mixed: set per line below',
     schedAppliesToHint:
       'Sets the stage for every line at once. Each line can still be changed individually below.',
     schedTypeLabel: 'Type:',
@@ -4369,7 +4370,7 @@ export const translations = {
     ppsAccessDeniedDesc:
       'Contact your company administrator if you need access to this section.',
     ppsPageDescription:
-      '{{lob}} Operational Area — Lifecycle tracking, batch feed & health logs, and cost-allocated closing.',
+      '{{lob}} Operational Area: lifecycle tracking, batch feed and health logs, and cost-allocated closing.',
     gipWarehouse: 'Location',
     grpTitle: 'GRN',
     grpSubtitle:
@@ -4410,7 +4411,7 @@ export const translations = {
     grpColUom: 'UOM',
     grpColRate: 'Unit Cost',
     grpColTotalCost: 'Total Cost',
-    grpToastPosted: 'GRN {{no}} posted — stock updated.',
+    grpToastPosted: 'GRN {{no}} posted. Stock updated.',
     grpToastDraftSaved: 'GRN {{no}} saved as draft.',
     grpToastDraftUpdated: 'GRN {{no}} draft updated.',
     grpColTracking: 'Tracking',
@@ -4421,7 +4422,7 @@ export const translations = {
     grpTrkYesSerial: 'Yes · Serial',
     grpTrkNo: 'No',
     grpTrkSerialSummary: '{{n}} / {{total}} serials',
-    grpTrkTitle: 'Item Tracking Lines — {{code}}',
+    grpTrkTitle: 'Item Tracking Lines: {{code}}',
     grpTrkDescription:
       "The lot or serial numbers this receipt brings in. Type them from the supplier's papers, or generate new ones from the item's tracking series.",
     grpTrkApply: 'Apply Tracking',
@@ -4440,7 +4441,7 @@ export const translations = {
       'This item has no tracking series; type the numbers instead.',
     grpTrkSerialCount: 'Serial Numbers ({{n}} / {{total}})',
     grpTrkSerialMismatch:
-      '{{n}} serials for a quantity of {{total}} — one serial per unit.',
+      '{{n}} serials for a quantity of {{total}}. Enter one serial per unit.',
     grpTrkAddSerial: 'Add Serial',
     grpTrkNoSerials:
       'No serial numbers yet. Generate them or add them one by one.',
@@ -4552,7 +4553,7 @@ export const translations = {
     sbpColStatus: 'Status',
     sbpLoading: 'Loading…',
     sbpNoStockOnHand:
-      'No stock on hand — post a GRN to bring items into inventory.',
+      'No stock on hand. Post a GRN to bring items into inventory.',
     sbpReorder: 'Reorder',
     sbpOk: 'OK',
     stpFailedToLoad: 'Failed to load transfer orders.',
@@ -4626,13 +4627,13 @@ export const translations = {
     barfCsvMovementLine: 'Movement Line',
     barfCsvAmountInr: 'Amount (INR)',
     barfOpeningCarryingValue: 'Opening Carrying Value',
-    barfCsvAcquisitions: 'Additions — Acquisitions / Purchases',
+    barfCsvAcquisitions: 'Additions: Acquisitions / Purchases',
     barfCsvGrowthCapitalization:
-      'Additions — Growth Capitalization (Feed/Meds/Overhead)',
-    barfCsvAmortization: 'Deductions — Amortization (Mature Breeding Stock)',
+      'Additions: Growth Capitalization (Feed/Meds/Overhead)',
+    barfCsvAmortization: 'Deductions: Amortization (Mature Breeding Stock)',
     barfCsvFairValueAdjustments: 'Fair Value Adjustments (P&L)',
-    barfCsvHarvestTransfers: 'Transfers — Harvest / Slaughter to Inventory',
-    barfCsvDisposals: 'Deductions — Disposals / Mortalities',
+    barfCsvHarvestTransfers: 'Transfers: Harvest / Slaughter to Inventory',
+    barfCsvDisposals: 'Deductions: Disposals / Mortalities',
     barfNetPeriodMovements: 'Net Period Movements',
     barfClosingCarryingValue: 'Closing Carrying Value',
     barfCsvGlReconciliation: 'General Ledger (GL) Reconciliation',
@@ -4794,7 +4795,7 @@ export const translations = {
     astmMinDurationOverrideError:
       'Minimum duration is {{minDays}} days (currently {{daysInStage}} days). Please provide a reason to override.',
     astmFailedToRecordTransition: 'Failed to record stage transition.',
-    astmModalTitle: 'Stage & Pen Transition — {{animalCode}}',
+    astmModalTitle: 'Stage & Pen Transition: {{animalCode}}',
     astmModalDescription:
       'Advance an animal within its current Batch and location, and track parity.',
     astmCancel: 'Cancel',
@@ -4957,7 +4958,7 @@ export const translations = {
     rfmRecordDoseTitle: 'Record Medication / Vaccine Dose',
     rfmMedicineVaccine: 'Medicine / Vaccine',
     rfmSelectMedicine: 'Select medicine…',
-    rfmWithdrawalDaysSuffix: '— {{days}}d withdrawal',
+    rfmWithdrawalDaysSuffix: '({{days}}d withdrawal)',
     rfmDoseQty: 'Dose Qty',
     rfmDoseQtyPlaceholder: 'e.g. 5',
     rfmCancel: 'Cancel',
@@ -5062,7 +5063,7 @@ export const translations = {
       '✓ Successfully imported {{count}} ear tags into batch {{code}}!',
     baapConfirmRemoveAnimal: 'Are you sure you want to remove animal {{tag}}?',
     baapAssignExistingSectionTitle: 'Assign an Existing Animal',
-    baapSelectAnimalPlaceholder: '— select animal —',
+    baapSelectAnimalPlaceholder: 'Select animal',
     baapNoUnassignedAnimals:
       'No unassigned animals available. Register a new one below.',
     baapErrSelectAnimalToAssign: 'Select an animal to assign.',
@@ -5111,11 +5112,11 @@ export const translations = {
     anpSourceReceiptId: 'Source Receipt ID *',
     anpSourceReceiptPlaceholder: 'GRN UUID',
     anpSourceBatch: 'Source Batch *',
-    anpSelectBatch: '— select batch —',
+    anpSelectBatch: 'Select batch',
     anpNotes: 'Notes',
-    anpSelectPlaceholder: '— select —',
-    anpSelectNobFirst: '— select NOB first —',
-    anpSelectLobFirst: '— select LOB first —',
+    anpSelectPlaceholder: 'Select',
+    anpSelectNobFirst: 'Select NOB first',
+    anpSelectLobFirst: 'Select LOB first',
     anpAnimalDetailTitle: 'Animal: {{code}}',
     anpDispose: 'Dispose',
     anpDisposed: 'Disposed',
@@ -5172,18 +5173,18 @@ export const translations = {
     anpAdministeredBy: 'Administered By',
     anpAdministeredByPlaceholder: 'Vet / handler name (free text)',
     anpDisposeAnimalTitle: 'Dispose Animal',
-    anpDisposeAnimalTitleWithCode: 'Dispose Animal — {{code}}',
+    anpDisposeAnimalTitleWithCode: 'Dispose Animal: {{code}}',
     anpDisposeAnimalDesc:
       'This is a permanent exit from the register. The animal record is kept for audit.',
     anpConfirmDisposal: 'Confirm Disposal',
     anpCannotSlaughterHeading:
-      'Cannot slaughter — withdrawal period not elapsed',
+      'Cannot slaughter: withdrawal period not elapsed',
     anpSlaughterWithdrawalHint:
       'Slaughter is blocked if any medicine withdrawal period has not elapsed. Check the Medication Log tab to confirm clearance before proceeding.',
     anpDisposalType: 'Disposal Type *',
     anpDate: 'Date *',
     anpDisposalReason: 'Reason',
-    anpDisposalReasonNone: '— None —',
+    anpDisposalReasonNone: 'None',
     anpDisposalValue: 'Disposal Value (sale/salvage)',
     anpGenderFemale: 'Female',
     anpGenderMale: 'Male',
@@ -5258,7 +5259,7 @@ export const translations = {
     brpSemenLotOptionLabel: '{{boar}} · collected {{date}}',
     brpLabelExpectedFarrowingDate: 'Expected farrowing date',
     brpHintGestationDays:
-      "{{days}} days after service — the sow's breed's own gestation length.",
+      "{{days}} days after service, which is the gestation length set for the sow's breed.",
     brpLabelPregCheckDate: 'Pregnancy check date',
     brpLabelResultShort: 'Result',
     brpResultCONFIRMED: 'Confirmed',
@@ -5530,7 +5531,7 @@ export const translations = {
     blGenerateAnotherPack: 'Generate Another Pack',
     blGeneratePack: 'Generate Pack',
     blGeneratePackTitle: 'Generate Pack',
-    blGeneratePackTitleFull: 'Generate Pack — {{item}}',
+    blGeneratePackTitleFull: 'Generate Pack: {{item}}',
     blGenerating: 'Generating…',
     blInputLineTitle: 'Input Line',
     blInputLinesInitialTitle: 'Input Lines & Initial Requisitions',
@@ -5738,12 +5739,12 @@ export const translations = {
     blNewBatch: 'New Batch',
     blNoBatches: 'No batches yet.',
     blNoCostGlImpactNote:
-      'This is a tracking event only — no cost or GL impact.',
+      'This is a tracking event only. It has no cost or GL impact.',
     blNoParamsScheduled: 'No parameters scheduled for this date.',
     blQcTarget: 'target',
     blNoQcParams: 'No active QC parameters defined yet.',
     blNoSchedulerInfo:
-      'This batch has no scheduler attached — record entries via the Transactions tab instead.',
+      'This batch has no scheduler attached. Record entries in the Transactions tab instead.',
     scLabelStatus: 'Status',
     scLabelBatch: 'Batch',
     scLabelStage: 'Stage',
@@ -5851,7 +5852,7 @@ export const translations = {
     schFilterStatus: 'All statuses',
     schSearchPlaceholder: 'Search by batch or scheduler no…',
     schViewDetail: 'View',
-    schDetailTitle: 'Scheduler {{schedulerNo}} — {{batchNo}}',
+    schDetailTitle: 'Scheduler {{schedulerNo}}: {{batchNo}}',
     schTabSystem: 'System Schedulers',
     schTabDraft: 'Draft',
     schTabActive: 'Active',
@@ -5859,7 +5860,7 @@ export const translations = {
     schFromSystem: 'Copied from {{name}}',
     sysSchCreate: 'Create System Scheduler',
     sysSchCreateTitle: 'New System Scheduler',
-    sysSchDetailTitle: 'System Scheduler — {{name}}',
+    sysSchDetailTitle: 'System Scheduler: {{name}}',
     sysSchSearch: 'Search by name',
     sysSchColName: 'Name',
     sysSchColActivities: 'Activities',
@@ -5894,7 +5895,7 @@ export const translations = {
     scCopyHint:
       "Pick a system scheduler or a batch's scheduler to copy its activities from. You can edit or remove them afterwards.",
     scCopyEmptyHint:
-      'No activities yet — add one, or copy them from another scheduler.',
+      'No activities yet. Add one, or copy them from another scheduler.',
     scCopySearch: 'Search by name, batch, stage or breed',
     scCopyBatchSection: 'Batch Schedulers',
     scCopySameStage: 'Same stage',
@@ -5905,21 +5906,21 @@ export const translations = {
       "This form already has {{n}} activities. Copying replaces them with the chosen scheduler's.",
     scCopyNoActivities: 'The chosen scheduler has no activities to copy.',
     blNoStagesConfigured:
-      "No stages are configured on this batch's scheduler yet — add stage-scoped parameter lines to the scheduler (Production → Schedulers) before transferring.",
+      "No stages are configured on this batch's scheduler yet. Before transferring, add stage-scoped parameter lines to the scheduler (Production → Schedulers).",
     blNoTransactions: 'No transactions yet.',
     blNone: 'None',
-    blOutputByProduct: 'Remove now — By-product (at NRV)',
-    blOutputLinesSplitNote: 'Output Lines — split % must sum to 100',
+    blOutputByProduct: 'Remove now: By-product (at NRV)',
+    blOutputLinesSplitNote: 'Output Lines: split % must sum to 100',
     blOutputLinesTitle: 'Output Lines',
     blOutputMainProduct: 'Main product (at close)',
     blOutputTypeByProduct: 'By-Product',
     blOutputTypeMain: 'Main',
-    blOutputWaste: 'Remove now — Waste (at NRV)',
+    blOutputWaste: 'Remove now: Waste (at NRV)',
     blOverallResult: 'Overall Result: {{result}}',
     blPackQcGateTooltip:
       'This LOB requires a passing QC record before a pack can be generated',
     blPackQcRequiredWarning:
-      'This LOB requires QC — select a QC record below with result PASS to generate a pack.',
+      'This LOB requires QC. Select a QC record below with result PASS to generate a pack.',
     blPageSubtitle:
       'Batch lifecycle: input placement, daily consumption/mortality/output, and closing to finished inventory.',
     blPageTitle: 'Batches',
@@ -5936,14 +5937,14 @@ export const translations = {
     blPlaceholderRate: 'Rate',
     blPlaceholderRemarks: 'Remarks',
     blQcOptionalSuffix: ' (optional)',
-    blQcRequiredSuffix: ' (required — must PASS)',
+    blQcRequiredSuffix: ' (required, must PASS)',
     blRateEstimateNote:
-      'Rate is an estimate only — actual cost is drawn from inventory via FIFO when the batch is activated.',
+      'Rate is an estimate only. Actual cost comes from inventory by FIFO when the batch is activated.',
     blRecordFairValue: 'Record Fair Value',
     blRecordQc: 'Record QC',
     blRecordQcTitle: 'Record QC',
-    blRecordQcTitleFull: 'Record QC — {{item}}',
-    blRenewBatch: 'Renew Batch — Start Next Cycle',
+    blRecordQcTitleFull: 'Record QC: {{item}}',
+    blRenewBatch: 'Renew Batch: Start Next Cycle',
     blRunAmortization: 'Run Amortization',
     blSaleProceedsNote:
       "The proceeds post to Trade Receivables against the customer, and the gain or loss against the animals' book value posts with them.",
@@ -5972,7 +5973,7 @@ export const translations = {
     blStdCostCarriedForwardNote:
       ' (standard-cost assumptions carried forward too)',
     blStdCostSubtitle:
-      'Optional — set these to enable Price/Usage/Output/Overhead variance calculation when the batch closes.',
+      'Optional. Set these to get Price/Usage/Output/Overhead variance calculated when the batch closes.',
     blStdCostTitle: 'Standard Cost Assumptions',
     blSubmitInspection: 'Submit Inspection',
     blTabCurves: 'Performance & Curves',
@@ -6039,7 +6040,7 @@ export const translations = {
       'Lets this user tick Direct Transfer on a Store requisition, posting shipment and receipt in one step.',
     tmFarmRequired: 'Select the farm this standard user belongs to.',
     tmAreasHint:
-      'Operational area and farm are separate access dimensions — an area is the line of business, a farm is the place.',
+      'Operational area and farm are separate access settings. An area is the line of business, a farm is the place.',
     tmAreasNone: 'No operational area assigned.',
     tmCompanyFixed: 'Users are created in your own company.',
     tmSelectCompany: 'Select a company',
@@ -6078,7 +6079,7 @@ export const translations = {
     rolMemberAssignFailed: 'Failed to assign the role.',
     rolMemberRemoveFailed: 'Failed to remove the role.',
     rolMemberSingleRoleNote:
-      'A user holds one role at a time — assigning this role replaces the one they hold now.',
+      'A user holds one role at a time. Assigning this role replaces the one they have now.',
     rolHoldersBadge: '{{n}} users',
     // W2R (10 Oct)
     rqdColMillBin: 'Mill Loading Bin No.',
@@ -6169,7 +6170,7 @@ export const translations = {
     deMortNone: 'No registered animals are alive at this stage.',
     deMortWeight: 'Dead weight (kg)',
     deMortReason: 'Reason for death',
-    deMortOther: 'Other — type the reason',
+    deMortOther: 'Other: type the reason',
     deMortOtherText: 'Type the reason',
     deMortDestination: 'Disposal destination (optional)',
     deMortDone: 'Done',
@@ -6186,7 +6187,7 @@ export const translations = {
     deLockStageDay: 'Lock Stage Day',
     deMortAnimalHelp: 'Enter the dead weight and the reason for {{animal}}.',
     deMortThisAnimal: 'This animal',
-    deMortOneAnimal: 'One animal can die only once — enter 1.',
+    deMortOneAnimal: 'One animal can die only once. Enter 1.',
     // LFO (11 Oct)
     lcFarmOverride: 'Farm (override)',
     lcFarmOverrideHelp:

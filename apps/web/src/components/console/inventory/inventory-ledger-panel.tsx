@@ -753,7 +753,7 @@ export default function InventoryLedgerPanel() {
                             className="text-[10px] font-semibold cursor-default"
                             title={
                               Number(row.lot_lines) > 0
-                                ? `${row.lot_lines} lots — open the entry to see which`
+                                ? `${row.lot_lines} lots. Open the entry to see which`
                                 : row.serial_no
                                   ? `Serial No(s): ${row.serial_no}`
                                   : `Lot: ${row.lot_no}${row.expiry_date ? ` (Exp: ${formatDate(row.expiry_date)})` : ''}`
