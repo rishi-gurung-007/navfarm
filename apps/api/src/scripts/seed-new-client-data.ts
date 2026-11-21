@@ -1126,30 +1126,38 @@ async function run() {
     plan.pigletDeathRowsSeen = pigletDeathRowsSeen;
     plan.sowIndicatorRowsSeen = sowIndicatorsSeen;
 
-    // ---- Porta commercial grower batch -------------------------------------
+    // ---- Porta commercial grower batches ------------------------------------
     // Porta had no weaner/grower/finisher lot at all (only the breeding-stock
     // placeholder batch), so it could never appear on a Slaughter Transfer
     // Order or in the Feed Forecast. Mirrors the existing Multiplier demo
     // batch BATCH-000012 (COUNT_ONLY/BATCH_WISE — this tenant's grower stock
     // is tracked by head count, not individual animal_register rows).
-    const PORTA_GROWER_BATCH_NO = 'BATCH-000014';
-    const PORTA_GROWER_HEAD_COUNT = 187; // matches the Porta kill sheet's headcount
-    const PORTA_GROWER_SHED_CODE = 'PGH1';
+    // BATCH-000014 was fully dispatched through a Slaughter Transfer Order
+    // (20 Nov showcase) — its closing_quantity is correctly 0, so it has
+    // nothing left to feed. BATCH-000015 is a second, undispatched batch so
+    // Porta's Feed Forecast still has live animals to calculate for.
     const GROWER_STAGE_ID = '1cf0587c-a1e5-48c5-93f3-0aee7927665c';
-    let portaGrowerBatchId: string | null = null;
-    const [[existingPortaGrower]] = await db.query<mysql.RowDataPacket[]>(
-      'SELECT batch_id FROM batch_header WHERE tenant_id = ? AND batch_no = ? LIMIT 1',
-      [scope.tenant_id, PORTA_GROWER_BATCH_NO],
-    );
-    if (existingPortaGrower) {
-      portaGrowerBatchId = existingPortaGrower.batch_id as string;
-      plan.portaGrowerBatch = { batchNo: PORTA_GROWER_BATCH_NO, action: 'already-exists', batchId: portaGrowerBatchId };
-    } else {
+    const portaGrowerBatches = [
+      { batchNo: 'BATCH-000014', shedCode: 'PGH1', headCount: 187 }, // matches the Porta kill sheet's headcount; fully dispatched
+      { batchNo: 'BATCH-000015', shedCode: 'PGH2', headCount: 165 }, // kept live, for Feed Forecast demo data
+    ];
+    const portaGrowerBatchIds: string[] = [];
+    plan.portaGrowerBatches = [];
+    for (const spec of portaGrowerBatches) {
+      const [[existing]] = await db.query<mysql.RowDataPacket[]>(
+        'SELECT batch_id FROM batch_header WHERE tenant_id = ? AND batch_no = ? LIMIT 1',
+        [scope.tenant_id, spec.batchNo],
+      );
+      if (existing) {
+        portaGrowerBatchIds.push(existing.batch_id as string);
+        (plan.portaGrowerBatches as unknown[]).push({ batchNo: spec.batchNo, action: 'already-exists', batchId: existing.batch_id });
+        continue;
+      }
       const [[template]] = await db.query<mysql.RowDataPacket[]>(
         `SELECT * FROM batch_header WHERE tenant_id = ? AND batch_no = 'BATCH-000012' LIMIT 1`,
         [scope.tenant_id],
       );
-      const shed = locationByCode.get(PORTA_GROWER_SHED_CODE);
+      const shed = locationByCode.get(spec.shedCode);
       const growerItemRow = (
         await db.query<mysql.RowDataPacket[]>(
           `SELECT item_id FROM item_master WHERE tenant_id = ? AND item_code = 'BIO-SWINE-GROWER' LIMIT 1`,
@@ -1157,48 +1165,49 @@ async function run() {
         )
       )[0][0];
       if (!template || !shed || shed.location_type !== 'SHED' || !growerItemRow) {
-        plan.portaGrowerBatch = {
-          batchNo: PORTA_GROWER_BATCH_NO,
+        (plan.portaGrowerBatches as unknown[]).push({
+          batchNo: spec.batchNo,
           action: 'skipped',
           reason: !template
             ? 'template batch BATCH-000012 not found'
             : !shed
-              ? `shed ${PORTA_GROWER_SHED_CODE} not found`
+              ? `shed ${spec.shedCode} not found`
               : 'BIO-SWINE-GROWER item not found',
-        };
-      } else {
-        portaGrowerBatchId = randomUUID();
-        const portaFarmRow = locationByCode.get('POR100');
-        if (write) {
-          await db.query(
-            `INSERT INTO batch_header
-               (batch_id, tenant_id, company_id, batch_no, lob_id, nob_id, costing_method, breed_id,
-                shed_id, location_id, start_date, expected_end_date, status, opening_quantity, uom,
-                closing_quantity, current_stage_code, stage_id, operational_area_id, animal_tracking,
-                farm_id, tracking_mode, is_litter_lot, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-08-01', '2026-11-15', 'ACTIVE', ?, 'HEAD',
-                     ?, ?, ?, ?, ?, ?, ?, 0, NOW(), NOW())`,
-            [
-              portaGrowerBatchId, scope.tenant_id, portaFarmRow?.company_id ?? scope.company_id, PORTA_GROWER_BATCH_NO,
-              template.lob_id, template.nob_id, template.costing_method, template.breed_id, shed.location_id,
-              shed.location_id, PORTA_GROWER_HEAD_COUNT, PORTA_GROWER_HEAD_COUNT, template.current_stage_code,
-              template.stage_id, template.operational_area_id, template.animal_tracking,
-              portaFarmRow?.location_id, template.tracking_mode,
-            ],
-          );
-          await db.query(
-            `INSERT INTO batch_bio_asset_state (state_id, batch_id, stage, current_quantity, nca_book_value, updated_at)
-             VALUES (?, ?, 'PREMATURE', ?, 0, NOW())`,
-            [randomUUID(), portaGrowerBatchId, PORTA_GROWER_HEAD_COUNT],
-          );
-          await db.query(
-            `INSERT INTO batch_input_line (line_id, batch_id, line_no, item_id, quantity, uom, rate)
-             VALUES (?, ?, 1, ?, ?, 'HEAD', 0)`,
-            [randomUUID(), portaGrowerBatchId, growerItemRow.item_id, PORTA_GROWER_HEAD_COUNT],
-          );
-        }
-        plan.portaGrowerBatch = { batchNo: PORTA_GROWER_BATCH_NO, action: 'insert', batchId: portaGrowerBatchId };
+        });
+        continue;
       }
+      const newBatchId = randomUUID();
+      const portaFarmRow = locationByCode.get('POR100');
+      if (write) {
+        await db.query(
+          `INSERT INTO batch_header
+             (batch_id, tenant_id, company_id, batch_no, lob_id, nob_id, costing_method, breed_id,
+              shed_id, location_id, start_date, expected_end_date, status, opening_quantity, uom,
+              closing_quantity, current_stage_code, stage_id, operational_area_id, animal_tracking,
+              farm_id, tracking_mode, is_litter_lot, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-08-01', '2026-11-15', 'ACTIVE', ?, 'HEAD',
+                   ?, ?, ?, ?, ?, ?, ?, 0, NOW(), NOW())`,
+          [
+            newBatchId, scope.tenant_id, portaFarmRow?.company_id ?? scope.company_id, spec.batchNo,
+            template.lob_id, template.nob_id, template.costing_method, template.breed_id, shed.location_id,
+            shed.location_id, spec.headCount, spec.headCount, template.current_stage_code,
+            template.stage_id, template.operational_area_id, template.animal_tracking,
+            portaFarmRow?.location_id, template.tracking_mode,
+          ],
+        );
+        await db.query(
+          `INSERT INTO batch_bio_asset_state (state_id, batch_id, stage, current_quantity, nca_book_value, updated_at)
+           VALUES (?, ?, 'PREMATURE', ?, 0, NOW())`,
+          [randomUUID(), newBatchId, spec.headCount],
+        );
+        await db.query(
+          `INSERT INTO batch_input_line (line_id, batch_id, line_no, item_id, quantity, uom, rate)
+           VALUES (?, ?, 1, ?, ?, 'HEAD', 0)`,
+          [randomUUID(), newBatchId, growerItemRow.item_id, spec.headCount],
+        );
+      }
+      portaGrowerBatchIds.push(newBatchId);
+      (plan.portaGrowerBatches as unknown[]).push({ batchNo: spec.batchNo, action: 'insert', batchId: newBatchId });
     }
 
     // ---- Demo batch lifecycle freshness ------------------------------------
@@ -1224,7 +1233,7 @@ async function run() {
       { batchId: '6dc992db-8177-42a9-ae06-1b2f739965a6', stageId: GROWER_STAGE_ID, daysAgoCount: 19 }, // BATCH-000012
       { batchId: 'f3052ec9-4d71-477c-9afb-6dd47bfeb778', stageId: DOUBLE_STOCK_STAGE_ID, daysAgoCount: 5 }, // BATCH-000010
     ];
-    if (portaGrowerBatchId) freshness.push({ batchId: portaGrowerBatchId, stageId: GROWER_STAGE_ID, daysAgoCount: 19 });
+    for (const batchId of portaGrowerBatchIds) freshness.push({ batchId, stageId: GROWER_STAGE_ID, daysAgoCount: 19 });
     let freshnessUpdated = 0;
     let freshnessCreated = 0;
     for (const f of freshness) {
@@ -1241,9 +1250,9 @@ async function run() {
           );
         }
         freshnessUpdated++;
-      } else if (f.batchId === portaGrowerBatchId) {
+      } else if (portaGrowerBatchIds.includes(f.batchId)) {
         const [[batch]] = await db.query<mysql.RowDataPacket[]>(
-          'SELECT batch_id, company_id, lob_id, nob_id, breed_id, shed_id, operational_area_id FROM batch_header WHERE batch_id = ?',
+          'SELECT batch_id, batch_no, company_id, lob_id, nob_id, breed_id, shed_id, operational_area_id FROM batch_header WHERE batch_id = ?',
           [f.batchId],
         );
         const [[headCount]] = await db.query<mysql.RowDataPacket[]>(
@@ -1260,7 +1269,7 @@ async function run() {
             [
               randomUUID(), scope.tenant_id, batch.company_id, batch.batch_id, f.stageId, batch.breed_id,
               batch.lob_id, batch.nob_id, batch.shed_id, effectiveFrom, daysAhead(75),
-              headCount?.current_quantity ?? PORTA_GROWER_HEAD_COUNT, `SCH-SHOWCASE-${PORTA_GROWER_BATCH_NO}`,
+              headCount?.current_quantity ?? 0, `SCH-SHOWCASE-${batch.batch_no}`,
             ],
           );
         }
@@ -1268,6 +1277,65 @@ async function run() {
       }
     }
     plan.batchLifecycleFreshness = { batchesUpdated: freshnessUpdated, batchesCreated: freshnessCreated };
+
+    // ---- Demo feed stock ----------------------------------------------------
+    // Opening stock the Feed Forecast engine actually reads for the batches
+    // above. Only the two (store, item) pairs genuinely needed: the Creep
+    // stage has no dedicated silo on this farm, so BATCH-000009/011 draw it
+    // from the Multiplier store (MST1); Porta has no silo stocked with the
+    // Grower item yet, so BATCH-000015 draws it from the Porta store (PST1).
+    // (Grower/Weaner/Double-Stock on Multiplier already resolve to their own
+    // linked silos via silo_shed_link, so they need no store-side stock.)
+    // One POSITIVE inventory_ledger row per pair, written directly (mirrors
+    // what POST /stock-adjustment + /post would write) and skipped if a row
+    // with the same synthetic document_no already exists.
+    const demoFeedStock: Array<{ storeCode: string; itemCode: string; quantity: number; rate: number; postingDate: string }> = [
+      { storeCode: 'MST1', itemCode: 'FEED000007', quantity: 275, rate: 26.5, postingDate: '2026-11-15' }, // Creep 2 Nosilac
+      { storeCode: 'PST1', itemCode: 'FEED000001', quantity: 1650, rate: 26.5, postingDate: '2026-11-15' }, // Grower1
+    ];
+    let feedStockInserted = 0;
+    let feedStockSkipped = 0;
+    const feedStockUnresolved: string[] = [];
+    for (const s of demoFeedStock) {
+      const documentNo = `SHOWCASE-STOCK-${s.storeCode}-${s.itemCode}`;
+      const store = locationByCode.get(s.storeCode);
+      const [[item]] = await db.query<mysql.RowDataPacket[]>(
+        'SELECT item_id, item_code, item_name, category_id FROM item_master WHERE tenant_id = ? AND item_code = ? LIMIT 1',
+        [scope.tenant_id, s.itemCode],
+      );
+      if (!store || !item) {
+        feedStockUnresolved.push(`${s.storeCode} ${s.itemCode}`);
+        continue;
+      }
+      // Idempotent against any prior stock for this (warehouse, item) — not just this script's own
+      // synthetic document_no — since this exact pair was first posted by hand through the Stock
+      // Adjustment API before this section existed.
+      const [[existingStock]] = await db.query<mysql.RowDataPacket[]>(
+        'SELECT ledger_id FROM inventory_ledger WHERE tenant_id = ? AND warehouse_id = ? AND item_id = ? AND quantity > 0 LIMIT 1',
+        [scope.tenant_id, store.location_id, item.item_id],
+      );
+      if (existingStock) {
+        feedStockSkipped++;
+        continue;
+      }
+      if (write) {
+        await db.query(
+          `INSERT INTO inventory_ledger
+             (ledger_id, tenant_id, company_id, item_id, item_code, item_description, document_type, document_no,
+              posting_date, entry_type, transaction_type, quantity, remaining_quantity, uom, rate, amount,
+              lot_no, warehouse_id, nob_id, lob_id, category_id, created_by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'STOCK_ADJUSTMENT', ?, ?, 'POSITIVE', 'VARIANCE_POSITIVE', ?, ?, 'KG', ?, ?,
+                   ?, ?, ?, ?, ?, NULL, NOW())`,
+          [
+            randomUUID(), scope.tenant_id, store.company_id ?? scope.company_id, item.item_id, item.item_code, item.item_name,
+            documentNo, s.postingDate, s.quantity, s.quantity, s.rate, s.quantity * s.rate,
+            `LOT-SHOWCASE-${s.storeCode}-${s.itemCode}`, store.location_id, scope.nob_id, scope.lob_id, item.category_id,
+          ],
+        );
+      }
+      feedStockInserted++;
+    }
+    plan.demoFeedStock = { inserted: feedStockInserted, alreadySeeded: feedStockSkipped, unresolved: feedStockUnresolved };
 
     console.log(JSON.stringify(plan, null, 2));
     if (apply) {

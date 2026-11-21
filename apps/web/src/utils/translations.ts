@@ -2361,7 +2361,7 @@ export const translations = {
     mplRequisitionsDue: 'Requisition due',
     mplDayHeading: '{{day}}',
     mplHead: 'Head',
-    mplUsed: 'Used',
+    mplUsed: 'Would use',
     mplStockRemaining: 'Stock remaining',
     mplStockOfCapacity: '{{stock}} of {{capacity}} ({{pct}}%)',
     mplStockNoCapacity: '{{stock}} (capacity not set)',

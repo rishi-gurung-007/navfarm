@@ -329,8 +329,15 @@ export default function FeedStockCountPanel() {
       if (!placeId || !companyId) return;
       const params = new URLSearchParams({ companyId, farmId: placeId, countedAt: inputToInstant(entryAt) });
       if (isMill) params.set("stockTakeType", "FEED_MILL");
-      setEntry(unwrap<EvidenceResponse>(await api.get(`/feed-stock-count/evidence?${params.toString()}`)));
-      setCounted({});
+      const evidence = unwrap<EvidenceResponse>(await api.get(`/feed-stock-count/evidence?${params.toString()}`));
+      setEntry(evidence);
+      // Pre-fill every line with the system quantity so the user edits only what actually differs,
+      // instead of retyping every silo's count from scratch.
+      setCounted(
+        Object.fromEntries(
+          evidence.pairs.map((pair) => [`${pair.siloId}:${pair.itemId}`, String(pair.systemQtyKg)]),
+        ),
+      );
       setReasonIds({});
     });
 
