@@ -5,7 +5,7 @@
 # Usage (password is never stored here):
 #   TENANT=cccshow LOGIN_EMAIL=company.admin@cccshow.local LOGIN_PASSWORD='...' \
 #     scripts/showcase-seed-cccshow.sh [step ...]
-# Steps: parties schedulers breed_names breeds lifecycle daily costing forecast requisition alerts health wean overheads   (default: all, in that order)
+# Steps: parties schedulers breed_names breeds lifecycle service_batches daily costing forecast requisition alerts health wean overheads   (default: all, in that order)
 #
 # Use the COMPANY admin: a TENANT_ADMIN only sees tenant-wide masters (scope trap).
 # Rerunnable: masters are skipped when they already exist; daily entries upsert (same day + line);
@@ -122,6 +122,49 @@ for b in breeds:
             done += bool(ok)
 print('lifecycle      %d stage rows updated' % done)
 PY
+}
+
+# ------------------------------------------------------------------ 0d. one batch per service week
+# The imported breeding history sat on one FOUNDATION-STOCK batch per farm, so the Farrowing report showed a single batch.
+# From 2025-01-01 each mating is moved to a batch for its service week (<farm code>-<ISO year>-W<week>, like the foundation
+# batches' descriptive names, so the BATCH-0000NN series is untouched); its farrowing follows it; each sow joins the batch of
+# her latest service; opening quantity = sows served that week; batches older than 7 months are CLOSED. Earlier matings stay
+# on the foundation batch. Raw SQL because no API re-points breeding records. Rerunnable: only matings still on a
+# foundation batch are moved. Needs the mysql client (SEED_DB, default nf_cccshow).
+step_service_batches() {
+  mysql -u "${SEED_DB_USER:-root}" "${SEED_DB:-nf_cccshow}" <<'SQL' && say service_batches "service-week batches in place" || say service_batches "FAILED"
+START TRANSACTION;
+CREATE TEMPORARY TABLE svc AS
+SELECT f.batch_id AS fid, br.breeding_id, br.mating_date,
+       CONCAT(l.location_code,'-',DATE_FORMAT(br.mating_date,'%x'),'-W',DATE_FORMAT(br.mating_date,'%v')) AS bno
+FROM breeding_record br
+JOIN batch_header f ON f.batch_id = br.batch_id AND f.batch_no LIKE '%-FOUNDATION-STOCK'
+JOIN location_master l ON l.location_id = f.farm_id
+WHERE br.mating_date >= '2025-01-01';
+INSERT INTO batch_header (batch_id,tenant_id,company_id,batch_no,lob_id,nob_id,costing_method,breed_id,start_date,status,opening_quantity,uom,remarks,animal_tracking,farm_id,tracking_mode,is_litter_lot,created_at,updated_at)
+SELECT UUID(), f.tenant_id, f.company_id, s.bno, f.lob_id, f.nob_id, f.costing_method, f.breed_id, MIN(s.mating_date), 'ACTIVE', 0, 'HEAD',
+       'Service-week batch: the sows served that week, grouped from the imported breeding history', f.animal_tracking, f.farm_id, f.tracking_mode, 0, NOW(), NOW()
+FROM svc s JOIN batch_header f ON f.batch_id = s.fid
+WHERE NOT EXISTS (SELECT 1 FROM batch_header x WHERE x.batch_no = s.bno AND x.tenant_id = f.tenant_id)
+GROUP BY s.bno, f.batch_id;
+UPDATE breeding_record br JOIN svc s ON s.breeding_id = br.breeding_id
+  JOIN batch_header f ON f.batch_id = s.fid
+  JOIN batch_header nb ON nb.batch_no = s.bno AND nb.tenant_id = f.tenant_id
+  SET br.batch_id = nb.batch_id;
+UPDATE farrowing_record fr JOIN breeding_record b ON b.breeding_id = fr.breeding_id
+  SET fr.batch_id = b.batch_id WHERE b.mating_date >= '2025-01-01';
+UPDATE animal_register a
+  JOIN (SELECT sow_animal_id, SUBSTRING_INDEX(GROUP_CONCAT(batch_id ORDER BY mating_date DESC SEPARATOR ','), ',', 1) AS bid
+        FROM breeding_record WHERE mating_date >= '2025-01-01' GROUP BY sow_animal_id) m ON m.sow_animal_id = a.animal_id
+  JOIN batch_header nb ON nb.batch_id = m.bid AND nb.remarks LIKE 'Service-week batch%'
+  SET a.current_batch_id = nb.batch_id
+  WHERE a.current_batch_id IN (SELECT batch_id FROM batch_header WHERE batch_no LIKE '%-FOUNDATION-STOCK');
+UPDATE batch_header b SET opening_quantity = (SELECT COUNT(DISTINCT sow_animal_id) FROM breeding_record r WHERE r.batch_id = b.batch_id)
+  WHERE b.remarks LIKE 'Service-week batch%';
+UPDATE batch_header b SET status='CLOSED', actual_end_date = DATE_ADD(b.start_date, INTERVAL 150 DAY), closed_at = NOW()
+  WHERE b.remarks LIKE 'Service-week batch%' AND b.status='ACTIVE' AND b.start_date < DATE_SUB(CURDATE(), INTERVAL 7 MONTH);
+COMMIT;
+SQL
 }
 
 # ------------------------------------------------------------------ 0b. breed master figures from the client's workbooks
@@ -258,6 +301,13 @@ print(' '.join(str(a+D.timedelta(i)) for i in range((b-a).days+1)))"); do
       r=$(api POST "/batch/$bid/transfer-stage" -d '{"to_stage_code":"DOUBLE_STOCK","transfer_date":"2026-11-19","remarks":"Weaned off to double stock (demo)"}')
       ok "$r" && say costing "$bn: moved Weaner -> Double Stock on 2026-11-19" || say costing "$bn: move FAILED: $r"
     else say costing "$bn: already in $cur"; fi
+  done
+  # An earlier weighing inside each weaner spell: the dashboard takes the spell's first weighing as the entry weight, so with a
+  # single weighing the gain is 0 and FCE Weaner stays empty. 15.8 kg on 9 Nov rising to the 18.5 kg of 14 Nov is about 0.5 kg/day.
+  for bn in BATCH-000009 BATCH-000011; do
+    bid=$(batch_id "$bn") || continue
+    lid=$(scheduler_lines "$bn" | grep -F "Body Weight" | head -1 | cut -d'|' -f2)
+    [ -n "$lid" ] && post_entry "$bid" "$lid" 2026-11-09 15.8 && say costing "$bn: entry weighing 15.8 kg on 2026-11-09"
   done
   # One costed slaughter from the grower batch. Skipped when its order (remark below) exists.
   farm=$(api GET /feed-forecast/farms | json "print(next(f['farmId'] for f in d['data'] if 'GRASMERE' in f.get('farmName','').upper() or 'MUL100' in str(f)))")
@@ -448,5 +498,5 @@ print(next((r['cost_center_id'] for r in (x or []) if r.get('cost_center_code')=
   done <<<"$FARMLIST"
 }
 
-STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(parties schedulers breed_names breeds lifecycle daily costing forecast requisition alerts health wean overheads)
+STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(parties schedulers breed_names breeds lifecycle service_batches daily costing forecast requisition alerts health wean overheads)
 for s in "${STEPS[@]}"; do "step_$s"; done
