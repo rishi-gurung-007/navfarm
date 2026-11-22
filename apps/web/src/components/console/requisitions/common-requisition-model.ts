@@ -173,8 +173,8 @@ export function toRequisitionPayload(v: CommonRequisitionView): Record<string, u
     remarks: s(v.remarks),
     lines: v.lines.map((l) => ({
       // Fixed Asset lines now name the selected Item Master asset too (Rishi,
-      // 19 Nov); Service remains free description only.
-      item_id: v.doc_type === "SERVICE" ? undefined : s(l.item_id),
+      // 19 Nov); a Service line may name one too, optionally (Rishi, 22 Nov).
+      item_id: s(l.item_id),
       // No resource_id: no line names a Resource (Rishi, 5 Oct — Service lines
       // are Description + Qty only), and the API refuses one on every kind.
       description: s(l.description),

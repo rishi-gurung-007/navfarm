@@ -376,6 +376,7 @@ describe('buildSiloStatus', () => {
         siloAvailableForNextDiet: false,
         nextDietSiloId: null,
         nextDietSiloCode: null,
+        nextDietAvailableKg: null,
       });
     });
 
@@ -401,6 +402,8 @@ describe('buildSiloStatus', () => {
         siloAvailableForNextDiet: true,
         nextDietSiloId: 'sd',
         nextDietSiloCode: 'SILO-D',
+        // SILO-D holds the next item (r2): its system balance is what is available for the next diet.
+        nextDietAvailableKg: 1500,
       });
     });
 

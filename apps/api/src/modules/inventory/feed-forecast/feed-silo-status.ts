@@ -69,6 +69,11 @@ export interface SiloStatusRow extends SiloFact {
   siloAvailableForNextDiet: boolean | null;
   nextDietSiloId: string | null;
   nextDietSiloCode: string | null;
+  /**
+   * Stock of the next diet item in the silo above, in kg: its system balance when that silo holds the next item, 0 when it
+   * is set up for the feed form but holds something else, null when there is no such silo or no next diet.
+   */
+  nextDietAvailableKg: number | null;
   /** 14 Oct: the dashboard shows the silo's name, not its code. */
   nextDietSiloName?: string | null;
   projectedShortfallKg: number;
@@ -459,6 +464,12 @@ export function buildSiloStatus(args: {
           ? change.nextSourceCode
           : null),
       nextDietSiloName: nextDietSilo?.siloName ?? null,
+      nextDietAvailableKg:
+        nextDietSilo && nextItemId
+          ? nextDietSilo.feedInSiloItemId === nextItemId
+            ? nextDietSilo.systemBalanceKg
+            : 0
+          : null,
       projectedShortfallKg,
       recommendedOrderKg,
       requisitionId:

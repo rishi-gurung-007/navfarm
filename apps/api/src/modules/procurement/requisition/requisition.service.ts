@@ -358,7 +358,7 @@ export class RequisitionService {
       // animals are registered from their GRN. Fixed Asset/Purchase can name
       // a biological Item Master asset as the requested asset, but does not
       // create stock movement or animal registration.
-      const bio = lines.findIndex((l) => l.item_id && found.get(l.item_id)?.is_biological_asset && docType === 'ITEM');
+      const bio = lines.findIndex((l) => l.item_id && found.get(l.item_id)?.is_biological_asset && docType !== 'FA');
       if (bio >= 0) {
         throw new BadRequestException(`Line ${bio + 1}: ${found.get(lines[bio].item_id!)?.item_code} is a biological asset. Biological assets are not held in stock, so they cannot be requisitioned; animals are registered from their GRN in the Animal Register.`);
       }

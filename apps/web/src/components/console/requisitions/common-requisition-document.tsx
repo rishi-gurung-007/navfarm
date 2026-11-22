@@ -262,7 +262,6 @@ export function CommonRequisitionDocument({
   }));
 
   const isItem = view.doc_type === 'ITEM';
-  const selectsItem = view.doc_type === 'ITEM' || view.doc_type === 'FA';
   // Rishi, 7 Oct: every common (non-feed) requisition shows this complete line
   // contract in the same order. Applicability changes values, not visibility.
   const columns = [
@@ -573,14 +572,17 @@ export function CommonRequisitionDocument({
                   <tr key={line.line_id ?? `new-${i}`}>
                     {/* Rishi's columns, in his order. */}
                     <td className={cn(TD, NUM)}>{no}</td>
-                    {selectsItem ? (
+                    {
                       <>
                         <td className={TD}>
                           {can ? (
                             <SearchableSelect
                               ariaLabel={t('crqItemFor', { line: i + 1 })}
                               value={line.item_id ?? ''}
-                              options={(view.doc_type === 'FA' ? fixedAssetItems : items).map((it) => ({
+                              options={(view.doc_type === 'FA'
+                                ? fixedAssetItems
+                                : items
+                              ).map((it) => ({
                                 value: it.item_id,
                                 code: it.item_code,
                                 name: it.item_name,
@@ -612,12 +614,13 @@ export function CommonRequisitionDocument({
                                   // description, while still letting the user
                                   // amend it for the actual asset requested.
                                   description:
-                                    view.doc_type === 'FA'
-                                      ? it?.item_name ?? null
+                                    view.doc_type === 'FA' ||
+                                    view.doc_type === 'SERVICE'
+                                      ? (it?.item_name ?? line.description)
                                       : line.description,
                                   uom:
                                     view.doc_type === 'ITEM'
-                                      ? it?.uom_primary ?? line.uom
+                                      ? (it?.uom_primary ?? line.uom)
                                       : line.uom,
                                 });
                               }}
@@ -642,7 +645,7 @@ export function CommonRequisitionDocument({
                             ''}
                         </td>
                         <td className={TD}>
-                          {view.doc_type === 'FA'
+                          {view.doc_type === 'FA' || view.doc_type === 'SERVICE'
                             ? cell(
                                 'crqDescriptionFor',
                                 line.description,
@@ -653,21 +656,7 @@ export function CommonRequisitionDocument({
                             : t('rqNotApplicable')}
                         </td>
                       </>
-                    ) : (
-                      <>
-                        <td className={TD}>{t('rqNotApplicable')}</td>
-                        <td className={TD}>{t('rqNotApplicable')}</td>
-                        <td className={TD}>
-                          {cell(
-                            'crqDescriptionFor',
-                            line.description,
-                            (v) => setLine(i, { description: v }),
-                            'text',
-                            'w-48',
-                          )}
-                        </td>
-                      </>
-                    )}
+                    }
                     <td className={cn(TD, NUM)}>
                       {cell(
                         'crqQtyFor',

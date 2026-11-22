@@ -110,7 +110,10 @@ describe('Item / Fixed Asset / Service line fields', () => {
       .toThrow('Requisition line 1: a Service line is Description + Qty only; it cannot reference a Resource.');
     expect(() => assertRequisitionLines('SERVICE', 'PURCHASE', [{ resource_id: 'res-1', description: 'Electrician', quantity: 2 }]))
       .toThrow('Requisition line 1: a Service line is Description + Qty only; it cannot reference a Resource.');
-    expect(() => assertRequisitionLines('SERVICE', 'PURCHASE', [itemLine({ description: 'Consult' })]))
+    // Rishi, 22 Nov: a Service line may name an Item Master item; a lot or serial is still refused.
+    expect(() => assertRequisitionLines('SERVICE', 'PURCHASE', [{ item_id: 'item-1', description: 'Consult', quantity: 1 }]))
+      .not.toThrow();
+    expect(() => assertRequisitionLines('SERVICE', 'PURCHASE', [{ item_id: 'item-1', lot_no: 'L1', description: 'Consult', quantity: 1 }]))
       .toThrow('Requisition line 1: a Service line cannot reference an inventory item.');
   });
 

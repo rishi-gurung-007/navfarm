@@ -165,7 +165,8 @@ export function assertLineFields(docType: CommonDocType, line: RequisitionLineRu
       // Description + Qty only. The optional Resource picker is removed." A
       // Resource id stored on an older line is still read back harmlessly by
       // findOne; it is never accepted again.
-      if (present(line.item_id)) throw new BadRequestException(`${at}: a Service line cannot reference an inventory item.`);
+      // Rishi, 22 Nov: a Service line may now name an Item Master item (optional);
+      // it still carries no lot or serial and no Resource.
       if (present(line.resource_id)) {
         throw new BadRequestException(`${at}: a Service line is Description + Qty only; it cannot reference a Resource.`);
       }
