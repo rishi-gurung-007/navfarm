@@ -64,7 +64,7 @@ export function SemenBoarResults({
                   checked={r.accepted}
                   onChange={(e) => onChange(b.animal_id, { accepted: e.target.checked })}
                 />
-                Ejaculate used in the lot
+                Include in this lot
               </label>
             </div>
 

@@ -3522,7 +3522,7 @@ export function BreedingPanel({
               <EntityLookupField
                 id="semen-boars"
                 label="Boars"
-                options={semenLineBoars.map((b) => {
+                options={semenBatchBoars.filter((b) => semenLineBoars.includes(b) || semenForm.boar_animal_ids.includes(b.animal_id)).map((b) => {
                   const since = daysSinceCollection(
                     b.animal_id,
                     semenBatches,
@@ -3571,8 +3571,8 @@ export function BreedingPanel({
 
           <Step
             n={3}
-            title="What each boar gave"
-            hint="Enter each boar's collection. A boar whose ejaculate is rejected is recorded with the reason and is in none of the lot's doses or costs."
+            title="Collection result for each boar"
+            hint="Enter the result for each boar. Untick a boar whose semen was rejected and give the reason: it is recorded, but its doses and cost are left out of the lot."
             done={
               semenAcceptedIds.length > 0 &&
               !semenIssues.some(
@@ -3651,7 +3651,7 @@ export function BreedingPanel({
               issues={semenIssues}
               name="output_item_id"
               required
-              hint="The doses are posted to the boar's farm store as a lot of this item, with a QR (boar, batch, lot number, collection date, doses, expiry). That is what an AI mating later draws from."
+              hint="The doses are added to the boar's farm store as a lot of this item, with a QR code (boar, batch, lot number, collection date, doses, expiry). AI matings use doses from this lot."
             >
               <SearchableSelect
                 id="semen-item"
@@ -3678,8 +3678,8 @@ export function BreedingPanel({
                   <span className="font-semibold" style={{ color: 'var(--warning)' }}>
                     QC required.
                   </span>{' '}
-                  Saving this collection does not put the doses into stock yet. It raises a QC inspection (Inventory &gt; QC Inspections); the doses are
-                  posted when it is completed and accepted, and the lot cannot be used in a mating before then.
+                  The doses are not added to stock when you save. Saving creates a QC inspection (Inventory &gt; QC Inspections). The doses are added once
+                  the inspection is accepted, and the lot cannot be used for a mating until then.
                 </p>
               )}
             </Field>
