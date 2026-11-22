@@ -175,6 +175,8 @@ export function FeedSiloDashboardCards({
     );
   const nextDietStarts = date(silo.nextDietDate, unavailable);
   const nextDietAvailable = kg(silo.nextDietAvailableKg, unavailable);
+  // The next diet's share of the projected need over the viewed window; 0 when no change falls inside it.
+  const nextDietRequired = kg(silo.nextProjectedNeedKg, unavailable);
   // Current diet: the item eaten today, else Feed in Silo — the same fallback the API uses for the name.
   const currentDiet: ReactNode = silo.currentDietItemCode ? (
     <ItemValue
@@ -252,6 +254,7 @@ export function FeedSiloDashboardCards({
     { label: 'fsdNextDietFeedItem', value: nextDiet },
     { label: 'fsdNextDietStarts', value: nextDietStarts },
     { label: 'fsdSiloAvailableNextDiet', value: yesNo },
+    { label: 'fsdNextDietRequiredQty', value: nextDietRequired },
     { label: 'fsdNextDietAvailableQty', value: nextDietAvailable },
     {
       label: 'fsdProjectedShortfallKg',
@@ -366,6 +369,10 @@ export function FeedSiloDashboardCards({
             <Summary label={t('fsdNextDietFeedItem')} value={nextDiet} />
             <Summary label={t('fsdNextDietStarts')} value={nextDietStarts} />
             <Summary label={t('fsdSiloAvailableNextDiet')} value={yesNo} />
+            <Summary
+              label={t('fsdNextDietRequiredQty')}
+              value={nextDietRequired}
+            />
             <Summary
               label={t('fsdNextDietAvailableQty')}
               value={nextDietAvailable}

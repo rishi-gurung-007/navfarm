@@ -2437,6 +2437,7 @@ export const translations = {
     fsdNextDietFeedItem: 'Next Diet Item',
     fsdNextDietStarts: 'Next Diet Starts',
     fsdSiloAvailableNextDiet: 'Next Diet Silo Available',
+    fsdNextDietRequiredQty: 'Next Diet Required Quantity',
     fsdNextDietAvailableQty: 'Next Diet Available Quantity',
     fsdProjectedShortfallKg: 'Projected Shortfall',
     fsdRecommendedOrderKg: 'Recommended Order',
