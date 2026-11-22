@@ -5,7 +5,7 @@
 # Usage (password is never stored here):
 #   TENANT=cccshow LOGIN_EMAIL=company.admin@cccshow.local LOGIN_PASSWORD='...' \
 #     scripts/showcase-seed-cccshow.sh [step ...]
-# Steps: parties schedulers daily forecast requisition alerts health wean overheads   (default: all, in that order)
+# Steps: parties schedulers breed_names breeds lifecycle daily costing forecast requisition alerts health wean overheads   (default: all, in that order)
 #
 # Use the COMPANY admin: a TENANT_ADMIN only sees tenant-wide masters (scope trap).
 # Rerunnable: masters are skipped when they already exist; daily entries upsert (same day + line);
@@ -54,6 +54,92 @@ for l in sorted(d['data']['lines'], key=lambda l: l['line_seq']):
       r=$(api DELETE "/scheduler-header/$sid/lines/$lid")
       ok "$r" && say schedulers "$sid: repeated feed line $lid deactivated" || say schedulers "FAILED $lid: $r"
     done
+  done
+}
+
+# ------------------------------------------------------------------ 0a. breed names without "Sow"; every boar is a Teaser Boar
+# The breed code cannot be changed through the API once created (master-code preservation), so this one step edits the
+# breed master and the boars' breed in MySQL. Rerunnable: it finds the old codes only the first time. Needs the local
+# mysql client: DB=nf_cccshow (override with SEED_DB).
+step_breed_names() {
+  mysql -u "${SEED_DB_USER:-root}" "${SEED_DB:-nf_cccshow}" -e "
+    UPDATE breed_master SET breed_code='TN-70',  breed_name='TN-70'  WHERE breed_code IN ('TN-70-SOW','TN-70-Sow');
+    UPDATE breed_master SET breed_code='Z-LINE', breed_name='Z-Line' WHERE breed_code IN ('Z-LINE-SOW','Z-Line-Sow');
+    SET @teaser = (SELECT breed_id FROM breed_master WHERE breed_code='TEASER-BOAR' LIMIT 1);
+    UPDATE animal_register SET breed_id=@teaser WHERE animal_type='BOAR' AND @teaser IS NOT NULL;
+    UPDATE semen_batch     SET breed_id=@teaser WHERE @teaser IS NOT NULL;" \
+    && say breed_names "breeds renamed, boars and semen batches set to TEASER-BOAR" || say breed_names "FAILED"
+}
+
+# ------------------------------------------------------------------ 0c. feed programme of Weaner, Double Stock and Grower
+# From the management-reviewed Breed Master workbooks (sheet "Breeder L-cycle stages -WeanGro"; the Multiplier and Porta
+# sheets carry the same feed text). Replaces the DEMO feed lines of those three stages, on every farm's row of every
+# breed, leaving the stage's KPIs, weights and alerts as they are. Weeks are counted from the day the batch enters the
+# stage (Weaner = age 4-10 wk, Double Stock = 10-14, Grower = 14-22). Readings of the sheet's text:
+#   Weaner  : 4 wk (8 days) Creep 2 0.48 | 5-6 wk (14 days) Creep 3 0.94 | 7-10 wk (17 days) Wean 1 1.1  -> weeks 1 | 2-3 | 4-6
+#   Double  : "Wean 1 OTC 3.3 kg, Grower 1 4.8 kg" is two weeks added up: 1.6 + 1.7 and 2.2 + 2.5 kg a day (the Grower sheet's
+#             own weekly figures for age 10-13 wk)                                                            -> weeks 1-2 | 3-4
+#   Grower  : age 14-15 Grower 2 2.6 / 2.7 | 16 Grower 3 2.9 | 17-18 Grower 3 3.1 | 19-22 Finisher 3.1       -> weeks 1-2 | 3 | 4-5 | 6-8
+# Product names -> items (assumed, for the client to confirm): Creep 2 = FEED000007, Creep 3 = FEED000084, Wean 1 / Wean 1 OTC =
+# FEED000024 Weaner O.T.C, Grower 1 = FEED000001, Grower 2 = FEED000002, Grower 3 = FEED000018, Finisher = FEED000095.
+# The sheet gives Multiplier finisher houses 3.1 to 3.9 kg; 3.1 (the first house) is used. Rerunnable: it sets the same lines.
+step_lifecycle() {
+  API="$API" TOK="$TOK" TENANT="$TENANT" CO="$CO" python3 - <<'PY'
+import json, os, urllib.request, urllib.parse
+API, TOK, TEN, CO = os.environ['API'], os.environ['TOK'], os.environ['TENANT'], os.environ['CO']
+def call(m, path, body=None):
+    req = urllib.request.Request(API + path, method=m, data=None if body is None else json.dumps(body).encode(),
+        headers={'authorization': 'Bearer ' + TOK, 'content-type': 'application/json', 'x-tenant-id': TEN,
+                 'x-active-company-id': CO, 'x-workspace-scope': 'COMPANY'})
+    try:
+        with urllib.request.urlopen(req) as r: return json.load(r)
+    except urllib.error.HTTPError as e: return json.loads(e.read() or b'{}')
+def rows(r):
+    x = r.get('data', r); return x.get('items', x) if isinstance(x, dict) else x
+ITEMS = {'creep2': 'FEED000007', 'creep3': 'FEED000084', 'wean1': 'FEED000024', 'g1': 'FEED000001', 'g2': 'FEED000002', 'g3': 'FEED000018', 'fin': 'FEED000095'}
+item = {}
+for k, code in ITEMS.items():
+    hit = [i for i in rows(call('GET', '/item?search=' + code + '&limit=20')) if i.get('item_code') == code]
+    if not hit: print('lifecycle      no item', code); raise SystemExit
+    item[k] = hit[0]['item_id']
+PROG = {  # stage code -> [(from week, to week, item, kg per head per day)]
+ 'WEANER':       [(1, 1, 'creep2', 0.48), (2, 3, 'creep3', 0.94), (4, 6, 'wean1', 1.1)],
+ 'DOUBLE_STOCK': [(1, 1, 'wean1', 1.6), (2, 2, 'wean1', 1.7), (3, 3, 'g1', 2.2), (4, 4, 'g1', 2.5)],
+ 'GROWER':       [(1, 1, 'g2', 2.6), (2, 2, 'g2', 2.7), (3, 3, 'g3', 2.9), (4, 5, 'g3', 3.1), (6, 8, 'fin', 3.1)],
+}
+NOTE = 'Feed programme from the management-reviewed Breed Master workbook (Weaner / Double Stock / Grower sheet); feed names matched to items by Triple C.'
+stages = {s['stage_code']: s['stage_id'] for s in rows(call('GET', '/stage?limit=100')) if s.get('stage_code') in PROG}
+breeds = [b for b in rows(call('GET', '/breed?limit=200')) if b['breed_code'] in ('TN-70', 'Z-LINE', 'TN-70-SOW', 'Z-LINE-SOW')]
+done = 0
+for b in breeds:
+    for code, sid in stages.items():
+        for r in rows(call('GET', '/breed-lifecycle-stage?breedId=%s&stageId=%s' % (b['breed_id'], sid))):
+            if not r.get('is_active', True): continue
+            lines = [{'period_from': f, 'period_to': t, 'feed_item_id': item[i], 'feed_qty_per_head_per_day_kg': q} for f, t, i, q in PROG[code]]
+            res = call('PUT', '/breed-lifecycle-stage/' + r['lifecycle_id'], {'feed_lines': lines, 'notes': NOTE})
+            ok = res.get('success')
+            print('lifecycle      %-8s %-12s %-22s %s' % (b['breed_code'], code, (r.get('farm_name') or 'default')[:22], 'feed lines set' if ok else 'FAILED ' + str(res.get('error', res))[:160]))
+            done += bool(ok)
+print('lifecycle      %d stage rows updated' % done)
+PY
+}
+
+# ------------------------------------------------------------------ 0b. breed master figures from the client's workbooks
+# "Multiplier Breed master_REVIEWED BY MANAGEMENT" and "Porta Breed Master_REVIEWED BY MANAGEMENT" (scripts/new data to
+# seed/), sheet "Breed Master", the sow row of each. Percentages are as the master stores them (0.93 in the sheet = 93).
+# Only the numeric columns are loaded; the lifecycle sheets are narrative text ("As per Feed schedule", "Creep 2-0.48,
+# Creep 3-0.94") and the vaccination column needs vaccine items, so neither is loaded. Rerunnable: PUT of the same values.
+step_breeds() {
+  api GET "/breed?limit=200" | json "
+x=d.get('data',d); x=x.get('items',x) if isinstance(x,dict) else x
+print('\n'.join(b['breed_code']+'|'+b['breed_id'] for b in x))" | while IFS='|' read -r code bid; do
+    case "$code" in
+      Z-LINE|Z-LINE-SOW) body='{"gestation_days":116,"lactation_days":28,"productive_life_months":46,"productive_life_cycles":10,"avg_litter_size":16,"avg_litter_size_born":15,"avg_litter_size_weaned":13.8,"avg_weaning_weight_kg":7.5,"avg_mortality_pct":8,"farrowing_rate_pct":90,"boar_doses_per_week":36,"boar_productive_life_months":29}' ;;
+      TN-70|TN-70-SOW)  body='{"gestation_days":116,"lactation_days":28,"productive_life_months":42,"productive_life_cycles":8,"avg_litter_size":17.24,"avg_litter_size_born":16.33,"avg_litter_size_weaned":15.35,"avg_weaning_weight_kg":8,"avg_mortality_pct":6,"farrowing_rate_pct":93,"boar_doses_per_week":74,"boar_productive_life_months":29}' ;;
+      *) continue ;;
+    esac
+    r=$(api PUT "/breed/$bid" -d "$body")
+    ok "$r" && say breeds "$code: breed master figures saved" || say breeds "FAILED $code: $r"
   done
 }
 
@@ -122,6 +208,76 @@ print(' '.join(str(a+D.timedelta(i)) for i in range((b-a).days+1)))"); do
     done <<<"$lines"
     say daily "$bn: $n entries posted, $bad refused"
   done
+}
+
+# ------------------------------------------------------------------ 2b. feed cost, stage moves and one costed slaughter
+# What fills Cost of Sales and the Weaner-Grower matrix on the GM dashboard:
+#  - GL mappings BIO_CONSUMPTION_PREMATURE / _MATURE (the setup wizard seeds them; this tenant lacked them and the GL
+#    Mapping API refuses BIO_* types, so they are added here with mysql, accounts 1050/5080 against 1010) so that feed
+#    posts and adds its cost to the batch's carrying value;
+#  - feed posted through Daily Data on two weaner batches and a grower batch (stock is per silo, so each spec names the
+#    lot sitting in that batch's silo and a date on or after its receipt);
+#  - the two weaner batches moved Weaner -> Double Stock (their weaner spells end in the window);
+#  - the grower batch sent to slaughter at its now non-zero carrying value, kill sheet reconciled, order closed and the
+#    batch closed (its grower spell ends), so the dispatch row and the Sale journal carry a cost.
+# Needs the mysql client for the mapping rows (SEED_DB, default nf_cccshow). Rerunnable: skips what is already there.
+step_costing() {
+  have=$(mysql -N -u "${SEED_DB_USER:-root}" "${SEED_DB:-nf_cccshow}" -e "SELECT COUNT(*) FROM gl_mapping_master WHERE transaction_type IN ('BIO_CONSUMPTION_PREMATURE','BIO_CONSUMPTION_MATURE') AND deleted_at IS NULL")
+  if [ "${have:-0}" -lt 2 ]; then
+    mysql -u "${SEED_DB_USER:-root}" "${SEED_DB:-nf_cccshow}" -e "
+      INSERT INTO gl_mapping_master (mapping_id,tenant_id,company_id,mapping_code,transaction_type,debit_gl_account_id,credit_gl_account_id)
+      SELECT UUID(), m.tenant_id, m.company_id, x.code, x.t,
+             (SELECT gl_account_id FROM gl_account_master WHERE account_code=x.dr AND company_id=m.company_id LIMIT 1),
+             (SELECT gl_account_id FROM gl_account_master WHERE account_code='1010' AND company_id=m.company_id LIMIT 1)
+      FROM (SELECT tenant_id, company_id FROM gl_mapping_master WHERE deleted_at IS NULL LIMIT 1) m
+      JOIN (SELECT 'GLMAP-013' code,'BIO_CONSUMPTION_PREMATURE' t,'1050' dr UNION ALL SELECT 'GLMAP-014','BIO_CONSUMPTION_MATURE','5080') x
+      WHERE NOT EXISTS (SELECT 1 FROM gl_mapping_master g WHERE g.transaction_type=x.t AND g.deleted_at IS NULL)" \
+      && say costing "feed consumption GL mappings added" || { say costing "FAILED adding GL mappings"; return; }
+  fi
+  # batch | activity text | lot | kg per day | first day | last day
+  for spec in "BATCH-000009|Weaner O.T.C|LOT-2025-01-FEED000024|180|2026-11-14|2026-11-18" \
+              "BATCH-000011|Weaner O.T.C|LOT-2025-01-FEED000024|180|2026-11-14|2026-11-18" \
+              "BATCH-000012|Grower1|LOT-00089|128|2026-11-19|2026-11-20"; do
+    IFS='|' read -r bn act lot kg d1 d2 <<<"$spec"
+    bid=$(batch_id "$bn") || { say costing "no batch $bn"; continue; }
+    [ "$(api GET "/batch/$bid" | json "print(d['data'].get('status'))")" = ACTIVE ] || { say costing "$bn: not active, feed skipped"; continue; }
+    lid=$(scheduler_lines "$bn" | grep -F "$act|" | head -1 | cut -d'|' -f2)
+    [ -z "$lid" ] && { say costing "$bn: no feed line '$act'"; continue; }
+    n=0; bad=0
+    for d in $(python3 -c "
+import datetime as D; a=D.date.fromisoformat('$d1'); b=D.date.fromisoformat('$d2')
+print(' '.join(str(a+D.timedelta(i)) for i in range((b-a).days+1)))"); do
+      post_entry "$bid" "$lid" "$d" "$kg" "\"lot_no\":\"$lot\"" && n=$((n+1)) || bad=$((bad+1))
+    done
+    say costing "$bn: $n feed entries posted ($kg kg/day), $bad refused"
+  done
+  for bn in BATCH-000009 BATCH-000011; do
+    bid=$(batch_id "$bn") || continue
+    cur=$(api GET "/batch/$bid" | json "print(d['data'].get('current_stage_code'))")
+    if [ "$cur" = WEANER ]; then
+      r=$(api POST "/batch/$bid/transfer-stage" -d '{"to_stage_code":"DOUBLE_STOCK","transfer_date":"2026-11-19","remarks":"Weaned off to double stock (demo)"}')
+      ok "$r" && say costing "$bn: moved Weaner -> Double Stock on 2026-11-19" || say costing "$bn: move FAILED: $r"
+    else say costing "$bn: already in $cur"; fi
+  done
+  # One costed slaughter from the grower batch. Skipped when its order (remark below) exists.
+  farm=$(api GET /feed-forecast/farms | json "print(next(f['farmId'] for f in d['data'] if 'GRASMERE' in f.get('farmName','').upper() or 'MUL100' in str(f)))")
+  if api GET "/slaughter-transfer-order" | json "
+import sys; x=d.get('data',d); x=x.get('items',x) if isinstance(x,dict) else x
+sys.exit(0 if any(isinstance(o,dict) and o.get('ho_approval_ref')=='HO-SHOWCASE-MUL-002' for o in x) else 1)"; then say costing "slaughter order exists"; return; fi
+  bid=$(batch_id BATCH-000012)
+  head=$(api GET "/slaughter-transfer-order/eligible-lots?farm_id=$farm&as_of=2026-11-20" | json "print(next(int(l['head']) for l in d['data'] if l['batch_id']=='$bid'))") || { say costing "BATCH-000012 not eligible"; return; }
+  r=$(api POST /slaughter-transfer-order -d "{\"to_date\":\"2026-11-20\",\"farm_id\":\"$farm\",\"ho_approval_ref\":\"HO-SHOWCASE-MUL-002\",\"destination\":\"Colcom Foods\",\"lines\":[{\"batch_id\":\"$bid\",\"head_count\":$head,\"avg_live_weight_kg\":128}]}")
+  to=$(echo "$r" | json "print(d['data']['to_id'])") || { say costing "order FAILED: $r"; return; }
+  line=$(echo "$r" | json "print(d['data']['lines'][0]['line_id'])")
+  for step in "confirm|{}" "pod|{\"pod_date\":\"2026-11-20\",\"received_by\":\"Colcom Foods\",\"lines\":[{\"line_id\":\"$line\",\"doa_head\":0}]}" \
+              "kill-sheet|{\"kill_sheet_ref\":\"3647110\",\"kill_sheet_date\":\"2026-11-21\",\"invoice_no\":\"COLCOM-3647110\",\"lines\":[{\"line_id\":\"$line\",\"avg_carcass_weight_kg\":97.3,\"price_per_kg\":2.573}]}" \
+              "close|{}"; do
+    nm=${step%%|*}; body=${step#*|}
+    r=$(api POST "/slaughter-transfer-order/$to/$nm" -d "$body")
+    ok "$r" && say costing "slaughter order $nm done" || { say costing "slaughter $nm FAILED: $r"; return; }
+  done
+  r=$(api POST "/batch/$bid/close" -d '{"actual_end_date":"2026-11-20","closing_quantity":0}')
+  ok "$r" && say costing "BATCH-000012 closed" || say costing "BATCH-000012 close FAILED: $r"
 }
 
 # ------------------------------------------------------------------ 3. feed forecast run + consolidation
@@ -292,5 +448,5 @@ print(next((r['cost_center_id'] for r in (x or []) if r.get('cost_center_code')=
   done <<<"$FARMLIST"
 }
 
-STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(parties schedulers daily forecast requisition alerts health wean overheads)
+STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(parties schedulers breed_names breeds lifecycle daily costing forecast requisition alerts health wean overheads)
 for s in "${STEPS[@]}"; do "step_$s"; done
