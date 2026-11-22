@@ -191,7 +191,7 @@ step_wean() {
   local rows n done
   rows=$(api GET "/piggery/breeding/farrowing?company_id=$CO" | WEAN_N="$WEAN_LITTERS" TO="$TO" python3 -c "
 import json,sys,os,datetime as D
-d=json.load(sys.stdin); x=d.get('data',d)
+d=json.load(sys.stdin); x=d if isinstance(d,list) else d.get('data',d)
 x=x.get('items',x.get('data',x)) if isinstance(x,dict) else x
 x=x or []
 day=lambda v: str(v)[:10] if v else ''
@@ -233,12 +233,10 @@ step_overheads() {
   done
   OTHER=$(gl_id 4600); STAFF=$(gl_id 4610); CASH=$(gl_id 1100)
   { [ -n "$OTHER" ] && [ -n "$STAFF" ] && [ -n "$CASH" ]; } || { say overheads "a GL account is missing, stopping"; return; }
-  FARMLIST=$(api GET "/location?limit=500" | python3 -c "
+  FARMLIST=$(api GET "/expense-documents/locations?companyId=$CO" | python3 -c "
 import json,sys
-d=json.load(sys.stdin); x=d.get('data',d)
-x=x.get('items',x.get('data',x)) if isinstance(x,dict) else x
-for r in (x or []):
-    if r.get('location_type')=='FARM': print('%s|%s|%s|%s' % (r['location_id'], r['location_code'], r.get('location_name') or r['location_code'], r.get('cost_center_id') or ''))")
+d=json.load(sys.stdin)
+for r in d['data']['farms']: print('%s|%s|%s|' % (r['location_id'], r['location_code'], r['location_name']))")
   while IFS='|' read -r lid lcode lname lcc; do
     [ -z "$lid" ] && continue
     code="CC-$lcode"
@@ -250,7 +248,7 @@ import json,sys
 d=json.load(sys.stdin); x=d.get('data',d)
 x=x.get('items',x.get('data',x)) if isinstance(x,dict) else x
 print(next((r['cost_center_id'] for r in (x or []) if r.get('cost_center_code')=='$code'),''))")
-    if [ -n "$ccid" ] && [ -z "$lcc" ]; then
+    if [ -n "$ccid" ]; then
       r=$(api PUT "/location/$lid" -d "{\"cost_center_id\":\"$ccid\"}")
       ok "$r" && say farm-link "$lcode -> $code" || say farm-link "FAILED $lcode: $r"
     fi
