@@ -5,7 +5,7 @@
 # Usage (password is never stored here):
 #   TENANT=cccshow LOGIN_EMAIL=company.admin@cccshow.local LOGIN_PASSWORD='...' \
 #     scripts/showcase-seed-cccshow.sh [step ...]
-# Steps: parties schedulers breed_names breeds lifecycle service_batches daily costing forecast requisition alerts health wean overheads periods porta mill_plan   (default: all, in that order)
+# Steps: parties schedulers breed_names breeds lifecycle service_batches daily costing forecast requisition alerts health wean overheads periods porta mill_plan qc_semen   (default: all, in that order)
 #
 # Use the COMPANY admin: a TENANT_ADMIN only sees tenant-wide masters (scope trap).
 # Rerunnable: masters are skipped when they already exist; daily entries upsert (same day + line);
@@ -679,5 +679,26 @@ call('POST', '/batch/%s/activate' % b, {}); print('mill_plan     Multiplier grow
 PY
 }
 
-STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(parties schedulers breed_names breeds lifecycle service_batches daily costing forecast requisition alerts health wean overheads periods porta mill_plan)
+# ------------------------------------------------------------------ qc_semen: the Semen item and its QC specification
+# Copied from what the tester set up on the test server (22 Nov): a lot-tracked, QC-required item "Semen" (ITM-0001, ml, FIFO,
+# QR on) with its two incoming checks, Motility 75-80 % and PH 7-7.8, and the two QC parameters they come from. The one QC
+# inspection the tester closed (QC-000001, lot LOT-00094) is left out: it points at a stock-ledger entry and warehouse that exist
+# only on that server. Tenant, company and creator are taken from the items already in the database. Rerunnable (INSERT IGNORE).
+step_qc_semen() {
+  mysql -u "${SEED_DB_USER:-root}" "${SEED_DB:-nf_cccshow}" -e "
+    SET @t=(SELECT tenant_id FROM item_master LIMIT 1), @c=(SELECT company_id FROM item_master LIMIT 1), @u=(SELECT created_by FROM item_master WHERE created_by IS NOT NULL LIMIT 1);
+    INSERT IGNORE INTO item_master (item_id, tenant_id, item_code, item_name, item_type, nob_id, lob_id, uom_primary, valuation_method, is_lot_tracked, is_serial_tracked,
+        is_biological_asset, is_inventoriable, is_qr_enabled, is_active, created_by, updated_by, company_id, status, posting_group, tracking_series_id, is_blocked, bio_auto_post, is_qc_required)
+      SELECT '033556c3-1c97-4a15-b269-7189e9059f74', @t, 'ITM-0001', 'Semen', 'RAW_MATERIAL', '50000000-5000-5000-5000-000000000002', '60000000-6000-6000-6000-000000000007', 'ML', 'FIFO', 1, 0,
+        0, 1, 1, 1, @u, @u, @c, 'ACTIVE', 'RAW_MATERIAL', (SELECT tracking_series_id FROM item_master WHERE tracking_series_id IS NOT NULL LIMIT 1), 0, 0, 1;
+    INSERT IGNORE INTO qc_parameter_master (param_id, tenant_id, company_id, param_code, param_name, param_type, uom, min_value, max_value, is_mandatory, is_active, created_by) VALUES
+      ('1d4bb851-4407-4e3a-9b71-a8d25dcd27d5', @t, @c, 'MOTILITY', 'Motility %', 'NUMERIC', 'PCT', 75, 80, 1, 1, @u),
+      ('5d830cf7-d9da-4a47-80ba-a6bddcd06f1d', @t, @c, 'PH', 'PH Value', 'NUMERIC', 'SCORE', 7, 7.8, 1, 1, @u);
+    INSERT IGNORE INTO item_qc_spec_line (spec_line_id, tenant_id, company_id, item_id, line_no, stage, measurement_code, measurement_description, sampling_type, uom, min_value, max_value, is_mandatory, is_active, created_by, updated_by, param_id) VALUES
+      ('e12803a5-1531-4bec-bfba-6522a28c366a', @t, @c, '033556c3-1c97-4a15-b269-7189e9059f74', 10000, 'INCOMING', 'MOTILITY', 'Motility %', 'VALUE', 'PCT', 75, 80, 1, 1, @u, @u, '1d4bb851-4407-4e3a-9b71-a8d25dcd27d5'),
+      ('385b3041-0bc4-46db-bd38-254d8518e067', @t, @c, '033556c3-1c97-4a15-b269-7189e9059f74', 20000, 'INCOMING', 'PH', 'PH Value', 'VALUE', 'SCORE', 7, 7.8, 1, 1, @u, @u, '5d830cf7-d9da-4a47-80ba-a6bddcd06f1d');" \
+    && say qc_semen "Semen item, QC parameters and incoming checks in place" || say qc_semen "FAILED"
+}
+
+STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(parties schedulers breed_names breeds lifecycle service_batches daily costing forecast requisition alerts health wean overheads periods porta mill_plan qc_semen)
 for s in "${STEPS[@]}"; do "step_$s"; done
