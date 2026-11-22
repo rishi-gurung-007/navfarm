@@ -4750,6 +4750,11 @@ export class BatchService {
     animalCount: number,
     stageAnimalCount?: number,
   ): number {
+    // A KPI line (service target, born alive, farrowing rate ...) carries its target in std_value, not a per-head quantity:
+    // its Expected is that target as it stands, never multiplied by the animals.
+    if (line.standard_qty == null && line.kpi_metric && line.std_value != null) {
+      return Number(line.std_value);
+    }
     if (line.standard_qty == null) return 0;
     const qty = Number(line.standard_qty);
     // A line with no basis reads as per head, as the data entry line reports it.

@@ -164,6 +164,8 @@ const defaultEntryValue = (line: Row) => {
   // An output is what actually came out — a litter, the doses collected — never the line's standard. Prefilled, saving
   // a stage's drafts would have recorded an output of the standard for every animal (a 1-piglet farrowing per sow).
   if (line.line_type === 'OUTPUT') return '';
+  // A KPI's Expected is its target; the Actual is what was measured, so it starts at none rather than at the target.
+  if (line.line_type === 'DESCRIPTIVE' && line.kpi_metric && !isTextCapture(line)) return '0';
   if (!isTextCapture(line) && line.expected_qty != null) {
     return String(line.expected_qty);
   }
