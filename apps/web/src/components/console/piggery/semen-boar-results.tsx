@@ -77,7 +77,7 @@ export function SemenBoarResults({
                       value={r.collector_id}
                       onChange={(e) => onChange(b.animal_id, { collector_id: e.target.value })}
                     >
-                      <option value="">{collectors.length ? "Not recorded" : "No users hold the Semen Collector role"}</option>
+                      <option value="">{collectors.length ? "Not recorded" : "No collector available"}</option>
                       {collectors.map((c) => (
                         <option key={c.collector_id} value={c.collector_id}>
                           {collectorLabel(c)}

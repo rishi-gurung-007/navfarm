@@ -227,8 +227,8 @@ export function checkFarrowing({ form, sow, mating }: FarrowingCheck): Issue[] {
   if (!Number.isNaN(live) && fout > live + fin) err("fostered_out", `Only ${live + fin} piglets are there to foster out (${live} born alive + ${fin} received).`);
   if (live + still + mummy > 0) {
     const total = live + still + mummy;
-    if (total > 25) warn("piglets_born_live", `${total} born is an exceptionally large litter. Check the counts.`);
-    if (still + mummy > total * 0.3) warn("piglets_stillborn", `${Math.round(((still + mummy) / total) * 100)}% of the litter was born dead. Check the counts.`);
+    if (total > 25) warn("piglets_total_born", `${total} piglets in total (${live} alive + ${still} stillborn + ${mummy} mummified) is an unusually large litter. Check the counts.`);
+    if (still + mummy > total * 0.3) warn("piglets_stillborn", `${still + mummy} of ${total} piglets (${Math.round(((still + mummy) / total) * 100)}%) were born dead (${still} stillborn + ${mummy} mummified). Check the counts.`);
   }
 
   const netLitter = Math.max(0, (Number.isNaN(live) ? 0 : live) + (fin || 0) - (fout || 0));

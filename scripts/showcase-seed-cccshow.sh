@@ -57,18 +57,27 @@ for l in sorted(d['data']['lines'], key=lambda l: l['line_seq']):
   done
 }
 
-# ------------------------------------------------------------------ 0a. breed names without "Sow"; every boar is a Teaser Boar
+# ------------------------------------------------------------------ 0a. breed names without "Sow"; boars carry their own line
 # The breed code cannot be changed through the API once created (master-code preservation), so this one step edits the
 # breed master and the boars' breed in MySQL. Rerunnable: it finds the old codes only the first time. Needs the local
 # mysql client: DB=nf_cccshow (override with SEED_DB).
+# Boar lines are from "A.I Animal Register Master Template for AI Station" (management reviewed): the 23 boars are
+# TEMPO (14: codes DA*, CJ*, CL*), L-Line (5: LA*) and Z-Line (4: BLX*). A semen batch takes its boar's breed.
 step_breed_names() {
   mysql -u "${SEED_DB_USER:-root}" "${SEED_DB:-nf_cccshow}" -e "
     UPDATE breed_master SET breed_code='TN-70',  breed_name='TN-70'  WHERE breed_code IN ('TN-70-SOW','TN-70-Sow');
     UPDATE breed_master SET breed_code='Z-LINE', breed_name='Z-Line' WHERE breed_code IN ('Z-LINE-SOW','Z-Line-Sow');
-    SET @teaser = (SELECT breed_id FROM breed_master WHERE breed_code='TEASER-BOAR' LIMIT 1);
-    UPDATE animal_register SET breed_id=@teaser WHERE animal_type='BOAR' AND @teaser IS NOT NULL;
-    UPDATE semen_batch     SET breed_id=@teaser WHERE @teaser IS NOT NULL;" \
-    && say breed_names "breeds renamed, boars and semen batches set to TEASER-BOAR" || say breed_names "FAILED"
+    INSERT INTO breed_master (breed_id, tenant_id, nob_id, lob_id, breed_code, breed_name, species, breed_type, is_active, company_id, status, created_by, updated_by, created_at, updated_at, is_blocked)
+      SELECT UUID(), t.tenant_id, t.nob_id, t.lob_id, n.code, n.name, t.species, t.breed_type, 1, t.company_id, 'ACTIVE', t.created_by, t.updated_by, NOW(), NOW(), 0
+      FROM breed_master t JOIN (SELECT 'TEMPO' code, 'TEMPO' name UNION ALL SELECT 'L-LINE', 'L-Line') n
+      WHERE t.breed_code='TEASER-BOAR' AND NOT EXISTS (SELECT 1 FROM breed_master x WHERE x.breed_code=n.code);
+    UPDATE animal_register a JOIN breed_master b ON b.breed_code = CASE
+        WHEN a.animal_code LIKE 'DA%' OR a.animal_code LIKE 'CJ%' OR a.animal_code LIKE 'CL%' THEN 'TEMPO'
+        WHEN a.animal_code LIKE 'LA%'  THEN 'L-LINE'
+        WHEN a.animal_code LIKE 'BLX%' THEN 'Z-LINE' END
+      SET a.breed_id=b.breed_id WHERE a.animal_type='BOAR';
+    UPDATE semen_batch s JOIN animal_register a ON a.animal_id=s.boar_animal_id SET s.breed_id=a.breed_id;" \
+    && say breed_names "breeds renamed, boars set to TEMPO / L-Line / Z-Line" || say breed_names "FAILED"
 }
 
 # ------------------------------------------------------------------ 0c. feed programme of Weaner, Double Stock and Grower
