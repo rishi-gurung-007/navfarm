@@ -30,6 +30,8 @@ export interface EntityLookupDialogProps {
   multiple?: boolean;
   loading?: boolean;
   onCreate?: () => void;
+  /** Columns shown after Code in place of Name, each read from the row's own key (e.g. a boar's RFID tag). */
+  columns?: { key: string; header: string }[];
 }
 
 export interface EntityLookupFieldProps {
@@ -45,6 +47,7 @@ export interface EntityLookupFieldProps {
   loading?: boolean;
   placeholder: string;
   onCreate?: () => void;
+  columns?: { key: string; header: string }[];
 }
 
 function stringValue(value: unknown): string {
@@ -112,6 +115,7 @@ export function EntityLookupDialog({
   multiple = false,
   loading = false,
   onCreate,
+  columns,
 }: EntityLookupDialogProps) {
   const [search, setSearch] = useState('');
   const selectedValues = multiple
@@ -133,6 +137,7 @@ export function EntityLookupDialog({
         code,
         name,
         ...labelKeys.map((key) => stringValue(option[key])),
+        ...(columns ?? []).map((c) => stringValue(option[c.key])),
       ].some((part) => part.toLocaleLowerCase().includes(term));
     });
   }, [labelKeys, options, search]);
@@ -195,15 +200,28 @@ export function EntityLookupDialog({
         <Table wrapperClassName="max-h-[min(28rem,55dvh)] overflow-auto">
           <TableHeader className="sticky top-0 z-10">
             <TableRow>
-              <TableHead>Code</TableHead>
-              <TableHead>Name</TableHead>
+              <TableHead className={columns ? 'w-[30%]' : undefined}>
+                Code
+              </TableHead>
+              {columns ? (
+                <>
+                  {columns.map((c) => (
+                    <TableHead key={c.key} className="w-[30%]">
+                      {c.header}
+                    </TableHead>
+                  ))}
+                  <TableHead className="w-12" />
+                </>
+              ) : (
+                <TableHead>Name</TableHead>
+              )}
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
                 <TableCell
-                  colSpan={2}
+                  colSpan={columns ? columns.length + 2 : 2}
                   className="py-10 text-center text-(--text-secondary)"
                 >
                   <Loader2
@@ -216,7 +234,7 @@ export function EntityLookupDialog({
             ) : filtered.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={2}
+                  colSpan={columns ? columns.length + 2 : 2}
                   className="py-10 text-center text-(--text-secondary)"
                 >
                   <Inbox
@@ -254,17 +272,31 @@ export function EntityLookupDialog({
                         {code || NA}
                       </button>
                     </TableCell>
-                    <TableCell>
-                      <div className="flex min-h-5 items-center justify-between gap-3">
-                        <span>{name || NA}</span>
+                    {(columns ?? [{ key: '', header: 'Name' }]).map((c, i, all) => (
+                      <TableCell key={c.key || 'name'}>
+                        <div className="flex min-h-5 items-center justify-between gap-3">
+                          <span>
+                            {(c.key ? stringValue(option[c.key]) : name) || NA}
+                          </span>
+                          {selected && !columns && i === all.length - 1 && (
+                            <Check
+                              className="h-4 w-4 shrink-0 text-(--accent)"
+                              aria-hidden
+                            />
+                          )}
+                        </div>
+                      </TableCell>
+                    ))}
+                    {columns && (
+                      <TableCell className="w-12 text-right">
                         {selected && (
                           <Check
-                            className="h-4 w-4 shrink-0 text-(--accent)"
+                            className="ml-auto h-4 w-4 text-(--accent)"
                             aria-hidden
                           />
                         )}
-                      </div>
-                    </TableCell>
+                      </TableCell>
+                    )}
                   </TableRow>
                 );
               })
@@ -296,6 +328,7 @@ export function EntityLookupField({
   loading = false,
   placeholder,
   onCreate,
+  columns,
 }: EntityLookupFieldProps) {
   const [open, setOpen] = useState(false);
   const selectedValues = multiple
@@ -383,6 +416,7 @@ export function EntityLookupField({
         multiple={multiple}
         loading={loading}
         onCreate={onCreate}
+        columns={columns}
       />
     </div>
   );

@@ -3531,13 +3531,28 @@ export function BreedingPanel({
                   return {
                     animal_id: b.animal_id,
                     code: b.animal_code,
-                    // The boar's own code leads (a picked chip shows only this text); the RFID tag follows when it has one.
-                    name: `${b.animal_code}${b.rfid_tag ? ` · ${b.rfid_tag}` : ''} · ${since == null ? 'never collected' : `collected ${since} d ago`}`,
+                    rfid: b.rfid_tag || '',
+                    last_collected:
+                      since == null ? 'Never collected' : `${since} d ago`,
+                    // The chip shows the boar's code, then the RFID tag when it has one. Outside the AI Station page the
+                    // picker is as it was: one text, with when the boar was last collected.
+                    name:
+                      section === 'ai-station'
+                        ? `${b.animal_code}${b.rfid_tag ? ` · ${b.rfid_tag}` : ''}`
+                        : `${b.animal_code}${b.rfid_tag ? ` · ${b.rfid_tag}` : ''} · ${since == null ? 'never collected' : `collected ${since} d ago`}`,
                   };
                 })}
                 value={semenForm.boar_animal_ids}
                 valueKey="animal_id"
-                labelKeys={['name']}
+                labelKeys={section === 'ai-station' ? ['code', 'name'] : ['name']}
+                columns={
+                  section === 'ai-station'
+                    ? [
+                        { key: 'rfid', header: 'RFID' },
+                        { key: 'last_collected', header: 'Last collected' },
+                      ]
+                    : undefined
+                }
                 onChange={(next) =>
                   setSemenForm({
                     ...semenForm,
