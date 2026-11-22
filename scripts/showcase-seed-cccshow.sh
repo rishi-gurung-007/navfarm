@@ -5,7 +5,7 @@
 # Usage (password is never stored here):
 #   TENANT=cccshow LOGIN_EMAIL=company.admin@cccshow.local LOGIN_PASSWORD='...' \
 #     scripts/showcase-seed-cccshow.sh [step ...]
-# Steps: parties daily forecast requisition alerts health   (default: all, in that order)
+# Steps: parties daily forecast requisition alerts health wean overheads   (default: all, in that order)
 #
 # Use the COMPANY admin: a TENANT_ADMIN only sees tenant-wide masters (scope trap).
 # Rerunnable: masters are skipped when they already exist; daily entries upsert (same day + line);
@@ -182,5 +182,95 @@ EOF
   ok "$r" && say treatment "logged for animal $A" || say treatment "FAILED: $r"
 }
 
-STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(parties daily forecast requisition alerts health)
+# ------------------------------------------------------------------ 7. weaning weights (dashboard: Avg Wean Weight, Total Litter Mass)
+# The farrowing page's own weaning call. A litter can be weaned once, so this weans unweaned litters farrowed 15-30 Oct
+# (weaned 21 days later, inside the dashboard window) and records a weaning weight. Litters already weaned by the
+# workbook import have no weight and the API has no way to edit them, so they are left as they are.
+WEAN_LITTERS="${WEAN_LITTERS:-12}"
+step_wean() {
+  local rows n done
+  rows=$(api GET "/piggery/breeding/farrowing?company_id=$CO" | WEAN_N="$WEAN_LITTERS" TO="$TO" python3 -c "
+import json,sys,os,datetime as D
+d=json.load(sys.stdin); x=d.get('data',d)
+x=x.get('items',x.get('data',x)) if isinstance(x,dict) else x
+x=x or []
+day=lambda v: str(v)[:10] if v else ''
+n=int(os.environ['WEAN_N']); to=os.environ['TO']
+done=[f for f in x if float(f.get('avg_weaning_weight_kg') or 0)>0 and '2026-10-25'<=day(f.get('weaning_date'))<=to]
+if len(done)>=n: print('DONE'); sys.exit(0)
+todo=sorted([f for f in x if not f.get('piglets_weaned') and '2026-10-15'<=day(f.get('farrowing_date'))<='2026-10-30' and f.get('piglets_born_live')],
+            key=lambda f: day(f['farrowing_date']))[:n-len(done)]
+for i,f in enumerate(todo):
+    wd=D.date.fromisoformat(day(f['farrowing_date']))+D.timedelta(days=21)
+    heads=max(1,int(f['piglets_born_live'])-1)
+    print('%s|%s|%d|%.2f' % (f['farrow_id'], wd, heads, 6.5+(i%6)*0.35))
+")
+  [ "$rows" = DONE ] && { say wean "already has $WEAN_LITTERS weighed litters in the window"; return; }
+  [ -z "$rows" ] && { say wean "no unweaned litter farrowed 15-30 Oct found"; return; }
+  n=0; done=0
+  while IFS='|' read -r fid wd heads kg; do
+    r=$(api PATCH "/piggery/breeding/farrowing/$fid/weaning" -d "{\"weaning_date\":\"$wd\",\"piglets_weaned\":$heads,\"avg_weaning_weight_kg\":$kg}")
+    if echo "$r" | json "import sys; sys.exit(1 if d.get('error') or d.get('statusCode') or d.get('success') is False else 0)" 2>/dev/null; then n=$((n+1)); else done=$((done+1)); echo "    FAILED $fid: $(echo "$r" | json "print(d.get('error',{}).get('message',d.get('message',d)))" 2>/dev/null)"; fi
+  done <<<"$rows"
+  say wean "$n litters weaned with a weight, $done refused"
+}
+
+# ------------------------------------------------------------------ 8. overheads (dashboard: Staff Overheads, Other Overheads)
+# The dashboard reads journal lines on GL 4600 (Other) and 4610 (Staff) that carry the cost centre CC-<farm code>. A farm's
+# cost centre comes from the cost centre set on its FARM location, so this step also makes the two accounts, a cash account
+# to pay from, one cost centre per farm and links it. Then it posts expenses through the Expense page's own endpoint.
+gl_id() { api GET "/gl-account?limit=500" | python3 -c "
+import json,sys
+d=json.load(sys.stdin); x=d.get('data',d)
+x=x.get('items',x.get('data',x)) if isinstance(x,dict) else x
+print(next((r['gl_account_id'] for r in (x or []) if str(r.get('account_code'))=='$1'),''))"; }
+step_overheads() {
+  for row in "4600|Other Overheads|EXPENSE" "4610|Staff Overheads|EXPENSE" "1100|Cash and Bank|ASSET"; do
+    IFS='|' read -r code name typ <<<"$row"
+    list_has "/gl-account?limit=500" account_code "$code" && { say gl-account "exists: $code"; continue; }
+    r=$(api POST /gl-account -d "{\"company_id\":\"$CO\",\"account_code\":\"$code\",\"account_name\":\"$name\",\"account_type\":\"$typ\"}")
+    ok "$r" && say gl-account "created: $code $name" || say gl-account "FAILED $code: $r"
+  done
+  OTHER=$(gl_id 4600); STAFF=$(gl_id 4610); CASH=$(gl_id 1100)
+  { [ -n "$OTHER" ] && [ -n "$STAFF" ] && [ -n "$CASH" ]; } || { say overheads "a GL account is missing, stopping"; return; }
+  FARMLIST=$(api GET "/location?limit=500" | python3 -c "
+import json,sys
+d=json.load(sys.stdin); x=d.get('data',d)
+x=x.get('items',x.get('data',x)) if isinstance(x,dict) else x
+for r in (x or []):
+    if r.get('location_type')=='FARM': print('%s|%s|%s|%s' % (r['location_id'], r['location_code'], r.get('location_name') or r['location_code'], r.get('cost_center_id') or ''))")
+  while IFS='|' read -r lid lcode lname lcc; do
+    [ -z "$lid" ] && continue
+    code="CC-$lcode"
+    list_has "/cost-center?limit=500" cost_center_code "$code" || {
+      r=$(api POST /cost-center -d "{\"company_id\":\"$CO\",\"cost_center_code\":\"$code\",\"cost_center_name\":\"$lname\",\"cost_center_type\":\"FARM\"}")
+      ok "$r" && say cost-centre "created: $code" || say cost-centre "FAILED $code: $r"; }
+    ccid=$(api GET "/cost-center?limit=500" | python3 -c "
+import json,sys
+d=json.load(sys.stdin); x=d.get('data',d)
+x=x.get('items',x.get('data',x)) if isinstance(x,dict) else x
+print(next((r['cost_center_id'] for r in (x or []) if r.get('cost_center_code')=='$code'),''))")
+    if [ -n "$ccid" ] && [ -z "$lcc" ]; then
+      r=$(api PUT "/location/$lid" -d "{\"cost_center_id\":\"$ccid\"}")
+      ok "$r" && say farm-link "$lcode -> $code" || say farm-link "FAILED $lcode: $r"
+    fi
+  done <<<"$FARMLIST"
+  if api GET "/expense-documents/expense?companyId=$CO&limit=200" | grep -q 'demo overhead'; then say expense "demo overheads already posted"; return; fi
+  # farm code | date | account | amount | what
+  while IFS='|' read -r lid lcode lname lcc; do
+    [ -z "$lid" ] && continue
+    case "$lcode" in MUL*) k=1.0 ;; *) k=0.7 ;; esac
+    for e in "2026-10-30|$STAFF|18500|Staff wages, October (demo overhead)" \
+             "2026-11-13|$STAFF|9250|Staff casual labour, November (demo overhead)" \
+             "2026-11-10|$OTHER|7200|Farm repairs and utilities (demo overhead)"; do
+      IFS='|' read -r dt acct amt what <<<"$e"
+      amt=$(python3 -c "print(round($amt*$k,2))")
+      r=$(api POST /expense-documents/expense -d "{\"company_id\":\"$CO\",\"posting_date\":\"$dt\",\"payee\":\"Demo payees\",\"description\":\"$lcode: $what\",\"amount\":-$amt,\"expense_gl_account_id\":\"$acct\",\"payment_gl_account_id\":\"$CASH\",\"location_id\":\"$lid\"}")
+      echo "$r" | json "import sys; sys.exit(0 if d.get('success') or 'data' in d else 1)" 2>/dev/null \
+        && say expense "$lcode $dt $amt" || say expense "FAILED $lcode $dt: $(echo "$r" | json "print(d.get('error',{}).get('message',d.get('message',d)))" 2>/dev/null)"
+    done
+  done <<<"$FARMLIST"
+}
+
+STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(parties daily forecast requisition alerts health wean overheads)
 for s in "${STEPS[@]}"; do "step_$s"; done
