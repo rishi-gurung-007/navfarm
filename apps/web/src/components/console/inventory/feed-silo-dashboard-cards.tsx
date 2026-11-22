@@ -52,6 +52,8 @@ export interface SelectedSiloDashboard {
   nextDietSiloName?: string | null;
   /** Next diet item's stock in that silo (kg); null when there is no next-diet silo. */
   nextDietAvailableKg?: number | null;
+  /** Next diet's kg/head/day x animals x days fed over the whole next stage (Rishi, 22 Nov). */
+  nextDietRequiredKg?: number | null;
   projectedShortfallKg: number;
   recommendedOrderKg: number;
   requisitionId: string | null;
@@ -175,8 +177,8 @@ export function FeedSiloDashboardCards({
     );
   const nextDietStarts = date(silo.nextDietDate, unavailable);
   const nextDietAvailable = kg(silo.nextDietAvailableKg, unavailable);
-  // The next diet's share of the projected need over the viewed window; 0 when no change falls inside it.
-  const nextDietRequired = kg(silo.nextProjectedNeedKg, unavailable);
+  // kg/head/day of the next diet x animals x days it is fed (the whole next stage), not just the viewed week.
+  const nextDietRequired = kg(silo.nextDietRequiredKg, unavailable);
   // Current diet: the item eaten today, else Feed in Silo — the same fallback the API uses for the name.
   const currentDiet: ReactNode = silo.currentDietItemCode ? (
     <ItemValue

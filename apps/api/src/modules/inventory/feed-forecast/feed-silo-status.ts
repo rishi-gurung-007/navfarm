@@ -74,6 +74,12 @@ export interface SiloStatusRow extends SiloFact {
    * is set up for the feed form but holds something else, null when there is no such silo or no next diet.
    */
   nextDietAvailableKg: number | null;
+  /**
+   * Next Diet Required Quantity, kg: kg/head/day of the next diet x animals x the days it is fed over the whole next stage
+   * (summed over the batches in this silo's sheds that take that item). Null when the stage figures are unknown; the
+   * selected-silo dashboard then falls back to the part of the projected need inside the viewed window.
+   */
+  nextDietRequiredKg: number | null;
   /** 14 Oct: the dashboard shows the silo's name, not its code. */
   nextDietSiloName?: string | null;
   projectedShortfallKg: number;
@@ -260,6 +266,13 @@ export function buildSelectedSiloDashboard(args: {
       nextProjectedNeedKg: sum3(
         nextSources.map((source) => source.walkDemandKg + source.safetyStockKg),
       ),
+      nextDietRequiredKg:
+        status.nextDietRequiredKg ??
+        sum3(
+          nextSources.map(
+            (source) => source.walkDemandKg + source.safetyStockKg,
+          ),
+        ),
       currentDietDaysRemaining: currentDietDaysRemaining,
       nextDietItemName,
       millLoadingBin: nextBinAssignment,
@@ -464,6 +477,12 @@ export function buildSiloStatus(args: {
           ? change.nextSourceCode
           : null),
       nextDietSiloName: nextDietSilo?.siloName ?? null,
+      nextDietRequiredKg: (() => {
+        if (!nextItemId) return null;
+        const mine = shedsOf(silo);
+        const same = nextStageDiets.filter((d) => mine.includes(d.shedCode) && d.itemId === nextItemId && d.requiredKg !== null);
+        return same.length ? Math.round(same.reduce((s, d) => s + (d.requiredKg ?? 0), 0) * 100) / 100 : null;
+      })(),
       nextDietAvailableKg:
         nextDietSilo && nextItemId
           ? nextDietSilo.feedInSiloItemId === nextItemId

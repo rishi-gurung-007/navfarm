@@ -33,6 +33,11 @@ export interface NextStageDiet {
   itemName: string | null;
   /** First day of the next stage when the current stage has a typical duration, else null. */
   date: string | null;
+  /**
+   * What the batch will eat of itemId across the whole next stage, kg: the lifecycle rows' kg/head/day x the days each row
+   * covers x the batch's heads (Rishi, 22 Nov). Null when there is no item.
+   */
+  requiredKg: number | null;
   /** Why itemId is null (no next stage / no lifecycle row); null when an item was found. */
   reason: string | null;
 }
@@ -47,6 +52,15 @@ const addDays = (iso: string, n: number): string => {
 export function nextStageFromField(current: NextStageStage, stages: Map<string, NextStageStage>): NextStageStage | null {
   const next = current.nextStageId ? stages.get(current.nextStageId) : undefined;
   return next && next.isActive ? next : null;
+}
+
+/** One feed's kg over the whole stage: the sum of kg/head/day x days of its rows (a farm's own rows replace the default ones), x heads. */
+export function nextStageRequiredKg(rows: FeedRow[], itemId: string, heads: number, farmId?: string | null): number {
+  const ofItem = rows.filter((r) => r.itemId === itemId);
+  const own = farmId ? ofItem.filter((r) => r.farmId === farmId) : [];
+  const pool = own.length ? own : ofItem.filter((r) => !r.farmId);
+  const perHead = pool.reduce((sum, r) => sum + r.kgPerHeadPerDay * (r.toDay - r.fromDay + 1), 0);
+  return Math.round(perHead * heads * 100) / 100;
 }
 
 export function resolveNextStageDiets(args: {
@@ -70,7 +84,7 @@ export function resolveNextStageDiets(args: {
     const segment = b.segments[0];
     const current = stages.get(segment.stageId);
     const base = { batchNo: b.batchNo, shedCode, heads: b.heads, breedId: b.breedId, currentStageCode: segment.stageCode };
-    const blank = { nextStageId: null, nextStageName: null, itemId: null, itemName: null, date: null };
+    const blank = { nextStageId: null, nextStageName: null, itemId: null, itemName: null, date: null, requiredKg: null };
     const stageLabel = current?.stageName ?? segment.stageCode;
     const next = current ? nextStageFromField(current, stages) : null;
     if (!next) {
@@ -92,10 +106,10 @@ export function resolveNextStageDiets(args: {
     }
     if (!row) {
       const breed = args.breedNames?.[b.breedId] ?? b.breedId;
-      out.push({ ...base, nextStageId: next.stageId, nextStageName: nextName, itemId: null, itemName: null, date, reason: `No feed item set for stage ${nextName} of breed ${breed}` });
+      out.push({ ...base, nextStageId: next.stageId, nextStageName: nextName, itemId: null, itemName: null, date, requiredKg: null, reason: `No feed item set for stage ${nextName} of breed ${breed}` });
       continue;
     }
-    out.push({ ...base, nextStageId: next.stageId, nextStageName: nextName, itemId: row.itemId, itemName: items[row.itemId] ?? row.itemName ?? null, date, reason: null });
+    out.push({ ...base, nextStageId: next.stageId, nextStageName: nextName, itemId: row.itemId, itemName: items[row.itemId] ?? row.itemName ?? null, date, requiredKg: nextStageRequiredKg(rows, row.itemId, b.heads, farmId), reason: null });
   }
   return out;
 }
