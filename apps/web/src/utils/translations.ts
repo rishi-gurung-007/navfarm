@@ -5350,7 +5350,7 @@ export const translations = {
     brpOptionAi: 'AI (Artificial Insemination)',
     brpOptionNaturalMating: 'Natural Mating',
     brpLabelMatingDate: 'Mating Date',
-    brpLabelBoarAnimal: 'Boar Animal',
+    brpLabelBoarAnimal: 'Boar Animal(s)',
     brpSelectBoar: 'Select Boar...',
     brpBoarOptionLabel: '{{code}} (Tag: {{tag}})',
     brpLabelSemenLotId: 'Semen Lot ID',

@@ -3432,7 +3432,7 @@ export function BreedingPanel({
           <Step
             n={1}
             title="Batch"
-            hint="Pick the batch, then its boar or boars."
+            hint="Pick the batch, then its boar(s)."
             done={!!semenForm.batch_id}
           >
             <BatchPicker
@@ -3474,7 +3474,7 @@ export function BreedingPanel({
 
           <Step
             n={2}
-            title="Boar or boars"
+            title="Boar(s)"
             hint="Choose the breed (line) first, then its boars from that batch. Choose several to mix their semen into one pooled lot."
             done={semenForm.boar_animal_ids.length > 0}
           >
@@ -3507,10 +3507,7 @@ export function BreedingPanel({
                 </option>
                 {semenBreedOptions.map((l) => (
                   <option key={l.breed_id} value={l.breed_id}>
-                    {l.breed_code}
-                    {l.breed_name && l.breed_name !== l.breed_code
-                      ? ` · ${l.breed_name}`
-                      : ''}
+                    {l.breed_name || l.breed_code}
                   </option>
                 ))}
               </select>
