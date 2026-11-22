@@ -2956,7 +2956,7 @@ export const translations = {
     gmdPigsToSlaughter: 'Pigs to Slaughter',
     gmdAvgCdm: 'Avg CDM',
     gmdCostOfSales: 'Cost of Sales',
-    gmdCosPerTonne: 'COS / tonne',
+    gmdCosPerTonne: 'COS $/kg CDM',
     gmdGrossMargin: 'Gross Margin',
     gmdGrossMarginPct: 'Gross Margin %',
     gmdOtherOverheads: 'Other Overheads',

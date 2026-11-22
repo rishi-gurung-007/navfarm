@@ -5,7 +5,7 @@
 # Usage (password is never stored here):
 #   TENANT=cccshow LOGIN_EMAIL=company.admin@cccshow.local LOGIN_PASSWORD='...' \
 #     scripts/showcase-seed-cccshow.sh [step ...]
-# Steps: parties schedulers breed_names breeds lifecycle service_batches daily costing forecast requisition alerts health wean overheads   (default: all, in that order)
+# Steps: parties schedulers breed_names breeds lifecycle service_batches daily costing forecast requisition alerts health wean overheads periods porta mill_plan   (default: all, in that order)
 #
 # Use the COMPANY admin: a TENANT_ADMIN only sees tenant-wide masters (scope trap).
 # Rerunnable: masters are skipped when they already exist; daily entries upsert (same day + line);
@@ -498,5 +498,177 @@ print(next((r['cost_center_id'] for r in (x or []) if r.get('cost_center_code')=
   done <<<"$FARMLIST"
 }
 
-STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(parties schedulers breed_names breeds lifecycle service_batches daily costing forecast requisition alerts health wean overheads)
+# ------------------------------------------------------------------ periods: Accounting Period Master (Monthly Ops report needs fiscal years)
+# 4-4-5 calendar as the ccc tenant has it: 28/28/35-day periods, fiscal year starting the last Sunday of June, named by the month
+# most of the period falls in. Three fiscal years (Jul 2024 - Jun 2027) so the 2025 and 2026 production data sits inside one.
+step_periods() {
+  python3 - "$API" "$TOK" "$TENANT" "$CO" <<'PY'
+import json, sys, urllib.request
+from datetime import date, timedelta
+api, tok, tenant, co = sys.argv[1:5]
+H = {'authorization': 'Bearer ' + tok, 'content-type': 'application/json', 'x-tenant-id': tenant,
+     'x-active-company-id': co, 'x-workspace-scope': 'COMPANY'}
+def call(m, path, body=None):
+    r = urllib.request.Request(api + path, data=json.dumps(body).encode() if body else None, headers=H, method=m)
+    try: return json.load(urllib.request.urlopen(r))
+    except urllib.error.HTTPError as e: return {'error': e.read().decode()[:200]}
+d = call('GET', '/accounting-period?limit=500')
+x = d.get('data', d); x = x.get('items', x.get('data', x)) if isinstance(x, dict) else x
+have = {str(r.get('starting_date'))[:10] for r in (x or [])}
+rows, start = [], date(2024, 6, 30)
+for fy in range(3):
+    for i, days in enumerate([28, 28, 35] * 4):
+        rows.append((start, i == 0)); start += timedelta(days=days)
+rows.append((start, True))
+made = 0
+for st, new in rows:
+    if st.isoformat() in have: continue
+    name = (st + timedelta(days=14)).strftime('%B')
+    r = call('POST', '/accounting-period', {'company_id': co, 'starting_date': st.isoformat(), 'name': name, 'new_fiscal_year': new})
+    if 'error' in r: print('periods       FAILED %s: %s' % (st, r['error'])); continue
+    made += 1
+print('periods       created %d, already there %d' % (made, len(have)))
+PY
+}
+
+# ------------------------------------------------------------------ porta: weaner + grower data for the Porta farm (Weaner-Grower panel, Cost of Sales)
+# Porta had no feed stock, feed postings, weights or stage moves, so its dashboard rows were empty. Mirrors what costing does for Multiplier:
+# opening feed stock (stock adjustments), a Porta weaner batch (210 head, PWH2, 2-19 Nov, moved to Double Stock), grower batch BATCH-000015 fed and
+# weighed 10-19 Nov, then slaughtered with a kill sheet and closed. Skipped when the weaner batch (remark below) already exists.
+step_porta() {
+  python3 - "$API" "$TOK" "$TENANT" "$CO" <<'PY'
+import json, sys, urllib.request, datetime as D
+api, tok, tenant, co = sys.argv[1:5]
+H = {'authorization': 'Bearer ' + tok, 'content-type': 'application/json', 'x-tenant-id': tenant, 'x-active-company-id': co, 'x-workspace-scope': 'COMPANY'}
+def call(m, path, body=None):
+    r = urllib.request.Request(api + path, data=json.dumps(body).encode() if body is not None else None, headers=H, method=m)
+    try: return json.load(urllib.request.urlopen(r))
+    except urllib.error.HTTPError as e: return {'error': e.read().decode()[:200]}
+def rows(path):
+    d = call('GET', path); x = d.get('data', d)
+    return x.get('items', x.get('data', x)) if isinstance(x, dict) else (x or [])
+def say(m): print('porta         ' + m)
+REMARK = 'Porta weaner batch (showcase)'
+batches = rows('/batch?limit=200')
+if any(b.get('remarks') == REMARK for b in batches): say('exists, skipping'); sys.exit(0)
+def loc(code):
+    for l in rows('/location-master?limit=500&search=' + code):
+        if l.get('location_code') == code: return l['location_id']
+def item(code):
+    for i in rows('/item-master?limit=500&search=' + code):
+        if i.get('item_code') == code: return i['item_id']
+def bid(no): return next(b['batch_id'] for b in batches if b['batch_no'] == no)
+# 1. opening feed stock; silos/stores are where each feed line draws from (PST1 store, PW-1 silo)
+stock = {'PWH2': [], 'PGH2': [], 'PGH1': [],
+         'PST1': [('FEED000007', 3000), ('FEED000084', 3000), ('FEED000002', 3000), ('FEED000018', 3000), ('FEED000095', 3000)],
+         'PW-1': [('FEED000024', 6000)]}
+for wh, lines in stock.items():
+    if not lines: continue
+    r = call('POST', '/stock-adjustment', {'company_id': co, 'warehouse_id': loc(wh), 'posting_date': '2026-11-01', 'reason': 'Opening feed stock (showcase)',
+        'lines': [{'item_id': item(c), 'quantity': q, 'uom': 'KG', 'rate': 0.45, 'lot_no': 'LOT-POR-' + c} for c, q in lines]})
+    aid = (r.get('data') or {}).get('adjustment_id')
+    if not aid: say('stock %s FAILED %s' % (wh, r)); sys.exit(1)
+    call('POST', '/stock-adjustment/%s/post' % aid, {}); say('stock posted at ' + wh)
+# 2. the weaner batch
+lob = next(b['lob_id'] for b in batches if b['batch_no'] == 'BATCH-000015')
+oa = next(b.get('operational_area_id') for b in batches if b['batch_no'] == 'BATCH-000015')
+stage = {s['stage_code']: s['stage_id'] for s in rows('/stage-master?limit=100')}
+breed = next(b['breed_id'] for b in batches if b['batch_no'] == 'BATCH-000015')
+r = call('POST', '/batch', {'company_id': co, 'lob_id': lob, 'operational_area_id': oa, 'costing_method': 'BIO_ASSET', 'breed_id': breed,
+    'stage_id': stage['WEANER'], 'auto_generate_scheduler': True, 'shed_id': loc('PWH2'), 'location_id': loc('PWH2'), 'start_date': '2026-11-02',
+    'expected_end_date': '2026-11-30', 'opening_quantity': 210, 'uom': 'HEAD', 'remarks': REMARK,
+    'input_lines': [{'item_id': item('BIO-SWINE-PIGLET'), 'quantity': 210, 'uom': 'HEAD', 'rate': 0}]})
+W = (r.get('data') or {}).get('batch_id')
+if not W: say('weaner batch FAILED %s' % r); sys.exit(1)
+call('POST', '/batch/%s/activate' % W, {})
+def lines_of(batch_id, stage_code):
+    for h in rows('/scheduler-header?limit=200'):
+        if h.get('batch_id') == batch_id and h.get('stage_code', stage_code) == stage_code:
+            ls = call('GET', '/scheduler-header/' + h['scheduler_id'])['data']['lines']
+            out = {}
+            for l in ls: out.setdefault(l['activity_name'], l['line_id'])
+            return out
+def feed(batch, ln, act, code, kg, d1, d2):
+    a, n = D.date.fromisoformat(d1), 0
+    while a <= D.date.fromisoformat(d2):
+        r = call('POST', '/batch/%s/daily-data' % batch, {'line_id': ln[act], 'entry_date': str(a), 'entered_value': kg, 'lot_no': 'LOT-POR-' + code})
+        n += bool(r.get('success')); a += D.timedelta(1)
+    say('%s: %d entries' % (act, n))
+def val(batch, ln, act, d, v): call('POST', '/batch/%s/daily-data' % batch, {'line_id': ln[act], 'entry_date': d, 'entered_value': v})
+wl = lines_of(W, 'WEANER')
+feed(W, wl, 'Weaner Feed — Creep 2 Nosilac', 'FEED000007', 100, '2026-11-02', '2026-11-04')
+feed(W, wl, 'Weaner Feed — Creep 3 Nosilac Bagged', 'FEED000084', 200, '2026-11-05', '2026-11-09')
+feed(W, wl, 'Weaner Feed — Weaner O.T.C', 'FEED000024', 230, '2026-11-10', '2026-11-18')
+for d, v in [('2026-11-02', 9.0), ('2026-11-10', 14.2), ('2026-11-18', 20.1)]: val(W, wl, 'KPI: Body Weight', d, v)
+for a, v in [('KPI: Average Daily Gain', 0.45), ('KPI: Feed Conversion Ratio', 1.45), ('KPI: Mortality %', 0.4)]: val(W, wl, a, '2026-11-18', v)
+r = call('POST', '/batch/%s/transfer-stage' % W, {'to_stage_code': 'DOUBLE_STOCK', 'transfer_date': '2026-11-19', 'remarks': 'Weaned off to double stock (demo)'})
+say('weaner batch moved to Double Stock' if 'error' not in r else 'move FAILED %s' % r)
+# 3. the grower batch: feed, weights, slaughter, close
+G = bid('BATCH-000015'); gl = lines_of(G, 'GROWER')
+feed(G, gl, 'Grower Feed — Grower 2', 'FEED000002', 450, '2026-11-10', '2026-11-12')
+feed(G, gl, 'Grower Feed — Grower 3', 'FEED000018', 480, '2026-11-13', '2026-11-16')
+feed(G, gl, 'Grower Feed — Grower Finisher Bagged', 'FEED000095', 500, '2026-11-17', '2026-11-19')
+for d, v in [('2026-11-09', 78.0), ('2026-11-19', 87.5)]: val(G, gl, 'Grower Body Weight Check', d, v)
+for a, v in [('KPI: Average Daily Gain', 0.95), ('KPI: Feed Conversion Ratio', 2.8), ('KPI: Mortality %', 0.2)]: val(G, gl, a, '2026-11-19', v)
+farm = next(b['farm_id'] for b in batches if b['batch_no'] == 'BATCH-000015')
+lot = next(l for l in call('GET', '/slaughter-transfer-order/eligible-lots?farm_id=%s&as_of=2026-11-20' % farm)['data'] if l['batch_id'] == G)
+r = call('POST', '/slaughter-transfer-order', {'to_date': '2026-11-20', 'farm_id': farm, 'ho_approval_ref': 'HO-SHOWCASE-POR-002', 'destination': 'Colcom Foods',
+    'lines': [{'batch_id': G, 'head_count': int(lot['head']), 'avg_live_weight_kg': 87.5}]})
+to = (r.get('data') or {}).get('to_id')
+if not to: say('slaughter FAILED %s' % r); sys.exit(1)
+line = r['data']['lines'][0]['line_id']
+for nm, b in [('confirm', {}), ('pod', {'pod_date': '2026-11-20', 'received_by': 'Colcom Foods', 'lines': [{'line_id': line, 'doa_head': 0}]}),
+              ('kill-sheet', {'kill_sheet_ref': '3647111', 'kill_sheet_date': '2026-11-21', 'invoice_no': 'COLCOM-3647111',
+                              'lines': [{'line_id': line, 'avg_carcass_weight_kg': 66.4, 'price_per_kg': 2.573}]}), ('close', {})]:
+    r = call('POST', '/slaughter-transfer-order/%s/%s' % (to, nm), b)
+    if 'error' in r: say('slaughter %s FAILED %s' % (nm, r)); sys.exit(1)
+r = call('POST', '/batch/%s/close' % G, {'actual_end_date': '2026-11-20', 'closing_quantity': 0})
+say('slaughter done, BATCH-000015 closed' if 'error' not in r else 'close FAILED %s' % r)
+PY
+}
+
+# ------------------------------------------------------------------ mill_plan: keep both farms' sheds in Mill Planning after the costing/porta steps
+# Those steps close a grower batch (slaughter) and move weaner batches to Double Stock, which would leave the Mill Planning page nearly empty.
+#  - A stage move gives the next stage's scheduler header the BATCH start date as effective_from, so a batch started in 2025 reads as day 690 of Double Stock
+#    and the plan finds no feed row: reset those headers to the move date (labelled SQL; the API has no way to set it).
+#  - BATCH-000014 (Porta grower) was loaded with closing_quantity 0, which the forecast reads as no heads: set to its opening quantity.
+#  - Add an active Multiplier grower batch (MUGR4, 200 head) to stand in for the one slaughtered, so the grower shed still plans feed.
+step_mill_plan() {
+  mysql -u "${SEED_DB_USER:-root}" "${SEED_DB:-nf_cccshow}" -e "
+    UPDATE scheduler_header h JOIN batch_header b ON b.batch_id=h.batch_id JOIN stage_master s ON s.stage_id=h.stage_id
+       SET h.effective_from='2026-11-19'
+     WHERE b.batch_no IN ('BATCH-000009','BATCH-000011','BATCH-000016') AND s.stage_code='DOUBLE_STOCK' AND h.effective_from<'2026-11-19';
+    UPDATE batch_header SET closing_quantity=opening_quantity WHERE batch_no='BATCH-000014' AND closing_quantity=0;" \
+    && say mill_plan "Double Stock headers and Porta head count set" || say mill_plan "SQL FAILED"
+  python3 - "$API" "$TOK" "$TENANT" "$CO" <<'PY'
+import json, sys, urllib.request
+api, tok, tenant, co = sys.argv[1:5]
+H = {'authorization': 'Bearer ' + tok, 'content-type': 'application/json', 'x-tenant-id': tenant, 'x-active-company-id': co, 'x-workspace-scope': 'COMPANY'}
+def call(m, path, body=None):
+    r = urllib.request.Request(api + path, data=json.dumps(body).encode() if body is not None else None, headers=H, method=m)
+    try: return json.load(urllib.request.urlopen(r))
+    except urllib.error.HTTPError as e: return {'error': e.read().decode()[:200]}
+def rows(path):
+    d = call('GET', path); x = d.get('data', d)
+    return x.get('items', x.get('data', x)) if isinstance(x, dict) else (x or [])
+REMARK = 'Multiplier grower batch (showcase)'
+batches = rows('/batch?limit=200')
+if any(b.get('remarks') == REMARK for b in batches): print('mill_plan     grower batch exists'); sys.exit(0)
+ref = next(b for b in batches if b['batch_no'] == 'BATCH-000012')
+stage = {s['stage_code']: s['stage_id'] for s in rows('/stage-master?limit=100')}
+def one(path, key, val, field):
+    return next(r[field] for r in rows(path) if r.get(key) == val)
+mugr4 = one('/location-master?limit=500&search=MUGR4', 'location_code', 'MUGR4', 'location_id')
+piglet = one('/item-master?limit=500&search=BIO-SWINE-GROWER', 'item_code', 'BIO-SWINE-GROWER', 'item_id')
+r = call('POST', '/batch', {'company_id': co, 'lob_id': ref['lob_id'], 'operational_area_id': ref.get('operational_area_id'), 'costing_method': 'BIO_ASSET',
+    'breed_id': ref['breed_id'], 'stage_id': stage['GROWER'], 'auto_generate_scheduler': True, 'shed_id': mugr4, 'location_id': mugr4,
+    'start_date': '2026-11-12', 'expected_end_date': '2027-02-20', 'opening_quantity': 200, 'uom': 'HEAD', 'remarks': REMARK,
+    'input_lines': [{'item_id': piglet, 'quantity': 200, 'uom': 'HEAD', 'rate': 0}]})
+b = (r.get('data') or {}).get('batch_id')
+if not b: print('mill_plan     grower batch FAILED', r); sys.exit(1)
+call('POST', '/batch/%s/activate' % b, {}); print('mill_plan     Multiplier grower batch created and active')
+PY
+}
+
+STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(parties schedulers breed_names breeds lifecycle service_batches daily costing forecast requisition alerts health wean overheads periods porta mill_plan)
 for s in "${STEPS[@]}"; do "step_$s"; done

@@ -450,10 +450,8 @@ function DayHead({ date }: { date: string }) {
       title={formatDateShort(date)}
       className="flex flex-col items-center text-center leading-tight"
     >
-      <span className="text-[10px] font-normal text-(--text-muted)">
-        {weekday(date)}
-      </span>
-      <span className="whitespace-nowrap">{`${date.slice(8, 10)}/${date.slice(5, 7)}`}</span>
+      <span className="whitespace-nowrap">{weekday(date)}</span>
+      <span className="text-[10px] font-normal text-(--text-muted)">{`${date.slice(8, 10)}/${date.slice(5, 7)}`}</span>
     </div>
   );
 }
@@ -580,8 +578,28 @@ const FARM_FIRST =
   'sticky left-0 z-[4] border-r border-(--border) bg-(--surface-raised)';
 const FARM_DAY = 'sticky z-[3] bg-(--surface-raised)';
 const TD = 'border-b border-(--border) px-3 py-2 align-middle text-xs';
-const NUM = 'whitespace-nowrap text-right tabular-nums';
-const HIGHLIGHT = 'bg-[color-mix(in_srgb,var(--warning)_18%,transparent)]';
+const NUM = 'whitespace-nowrap text-center tabular-nums';
+// Each distinct diet change gets its own colour (Rishi, 22 Nov), so two changes on one page are told apart at a glance.
+const CHANGE_COLOURS = [
+  { cell: 'bg-[color-mix(in_srgb,#f59e0b_22%,transparent)]', text: 'text-[#b45309]' },
+  { cell: 'bg-[color-mix(in_srgb,#3b82f6_20%,transparent)]', text: 'text-[#1d4ed8]' },
+  { cell: 'bg-[color-mix(in_srgb,#10b981_22%,transparent)]', text: 'text-[#047857]' },
+  { cell: 'bg-[color-mix(in_srgb,#a855f7_20%,transparent)]', text: 'text-[#7e22ce]' },
+  { cell: 'bg-[color-mix(in_srgb,#ec4899_20%,transparent)]', text: 'text-[#be185d]' },
+  { cell: 'bg-[color-mix(in_srgb,#14b8a6_22%,transparent)]', text: 'text-[#0f766e]' },
+];
+const changeColour = (
+  plan: { dietChanges: Array<{ fromItemName: string; toItemName: string }> },
+  change: { fromItemName: string; toItemName: string },
+) => {
+  const keys = [
+    ...new Set(
+      plan.dietChanges.map((c) => `${c.fromItemName}|${c.toItemName}`),
+    ),
+  ].sort();
+  const at = keys.indexOf(`${change.fromItemName}|${change.toItemName}`);
+  return CHANGE_COLOURS[(at < 0 ? 0 : at) % CHANGE_COLOURS.length];
+};
 const RUN_OUT = 'bg-[color-mix(in_srgb,var(--danger)_14%,transparent)]';
 
 export default function MillPlanPanel() {
@@ -1392,7 +1410,9 @@ export default function MillPlanPanel() {
                                     </Fragment>
                                   ))}
                                   {shed.changeDate && (
-                                    <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase text-(--warning)">
+                                    <span
+                                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${shed.changes[0] ? changeColour(plan, shed.changes[0]).text : 'text-(--warning)'}`}
+                                    >
                                       {t('mplTypeChange')}
                                     </span>
                                   )}
@@ -1407,7 +1427,7 @@ export default function MillPlanPanel() {
                                 return (
                                   <td
                                     key={date}
-                                    className={`${TD} ${NUM} ${change ? HIGHLIGHT : ''}`}
+                                    className={`${TD} ${NUM} ${change ? changeColour(plan, dayChanges[0]).cell : ''}`}
                                     {...(change
                                       ? {
                                           'data-diet-change': '',

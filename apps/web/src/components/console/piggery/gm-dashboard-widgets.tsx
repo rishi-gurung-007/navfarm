@@ -273,7 +273,7 @@ function FigureBlock({
   );
 }
 
-/** A secondary KPI under the main one (COS $/tonne, Gross Margin %, Staff Overheads): Month and YTD on one line each. */
+/** A secondary KPI under the main one (COS $/kg CDM, Gross Margin %, Staff Overheads): Month and YTD on one line each. */
 export interface SubKpi {
   label: string;
   unit: string;

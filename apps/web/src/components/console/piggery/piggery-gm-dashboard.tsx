@@ -239,7 +239,7 @@ const FINANCIAL_ROWS: Array<
   },
   {
     key: 'cos_per_tonne',
-    label: 'COS $/tonne',
+    label: 'COS $/kg CDM',
     unit: '',
     lower_is_better: true,
   },
