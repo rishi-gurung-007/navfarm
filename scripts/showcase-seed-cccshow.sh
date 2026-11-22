@@ -5,7 +5,7 @@
 # Usage (password is never stored here):
 #   TENANT=cccshow LOGIN_EMAIL=company.admin@cccshow.local LOGIN_PASSWORD='...' \
 #     scripts/showcase-seed-cccshow.sh [step ...]
-# Steps: parties daily forecast requisition alerts health wean overheads   (default: all, in that order)
+# Steps: parties schedulers daily forecast requisition alerts health wean overheads   (default: all, in that order)
 #
 # Use the COMPANY admin: a TENANT_ADMIN only sees tenant-wide masters (scope trap).
 # Rerunnable: masters are skipped when they already exist; daily entries upsert (same day + line);
@@ -34,6 +34,28 @@ import json,sys
 d=json.load(sys.stdin); x=d.get('data',d)
 x=x.get('items',x.get('data',x)) if isinstance(x,dict) else x
 sys.exit(0 if any(str(r.get('$2'))=='$3' for r in (x or [])) else 1)" 2>/dev/null; }
+
+# ------------------------------------------------------------------ 0. schedulers: drop repeated feed lines
+# Older schedulers were generated from the breed lifecycle rows of every farm, so a batch got each feed line once per
+# farm. The generator is fixed (it now reads default rows and the batch's own farm); this clears the repeats already
+# there. Of lines with the same item, days, quantity and occurrence, the first is kept and the rest are deactivated
+# (history kept). Rerunnable: it finds nothing the second time.
+step_schedulers() {
+  api GET "/scheduler-header?limit=500" | json "
+x=d.get('data',d); x=x.get('items',x) if isinstance(x,dict) else x
+print('\n'.join(h['scheduler_id'] for h in x))" | while read -r sid; do
+    api GET "/scheduler-header/$sid" | json "
+seen=set()
+for l in sorted(d['data']['lines'], key=lambda l: l['line_seq']):
+    if not l.get('is_active', True) or l['line_type']!='CONSUMPTION' or not l.get('item_id'): continue
+    k=(l['item_id'],l.get('start_day'),l.get('end_day'),str(l.get('standard_qty')),l.get('occurrence'))
+    if k in seen: print(l['line_id'])
+    seen.add(k)" | while read -r lid; do
+      r=$(api DELETE "/scheduler-header/$sid/lines/$lid")
+      ok "$r" && say schedulers "$sid: repeated feed line $lid deactivated" || say schedulers "FAILED $lid: $r"
+    done
+  done
+}
 
 # ------------------------------------------------------------------ 1. suppliers and customers
 step_parties() {
@@ -270,5 +292,5 @@ print(next((r['cost_center_id'] for r in (x or []) if r.get('cost_center_code')=
   done <<<"$FARMLIST"
 }
 
-STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(parties daily forecast requisition alerts health wean overheads)
+STEPS=("$@"); [ ${#STEPS[@]} -eq 0 ] && STEPS=(parties schedulers daily forecast requisition alerts health wean overheads)
 for s in "${STEPS[@]}"; do "step_$s"; done

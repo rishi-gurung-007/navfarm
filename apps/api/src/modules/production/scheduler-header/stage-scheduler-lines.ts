@@ -13,7 +13,7 @@
  * The same lines are what auto-create writes and what the Create Scheduler form starts from; the user may change them
  * there, and once the scheduler exists they are fixed.
  */
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import * as schema from '../../../core/database/schema';
 import { stageDayRange } from '../lifecycle/feed-row-days';
@@ -275,6 +275,10 @@ export async function buildStageSchedulerLines(
         eq(t.stage_id, stageId),
         eq(t.is_active, true),
         isNull(t.retired_at),
+        // Default rows (no farm) and this batch's farm only; another farm's rows would repeat the same feed.
+        batch.farm_id
+          ? or(isNull(t.farm_id), eq(t.farm_id, batch.farm_id))
+          : isNull(t.farm_id),
       ),
     )
     .orderBy(t.period_from);
