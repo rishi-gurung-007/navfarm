@@ -14,4 +14,11 @@ describe('SetupWizardController company currency compatibility', () => {
     await controller.saveStep5('co-1', 'base-1');
     expect(service.saveStep5Currency).toHaveBeenCalledWith('co-1', 'base-1');
   });
+
+  it('saves the timezone from the body so a slash in the id cannot break the route', async () => {
+    const service = { saveStep6Timezone: jest.fn().mockResolvedValue({ success: true }) };
+    const controller = new SetupWizardController(service as any);
+    await controller.saveStep6Body('co-1', { timezone_id: 'Asia/Kolkata', country_id: 'ind' });
+    expect(service.saveStep6Timezone).toHaveBeenCalledWith('co-1', 'Asia/Kolkata', 'IND');
+  });
 });

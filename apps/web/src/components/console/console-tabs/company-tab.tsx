@@ -525,9 +525,10 @@ export default function CompanyTab({
           api.post(
             `/setup/wizard/step-5/${targetCompany.company_id}/${base_currency_id}/${local_currency_id}`,
           ),
-          api.post(
-            `/setup/wizard/step-6/${targetCompany.company_id}/${encodeURIComponent(default_timezone_id)}/${country_id.toUpperCase()}`,
-          ),
+          api.post(`/setup/wizard/step-6/${targetCompany.company_id}`, {
+            timezone_id: default_timezone_id,
+            country_id: country_id.toUpperCase(),
+          }),
         ]);
       } else if (settingsTab === 'feed') {
         const numberOrNull = (value: number | '') =>

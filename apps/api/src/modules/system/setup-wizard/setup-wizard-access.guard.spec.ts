@@ -175,6 +175,7 @@ describe('SetupWizardController guard wiring', () => {
     ['saveStep5', { admin: true, target: 'company' }],
     ['saveStep5Currencies', { admin: true, target: 'company' }],
     ['saveStep6', { admin: true, target: 'company' }],
+    ['saveStep6Body', { admin: true, target: 'company' }],
     ['saveStep7', { admin: true, target: 'company' }],
     ['saveStep8', { admin: true, target: 'company' }],
     ['getStatus', { admin: true, target: 'company' }],
@@ -195,6 +196,6 @@ describe('SetupWizardController guard wiring', () => {
   it('leaves no route outside the list above', () => {
     // The class itself carries @Controller's path, and proto.constructor is the class.
     const routes = Object.getOwnPropertyNames(proto).filter((name) => name !== 'constructor' && Reflect.getMetadata(PATH_METADATA, proto[name]) !== undefined);
-    expect(routes).toHaveLength(21);
+    expect(routes).toHaveLength(22);
   });
 });

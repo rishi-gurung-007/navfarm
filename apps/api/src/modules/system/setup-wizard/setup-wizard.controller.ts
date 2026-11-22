@@ -8,6 +8,7 @@ import { Step1ProfileDto } from './dto/step1-profile.dto';
 import { Step2AddressDto } from './dto/step2-address.dto';
 import { Step3ContactDto } from './dto/step3-contact.dto';
 import { Step7FiscalDto } from './dto/step7-fiscal.dto';
+import { Step6LocaleDto } from './dto/step6-locale.dto';
 import { Step8ModulesDto } from './dto/step8-modules.dto';
 import { CreateNobDto, UpdateNobDto, CreateLobDto, UpdateLobDto } from './dto/nob-lob.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -134,6 +135,19 @@ export class SetupWizardController {
     @Param('countryId') countryId: string,
   ) {
     return this.wizardService.saveStep6Timezone(companyId, timezoneId, countryId);
+  }
+
+  /**
+   * Same save as the path-parameter route above, but the timezone travels in the body: a timezone id such as
+   * Asia/Kolkata has a slash, and a proxy that decodes %2F in front of the API turns it into extra path
+   * segments, so the path route answers "Cannot POST". The web uses this one.
+   */
+  @Post('step-6/:companyId')
+  @WizardAccess({ admin: true, target: 'company' })
+  @ApiOperation({ summary: 'Step 6: Save default Timezone and Region references (timezone in the body)' })
+  @ApiParam({ name: 'companyId', description: 'Company UUID' })
+  async saveStep6Body(@Param('companyId') companyId: string, @Body() dto: Step6LocaleDto) {
+    return this.wizardService.saveStep6Timezone(companyId, dto.timezone_id, dto.country_id.toUpperCase());
   }
 
   @Post('step-7')
