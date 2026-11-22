@@ -3531,12 +3531,13 @@ export function BreedingPanel({
                   return {
                     animal_id: b.animal_id,
                     code: b.animal_code,
-                    name: `${b.rfid_tag || t('brpNa')} · ${since == null ? 'never collected' : `collected ${since} d ago`}`,
+                    // The boar's own code leads (a picked chip shows only this text); the RFID tag follows when it has one.
+                    name: `${b.animal_code}${b.rfid_tag ? ` · ${b.rfid_tag}` : ''} · ${since == null ? 'never collected' : `collected ${since} d ago`}`,
                   };
                 })}
                 value={semenForm.boar_animal_ids}
                 valueKey="animal_id"
-                labelKeys={['code', 'name']}
+                labelKeys={['name']}
                 onChange={(next) =>
                   setSemenForm({
                     ...semenForm,
