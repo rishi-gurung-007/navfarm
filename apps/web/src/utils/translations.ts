@@ -2178,7 +2178,7 @@ export const translations = {
     ffColHeadCount: 'Head Count',
     ffColFeedRate: 'Rate per Head per Day',
     ffColOpeningSystemBalance: 'Opening System Balance',
-    ffColConfirmedReceipts: 'Confirmed Receipts',
+    ffColConfirmedReceipts: 'Confirmed Stock In',
     ffColDailyUse: 'Daily Use',
     ffColUom: 'UOM',
     ffProjectedClosingOn: 'Projected Closing Balance on {{date}}',
