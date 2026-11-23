@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { eq, and, count, isNull, or, sql } from 'drizzle-orm';
+import { eq, and, count, isNull, isNotNull, or, sql, inArray } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -365,12 +365,38 @@ export class QrCodeService {
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
-    return this.db
+    // A lot that failed QC (inspection closed, nothing posted) is not stock: its pack is not listed.
+    conditions.push(sql`not exists (
+      select 1 from ${schema.qcInspection} qi
+      where qi.tenant_id = ${schema.qrCodeMaster.tenant_id}
+        and qi.lot_no = ${schema.qrCodeMaster.lot_no}
+        and qi.status = 'CLOSED' and qi.ledger_entry_id is null)`);
+
+    const rows = await this.db
       .select()
       .from(schema.qrCodeMaster)
       .where(and(...conditions))
       .limit(limit)
       .offset(offset);
+
+    // The QC inspection of each pack's lot, so the list can show its number and status and link to it.
+    const lotNos = [...new Set(rows.map((r) => r.lot_no).filter((l): l is string => !!l))];
+    const inspections = lotNos.length
+      ? await this.db
+          .select({
+            lot_no: schema.qcInspection.lot_no,
+            inspection_id: schema.qcInspection.inspection_id,
+            inspection_no: schema.qcInspection.inspection_no,
+            status: schema.qcInspection.status,
+            result: schema.qcInspection.result,
+          })
+          .from(schema.qcInspection)
+          .where(and(eq(schema.qcInspection.tenant_id, tenantId), inArray(schema.qcInspection.lot_no, lotNos)))
+      : [];
+    return rows.map((r) => ({
+      ...r,
+      qc_inspection: inspections.find((i) => i.lot_no === r.lot_no) ?? null,
+    }));
   }
 
   async voidPack(id: string, tenantId: string, userPayload?: any) {

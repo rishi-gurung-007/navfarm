@@ -2627,10 +2627,35 @@ export class BreedingService {
     const lotIds = lots.map((l) => l.semen_batch_id);
     const pooled = await this.semenLotBoars(lotIds);
     const results = await this.semenLotResults(lotIds);
+    // The QC inspection of each lot (only a lot of a QC-required item has one).
+    const inspections = lotIds.length
+      ? await this.db
+          .select({
+            source_line_id: schema.qcInspection.source_line_id,
+            inspection_id: schema.qcInspection.inspection_id,
+            inspection_no: schema.qcInspection.inspection_no,
+            status: schema.qcInspection.status,
+            result: schema.qcInspection.result,
+            ledger_entry_id: schema.qcInspection.ledger_entry_id,
+          })
+          .from(schema.qcInspection)
+          .where(and(eq(schema.qcInspection.source_doc_type, 'SEMEN_COLLECTION'), inArray(schema.qcInspection.source_line_id, lotIds)))
+      : [];
     return lots.map((l) => {
       const boars = pooled.filter((p) => p.semen_batch_id === l.semen_batch_id);
+      const qc = inspections.find((i) => i.source_line_id === l.semen_batch_id);
       return {
         ...l,
+        qc_inspection: qc
+          ? {
+              inspection_id: qc.inspection_id,
+              inspection_no: qc.inspection_no,
+              status: qc.status,
+              result: qc.result,
+              // Waiting, accepted into stock, or rejected: what the list shows.
+              qc_state: qc.status !== 'CLOSED' ? 'PENDING' : qc.ledger_entry_id ? 'ACCEPTED' : 'REJECTED',
+            }
+          : null,
         results: results.filter((r) => r.semen_batch_id === l.semen_batch_id),
         pooled: boars.length > 0,
         boars: boars.map((b) => ({

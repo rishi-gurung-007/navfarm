@@ -1468,9 +1468,30 @@ export class InventoryLedgerService {
       )
       .where(eq(schema.batchTransaction.ledger_id, ledgerId));
 
+    // The QC inspection that released this stock (goods receipt, transfer receipt or semen collection of a QC-required item).
+    const qcCols = {
+      inspection_id: schema.qcInspection.inspection_id,
+      inspection_no: schema.qcInspection.inspection_no,
+      status: schema.qcInspection.status,
+      result: schema.qcInspection.result,
+    };
+    let [qc] = await this.db
+      .select(qcCols)
+      .from(schema.qcInspection)
+      .where(eq(schema.qcInspection.ledger_entry_id, ledgerId))
+      .limit(1);
+    if (!qc && entry.lot_no && entry.item_id && isInbound) {
+      [qc] = await this.db
+        .select(qcCols)
+        .from(schema.qcInspection)
+        .where(and(eq(schema.qcInspection.item_id, entry.item_id), eq(schema.qcInspection.lot_no, entry.lot_no)))
+        .limit(1);
+    }
+
     return {
       ...entry,
       warehouse,
+      qc_inspection: qc ?? null,
       lots,
       costing:
         !isInbound && applications.length > 0
