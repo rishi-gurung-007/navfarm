@@ -160,16 +160,8 @@ export function assertLineFields(docType: CommonDocType, line: RequisitionLineRu
       if (!present(line.description)) throw new BadRequestException(`${at} needs a Fixed Asset description.`);
       break;
     case 'SERVICE':
-      // Rishi, 5 Oct (decisions.md "Common requisition: requester, Service
-      // lines, receipt and release", point 2): "Service lines follow his list:
-      // Description + Qty only. The optional Resource picker is removed." A
-      // Resource id stored on an older line is still read back harmlessly by
-      // findOne; it is never accepted again.
-      // Rishi, 22 Nov: a Service line may now name an Item Master item (optional);
-      // it still carries no lot or serial and no Resource.
-      if (present(line.resource_id)) {
-        throw new BadRequestException(`${at}: a Service line is Description + Qty only; it cannot reference a Resource.`);
-      }
+      // Rishi, 5 Oct: Service lines are Description + Qty only. Rishi, 22 Nov: a Service line
+      // names its item from the Resource master (optional); it carries no lot or serial.
       if (!present(line.description)) throw new BadRequestException(`${at} needs a Service description.`);
       break;
   }

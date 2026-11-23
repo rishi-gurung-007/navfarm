@@ -193,6 +193,8 @@ export function CommonRequisitionDocument({
   const departments = options?.departments ?? [];
   const items = options?.items ?? [];
   const fixedAssetItems = options?.fixed_asset_items ?? items;
+  // A Service line picks from the Resource master (Rishi, 22 Nov); the other kinds from the Item Master.
+  const resources = options?.resources ?? [];
   const locCode = (id: string | null, code?: string | null) =>
     code ?? locations.find((l) => l.location_id === id)?.location_code ?? null;
   /** W2D W12: a location's code linked to its record; null when there is no code (the caller's empty text then shows). */
@@ -578,15 +580,21 @@ export function CommonRequisitionDocument({
                           {can ? (
                             <SearchableSelect
                               ariaLabel={t('crqItemFor', { line: i + 1 })}
-                              value={line.item_id ?? ''}
-                              options={(view.doc_type === 'FA'
-                                ? fixedAssetItems
-                                : items
-                              ).map((it) => ({
-                                value: it.item_id,
-                                code: it.item_code,
-                                name: it.item_name,
-                              }))}
+                              value={(view.doc_type === 'SERVICE' ? line.resource_id : line.item_id) ?? ''}
+                              options={(view.doc_type === 'SERVICE'
+                                ? resources.map((r) => ({
+                                    value: r.resource_id,
+                                    code: r.resource_code,
+                                    name: r.resource_name,
+                                  }))
+                                : (view.doc_type === 'FA'
+                                    ? fixedAssetItems
+                                    : items
+                                  ).map((it) => ({
+                                    value: it.item_id,
+                                    code: it.item_code,
+                                    name: it.item_name,
+                                  })))}
                               valueKey="value"
                               getLabel={(row) => `${row.code} — ${row.name}`}
                               getSelectedLabel={(row) => String(row.code)}
@@ -603,6 +611,17 @@ export function CommonRequisitionDocument({
                               noMatchesLabel={t('crqNoMatches')}
                               triggerClassName="w-48"
                               onChange={(itemId) => {
+                                if (view.doc_type === 'SERVICE') {
+                                  const r = resources.find((x) => x.resource_id === itemId);
+                                  setLine(i, {
+                                    resource_id: itemId || null,
+                                    resource_code: r?.resource_code ?? null,
+                                    resource_name: r?.resource_name ?? null,
+                                    item_id: null,
+                                    description: r?.resource_name ?? line.description,
+                                  });
+                                  return;
+                                }
                                 const it = (
                                   view.doc_type === 'FA'
                                     ? fixedAssetItems
@@ -614,8 +633,7 @@ export function CommonRequisitionDocument({
                                   // description, while still letting the user
                                   // amend it for the actual asset requested.
                                   description:
-                                    view.doc_type === 'FA' ||
-                                    view.doc_type === 'SERVICE'
+                                    view.doc_type === 'FA'
                                       ? (it?.item_name ?? line.description)
                                       : line.description,
                                   uom:
@@ -627,16 +645,28 @@ export function CommonRequisitionDocument({
                             />
                           ) : (
                             <RecordLink
-                              code={line.item_code}
+                              code={
+                                view.doc_type === 'SERVICE'
+                                  ? line.resource_code
+                                  : line.item_code
+                              }
                               href={
-                                line.item_id ? itemHref(line.item_id) : null
+                                view.doc_type !== 'SERVICE' && line.item_id
+                                  ? itemHref(line.item_id)
+                                  : null
                               }
                             />
                           )}
                         </td>
                         {/* Item Name is the Item Master's name, never typed here. */}
                         <td className={TD}>
-                          {line.item_name ??
+                          {(view.doc_type === 'SERVICE'
+                            ? (line.resource_name ??
+                              resources.find(
+                                (x) => x.resource_id === line.resource_id,
+                              )?.resource_name)
+                            : null) ??
+                            line.item_name ??
                             (view.doc_type === 'FA'
                               ? fixedAssetItems
                               : items

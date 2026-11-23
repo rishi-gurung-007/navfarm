@@ -115,6 +115,8 @@ export interface CommonRequisitionOptions {
   items: { item_id: string; item_code: string; item_name: string; uom_primary: string | null; is_lot_tracked?: boolean; is_serial_tracked?: boolean }[];
   /** FA requests may name a biological Item Master asset; Item/Store requests may not. */
   fixed_asset_items?: { item_id: string; item_code: string; item_name: string; uom_primary: string | null; is_lot_tracked?: boolean; is_serial_tracked?: boolean }[];
+  /** Service lines pick their item from the Resource master (Rishi, 22 Nov). */
+  resources?: { resource_id: string; resource_code: string; resource_name: string; unit: string | null }[];
   locations: { location_id: string; location_code: string; location_name: string; location_type: string; farm_id: string | null }[];
   /** Every Farm-type location the user may open — the Main / Farm Location choices (12 Oct). */
   farms?: { location_id: string; location_code: string; location_name: string; location_type: string; farm_id: string | null }[];
@@ -174,9 +176,9 @@ export function toRequisitionPayload(v: CommonRequisitionView): Record<string, u
     lines: v.lines.map((l) => ({
       // Fixed Asset lines now name the selected Item Master asset too (Rishi,
       // 19 Nov); a Service line may name one too, optionally (Rishi, 22 Nov).
-      item_id: s(l.item_id),
-      // No resource_id: no line names a Resource (Rishi, 5 Oct — Service lines
-      // are Description + Qty only), and the API refuses one on every kind.
+      item_id: v.doc_type === "SERVICE" ? null : s(l.item_id),
+      // A Service line names its item from the Resource master (Rishi, 22 Nov); the API refuses a Resource on other kinds.
+      resource_id: v.doc_type === "SERVICE" ? s(l.resource_id) : undefined,
       description: s(l.description),
       quantity: Number(l.quantity),
       // WP1c addendum (Rishi, 5 Oct): an FA/Service line is "Description + Qty

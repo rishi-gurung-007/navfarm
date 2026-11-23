@@ -335,7 +335,7 @@ export class RequisitionService {
     tenantId: string,
     companyId: string,
     docType: CommonDocType,
-    lines: Array<{ item_id?: string | null; lot_no?: string | null; serial_no?: string | null }>,
+    lines: Array<{ item_id?: string | null; resource_id?: string | null; lot_no?: string | null; serial_no?: string | null }>,
   ) {
     const itemIds = [...new Set(lines.map((l) => l.item_id).filter((v): v is string => !!v))];
     if (itemIds.length) {
@@ -372,9 +372,21 @@ export class RequisitionService {
         }
       });
     }
-    // No line names a Resource any more (Rishi, 5 Oct: Service lines are
-    // Description + Qty only) — assertLineFields refuses one on every kind
-    // before this runs, so there is nothing left to look up.
+    // A Service line names its item from the Resource master (Rishi, 22 Nov).
+    const resourceIds = [...new Set(lines.map((l) => l.resource_id).filter((v): v is string => !!v))];
+    if (resourceIds.length) {
+      const rows = await this.db
+        .select({ resource_id: schema.resourceMaster.resource_id })
+        .from(schema.resourceMaster)
+        .where(and(
+          eq(schema.resourceMaster.tenant_id, tenantId), eq(schema.resourceMaster.company_id, companyId),
+          eq(schema.resourceMaster.is_active, true), isNull(schema.resourceMaster.deleted_at),
+          inArray(schema.resourceMaster.resource_id, resourceIds),
+        ));
+      const found = new Set(rows.map((r) => r.resource_id));
+      const at = lines.findIndex((l) => l.resource_id && !found.has(l.resource_id));
+      if (at >= 0) throw new BadRequestException(`Line ${at + 1}: resource is not an active resource of this company.`);
+    }
   }
 
   /** One insert row per supplied line — the mapping create() always used, shared with update(). */
@@ -588,8 +600,13 @@ export class RequisitionService {
         };
       }
     }
-    // No resources: no line may name one (Rishi, 5 Oct — Service lines are Description + Qty only).
-    return { items, fixed_asset_items, locations, farms, departments, may_direct_transfer: mayDirectTransfer, requester };
+    // Service lines pick their item from the Resource master (Rishi, 22 Nov).
+    const resources = await this.db
+      .select({ resource_id: schema.resourceMaster.resource_id, resource_code: schema.resourceMaster.resource_code, resource_name: schema.resourceMaster.resource_name, unit: schema.resourceMaster.unit })
+      .from(schema.resourceMaster)
+      .where(and(eq(schema.resourceMaster.tenant_id, tenantId), eq(schema.resourceMaster.company_id, query.company_id), eq(schema.resourceMaster.is_active, true), isNull(schema.resourceMaster.deleted_at)))
+      .orderBy(schema.resourceMaster.resource_code);
+    return { items, fixed_asset_items, resources, locations, farms, departments, may_direct_transfer: mayDirectTransfer, requester };
   }
 
   /**
