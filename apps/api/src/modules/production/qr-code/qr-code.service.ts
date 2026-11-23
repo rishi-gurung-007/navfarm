@@ -237,6 +237,8 @@ export class QrCodeService {
       week?: { no: number; year: number };
       colorantName?: string | null;
       destinationFarmId?: string | null;
+      /** The QC inspection raised for the lot, when its item is QC required. */
+      qcInspectionNo?: string | null;
     },
     tenantId: string,
     userPayload?: any,
@@ -264,6 +266,8 @@ export class QrCodeService {
       week?: { no: number; year: number };
       colorantName?: string | null;
       destinationFarmId?: string | null;
+      /** The QC inspection raised for the lot, when its item is QC required. */
+      qcInspectionNo?: string | null;
     },
     tenantId: string,
     userPayload?: any,
@@ -303,6 +307,7 @@ export class QrCodeService {
       batch_no: boarBatch.batch_no,
       collection_date: params.collectionDate,
       doses: params.doses,
+      ...(params.qcInspectionNo ? { qc_inspection: { inspection_no: params.qcInspectionNo, result: 'Pending', accepted: null, collected: params.doses } } : {}),
       expiry_date: params.expiryDate,
       facility_code: facilityCode,
       // Quality read at collection (G8), when it was recorded.

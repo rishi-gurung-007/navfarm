@@ -460,7 +460,13 @@ export default function PacksPanel() {
                     ? t('pkLinkedResult', {
                         result: viewing.qr_data?.qc?.overall_result || NA,
                       })
-                    : t('pkNotLinked')}
+                    : viewing.qr_data?.qc_inspection
+                      ? `${viewing.qr_data.qc_inspection.inspection_no} · ${viewing.qr_data.qc_inspection.result}${
+                          viewing.qr_data.qc_inspection.result === 'Partly accepted'
+                            ? ` (${viewing.qr_data.qc_inspection.accepted} of ${viewing.qr_data.qc_inspection.collected} doses)`
+                            : ''
+                        }`
+                      : t('pkNotLinked')}
                 </p>
               </div>
               <div>

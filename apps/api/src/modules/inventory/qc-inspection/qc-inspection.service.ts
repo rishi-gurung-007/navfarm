@@ -597,7 +597,7 @@ export class QcInspectionService {
    * only in part has only the accepted doses to use, and one that failed has none.
    */
   private async settleSource(
-    inspection: { source_doc_type: string; source_line_id: string; inspection_no: string; quantity: string },
+    inspection: { tenant_id: string; source_doc_type: string; source_line_id: string; inspection_no: string; quantity: string; lot_no: string | null },
     acceptedQty: number,
     posted: boolean,
   ) {
@@ -612,6 +612,17 @@ export class QcInspectionService {
         ...(note ? { notes: sql`concat(coalesce(${schema.semenBatch.notes}, ''), ${note}, ' ')` } : {}),
       })
       .where(eq(schema.semenBatch.semen_batch_id, inspection.source_line_id));
+    // The lot's QR pack carries the doses that were collected; it follows what QC accepted, and names the inspection (Traceability's QC link).
+    if (inspection.lot_no) {
+      const result = !posted ? 'Rejected' : acceptedQty + 1e-9 < collected ? 'Partly accepted' : 'Accepted';
+      await this.db
+        .update(schema.qrCodeMaster)
+        .set({
+          net_weight: String(acceptedQty),
+          qr_data: sql`json_set(${schema.qrCodeMaster.qr_data}, '$.doses', ${acceptedQty}, '$.qc_inspection', json_object('inspection_no', ${inspection.inspection_no}, 'result', ${result}, 'accepted', ${acceptedQty}, 'collected', ${collected}))`,
+        })
+        .where(and(eq(schema.qrCodeMaster.tenant_id, inspection.tenant_id), eq(schema.qrCodeMaster.lot_no, inspection.lot_no), eq(schema.qrCodeMaster.pack_uom, 'DOSE')));
+    }
   }
 
   // ---------------------------------------------------------------- the ledger entry

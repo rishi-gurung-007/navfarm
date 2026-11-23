@@ -177,7 +177,7 @@ export class SemenLotService {
       ? await this.qrCodeService.createForSemenLot(
           {
             boar, poolBoars: params.poolBoars, boarBatch, item, lotNo, collectionDate: params.collectionDate, doses: params.doses, expiryDate: expiry, warehouseId, quality: params.quality,
-            label: params.label, week: params.week, colorantName: params.colorantName ?? null, destinationFarmId: params.destinationFarmId,
+            label: params.label, week: params.week, colorantName: params.colorantName ?? null, destinationFarmId: params.destinationFarmId, qcInspectionNo,
           },
           tenantId,
           userPayload,
