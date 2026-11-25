@@ -34,6 +34,7 @@ describe('FeedForecastService.siloStatus', () => {
     jest.spyOn(service as any, 'loadInput').mockResolvedValue({ input, flags: [], stageBlocks: [] });
     jest.spyOn(service as any, 'siloPlanningRows').mockResolvedValue(new Map([['farm-b', hierarchy]]));
     jest.spyOn(service as any, 'loadItemFeedTypes').mockResolvedValue({});
+    jest.spyOn(service as any, 'fedAnimalAges').mockResolvedValue({ ages: new Map(), estimated: new Set() });
     return { cls, service };
   }
 

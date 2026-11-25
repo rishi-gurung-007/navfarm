@@ -2425,6 +2425,10 @@ export const translations = {
     fsdDaysUnit: 'days',
     fsdAnimalsFed: 'Animals Fed',
     fsdHeadUnit: 'head',
+    fsdAverageAge: 'Average Age',
+    fsdAgeKnownFor: 'Age known for',
+    fsdEstimated: 'estimated',
+    fsdDailyNeedPerAnimal: 'Daily Need per Animal',
     fsdAnimalsFedNone:
       'No batch in this shed draws on this silo on the planning date',
     fsdAnimalsFedBatches: 'Batches in this shed fed from this silo',

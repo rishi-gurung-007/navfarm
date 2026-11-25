@@ -215,6 +215,8 @@ export interface DailyForecastRow {
   stageCode: string;
   /** The real stage_master/breed_lifecycle stage id this row's segment is in on `date` — travels separately from `realBatchId` (D1). */
   stageId: string;
+  /** Day of that stage on `date` (day 1 = entry); the dashboard estimates an age from it. */
+  stageDay?: number;
   /**
    * The stage GROUP's identity: the batch's starting segment stage — for an
    * ANIMAL_WISE/REGISTERED group, the stage in its composite `batchId`. Fixed
@@ -741,6 +743,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
     demandMicrograms: number;
     /** D36: the date sits inside the segment's stage-change window (earliest…latest) — see DailyForecastRow. */
     inChangeWindow: boolean;
+    stageDay: number;
   }
   const dailyEntries: DailyEntry[] = [];
   const batchesByKeyDate = new Map<string, Set<string>>();
@@ -845,6 +848,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
             date, batchId: batch.batchId, realBatchId: batch.realBatchId, batchNo: batch.batchNo, shedId: batch.shedId, heads: batch.heads,
             stageCode: segment.stageCode, stageId: segment.stageId, groupStageId: batch.segments[0].stageId, feedRow, key: sk.key, sourceType: sk.sourceType, sourceCode: sk.sourceCode, demandMicrograms,
             inChangeWindow,
+            stageDay: dayOfStage,
           });
           const shareKey = `${sk.key}|${date}`;
           let sharing = batchesByKeyDate.get(shareKey);
@@ -1201,6 +1205,7 @@ export function buildFeedForecast(input: ForecastInput): ForecastResult {
         expectedDate: entry.expectedDate,
         overdue: entry.overdue,
       })),
+      stageDay: e.stageDay,
       currentInventoryKg: toKg(opening),
       heads: e.heads,
       feedRateKg: e.feedRow.kgPerHeadPerDay,

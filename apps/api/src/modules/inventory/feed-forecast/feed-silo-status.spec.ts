@@ -736,6 +736,44 @@ describe('buildSelectedSiloDashboard', () => {
     ]);
   });
 
+  // 25 Nov: the average age of the animals fed, and what one of them eats a day. Both read the same rows as Animals
+  // Fed (the selected shed's), not the whole silo's Daily Need.
+  it('averages the age over the heads whose age is known, and divides those rows demand by the animals fed', () => {
+    const status = {
+      ...fact({}),
+      currentDietItemId: 'r1',
+      nextDietItemId: null,
+      alert: null,
+    } as unknown as SiloStatusRow;
+    const row = (over: Record<string, unknown>) => ({
+      batchId: 'b1', realBatchId: 'b1', batchNo: 'B-1', stageCode: 'GROWER', shedId: 'shed-1', itemId: 'r1',
+      itemName: 'Diet R1', date: '2026-09-23', heads: 100, demandKg: 200, sourceType: 'SILO',
+      destinationLocationId: 's1', currentInventoryKg: 1500, confirmedReceiptKg: 0, ...over,
+    });
+    const shaped = buildSelectedSiloDashboard({
+      status,
+      planningDate: '2026-09-23',
+      shedId: 'shed-1',
+      nextBinAssignment: null,
+      ageDaysByBatchId: new Map([['b1', 60], ['b2', 80]]),
+      estimatedAgeBatchIds: new Set(['b2']),
+      result: {
+        sources: [],
+        daily: [
+          row({}),
+          row({ batchId: 'b2', batchNo: 'B-2', heads: 60, demandKg: 90 }),
+          row({ batchId: 'b3', batchNo: 'B-3', heads: 40, demandKg: 50 }), // age unknown
+          row({ batchId: 'b9', batchNo: 'B-9', heads: 500, demandKg: 900, shedId: 'shed-2' }),
+        ] as any,
+      },
+    });
+    expect(shaped.silo.animalsFed).toBe(200);
+    expect(shaped.silo.dailyNeedPerAnimalKg).toBe(1.7);
+    expect(shaped.silo.averageAgeDays).toBe(67.5);
+    expect(shaped.silo.averageAgeKnownHeads).toBe(160);
+    expect(shaped.silo.averageAgeEstimated).toBe(true);
+  });
+
   it('says 0 animals when no batch draws on the silo that day', () => {
     const status = {
       ...fact({}),
@@ -752,6 +790,8 @@ describe('buildSelectedSiloDashboard', () => {
     });
     expect(shaped.silo.animalsFed).toBe(0);
     expect(shaped.silo.animalsFedBatches).toEqual([]);
+    expect(shaped.silo.dailyNeedPerAnimalKg).toBeNull();
+    expect(shaped.silo.averageAgeDays).toBeNull();
   });
 });
 

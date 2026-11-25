@@ -124,6 +124,10 @@ export function buildSelectedSiloDashboard(args: {
   /** The Dashboard's selected shed: Animals Fed counts only its batches (Rishi, 2 Nov). */
   shedId?: string | null;
   nextBinAssignment: NextBinAssignment | null;
+  /** Forecast batch id -> average age in days on the planning date (feed-animal-age.ts); a row without one is unknown. */
+  ageDaysByBatchId?: Map<string, number>;
+  /** The ids above whose age is estimated from stage durations rather than birth or litter records. */
+  estimatedAgeBatchIds?: Set<string>;
 }): {
   silo: SiloStatusRow & {
     currentDietItemName: string | null;
@@ -135,6 +139,12 @@ export function buildSelectedSiloDashboard(args: {
     /** Rishi, 2 Nov: the heads of the selected shed's batches drawing on this silo on the planning date. */
     animalsFed: number;
     animalsFedBatches: Array<{ batchNo: string; stage: string; heads: number }>;
+    /** 25 Nov: head-weighted over the Animals Fed whose age is known, and how many that is. */
+    averageAgeDays: number | null;
+    averageAgeKnownHeads: number;
+    averageAgeEstimated: boolean;
+    /** 25 Nov: the same rows' demand over Animals Fed — the selected shed's, not the whole silo's Daily Need. */
+    dailyNeedPerAnimalKg: number | null;
   };
   balanceSeries: SiloBalancePoint[];
   demandSeries: SiloDemandPoint[];
@@ -203,6 +213,10 @@ export function buildSelectedSiloDashboard(args: {
     string,
     { batchNo: string; stage: string; heads: number }
   >();
+  let fedDemandKg = 0;
+  let ageHeads = 0;
+  let ageHeadDays = 0;
+  let ageEstimated = false;
   for (const row of result.daily) {
     if (
       row.date !== planningDate ||
@@ -221,6 +235,13 @@ export function buildSelectedSiloDashboard(args: {
     };
     entry.heads += row.heads;
     headsByBatch.set(key, entry);
+    fedDemandKg += row.demandKg;
+    const ageDays = args.ageDaysByBatchId?.get(row.batchId);
+    if (ageDays !== undefined) {
+      ageHeads += row.heads;
+      ageHeadDays += ageDays * row.heads;
+      if (args.estimatedAgeBatchIds?.has(row.batchId)) ageEstimated = true;
+    }
   }
   const animalsFedBatches = [...headsByBatch.values()].sort(
     (a, b) =>
@@ -278,6 +299,12 @@ export function buildSelectedSiloDashboard(args: {
       millLoadingBin: nextBinAssignment,
       animalsFed,
       animalsFedBatches,
+      averageAgeDays:
+        ageHeads > 0 ? Math.round((ageHeadDays / ageHeads) * 10) / 10 : null,
+      averageAgeKnownHeads: ageHeads,
+      averageAgeEstimated: ageEstimated,
+      dailyNeedPerAnimalKg:
+        animalsFed > 0 ? round3(fedDemandKg / animalsFed) : null,
     },
     balanceSeries,
     demandSeries: [...demandByDate.values()].sort((a, b) =>

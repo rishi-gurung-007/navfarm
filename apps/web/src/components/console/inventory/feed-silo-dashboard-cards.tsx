@@ -63,6 +63,12 @@ export interface SelectedSiloDashboard {
   /** Rishi, 2 Nov: the heads of the batches drawing on this silo on the planning date, and those batches. */
   animalsFed?: number;
   animalsFedBatches?: Array<{ batchNo: string; stage: string; heads: number }>;
+  /** 25 Nov: average age of those animals (over the heads whose age is known) and what one of them eats a day. */
+  averageAgeDays?: number | null;
+  averageAgeKnownHeads?: number;
+  /** Rishi, 25 Nov: part of that average is estimated from stage durations. */
+  averageAgeEstimated?: boolean;
+  dailyNeedPerAnimalKg?: number | null;
 }
 
 type Translate = (key: TranslationKeys) => string;
@@ -233,6 +239,16 @@ export function FeedSiloDashboardCards({
     animalsFed === unavailable
       ? animalsFed
       : `${animalsFed} ${t('fsdHeadUnit')}`;
+  const ageDays =
+    silo.averageAgeDays === null || silo.averageAgeDays === undefined
+      ? unavailable
+      : `${Math.round(silo.averageAgeDays)} ${t('fsdDaysUnit')}${silo.averageAgeEstimated ? ` (${t('fsdEstimated')})` : ''}`;
+  // Say how much of the herd the average covers when some animals have no birth record behind them.
+  const knownHeads = silo.averageAgeKnownHeads ?? 0;
+  const ageCoverage =
+    knownHeads > 0 && knownHeads < (silo.animalsFed ?? 0)
+      ? `${t('fsdAgeKnownFor')} ${number(knownHeads, unavailable)} / ${number(silo.animalsFed, unavailable)} ${t('fsdHeadUnit')}`
+      : null;
   const details: Array<{ label: TranslationKeys; value: ReactNode }> = [
     { label: 'fsdCurrentDietFeedItem', value: currentDiet },
     { label: 'fsdMillLoadingBin', value: binValue },
@@ -246,6 +262,14 @@ export function FeedSiloDashboardCards({
       value: kg(silo.dailyRequirementKg, unavailable),
     },
     { label: 'fsdAnimalsFed', value: animalsFedText },
+    {
+      label: 'fsdAverageAge',
+      value: ageCoverage ? `${ageDays} (${ageCoverage})` : ageDays,
+    },
+    {
+      label: 'fsdDailyNeedPerAnimal',
+      value: kg(silo.dailyNeedPerAnimalKg, unavailable),
+    },
     { label: 'fsdDaysFeedRemaining', value: daysRemaining },
     { label: 'fsdFirstShortageDate', value: firstShortage },
     { label: 'fsdProjectedNeedRangeKg', value: projectedNeed },
@@ -307,6 +331,12 @@ export function FeedSiloDashboardCards({
           label={t('fsdAnimalsFed')}
           value={animalsFed}
           unit={t('fsdHeadUnit')}
+          sub={
+            <span className="inline-flex flex-col text-xs text-(--text-secondary)">
+              <span>{`${t('fsdAverageAge')}: ${ageDays}`}</span>
+              {ageCoverage && <span>{ageCoverage}</span>}
+            </span>
+          }
           action={
             <button
               type="button"
@@ -318,6 +348,11 @@ export function FeedSiloDashboardCards({
               <Info className="h-4 w-4" />
             </button>
           }
+        />
+        <StatCard
+          label={t('fsdDailyNeedPerAnimal')}
+          value={number(silo.dailyNeedPerAnimalKg, unavailable)}
+          unit="kg"
         />
         <StatCard
           label={t('fsdDaysFeedRemaining')}
@@ -478,7 +513,7 @@ function Summary({ label, value }: { label: string; value: ReactNode }) {
 
 /**
  * Rishi, 2 Nov: what stands in for the cards and charts while a silo's figures load — their shapes, not a spinner:
- * the seven stat cards, the two detail panels beside Farm Total Order, and the two charts.
+ * the eight stat cards, the two detail panels beside Farm Total Order, and the two charts.
  */
 export function FeedSiloDashboardSkeleton({ label }: { label: string }) {
   const block = 'rounded-md border border-(--border) bg-(--surface) p-4';
@@ -490,7 +525,7 @@ export function FeedSiloDashboardSkeleton({ label }: { label: string }) {
       className="flex min-h-0 flex-col gap-4"
     >
       <StatRow columns={4}>
-        {Array.from({ length: 7 }, (_, i) => (
+        {Array.from({ length: 8 }, (_, i) => (
           <div key={i} data-skeleton-card className={block}>
             <Skeleton className="h-3 w-24" />
             <Skeleton className="mt-3 h-7 w-20" />

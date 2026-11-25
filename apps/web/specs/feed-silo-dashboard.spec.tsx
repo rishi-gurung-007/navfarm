@@ -93,6 +93,9 @@ const selectedSilo = {
   alert: null,
   millLoadingBin: null,
   animalsFed: 1240,
+  averageAgeDays: 62.4,
+  averageAgeKnownHeads: 1240,
+  dailyNeedPerAnimalKg: 1.7,
   animalsFedBatches: [
     { batchNo: 'GRS-B12', stage: 'GROWER', heads: 620 },
     { batchNo: 'GRS-B13', stage: 'FINISHER', heads: 620 },
@@ -323,6 +326,34 @@ describe('FeedSiloDashboard', () => {
     ]);
   });
 
+  it('shows the average age on the Animals Fed card and a Daily Need per Animal card', async () => {
+    render(<FeedSiloDashboard />);
+    await pickAll();
+    const table = await screen.findByRole('table', { name: 'fsdLabel' });
+    expect(screen.getByText('fsdAverageAge: 62 fsdDaysUnit')).toBeTruthy();
+    expect(screen.queryByText(/fsdAgeKnownFor/)).toBeNull();
+    expect(screen.getAllByText('fsdDailyNeedPerAnimal').length).toBeGreaterThan(1);
+    expect(
+      within(table).getByText('fsdDailyNeedPerAnimal').closest('tr')!.textContent,
+    ).toContain('1.7 kg');
+    expect(
+      within(table).getByText('fsdAverageAge').closest('tr')!.textContent,
+    ).toContain('62 fsdDaysUnit');
+  });
+
+  it('marks the average age as estimated when it comes from stage durations', async () => {
+    (api.get as jest.Mock).mockImplementation(async (url: string) => {
+      const out: any = await route(url);
+      return out.data.silo
+        ? { ...out, data: { ...out.data, silo: { ...out.data.silo, averageAgeDays: 79, averageAgeEstimated: true } } }
+        : out;
+    });
+    render(<FeedSiloDashboard />);
+    await pickAll();
+    await screen.findByRole('table', { name: 'fsdLabel' });
+    expect(screen.getByText('fsdAverageAge: 79 fsdDaysUnit (fsdEstimated)')).toBeTruthy();
+  });
+
   // Rishi, 2 Nov: while a silo's figures load, a skeleton of the cards and charts stands in for them, not a spinner.
   it('shows a skeleton of the dashboard, not a spinner, while the chosen silo loads', async () => {
     (api.get as jest.Mock).mockImplementation((url: string) =>
@@ -334,7 +365,7 @@ describe('FeedSiloDashboard', () => {
     await pickAll();
     const skeleton = await screen.findByRole('status', { name: 'fsdLoading' });
     expect(skeleton.getAttribute('aria-busy')).toBe('true');
-    expect(skeleton.querySelectorAll('[data-skeleton-card]')).toHaveLength(7);
+    expect(skeleton.querySelectorAll('[data-skeleton-card]')).toHaveLength(8);
     expect(skeleton.querySelectorAll('[data-skeleton-chart]')).toHaveLength(2);
     expect(screen.queryByText('fsdLoading')).toBeNull();
   });

@@ -47,6 +47,13 @@ import {
 } from '../../production/lifecycle/feed-row-days';
 import { resolveNextStageDiets, type NextStageDiet } from './next-stage-diet';
 import {
+  animalAgesByGroup,
+  lineageAges,
+  stageAgeDays,
+  type LitterFact,
+  type MoveFact,
+} from './feed-animal-age';
+import {
   asBatchPk,
   buildFeedForecast,
   DailyForecastRow,
@@ -2069,7 +2076,20 @@ export class FeedForecastService {
         query.to !== undefined,
         sentTo,
       );
+      const fedAges = await this.fedAnimalAges(
+        displayedDaily.filter(
+          (row) =>
+            row.date === planningDate &&
+            row.sourceType === 'SILO' &&
+            row.destinationLocationId === status.siloId,
+        ),
+        planningDate,
+        companyId,
+        tenantId,
+      );
       const dashboard = buildSelectedSiloDashboard({
+        ageDaysByBatchId: fedAges.ages,
+        estimatedAgeBatchIds: fedAges.estimated,
         status,
         result: { sources: forecast.sources, daily: displayedDaily },
         planningDate,
@@ -2089,6 +2109,150 @@ export class FeedForecastService {
           ) / 1000,
       };
     });
+  }
+
+  /** Forecast batch id -> average age in days on `asOf`, for the rows one silo feeds (feed-animal-age.ts). */
+  private async fedAnimalAges(
+    rows: Array<
+      Pick<DailyForecastRow, 'batchId' | 'realBatchId' | 'stageId' | 'stageDay'>
+    >,
+    asOf: string,
+    companyId: string,
+    tenantId: string,
+  ): Promise<{ ages: Map<string, number>; estimated: Set<string> }> {
+    const ages = new Map<string, number>();
+    const estimated = new Set<string>();
+    if (!rows.length) return { ages, estimated };
+    const realIds: string[] = [...new Set(rows.map((row) => row.realBatchId))];
+
+    // An animal-wise row's id is "batch:stage" (buildInputBatches).
+    const groupedIds: string[] = [
+      ...new Set(
+        rows
+          .filter((row) => row.batchId !== row.realBatchId)
+          .map((row) => row.realBatchId),
+      ),
+    ];
+    const animals = groupedIds.length
+      ? await this.db
+          .select({
+            batchId: schema.animalRegister.current_batch_id,
+            stageId: schema.animalRegister.current_stage_id,
+            dob: schema.animalRegister.dob,
+            entryDate: schema.animalRegister.entry_date,
+            ageAtEntryWeeks: schema.animalRegister.age_at_entry_weeks,
+          })
+          .from(schema.animalRegister)
+          .where(
+            and(
+              eq(schema.animalRegister.tenant_id, tenantId),
+              eq(schema.animalRegister.company_id, companyId),
+              inArray(schema.animalRegister.current_batch_id, groupedIds),
+              notInArray(schema.animalRegister.status, GONE_STATUSES),
+            ),
+          )
+      : [];
+    const byGroup = animalAgesByGroup(
+      asOf,
+      animals.map((a) => ({ ...a, batchId: a.batchId as string })),
+    );
+
+    // Walk back one move at a time until no new source batch appears.
+    const farrowings: LitterFact[] = [];
+    const transfers: MoveFact[] = [];
+    const seen = new Set<string>();
+    let frontier = realIds;
+    while (frontier.length) {
+      frontier.forEach((id) => seen.add(id));
+      const [litters, moves] = await Promise.all([
+        this.db
+          .select({
+            batchId: schema.farrowingRecord.piglet_batch_id,
+            farrowingDate: schema.farrowingRecord.farrowing_date,
+            piglets: schema.farrowingRecord.piglets_born_live,
+          })
+          .from(schema.farrowingRecord)
+          .where(
+            and(
+              eq(schema.farrowingRecord.tenant_id, tenantId),
+              eq(schema.farrowingRecord.company_id, companyId),
+              inArray(schema.farrowingRecord.piglet_batch_id, frontier),
+            ),
+          ),
+        this.db
+          .select({
+            fromBatchId: schema.batchTransfer.from_batch_id,
+            toBatchId: schema.batchTransfer.to_batch_id,
+            heads: schema.batchTransfer.head_count,
+            date: schema.batchTransfer.transfer_date,
+          })
+          .from(schema.batchTransfer)
+          .where(
+            and(
+              eq(schema.batchTransfer.tenant_id, tenantId),
+              eq(schema.batchTransfer.company_id, companyId),
+              inArray(schema.batchTransfer.to_batch_id, frontier),
+              eq(schema.batchTransfer.status, 'POSTED'),
+              isNull(schema.batchTransfer.deleted_at),
+            ),
+          ),
+      ]);
+      farrowings.push(
+        ...litters.map((l) => ({
+          batchId: l.batchId as string,
+          farrowingDate: String(l.farrowingDate),
+          piglets: Number(l.piglets),
+        })),
+      );
+      transfers.push(
+        ...moves.map((m) => ({
+          fromBatchId: m.fromBatchId as string,
+          toBatchId: m.toBatchId as string,
+          heads: Number(m.heads),
+          date: String(m.date),
+        })),
+      );
+      frontier = [
+        ...new Set(moves.map((m) => m.fromBatchId as string)),
+      ].filter((id) => id && !seen.has(id));
+    }
+    const byLineage = lineageAges({
+      batchIds: realIds,
+      asOf,
+      farrowings,
+      transfers,
+    });
+
+    for (const row of rows) {
+      const age = byGroup.get(row.batchId) ?? byLineage.get(row.realBatchId);
+      if (age !== undefined) ages.set(row.batchId, age);
+    }
+
+    const unknown = rows.filter((row) => !ages.has(row.batchId) && row.stageDay);
+    if (!unknown.length) return { ages, estimated };
+    const stages = await this.db
+      .select({
+        stageId: schema.stageMaster.stage_id,
+        stageCode: schema.stageMaster.stage_code,
+        durationDays: schema.stageMaster.typical_duration_days,
+        nextStageId: schema.stageMaster.next_stage_id,
+        lobId: schema.stageMaster.lob_id,
+        companyId: schema.stageMaster.company_id,
+      })
+      .from(schema.stageMaster)
+      .where(
+        and(
+          eq(schema.stageMaster.tenant_id, tenantId),
+          isNull(schema.stageMaster.deleted_at),
+        ),
+      );
+    for (const row of unknown) {
+      const age = stageAgeDays(row.stageId, row.stageDay as number, stages);
+      if (age === null) continue;
+      ages.set(row.batchId, age);
+      estimated.add(row.batchId);
+    }
+    return { ages, estimated };
   }
 
   /** One row per ACTIVE silo from an already computed farm forecast (Dashboard rows 47–64). */
