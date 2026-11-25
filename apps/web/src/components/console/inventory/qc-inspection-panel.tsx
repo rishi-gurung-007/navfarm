@@ -5,7 +5,6 @@ import { Eye, Inbox, Loader2, Search } from "lucide-react";
 import { api } from "@/services/api-client";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
-import { DateInput } from "@/components/ui/date-input";
 import { ReasonSelect } from "@/components/ui/reason-select";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -95,11 +94,10 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [entries, setEntries] = useState<Record<string, { value: string; verdict: string; text: string }>>({});
-  const [sample, setSample] = useState("");
-  const [accepted, setAccepted] = useState<string | null>(null);
   const [reasonId, setReasonId] = useState("");
   const [deviation, setDeviation] = useState(false);
-  const [postingDate, setPostingDate] = useState(todayStr());
+  // The whole lot is accepted or rejected as one: no partial quantities, and stock posts on the day of the decision.
+  const postingDate = todayStr();
   const [remarks, setRemarks] = useState("");
   // What becomes of the rejected quantity: chosen on completion, on refusing a deviation, or later for one held for a decision.
   const [disposition, setDisposition] = useState("");
@@ -125,8 +123,8 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
   const verdicts = lines.map((l) => judge(l, entries[l.line_id] ?? { value: "", verdict: "" }));
   const failed = lines.some((l, i) => l.is_mandatory && verdicts[i] === "FAIL");
   const missing = lines.some((l, i) => l.is_mandatory && verdicts[i] === null);
-  // A failed lot accepts nothing unless it goes through as a deviation; otherwise the whole lot is accepted unless the inspector says less.
-  const acceptedQty = failed && !deviation ? 0 : accepted !== null ? Number(accepted) : quantity;
+  // A failed lot is rejected whole unless it goes through as a deviation; a passing lot is accepted whole.
+  const acceptedQty = failed && !deviation ? 0 : quantity;
   const rejectedQty = Math.round((quantity - acceptedQty) * 1e4) / 1e4;
   const needsReason = failed || rejectedQty > 0;
   const editable = open && canEdit;
@@ -155,7 +153,6 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
             actual_text: e.text || null,
           };
         }),
-        sample_qty: sample === "" ? undefined : Number(sample),
         accepted_qty: acceptedQty,
         rejected_qty: rejectedQty,
         reason_id: reasonId || undefined,
@@ -333,20 +330,6 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
             </div>
           </section>
 
-          <section>
-            <SectionTitle>{tLabel("Quantities")}</SectionTitle>
-            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-              {labelled("Sample Qty", <input className={`${control} text-right font-mono`} type="number" min={0} step="any" disabled={!editable}
-                value={open ? sample : insp.sample_qty != null ? String(Number(insp.sample_qty)) : ""} onChange={(e) => setSample(e.target.value)} />)}
-              {labelled("Accepted Qty", <input className={`${control} text-right font-mono`} type="number" min={0} step="any" disabled={!editable || (failed && !deviation)}
-                value={open ? String(acceptedQty) : insp.accepted_qty != null ? String(Number(insp.accepted_qty)) : ""} onChange={(e) => setAccepted(e.target.value)} />)}
-              {labelled("Rejected Qty", <input className={`${control} text-right font-mono`} disabled
-                value={open ? String(rejectedQty) : insp.rejected_qty != null ? String(Number(insp.rejected_qty)) : ""} />)}
-              {labelled("Posting Date", <DateInput value={open ? postingDate : insp.posting_date ? day(insp.posting_date) : ""}
-                className="nf-input-sm h-9" disabled={!open && insp.status !== "PENDING_APPROVAL"} onChange={(e) => setPostingDate(e.target.value)} />)}
-            </div>
-          </section>
-
           {editable ? (
             <section>
               <SectionTitle>{tLabel("Outcome")}</SectionTitle>
@@ -356,7 +339,7 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
               </div>
               {failed && (
                 <label className="mt-4 flex items-start gap-2 text-sm" style={S.primary}>
-                  <input type="checkbox" className="mt-1" checked={deviation} onChange={(e) => { setDeviation(e.target.checked); setAccepted(null); }} />
+                  <input type="checkbox" className="mt-1" checked={deviation} onChange={(e) => { setDeviation(e.target.checked); }} />
                   <span>{tLabel("Accept with a deviation. A different user must approve it before any stock is posted.")}</span>
                 </label>
               )}

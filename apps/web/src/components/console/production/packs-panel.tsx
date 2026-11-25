@@ -21,6 +21,7 @@ import { getActiveCompanyId } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/hooks/useLanguage';
 import { Badge } from '@/components/ui/badge';
+import { QcLink } from '../inventory/qc-link';
 import { confirmAction } from '@/components/ui/confirm-dialog';
 import { formatQuantity } from '@/lib/utils';
 import type { TranslationKeys } from '@/utils/translations';
@@ -263,6 +264,7 @@ export default function PacksPanel() {
               <TableHead>{t('pkItem')}</TableHead>
               <TableHead>{t('pkLotNo')}</TableHead>
               <TableHead>{t('pkBatch')}</TableHead>
+              <TableHead>QC</TableHead>
               <TableHead>{t('pkColQuantity')}</TableHead>
               <TableHead>{t('pkColProduced')}</TableHead>
               <TableHead>{t('pkColExpiry')}</TableHead>
@@ -300,6 +302,9 @@ export default function PacksPanel() {
                 </TableCell>
                 <TableCell className="whitespace-nowrap">
                   {batchLabel(row.batch_id)}
+                </TableCell>
+                <TableCell className="whitespace-nowrap">
+                  <QcLink qc={row.qc_inspection} />
                 </TableCell>
                 <TableCell className="whitespace-nowrap">
                   {formatQuantity(row.net_weight)} {row.pack_uom}

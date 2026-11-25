@@ -785,6 +785,33 @@ export default function InventoryLedgerDetail({
                 className="font-semibold uppercase tracking-wider text-[11px]"
                 style={S.muted}
               >
+                QC Inspection
+              </p>
+              {entry.qc_inspection ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push(
+                      `/inventory/qc-inspection?recordId=${entry.qc_inspection.inspection_id}`,
+                    )
+                  }
+                  className="mt-0.5 flex items-center gap-1.5 font-mono font-semibold text-[var(--accent)] hover:underline"
+                >
+                  {entry.qc_inspection.inspection_no}
+                  <ExternalLink className="h-3 w-3" />
+                </button>
+              ) : (
+                <p className="mt-0.5" style={S.muted}>
+                  No QC inspection
+                </p>
+              )}
+            </div>
+
+            <div className="col-span-2">
+              <p
+                className="font-semibold uppercase tracking-wider text-[11px]"
+                style={S.muted}
+              >
                 External Document No.
               </p>
               <p

@@ -45,6 +45,7 @@ import {
 } from './gilt-selection-rules';
 import { formatQuantity } from '@/lib/utils';
 import { SemenLotDetails } from './semen-lot-details';
+import { QcLink } from '../inventory/qc-link';
 import {
   PageHeader,
   StatTiles,
@@ -1822,6 +1823,7 @@ export function BreedingPanel({
                       <th className="whitespace-nowrap py-3 px-4">
                         {t('brpColInternalSold')}
                       </th>
+                      <th className="whitespace-nowrap py-3 px-4">QC</th>
                     </tr>
                   </thead>
                   <tbody
@@ -1831,7 +1833,7 @@ export function BreedingPanel({
                     {semenBatches.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={6}
+                          colSpan={7}
                           className="py-12 text-center"
                           style={S.muted}
                         >
@@ -1937,6 +1939,9 @@ export function BreedingPanel({
                               internal: s.doses_used_internal || 0,
                               sold: s.doses_sold || 0,
                             })}
+                          </td>
+                          <td className="whitespace-nowrap py-3.5 px-4">
+                            <QcLink qc={s.qc_inspection} />
                           </td>
                         </tr>
                       ))
