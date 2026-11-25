@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type ElementType, type ReactNode } from 'react';
+import Link from 'next/link';
 import {
   ArrowDown,
   ArrowUp,
@@ -65,7 +66,71 @@ export interface Figure {
 
 export const NO_FIGURE: Figure = { actual: null, budget: null };
 
-type T = (key: TranslationKeys) => string;
+type T = (key: TranslationKeys, vars?: Record<string, string>) => string;
+
+/** Where one figure's Month and YTD actuals and budgets open (25 Nov); null or absent leaves it unlinked. */
+export interface FigureLinks {
+  month?: string | null;
+  ytd?: string | null;
+  monthBudget?: string | null;
+  ytdBudget?: string | null;
+}
+
+type AlertHref = (a: { metric_key: string; farm_id?: string }) => string | null;
+
+const FOCUS_RING =
+  'rounded-sm focus-visible:outline-2 focus-visible:outline-(--accent)';
+
+/**
+ * A link stretched over the figure block holding it (which is `relative isolate`): the whole block opens the records.
+ * It covers the figures, so it carries the hover the covered figure had. It reaches 2px above and below, half the 4px
+ * between stacked lines, so one line's area never covers its neighbour's.
+ */
+function StretchedLink({
+  href,
+  name,
+  title,
+  t,
+}: {
+  href?: string | null;
+  name: string;
+  title?: string;
+  t: T;
+}) {
+  return href ? (
+    <Link
+      href={href}
+      aria-label={t('gmdOpenRecords', { name })}
+      title={title}
+      className={`absolute -inset-x-1 -inset-y-0.5 hover:bg-(--accent)/5 ${FOCUS_RING}`}
+    />
+  ) : null;
+}
+
+/** A measure's or chart's name, as a link when there is a page to open. */
+function NameLink({
+  href,
+  name,
+  children,
+  t,
+}: {
+  href?: string | null;
+  name: string;
+  children: ReactNode;
+  t: T;
+}) {
+  return href ? (
+    <Link
+      href={href}
+      aria-label={t('gmdOpenRecords', { name })}
+      className={`hover:text-(--accent) hover:underline ${FOCUS_RING}`}
+    >
+      {children}
+    </Link>
+  ) : (
+    <>{children}</>
+  );
+}
 
 /** The theme's own status colours (Rishi, 2 Nov: the GM Dashboard keeps the current theme). */
 /**
@@ -216,13 +281,46 @@ function VarianceText({
   );
 }
 
-/** A budget figure; N/A or partial, it carries the hover that says why. */
-function BudgetValue({ figure, unit }: { figure: Figure; unit: string }) {
+/**
+ * A budget figure; N/A or partial, it carries the hover that says why. With `href` it opens the budget lines, above
+ * the block's stretched link; the hover then wraps the link, so focusing the link still shows it.
+ */
+function BudgetValue({
+  figure,
+  unit,
+  href,
+  name,
+  t,
+}: {
+  figure: Figure;
+  unit: string;
+  href?: string | null;
+  name: string;
+  t: T;
+}) {
   const text = fig(figure.budget, unit);
-  return figure.budgetHint ? (
-    <HoverHint hint={figure.budgetHint}>{text}</HoverHint>
+  const value = href ? (
+    <Link
+      href={href}
+      aria-label={t('gmdOpenBudget', { name })}
+      className={`relative z-10 cursor-pointer hover:text-(--accent) ${FOCUS_RING}`}
+    >
+      {text}
+    </Link>
   ) : (
-    <>{text}</>
+    text
+  );
+  // The hint is raised over the block's records link, or a mouse could not reach it.
+  return figure.budgetHint ? (
+    <HoverHint
+      hint={figure.budgetHint}
+      focusable={!href}
+      className="relative z-10"
+    >
+      {value}
+    </HoverHint>
+  ) : (
+    <>{value}</>
   );
 }
 
@@ -232,23 +330,32 @@ function FigureBlock({
   figure,
   unit,
   lowerIsBetter,
+  name,
+  href,
+  budgetHref,
   t,
 }: {
   label: string;
   figure: Figure;
   unit: string;
   lowerIsBetter: boolean;
+  /** What the links are called for assistive tech: the card and Month or YTD. */
+  name: string;
+  href?: string | null;
+  budgetHref?: string | null;
   t: T;
 }) {
   const v = figureVariance(figure, lowerIsBetter);
+  const full = figure.actual == null ? undefined : fmt(figure.actual, unit);
   return (
-    <div className="min-w-0 flex-1">
+    <div className="relative isolate min-w-0 flex-1">
+      <StretchedLink href={href} name={name} title={full} t={t} />
       <div className="flex items-start justify-between gap-1">
         <div className="min-w-0">
           <p className="text-xs text-(--text-secondary)">{label}</p>
           <p
             className="truncate font-mono text-xl font-semibold tabular-nums"
-            title={figure.actual == null ? undefined : fmt(figure.actual, unit)}
+            title={full}
           >
             {fig(figure.actual, unit)}
           </p>
@@ -259,7 +366,13 @@ function FigureBlock({
         <div>
           <p className="text-(--text-secondary)">{t('gmdBudget')}</p>
           <p className="font-mono tabular-nums">
-            <BudgetValue figure={figure} unit={unit} />
+            <BudgetValue
+              figure={figure}
+              unit={unit}
+              href={budgetHref}
+              name={name}
+              t={t}
+            />
           </p>
         </div>
         <div>
@@ -280,6 +393,7 @@ export interface SubKpi {
   month: Figure;
   ytd: Figure;
   lowerIsBetter: boolean;
+  links?: FigureLinks;
 }
 
 function SubLine({
@@ -287,23 +401,37 @@ function SubLine({
   figure,
   unit,
   lowerIsBetter,
+  name,
+  href,
+  budgetHref,
   t,
 }: {
   label: string;
   figure: Figure;
   unit: string;
   lowerIsBetter: boolean;
+  name: string;
+  href?: string | null;
+  budgetHref?: string | null;
   t: T;
 }) {
   const v = figureVariance(figure, lowerIsBetter);
   return (
-    <div className="flex items-center gap-2 text-xs">
+    <div className="relative isolate flex items-center gap-2 text-xs">
+      <StretchedLink href={href} name={name} t={t} />
       <span className="w-9 text-(--text-secondary)">{label}</span>
       <span className="font-mono font-semibold tabular-nums">
         {fig(figure.actual, unit)}
       </span>
       <span className="text-(--text-secondary)">
-        {t('gmdBudget')} <BudgetValue figure={figure} unit={unit} />
+        {t('gmdBudget')}{' '}
+        <BudgetValue
+          figure={figure}
+          unit={unit}
+          href={budgetHref}
+          name={name}
+          t={t}
+        />
       </span>
       <span className="ml-auto">
         <VarianceText v={v} unit={unit} />
@@ -320,6 +448,7 @@ export function KpiCard({
   ytd,
   lowerIsBetter = false,
   sub,
+  links,
   t,
 }: {
   icon: ElementType;
@@ -329,6 +458,7 @@ export function KpiCard({
   ytd: Figure;
   lowerIsBetter?: boolean;
   sub?: SubKpi;
+  links?: FigureLinks;
   t: T;
 }) {
   const empty = month.actual == null && ytd.actual == null;
@@ -362,6 +492,9 @@ export function KpiCard({
             figure={month}
             unit={unit}
             lowerIsBetter={lowerIsBetter}
+            name={`${title} (${t('gmdMonth')})`}
+            href={links?.month}
+            budgetHref={links?.monthBudget}
             t={t}
           />
           <div className="w-px bg-(--border)" />
@@ -370,6 +503,9 @@ export function KpiCard({
             figure={ytd}
             unit={unit}
             lowerIsBetter={lowerIsBetter}
+            name={`${title} (${t('gmdYtd')})`}
+            href={links?.ytd}
+            budgetHref={links?.ytdBudget}
             t={t}
           />
         </div>
@@ -384,6 +520,9 @@ export function KpiCard({
               figure={sub.month}
               unit={sub.unit}
               lowerIsBetter={sub.lowerIsBetter}
+              name={`${sub.label} (${t('gmdMonth')})`}
+              href={sub.links?.month}
+              budgetHref={sub.links?.monthBudget}
               t={t}
             />
             <SubLine
@@ -391,6 +530,9 @@ export function KpiCard({
               figure={sub.ytd}
               unit={sub.unit}
               lowerIsBetter={sub.lowerIsBetter}
+              name={`${sub.label} (${t('gmdYtd')})`}
+              href={sub.links?.ytd}
+              budgetHref={sub.links?.ytdBudget}
               t={t}
             />
           </div>
@@ -410,6 +552,8 @@ export function Matrix({
   note,
   budgeted = false,
   reportingFarmIds,
+  rowHref,
+  onFarm,
 }: {
   icon: ElementType;
   title: string;
@@ -421,6 +565,9 @@ export function Matrix({
   budgeted?: boolean;
   /** The farms with records in the period: any other column is dimmed and shows a dash, not an empty circle. */
   reportingFarmIds?: string[];
+  rowHref?: (key: string) => string | null;
+  /** Makes each farm heading and dot a button that selects that farm. */
+  onFarm?: (farmId: string) => void;
 }) {
   const silent = (farmId: string) =>
     !!reportingFarmIds && !reportingFarmIds.includes(farmId);
@@ -453,7 +600,8 @@ export function Matrix({
                   key={f.farm_id}
                   className={`w-[3.25rem] min-w-[3.25rem] px-0.5 py-2 text-center align-bottom text-[9px] font-semibold uppercase leading-[1.15] tracking-tight ${silent(f.farm_id) ? 'opacity-50' : ''}`}
                 >
-                  {/* The name wraps in its narrow column; the card on hover gives it whole. */}
+                  {/* The name wraps in its narrow column; the card on hover gives it whole. The card wraps the
+                  button, so focusing the button shows it too. */}
                   <HoverHint
                     hint={
                       silent(f.farm_id)
@@ -464,7 +612,18 @@ export function Matrix({
                     focusable={false}
                     className="block break-words"
                   >
-                    {f.farm_name}
+                    {onFarm ? (
+                      <button
+                        type="button"
+                        onClick={() => onFarm(f.farm_id)}
+                        aria-label={t('gmdShowFarm', { name: f.farm_name })}
+                        className={`block w-full break-words uppercase hover:text-(--accent) ${FOCUS_RING}`}
+                      >
+                        {f.farm_name}
+                      </button>
+                    ) : (
+                      f.farm_name
+                    )}
                   </HoverHint>
                 </th>
               ))}
@@ -477,7 +636,13 @@ export function Matrix({
                 className="group h-12 border-t border-(--border) hover:bg-(--surface-raised)"
               >
                 <td className="sticky left-0 z-10 bg-(--surface) px-2 py-2 group-hover:bg-(--surface-raised)">
-                  {row.label}
+                  <NameLink
+                    href={rowHref?.(row.key)}
+                    name={row.label}
+                    t={t}
+                  >
+                    {row.label}
+                  </NameLink>
                 </td>
                 {farms.map((f) => {
                   const c = row.cells[f.farm_id];
@@ -499,6 +664,20 @@ export function Matrix({
                       ? `${t(targetKey)} ${fmt(c.target, row.unit)}`
                       : t(noTargetKey)
                   }`;
+                  const dot = (
+                    <>
+                      <StatusDot
+                        status={c?.status ?? null}
+                        hasValue={c?.value != null}
+                      />
+                      {c?.value != null && (
+                        <span className="text-[10px] leading-none tabular-nums text-(--text-secondary)">
+                          {fig(c.value, row.unit)}
+                        </span>
+                      )}
+                    </>
+                  );
+                  const dotLayout = 'inline-flex flex-col items-center gap-0.5';
                   return (
                     <td
                       key={f.farm_id}
@@ -506,17 +685,18 @@ export function Matrix({
                       title={tip}
                       aria-label={tip}
                     >
-                      <span className="inline-flex flex-col items-center gap-0.5">
-                        <StatusDot
-                          status={c?.status ?? null}
-                          hasValue={c?.value != null}
-                        />
-                        {c?.value != null && (
-                          <span className="text-[10px] leading-none tabular-nums text-(--text-secondary)">
-                            {fig(c.value, row.unit)}
-                          </span>
-                        )}
-                      </span>
+                      {onFarm ? (
+                        <button
+                          type="button"
+                          onClick={() => onFarm(f.farm_id)}
+                          aria-label={t('gmdShowFarm', { name: f.farm_name })}
+                          className={`${dotLayout} hover:bg-(--accent)/10 ${FOCUS_RING}`}
+                        >
+                          {dot}
+                        </button>
+                      ) : (
+                        <span className={dotLayout}>{dot}</span>
+                      )}
                     </td>
                   );
                 })}
@@ -550,11 +730,14 @@ export function ProgressChart({
   title,
   points,
   t,
+  href,
 }: {
   icon: ElementType;
   title: string;
   points: ProgressPoint[];
   t: T;
+  /** The title links here; the plot keeps its tooltip. */
+  href?: string | null;
 }) {
   const empty = points.every((p) => p.actual == null && p.budget == null);
   return (
@@ -564,7 +747,11 @@ export function ProgressChart({
     >
       <header className="flex items-center gap-2 border-b border-(--border) px-4 py-3">
         <Icon className="h-5 w-5 shrink-0 text-(--accent)" />
-        <h3 className="text-sm font-semibold">{title}</h3>
+        <h3 className="text-sm font-semibold">
+          <NameLink href={href} name={title} t={t}>
+            {title}
+          </NameLink>
+        </h3>
       </header>
       <div className="relative h-64 px-2 py-3">
         <ResponsiveContainer width="100%" height="100%">
@@ -634,6 +821,7 @@ export function ProgressChart({
 export interface Alert {
   farm_id: string;
   farm_name: string;
+  metric_key: string;
   metric: string;
   unit: string;
   value: number;
@@ -643,12 +831,49 @@ export interface Alert {
 
 const ALERTS_SHOWN = 6;
 
-function AlertRow({ a, t }: { a: Alert; t: T }) {
+const ALERT_LAYOUT = 'flex items-center gap-2.5 px-4 py-2 text-xs';
+
+/** One alert's list item; with a page to open, the whole row is the link. */
+function AlertItem({
+  href,
+  name,
+  title,
+  children,
+  t,
+}: {
+  href?: string | null;
+  name: string;
+  title: string;
+  children: ReactNode;
+  t: T;
+}) {
+  return href ? (
+    <li>
+      <Link
+        href={href}
+        aria-label={t('gmdOpenRecords', { name })}
+        title={title}
+        // The outline sits inside the row, where the list cannot clip it.
+        className={`${ALERT_LAYOUT} hover:bg-(--surface-raised) focus-visible:-outline-offset-2! ${FOCUS_RING}`}
+      >
+        {children}
+      </Link>
+    </li>
+  ) : (
+    <li className={ALERT_LAYOUT} title={title}>
+      {children}
+    </li>
+  );
+}
+
+function AlertRow({ a, t, href }: { a: Alert; t: T; href?: string | null }) {
   const above = a.target != null && a.value > a.target;
   return (
-    <li
-      className="flex items-center gap-2.5 px-4 py-2 text-xs"
+    <AlertItem
+      href={href}
+      name={`${a.metric} ${above ? t('gmdAboveTarget') : t('gmdBelowTarget')}, ${a.farm_name}`}
       title={`${fmt(a.value, a.unit)} ${t('gmdVsTarget')} ${fmt(a.target, a.unit)}`}
+      t={t}
     >
       <CircleAlert
         className="h-4.5 w-4.5 shrink-0"
@@ -662,11 +887,19 @@ function AlertRow({ a, t }: { a: Alert; t: T }) {
         {fmt(a.value, a.unit)}
       </span>
       <ChevronRight className="h-3.5 w-3.5 shrink-0 text-(--text-secondary)" />
-    </li>
+    </AlertItem>
   );
 }
 
-export function AlertsPanel({ alerts, t }: { alerts: Alert[]; t: T }) {
+export function AlertsPanel({
+  alerts,
+  t,
+  alertHref,
+}: {
+  alerts: Alert[];
+  t: T;
+  alertHref?: AlertHref;
+}) {
   const [open, setOpen] = useState(false);
   const shown = alerts.slice(0, ALERTS_SHOWN);
   return (
@@ -693,7 +926,12 @@ export function AlertsPanel({ alerts, t }: { alerts: Alert[]; t: T }) {
       {shown.length ? (
         <ul className="divide-y divide-(--border)">
           {shown.map((a, i) => (
-            <AlertRow key={`${a.farm_id}-${a.metric}-${i}`} a={a} t={t} />
+            <AlertRow
+              key={`${a.farm_id}-${a.metric}-${i}`}
+              a={a}
+              t={t}
+              href={alertHref?.(a)}
+            />
           ))}
         </ul>
       ) : (
@@ -710,7 +948,12 @@ export function AlertsPanel({ alerts, t }: { alerts: Alert[]; t: T }) {
       >
         <ul className="divide-y divide-(--border) -mx-5 sm:-mx-6">
           {alerts.map((a, i) => (
-            <AlertRow key={`${a.farm_id}-${a.metric}-${i}`} a={a} t={t} />
+            <AlertRow
+              key={`${a.farm_id}-${a.metric}-${i}`}
+              a={a}
+              t={t}
+              href={alertHref?.(a)}
+            />
           ))}
         </ul>
       </Dialog>
@@ -727,15 +970,20 @@ export function KgMeatCard({
   title,
   main,
   ytd,
+  links,
   t,
 }: {
   icon: ElementType;
   title: string;
   main: Figure;
   ytd?: Figure;
+  /** `month` and `monthBudget` are the main figure's, whatever window the page gives it. */
+  links?: FigureLinks;
   t: T;
 }) {
   const v = figureVariance(main, false);
+  const mainName = ytd ? `${title} (${t('gmdMonth')})` : title;
+  const ytdName = `${title} (${t('gmdYtd')})`;
   return (
     <section
       className="rounded-md border border-(--border) bg-(--surface-raised) p-4"
@@ -745,7 +993,8 @@ export function KgMeatCard({
         <Icon className="h-8 w-8 shrink-0 text-(--accent)" />
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold">{title}</h3>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <div className="relative isolate flex flex-wrap items-center gap-x-4 gap-y-1">
+            <StretchedLink href={links?.month} name={mainName} t={t} />
             <span
               className="font-mono text-2xl font-bold tabular-nums"
               data-testid="gmd-kg-value"
@@ -754,14 +1003,22 @@ export function KgMeatCard({
             </span>
             <TrendArrow v={v} t={t} />
             <span className="text-xs text-(--text-secondary)">
-              {t('gmdBudget')} <BudgetValue figure={main} unit="" />
+              {t('gmdBudget')}{' '}
+              <BudgetValue
+                figure={main}
+                unit=""
+                href={links?.monthBudget}
+                name={mainName}
+                t={t}
+              />
             </span>
             <span className="text-xs text-(--text-secondary)">
               {t('gmdVar')} <VarianceText v={v} unit="" />
             </span>
           </div>
           {ytd && (
-            <p className="mt-1 text-xs text-(--text-secondary)">
+            <p className="relative isolate mt-1 text-xs text-(--text-secondary)">
+              <StretchedLink href={links?.ytd} name={ytdName} t={t} />
               {t('gmdYtd')}{' '}
               <span
                 className="font-mono tabular-nums text-(--text-primary)"
@@ -770,7 +1027,14 @@ export function KgMeatCard({
                 {fmt(ytd.actual)}
               </span>
               {' · '}
-              {t('gmdBudget')} <BudgetValue figure={ytd} unit="" />
+              {t('gmdBudget')}{' '}
+              <BudgetValue
+                figure={ytd}
+                unit=""
+                href={links?.ytdBudget}
+                name={ytdName}
+                t={t}
+              />
             </p>
           )}
         </div>
@@ -857,6 +1121,7 @@ export function FarmMatrix({
   t,
   note,
   budgeted = false,
+  rowHref,
 }: {
   icon: ElementType;
   title: string;
@@ -865,6 +1130,7 @@ export function FarmMatrix({
   note?: ReactNode;
   /** The rows' figures are budgets (Slaughter & Financial), so the hover says Budget, not Target. */
   budgeted?: boolean;
+  rowHref?: (key: string) => string | null;
 }) {
   const [targetKey, noTargetKey] = budgeted
     ? (['gmdBudget', 'gmdNoBudget'] as const)
@@ -912,7 +1178,13 @@ export function FarmMatrix({
               return (
                 <tr key={row.key} className="border-t border-(--border)">
                   <td className="px-2 py-1.5 leading-tight">
-                    {row.label}
+                    <NameLink
+                      href={rowHref?.(row.key)}
+                      name={row.label}
+                      t={t}
+                    >
+                      {row.label}
+                    </NameLink>
                     {row.unit === '%' ? ' (%)' : unitSuffix(row.unit)}
                   </td>
                   {FARM_COLUMNS.map((c) => (
@@ -959,6 +1231,7 @@ export function FarmMatrix({
 }
 
 export interface FarmAlert {
+  metric_key: string;
   metric: string;
   unit: string;
   value: number;
@@ -967,7 +1240,15 @@ export interface FarmAlert {
   above: boolean;
 }
 
-function FarmAlertRow({ a, t }: { a: FarmAlert; t: T }) {
+function FarmAlertRow({
+  a,
+  t,
+  href,
+}: {
+  a: FarmAlert;
+  t: T;
+  href?: string | null;
+}) {
   const Icon = a.status === 'GREEN' ? CircleCheck : CircleAlert;
   const text =
     a.status === 'GREEN'
@@ -976,9 +1257,11 @@ function FarmAlertRow({ a, t }: { a: FarmAlert; t: T }) {
         ? t('gmdAboveTarget')
         : t('gmdBelowTarget');
   return (
-    <li
-      className="flex items-center gap-2.5 px-4 py-2 text-xs"
+    <AlertItem
+      href={href}
+      name={`${a.metric} ${text} (${t('gmdThisWeek')})`}
       title={`${fmt(a.value, a.unit)} ${t('gmdVsTarget')} ${fmt(a.target, a.unit)}`}
+      t={t}
     >
       <Icon className="h-4.5 w-4.5 shrink-0" style={{ color: STATUS_COLOR[a.status] }} />
       <span className="min-w-0 flex-1">
@@ -988,7 +1271,7 @@ function FarmAlertRow({ a, t }: { a: FarmAlert; t: T }) {
         {fmt(a.value, a.unit)}
       </span>
       <ChevronRight className="h-3.5 w-3.5 shrink-0 text-(--text-secondary)" />
-    </li>
+    </AlertItem>
   );
 }
 
@@ -996,9 +1279,11 @@ function FarmAlertRow({ a, t }: { a: FarmAlert; t: T }) {
 export function FarmAlertsPanel({
   alerts,
   t,
+  alertHref,
 }: {
   alerts: FarmAlert[];
   t: T;
+  alertHref?: AlertHref;
 }) {
   const [open, setOpen] = useState(false);
   const shown = alerts.slice(0, ALERTS_SHOWN);
@@ -1027,7 +1312,12 @@ export function FarmAlertsPanel({
       {shown.length ? (
         <ul className="divide-y divide-(--border)">
           {shown.map((a, i) => (
-            <FarmAlertRow key={`${a.metric}-${i}`} a={a} t={t} />
+            <FarmAlertRow
+              key={`${a.metric}-${i}`}
+              a={a}
+              t={t}
+              href={alertHref?.(a)}
+            />
           ))}
         </ul>
       ) : (
@@ -1044,7 +1334,12 @@ export function FarmAlertsPanel({
       >
         <ul className="divide-y divide-(--border) -mx-5 sm:-mx-6">
           {alerts.map((a, i) => (
-            <FarmAlertRow key={`${a.metric}-${i}`} a={a} t={t} />
+            <FarmAlertRow
+              key={`${a.metric}-${i}`}
+              a={a}
+              t={t}
+              href={alertHref?.(a)}
+            />
           ))}
         </ul>
       </Dialog>

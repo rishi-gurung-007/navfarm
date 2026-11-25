@@ -11,6 +11,7 @@ import {
   IsArray,
   ValidateNested,
   ArrayMinSize,
+  Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MasterListQueryDto } from '../../../../common/master-list-query';
@@ -115,4 +116,14 @@ export class QueryJournalDto extends MasterListQueryDto {
   @IsOptional()
   @IsDateString()
   dateTo?: string;
+
+  @ApiProperty({ description: 'Only journals with a line on one of these GL account codes (comma separated)', required: false, example: '4600,4610' })
+  @IsOptional()
+  @Matches(/^\d{3,10}(,\d{3,10})*$/, { message: 'accountCodes must be GL account codes separated by commas.' })
+  accountCodes?: string;
+
+  @ApiProperty({ description: "Only journals with a line on this farm's cost centre (CC-<farm code>); with accountCodes, the same line", required: false })
+  @IsOptional()
+  @IsUUID()
+  farmId?: string;
 }

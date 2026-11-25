@@ -23,6 +23,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
+import { DateInput } from '@/components/ui/date-input';
 import { Pagination } from '@/components/ui/pagination';
 import { EmptyState, LoadingState, ErrorState } from '@/components/ui/states';
 import { api } from '@/services/api-client';
@@ -30,6 +31,8 @@ import { formatQuantity } from '@/lib/utils';
 import { formatDate } from '@/utils/date-short';
 import { useCompanyCurrency, formatMoney } from '@/hooks/useCompanyCurrency';
 import { getStoredUser, getActiveCompanyId } from '@/hooks/useAuth';
+import { useDrillParams } from '@/hooks/useDrillParams';
+import { useFarmPickerOptions } from '@/hooks/useFarmPickerOptions';
 
 interface KillSheetRow {
   import_id: string;
@@ -59,6 +62,8 @@ export default function KillSheetsPage() {
   const router = useRouter();
   const { currency } = useCompanyCurrency();
   const user = getStoredUser();
+  // A GM Dashboard link arrives with filters; they only seed the page's own, which stay editable.
+  const drill = useDrillParams();
 
   const [rows, setRows] = useState<KillSheetRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -73,12 +78,16 @@ export default function KillSheetsPage() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>(
     getActiveCompanyId() || ''
   );
-  const [selectedFarmId, setSelectedFarmId] = useState<string>('');
-  const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
+  const [selectedFarmId, setSelectedFarmId] = useState<string>(drill.farmId);
+  const [selectedStatus, setSelectedStatus] = useState<string>(
+    drill.status || 'ALL'
+  );
+  const [dateFrom, setDateFrom] = useState(drill.from);
+  const [dateTo, setDateTo] = useState(drill.to);
 
   // Options
   const [companies, setCompanies] = useState<Array<{ id: string; name: string }>>([]);
-  const [farms, setFarms] = useState<Array<{ id: string; name: string; code: string }>>([]);
+  const farms = useFarmPickerOptions(selectedFarmId, drill.farmId, selectedCompanyId);
 
   // Debounce search
   useEffect(() => {
@@ -115,23 +124,6 @@ export default function KillSheetsPage() {
     }
   }, [user?.tenantId]);
 
-  // Load farms when company changes
-  useEffect(() => {
-    api
-      .get('/location?locationType=FARM&rootOnly=true&isActive=true&limit=100')
-      .then((res: any) => {
-        const items = res?.data ?? (Array.isArray(res) ? res : []);
-        setFarms(
-          items.map((loc: any) => ({
-            id: loc.location_id,
-            name: loc.location_name,
-            code: loc.location_code,
-          }))
-        );
-      })
-      .catch(() => void 0);
-  }, [selectedCompanyId]);
-
   const fetchKillSheets = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -144,6 +136,8 @@ export default function KillSheetsPage() {
       if (selectedFarmId) params.set('farm_id', selectedFarmId);
       if (selectedStatus && selectedStatus !== 'ALL')
         params.set('status', selectedStatus);
+      if (dateFrom) params.set('date_from', dateFrom);
+      if (dateTo) params.set('date_to', dateTo);
 
       const res = await api.get(`/kill-sheets?${params.toString()}`);
       setRows(res?.data ?? []);
@@ -153,7 +147,16 @@ export default function KillSheetsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, debouncedSearch, selectedCompanyId, selectedFarmId, selectedStatus]);
+  }, [
+    page,
+    pageSize,
+    debouncedSearch,
+    selectedCompanyId,
+    selectedFarmId,
+    selectedStatus,
+    dateFrom,
+    dateTo,
+  ]);
 
   useEffect(() => {
     fetchKillSheets();
@@ -172,6 +175,11 @@ export default function KillSheetsPage() {
 
   const handleStatusChange = (status: string) => {
     setSelectedStatus(status);
+    setPage(1);
+  };
+
+  const handleDateChange = (set: (date: string) => void, date: string) => {
+    set(date);
     setPage(1);
   };
 
@@ -228,12 +236,15 @@ export default function KillSheetsPage() {
             <Select
               value={selectedFarmId}
               onChange={(e) => handleFarmChange(e.target.value)}
+              aria-label="Farm"
               className="text-sm"
             >
               <option value="">All Farms</option>
               {farms.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name} ({f.code})
+                <option key={f.location_id} value={f.location_id}>
+                  {f.location_code
+                    ? `${f.location_name} (${f.location_code})`
+                    : f.location_name}
                 </option>
               ))}
             </Select>
@@ -251,9 +262,35 @@ export default function KillSheetsPage() {
               <option value="PREVIEW_READY">Preview Ready</option>
             </Select>
           </div>
+
+          {/* Slaughter date filter */}
+          {[
+            { id: 'kill-sheets-from', label: 'Slaughtered from', value: dateFrom, set: setDateFrom },
+            { id: 'kill-sheets-to', label: 'Slaughtered to', value: dateTo, set: setDateTo },
+          ].map((field) => (
+            <div key={field.id} className="flex items-center gap-1.5">
+              <label
+                htmlFor={field.id}
+                className="text-xs text-[var(--text-secondary)]"
+              >
+                {field.label}
+              </label>
+              <DateInput
+                id={field.id}
+                value={field.value}
+                onChange={(e) => handleDateChange(field.set, e.target.value)}
+                className="nf-input w-[140px] text-sm"
+              />
+            </div>
+          ))}
         </div>
 
-        {(search || selectedCompanyId || selectedFarmId || selectedStatus !== 'ALL') && (
+        {(search ||
+          selectedCompanyId ||
+          selectedFarmId ||
+          selectedStatus !== 'ALL' ||
+          dateFrom ||
+          dateTo) && (
           <Button
             variant="ghost"
             size="sm"
@@ -262,6 +299,8 @@ export default function KillSheetsPage() {
               setSelectedCompanyId('');
               setSelectedFarmId('');
               setSelectedStatus('ALL');
+              setDateFrom('');
+              setDateTo('');
               setPage(1);
             }}
             className="text-xs text-[var(--text-secondary)]"
@@ -281,7 +320,11 @@ export default function KillSheetsPage() {
           icon={FileSpreadsheet}
           title="No Kill Sheets Found"
           description={
-            debouncedSearch || selectedFarmId || selectedStatus !== 'ALL'
+            debouncedSearch ||
+            selectedFarmId ||
+            selectedStatus !== 'ALL' ||
+            dateFrom ||
+            dateTo
               ? 'No kill sheets match your active filter criteria. Try adjusting your search or filters.'
               : 'Upload an individual slaughter sheet (.xls or .xlsx) and optional product summary to get started.'
           }

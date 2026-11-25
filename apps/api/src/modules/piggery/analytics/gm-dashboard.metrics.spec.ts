@@ -292,10 +292,13 @@ describe('alertsFrom', () => {
         },
       },
     ];
-    expect(alertsFrom(rows, farms)).toEqual([
+    const out = alertsFrom(rows, farms);
+    expect(out[0].metric_key).toBe(rows[1].key);
+    expect(out).toEqual([
       {
         farm_id: 'b',
         farm_name: 'PORTA',
+        metric_key: 'y',
         metric: 'FCE Grower',
         unit: '',
         value: 2.9,
@@ -305,6 +308,7 @@ describe('alertsFrom', () => {
       {
         farm_id: 'a',
         farm_name: 'GRASMERE',
+        metric_key: 'x',
         metric: 'Farrowing Rate',
         unit: '%',
         value: 85,
@@ -409,8 +413,11 @@ describe('farmRow and farmAlerts', () => {
       null,
       has,
     );
-    expect(farmAlerts([ok, none, fce, row])).toEqual([
+    const out = farmAlerts([ok, none, fce, row]);
+    expect(out[0].metric_key).toBe(row.key);
+    expect(out).toEqual([
       {
+        metric_key: 'fr',
         metric: 'Farrowing Rate',
         unit: '%',
         value: 80,
@@ -419,6 +426,7 @@ describe('farmRow and farmAlerts', () => {
         above: false,
       },
       {
+        metric_key: 'fce',
         metric: 'FCE Grower',
         unit: '',
         value: 2.5,
@@ -427,6 +435,7 @@ describe('farmRow and farmAlerts', () => {
         above: true,
       },
       {
+        metric_key: 'm',
         metric: 'Grower Mortality',
         unit: '%',
         value: 1.8,

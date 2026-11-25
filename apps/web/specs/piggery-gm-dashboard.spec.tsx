@@ -10,7 +10,15 @@ import PiggeryGmDashboard from '../src/components/console/piggery/piggery-gm-das
 import { api } from '../src/services/api-client';
 
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn() } }));
-jest.mock('../src/hooks/useAuth', () => ({ getActiveCompanyId: () => 'co-1' }));
+// The signed-in user, whose grants decide which figures link; the permission check itself is the real one.
+let mockUser: any;
+let mockScope = 'COMPANY';
+jest.mock('../src/hooks/useAuth', () => ({
+  ...jest.requireActual('../src/hooks/useAuth'),
+  getActiveCompanyId: () => 'co-1',
+  getStoredUser: () => mockUser,
+  getActiveWorkspaceScope: () => mockScope,
+}));
 jest.mock('../src/hooks/useCompanyCurrency', () => ({
   useCompanyCurrency: () => ({ currency: { iso_code: 'USD' }, ready: true }),
 }));
@@ -98,6 +106,7 @@ const response = (periodId: string, farmId?: string) => ({
       {
         farm_id: 'g',
         farm_name: 'GRASMERE',
+        metric_key: 'farrowing_rate_pct',
         metric: 'Farrowing Rate',
         unit: '%',
         value: 57.14,
@@ -148,6 +157,7 @@ const response = (periodId: string, farmId?: string) => ({
           ],
           alerts: [
             {
+              metric_key: 'fce_grower',
               metric: 'FCE Grower',
               unit: '',
               value: 3.65,
@@ -156,6 +166,7 @@ const response = (periodId: string, farmId?: string) => ({
               above: true,
             },
             {
+              metric_key: 'farrowing_rate_pct',
               metric: 'Farrowing Rate',
               unit: '%',
               value: 100,
@@ -170,6 +181,7 @@ const response = (periodId: string, farmId?: string) => ({
 });
 
 beforeEach(() => {
+  mockUser = { userType: 'TENANT_ADMIN' };
   chartProps.length = 0;
   get.mockReset().mockImplementation(async (url: string) => {
     const q = new URLSearchParams(url.split('?')[1]);
@@ -790,5 +802,431 @@ describe('StatusDot', () => {
     const ring = container.querySelector('[data-status]') as HTMLElement;
     expect(ring.style.border).toContain('dashed');
     expect(ring.style.opacity).toBe('');
+  });
+});
+
+// 25 Nov: every stage 1 figure opens the page holding its records, filtered to the dashboard's farm and period.
+describe('GM Dashboard — quick access links', () => {
+  const MONTH = 'from=2026-09-27&to=2026-10-24';
+  const YTD = 'from=2026-06-28&to=2026-10-24';
+  const SOLD = '/inventory/bio-asset-ledger?salesOnly=true';
+  const KILLS = '/batches/kill-sheets?status=IMPORTED';
+  const FARROWING = '/reports/farrowing';
+  const sales = {
+    heads: 10,
+    cost_of_sales: 100,
+    revenue: 200,
+    gross_margin: 100,
+    gross_margin_pct: 50,
+  };
+  const row = (key: string, label: string) => ({
+    key,
+    label,
+    unit: '',
+    lower_is_better: false,
+    cells: { g: { value: 12, target: 13, status: 'AMBER' } },
+  });
+  const farmRow = (key: string, label: string) => ({
+    ...row(key, label),
+    target: 13,
+    status: 'AMBER',
+    values: {
+      this_week: 12,
+      avg_4w: 12,
+      this_month: 12,
+      prev_month: 12,
+      three_month: 12,
+    },
+    trend: [12, 12, 12, 12, 12, 12],
+  });
+  const alert = (farm: string, key: string, metric: string) => ({
+    farm_id: farm,
+    farm_name: farm === 'g' ? 'GRASMERE' : 'PORTA',
+    metric_key: key,
+    metric,
+    unit: '',
+    value: 12,
+    target: 13,
+    status: 'RED',
+  });
+
+  const data = (farmId?: string, extra: Record<string, unknown> = {}) => {
+    const base = response('p10', farmId).data;
+    return {
+      ...base,
+      breeding: [
+        ...base.breeding,
+        row('born_alive_per_litter', 'Born Alive'),
+      ],
+      alerts: [
+        ...base.alerts,
+        alert('g', 'born_alive_per_litter', 'Born Alive'),
+        // PORTA sold nothing this month, though All Farms did.
+        alert('p', 'pigs_to_slaughter', 'Pigs to Slaughter'),
+      ],
+      farm_view: base.farm_view && {
+        ...base.farm_view,
+        breeding: [
+          ...base.farm_view.breeding,
+          farmRow('born_alive_per_litter', 'Born Alive'),
+        ],
+        alerts: [
+          ...base.farm_view.alerts,
+          {
+            ...alert('g', 'born_alive_per_litter', 'Born Alive'),
+            above: false,
+          },
+        ],
+      },
+      financial: {
+        month: { all: sales, g: sales, p: null },
+        ytd: { all: sales, g: sales, p: sales },
+        heads_by_period: [],
+      },
+      ...extra,
+    };
+  };
+
+  const open = async (extra: Record<string, unknown> = {}) => {
+    get.mockImplementation(async (url: string) => {
+      const q = new URLSearchParams(url.split('?')[1]);
+      return { data: data(q.get('farmId') ?? undefined, extra) };
+    });
+    const view = render(<PiggeryGmDashboard />);
+    await screen.findByRole('region', { name: 'gmdBreedingMatrix' });
+    return view;
+  };
+  const chooseGrasmere = async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'rptFarm' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'GRASMERE' }));
+    await screen.findByRole('heading', { name: 'GRASMERE' });
+  };
+
+  const region = (name: string) => screen.getByRole('region', { name });
+  const link = (within_: string, name: string) =>
+    within(region(within_)).queryByRole('link', { name });
+  const href = (within_: string, name: string) =>
+    link(within_, name)?.getAttribute('href') ?? null;
+  const records = (name: string) => `gmdOpenRecords ${name}`;
+  const budget = (name: string) => `gmdOpenBudget ${name}`;
+  const hrefs = (el: HTMLElement) =>
+    Array.from(el.querySelectorAll('a'), (a) => a.getAttribute('href')!);
+  const query = (url: string) => new URLSearchParams(url.split('?')[1]);
+  const nested = () =>
+    document.querySelectorAll(
+      ':is(a, button) :is(a, button, input, select, [tabindex])',
+    ).length;
+
+  it('links each All Farms card figure to its records with its own dates and no farm', async () => {
+    await open();
+    const card = 'gmdCostOfSales';
+    expect(href(card, records('gmdCostOfSales (gmdMonth)'))).toBe(
+      `${SOLD}&${MONTH}`,
+    );
+    expect(href(card, records('gmdCostOfSales (gmdYtd)'))).toBe(
+      `${SOLD}&${YTD}`,
+    );
+    expect(href(card, records('gmdCosPerTonne (gmdMonth)'))).toBe(
+      `${KILLS}&${MONTH}`,
+    );
+    expect(href(card, records('gmdCosPerTonne (gmdYtd)'))).toBe(
+      `${KILLS}&${YTD}`,
+    );
+    // A blank figure is still clickable.
+    expect(href('gmdAvgCdm', records('gmdAvgCdm (gmdMonth)'))).toBe(
+      `${KILLS}&${MONTH}`,
+    );
+    expect(
+      href('gmdGrossMargin', records('gmdGrossMarginPct (gmdYtd)')),
+    ).toBe(`${SOLD}&${YTD}`);
+    expect(
+      href('gmdOtherOverheads', records('gmdOtherOverheads (gmdMonth)')),
+    ).toBe(`/finance/journal?status=POSTED&accounts=4600&${MONTH}`);
+    expect(
+      href('gmdOtherOverheads', records('gmdStaffOverheads (gmdYtd)')),
+    ).toBe(`/finance/journal?status=POSTED&accounts=4610&${YTD}`);
+
+    const month = query(href(card, budget('gmdCostOfSales (gmdMonth)'))!);
+    expect(month.get('filter[period_code]')).toBe('2026-10');
+    expect(month.get('filter[metric_label]')).toBe('Cost of Sales');
+    expect(month.has('filter[farm_name]')).toBe(false);
+    const ytd = query(href(card, budget('gmdCostOfSales (gmdYtd)'))!);
+    expect(ytd.has('filter[period_code]')).toBe(false);
+    expect(
+      query(href(card, budget('gmdCosPerTonne (gmdMonth)'))!).get(
+        'filter[metric_label]',
+      ),
+    ).toBe('COS per tonne');
+    expect(nested()).toBe(0);
+  });
+
+  it('passes the chosen farm on every card, chart, matrix row and Kg Meat link', async () => {
+    await open();
+    await chooseGrasmere();
+    const records_ = hrefs(document.body).filter(
+      (h) => !h.startsWith('/master-data/budget'),
+    );
+    expect(records_.length).toBeGreaterThan(10);
+    expect(records_.filter((h) => query(h).get('farmId') !== 'g')).toEqual([]);
+    const budgets = hrefs(document.body).filter((h) =>
+      h.startsWith('/master-data/budget'),
+    );
+    expect(budgets.length).toBeGreaterThan(10);
+    expect(
+      budgets.filter((h) => query(h).get('filter[farm_name]') !== 'GRASMERE'),
+    ).toEqual([]);
+    expect(
+      href('gmdBreedingMatrix', records('Born Alive')),
+    ).toBe(`${FARROWING}?farmId=g&${MONTH}`);
+    // Profit and loss has no farm filter.
+    expect(link('gmdPbtProgress', records('gmdPbtProgress'))).toBeNull();
+    expect(
+      href('gmdPigsToSlaughterProgress', records('gmdPigsToSlaughterProgress')),
+    ).toBe(`${SOLD}&farmId=g&${YTD}`);
+    // One farm's Kg Meat figure is the year to date.
+    expect(
+      href('gmdKgSoldPerSowYearYtd', records('gmdKgSoldPerSowYearYtd')),
+    ).toBe(`${KILLS}&farmId=g&${YTD}`);
+    const kgBudget = query(
+      href('gmdKgSoldPerSowYearYtd', budget('gmdKgSoldPerSowYearYtd'))!,
+    );
+    expect(kgBudget.has('filter[period_code]')).toBe(false);
+    expect(nested()).toBe(0);
+  });
+
+  it('links the All Farms Kg Meat card to the month, with the year to date beneath', async () => {
+    await open();
+    const card = 'gmdKgSoldPerSowYear';
+    expect(href(card, records('gmdKgSoldPerSowYear (gmdMonth)'))).toBe(
+      `${KILLS}&${MONTH}`,
+    );
+    expect(href(card, records('gmdKgSoldPerSowYear (gmdYtd)'))).toBe(
+      `${KILLS}&${YTD}`,
+    );
+    expect(
+      query(href(card, budget('gmdKgSoldPerSowYear (gmdMonth)'))!).get(
+        'filter[period_code]',
+      ),
+    ).toBe('2026-10');
+    expect(link(card, budget('gmdKgSoldPerSowYear (gmdYtd)'))).toBeTruthy();
+  });
+
+  it('links the charts with the year to date', async () => {
+    await open();
+    expect(
+      href('gmdPigsToSlaughterProgress', records('gmdPigsToSlaughterProgress')),
+    ).toBe(`${SOLD}&${YTD}`);
+    expect(href('gmdPbtProgress', records('gmdPbtProgress'))).toBe(
+      `/finance/profit-loss?${YTD}`,
+    );
+  });
+
+  it('links a stage 1 row name with no farm in All Farms, and leaves stage 2 rows as they were', async () => {
+    await open();
+    expect(href('gmdBreedingMatrix', records('Born Alive'))).toBe(
+      `${FARROWING}?${MONTH}`,
+    );
+    expect(
+      href('gmdBreedingMatrix', records('gmdKgSoldPerSowYear')),
+    ).toBe(`${KILLS}&${MONTH}`);
+    expect(
+      href('gmdFinancialMatrix', records('Cost of Sales')),
+    ).toBe(`${SOLD}&${MONTH}`);
+    const stage2 = within(region('gmdBreedingMatrix'))
+      .getAllByRole('row')[1]
+      .querySelector('td')!;
+    expect(stage2.textContent).toBe('Farrowing Rate');
+    expect(stage2.children).toHaveLength(0);
+    expect(region('gmdWeanerGrowerMatrix').querySelector('a')).toBeNull();
+  });
+
+  it('leaves a farm view stage 2 row with no link', async () => {
+    await open();
+    await chooseGrasmere();
+    expect(link('gmdBreedingMatrix', records('Farrowing Rate'))).toBeNull();
+    expect(region('gmdWeanerGrowerMatrix').querySelector('a')).toBeNull();
+  });
+
+  it('chooses a farm from a matrix heading', async () => {
+    await open();
+    const [, , porta] = within(region('gmdWeanerGrowerMatrix')).getAllByRole(
+      'columnheader',
+    );
+    const head = within(porta).getByRole('button', {
+      name: 'gmdShowFarm PORTA',
+    });
+    // The name's hover card still opens, from the keyboard too.
+    fireEvent.focus(head);
+    expect(screen.getByRole('tooltip').textContent).toBe('PORTA');
+    fireEvent.click(head);
+    await waitFor(() =>
+      expect(get).toHaveBeenLastCalledWith(expect.stringContaining('farmId=p')),
+    );
+    expect(await screen.findByRole('heading', { name: 'PORTA' })).toBeTruthy();
+  });
+
+  it('chooses a farm from its dot', async () => {
+    await open();
+    const dot = within(region('gmdBreedingMatrix'))
+      .getAllByRole('row')[1]
+      .querySelector('[data-status]')!;
+    const button = dot.closest('button')!;
+    expect(button.getAttribute('aria-label')).toBe('gmdShowFarm GRASMERE');
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(get).toHaveBeenLastCalledWith(expect.stringContaining('farmId=g')),
+    );
+  });
+
+  it("opens an All Farms alert for the alert's farm, judged by that farm's sales", async () => {
+    await open();
+    expect(href('gmdAlerts', records('Born Alive gmdBelowTarget, GRASMERE'))).toBe(
+      `${FARROWING}?farmId=g&${MONTH}`,
+    );
+    expect(
+      href('gmdAlerts', records('Pigs to Slaughter gmdBelowTarget, PORTA')),
+    ).toBe(`${KILLS}&farmId=p&${MONTH}`);
+    const [stage2] = within(region('gmdAlerts')).getAllByRole('listitem');
+    expect(stage2.textContent).toContain('Farrowing Rate');
+    expect(stage2.querySelector('a')).toBeNull();
+    expect(stage2.className).toBe('flex items-center gap-2.5 px-4 py-2 text-xs');
+    expect(stage2.querySelectorAll('svg')).toHaveLength(2); // icon and chevron
+    expect(nested()).toBe(0);
+  });
+
+  it("opens a farm view alert for the chosen farm, and leaves its stage 2 alerts alone", async () => {
+    await open();
+    await chooseGrasmere();
+    const alerts = region('gmdAlerts');
+    expect(hrefs(alerts)).toEqual([`${FARROWING}?farmId=g&${MONTH}`]);
+  });
+
+  it('offers no budget link on a custom range, and uses its dates', async () => {
+    await open({
+      period: {
+        period_id: '',
+        period_code: 'CUSTOM',
+        business_year: '',
+        start_date: '2026-10-01',
+        end_date: '2026-10-10',
+        ytd_from: '2026-10-01',
+        to: '2026-10-10',
+      },
+    });
+    const budgetLinks = () =>
+      document.querySelectorAll('a[href^="/master-data/budget"]');
+    expect(
+      href('gmdCostOfSales', records('gmdCostOfSales (gmdMonth)')),
+    ).toBe(`${SOLD}&from=2026-10-01&to=2026-10-10`);
+    expect(budgetLinks()).toHaveLength(0);
+    await chooseGrasmere();
+    expect(budgetLinks()).toHaveLength(0);
+  });
+
+  it('offers no budget link in the tenant-wide workspace, where the Budget master cannot open', async () => {
+    mockScope = 'TENANT';
+    try {
+      await open();
+      const budgetLinks = () =>
+        document.querySelectorAll('a[href^="/master-data/budget"]');
+      expect(
+        href('gmdCostOfSales', records('gmdCostOfSales (gmdMonth)')),
+      ).toBeTruthy();
+      expect(budgetLinks()).toHaveLength(0);
+      await chooseGrasmere();
+      expect(budgetLinks()).toHaveLength(0);
+    } finally {
+      mockScope = 'COMPANY';
+    }
+  });
+
+  it('keeps the budget hover card on a linked budget figure', async () => {
+    await open({
+      budget: {
+        month: {
+          all: {
+            avg_cdm: {
+              budget: null,
+              actual: null,
+              var: null,
+              var_pct: null,
+              status: null,
+              missing: ['MUL100'],
+            },
+          },
+        },
+        ytd: {},
+        by_period: [],
+      },
+    });
+    const a = link('gmdAvgCdm', budget('gmdAvgCdm (gmdMonth)'))!;
+    expect(a.textContent).toBe('N/A');
+    fireEvent.focus(a);
+    expect(screen.getByRole('tooltip').textContent).toContain('gmdNoBudgetFor');
+    expect(nested()).toBe(0);
+  });
+
+  it('keeps an unlinked budget hover card above the records link, where a mouse reaches it', async () => {
+    await open({
+      period: { ...response('p10').data.period, period_code: 'CUSTOM' },
+      budget: {
+        month: {
+          all: {
+            avg_cdm: {
+              budget: null,
+              actual: null,
+              var: null,
+              var_pct: null,
+              status: null,
+              missing: ['MUL100'],
+            },
+          },
+        },
+        ytd: {},
+        by_period: [],
+      },
+    });
+    const hint = region('gmdAvgCdm').querySelector('[data-hint]')!;
+    expect(hint.classList.contains('relative')).toBe(true);
+    expect(hint.classList.contains('z-10')).toBe(true);
+  });
+
+  it('gives no link to a page the user cannot view, and keeps the others', async () => {
+    mockUser = {
+      userType: 'STANDARD_USER',
+      permissions: [
+        'INVENTORY',
+        'PRODUCTION',
+        'REPORTS',
+        'MASTER_DATA',
+      ].map((moduleCode) => ({ moduleCode, resource: 'ALL', canView: true })),
+    };
+    await open({
+      alerts: [
+        alert('g', 'born_alive_per_litter', 'Born Alive'),
+        alert('g', 'other_overheads', 'Other Overheads'),
+      ],
+    });
+    const all = hrefs(document.body);
+    expect(all.filter((h) => h.startsWith('/finance/'))).toEqual([]);
+    // No PIGGERY/BUDGET grant, and no FINANCE grant for the overhead alert.
+    expect(all.filter((h) => h.startsWith('/master-data/budget'))).toEqual([]);
+    // The allowed alert links under the same naming, so the missing one is the permission's doing.
+    expect(
+      link('gmdAlerts', records('Born Alive gmdBelowTarget, GRASMERE')),
+    ).toBeTruthy();
+    expect(
+      link('gmdAlerts', records('Other Overheads gmdBelowTarget, GRASMERE')),
+    ).toBeNull();
+    expect(
+      within(region('gmdAlerts')).getByText(/Other Overheads/),
+    ).toBeTruthy();
+    expect(
+      href('gmdCostOfSales', records('gmdCostOfSales (gmdMonth)')),
+    ).toBe(`${SOLD}&${MONTH}`);
+    expect(
+      link('gmdAvgCdm', records('gmdAvgCdm (gmdMonth)')),
+    ).toBeTruthy();
+    expect(link('gmdBreedingMatrix', records('Born Alive'))).toBeTruthy();
   });
 });

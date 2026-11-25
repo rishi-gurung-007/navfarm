@@ -352,6 +352,24 @@ export class JournalService {
     if (query.dateFrom) conditions.push(gte(schema.journalHeader.posting_date, query.dateFrom.slice(0, 10)));
     if (query.dateTo) conditions.push(lte(schema.journalHeader.posting_date, query.dateTo.slice(0, 10)));
 
+    if (query.accountCodes || query.farmId) {
+      // Both filters must hold on the same line: the rule the GM Dashboard adds overheads up by.
+      const line = schema.journalLine;
+      const onLine = [sql`${line.journal_id} = ${schema.journalHeader.journal_id}`];
+      if (query.accountCodes) {
+        const account = schema.glAccountMaster;
+        const codes = sql.join(query.accountCodes.split(',').map((code) => sql`${code}`), sql`, `);
+        onLine.push(sql`${line.gl_account_id} in (select ${account.gl_account_id} from ${account} where ${account.account_code} in (${codes}))`);
+      }
+      if (query.farmId) {
+        const farmCode = await this.farmCode(query.farmId, tenantId);
+        if (!farmCode) return [];
+        const centre = schema.costCenterMaster;
+        onLine.push(sql`${line.cost_center_id} in (select ${centre.cost_center_id} from ${centre} where ${centre.cost_center_code} = ${`CC-${farmCode}`})`);
+      }
+      conditions.push(sql`exists (select 1 from ${line} where ${sql.join(onLine, sql` and `)})`);
+    }
+
     const limit = query.limit || 50;
     const offset = query.offset || 0;
 
@@ -362,6 +380,15 @@ export class JournalService {
       .orderBy(...journalOrderBy(query.sort, query.dir))
       .limit(limit)
       .offset(offset);
+  }
+
+  private async farmCode(farmId: string, tenantId: string) {
+    const [farm] = await this.db
+      .select({ code: schema.locationMaster.location_code })
+      .from(schema.locationMaster)
+      .where(and(eq(schema.locationMaster.tenant_id, tenantId), eq(schema.locationMaster.location_id, farmId)))
+      .limit(1);
+    return farm?.code;
   }
 
   private assertDraft(journal: { status: string }) {

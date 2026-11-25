@@ -1,8 +1,12 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import FarrowingReportPanel from '../src/components/console/reports/farrowing-report-panel';
 import { api } from '../src/services/api-client';
 
+let query = '';
+jest.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(query),
+}));
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn() } }));
 jest.mock('../src/hooks/useAuth', () => ({
   getActiveCompanyId: () => 'co-1',
@@ -33,6 +37,7 @@ const report = {
 };
 
 beforeEach(() => {
+  query = '';
   get.mockReset().mockImplementation(async (url: string) => {
     if (url.startsWith('/reports/farrowing/farms'))
       return {
@@ -198,5 +203,87 @@ describe('Farrowing Report — prior year batch', () => {
     const cell = await screen.findByText('BATCH-000305');
     expect(cell.textContent).toBe('BATCH-000305');
     expect(screen.queryByText(/BATCH-000078/)).toBeNull();
+  });
+});
+
+// Opened from the GM Dashboard: the farm and dates arrive in the link.
+describe('Farrowing Report — from a dashboard link', () => {
+  const filterCalls = () =>
+    get.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.startsWith('/reports/farrowing/filters'));
+  const field = (name: RegExp) =>
+    screen.getByLabelText(name) as HTMLInputElement;
+  const farm = () => screen.getByRole('button', { name: 'rptFarm' });
+  /** Lets every pending response and the effects after it run. */
+  const settle = () => act(() => new Promise((done) => setTimeout(done, 20)));
+
+  const linkFarms = (company: string) => {
+    const answer = get.getMockImplementation()!;
+    get.mockImplementation(async (url: string) =>
+      url.startsWith('/reports/farrowing/farms')
+        ? { data: [{ farm_id: 'f1', farm_name: 'Linked Farm', company_id: company }] }
+        : answer(url),
+    );
+  };
+
+  // Strict mode runs effects twice, as the dev server does. The linked farm may belong to another company than the
+  // active one, which re-runs the farm-change effect (it clears the report) once the farm list arrives.
+  it.each(['co-1', 'co-2'])(
+    'generates once by itself when the farm and both dates arrive (farm of %s), and the report stays',
+    async (company) => {
+      query = 'farmId=f1&from=2026-10-25&to=2026-11-21';
+      linkFarms(company);
+      render(
+        <React.StrictMode>
+          <FarrowingReportPanel />
+        </React.StrictMode>,
+      );
+      await waitFor(() => expect(reportCalls()).toHaveLength(1));
+      await settle();
+      expect(reportCalls()).toHaveLength(1);
+      const sent = new URLSearchParams(reportCalls()[0].split('?')[1]);
+      expect(Object.fromEntries(sent)).toEqual({
+        farmId: 'f1',
+        dateFrom: '2026-10-25',
+        dateTo: '2026-11-21',
+        companyId: company,
+      });
+      expect(screen.getByText('rptNoRecords')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'rptGenerated' })).toBeTruthy();
+      expect(farm().textContent).toContain('Linked Farm');
+      expect(field(/rptDateFrom/).value).toBe('25/10/26');
+      expect(field(/rptDateTo/).value).toBe('21/11/26');
+
+      // A later change waits for the button, as always.
+      fireEvent.change(field(/rptDateTo/), { target: { value: '2026-11-20' } });
+      await settle();
+      expect(reportCalls()).toHaveLength(1);
+    },
+  );
+
+  it('fills the dates alone, leaves the farm empty, and does not run when one is chosen', async () => {
+    query = 'from=2026-10-25&to=2026-11-21';
+    render(<FarrowingReportPanel />);
+    await settle();
+    expect(field(/rptDateFrom/).value).toBe('25/10/26');
+    expect(field(/rptDateTo/).value).toBe('21/11/26');
+    expect(farm().textContent).toContain('rptSelectFarm');
+    expect(filterCalls()).toHaveLength(0);
+    expect(reportCalls()).toHaveLength(0);
+
+    await pick('rptFarm', 'Grasmere');
+    await settle();
+    expect(reportCalls()).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'rptGenerate' })).toBeTruthy();
+  });
+
+  it('opens on the active farm with empty dates and no run without a link', async () => {
+    render(<FarrowingReportPanel />);
+    await settle();
+    expect(farm().textContent).toContain('Grasmere');
+    expect(field(/rptDateFrom/).value).toBe('');
+    expect(field(/rptDateTo/).value).toBe('');
+    expect(reportCalls()).toHaveLength(0);
   });
 });

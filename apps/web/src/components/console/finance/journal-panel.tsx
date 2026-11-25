@@ -25,6 +25,8 @@ import { Select } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { getActiveCompanyId } from '@/hooks/useAuth';
+import { useDrillParams } from '@/hooks/useDrillParams';
+import { useFarmPickerOptions } from '@/hooks/useFarmPickerOptions';
 import {
   TableHeader,
   TableBody,
@@ -38,6 +40,8 @@ import { formatAmount } from '@/lib/utils';
 import { JournalSourceDialog } from './journal-source-dialog';
 
 const PAGE_SIZE = 25;
+// The accounts the overheads are posted to: Other Overheads and Staff Overheads.
+const OVERHEAD_ACCOUNTS = ['4600', '4610'];
 
 type Row = Record<string, any>;
 
@@ -125,10 +129,14 @@ export default function JournalPanel() {
       : new URLSearchParams(window.location.search).get('no') || '',
   );
   const [search, setSearch] = useState(openNo);
-  const [statusFilter, setStatusFilter] = useState('');
+  // A GM Dashboard link arrives with filters; they only seed the page's own, which stay editable.
+  const drill = useDrillParams();
+  const [statusFilter, setStatusFilter] = useState(drill.status);
+  const [farmId, setFarmId] = useState(drill.farmId);
+  const [accountCodes, setAccountCodes] = useState(drill.accounts.join(','));
   // The posting dates to list, both ends inclusive; either may be left empty.
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [dateFrom, setDateFrom] = useState(drill.from);
+  const [dateTo, setDateTo] = useState(drill.to);
   // Newest first until a column is chosen: the list is cut at 200, so the order is the API's, not the browser's.
   const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'posting_date', dir: 'desc' });
   const [sourceOf, setSourceOf] = useState<Row | null>(null);
@@ -148,6 +156,7 @@ export default function JournalPanel() {
   const [posting, setPosting] = useState(false);
 
   const companyId = getActiveCompanyId();
+  const farms = useFarmPickerOptions(farmId, drill.farmId, companyId);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
 
@@ -161,6 +170,8 @@ export default function JournalPanel() {
       if (statusFilter) params.set('status', statusFilter);
       if (dateFrom) params.set('dateFrom', dateFrom);
       if (dateTo) params.set('dateTo', dateTo);
+      if (accountCodes) params.set('accountCodes', accountCodes);
+      if (farmId) params.set('farmId', farmId);
       params.set('sort', sort.key);
       params.set('dir', sort.dir);
       params.set('limit', '200');
@@ -176,11 +187,11 @@ export default function JournalPanel() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, statusFilter, dateFrom, dateTo, sort]);
+  }, [search, statusFilter, accountCodes, farmId, dateFrom, dateTo, sort]);
 
   useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, dateFrom, dateTo, pageSize, sort]);
+  }, [search, statusFilter, accountCodes, farmId, dateFrom, dateTo, pageSize, sort]);
   const openedByNo = useRef(false);
   useEffect(() => {
     if (!openNo || openedByNo.current) return;
@@ -294,6 +305,16 @@ export default function JournalPanel() {
     }
   };
 
+  // Anything else a link asked for is listed too, so the filter in force is always the one shown.
+  const accountOptions =
+    !accountCodes || OVERHEAD_ACCOUNTS.includes(accountCodes)
+      ? OVERHEAD_ACCOUNTS
+      : [...OVERHEAD_ACCOUNTS, accountCodes];
+  const accountLabel = (code: string) => {
+    const name = glAccounts.find((a) => a.account_code === code)?.account_name;
+    return name ? `${code} · ${name}` : code;
+  };
+
   // Code and name are two columns (Rishi, 14 Oct).
   const accountCode = (id: string) =>
     glAccounts.find((a) => a.gl_account_id === id)?.account_code || NA;
@@ -327,6 +348,36 @@ export default function JournalPanel() {
           <option value="DRAFT">{t('jpDraft')}</option>
           <option value="POSTED">{t('jpPosted')}</option>
           <option value="CANCELLED">{t('jpCancelled')}</option>
+        </Select>
+        <Select
+          value={farmId}
+          onChange={(e) => setFarmId(e.target.value)}
+          aria-label={t('jpFilterByFarm')}
+          fullWidth={false}
+          className="h-9 w-full min-w-0 text-[13px] sm:w-auto sm:min-w-[9.5rem]"
+        >
+          <option value="">{t('jpAllFarms')}</option>
+          {farms.map((f) => (
+            <option key={f.location_id} value={f.location_id}>
+              {f.location_code
+                ? `${f.location_name} (${f.location_code})`
+                : f.location_name}
+            </option>
+          ))}
+        </Select>
+        <Select
+          value={accountCodes}
+          onChange={(e) => setAccountCodes(e.target.value)}
+          aria-label={t('jpFilterByAccount')}
+          fullWidth={false}
+          className="h-9 w-full min-w-0 text-[13px] sm:w-auto sm:min-w-[9.5rem]"
+        >
+          <option value="">{t('jpAllAccounts')}</option>
+          {accountOptions.map((code) => (
+            <option key={code} value={code}>
+              {accountLabel(code)}
+            </option>
+          ))}
         </Select>
         <DateInput
           aria-label="From posting date"

@@ -9,6 +9,7 @@ import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { parseIndividualKillSheet, parseProductSummary, type ImportIssue, type ParsedKillSheet, type ParsedProductSummary } from './kill-sheet-parser';
 import { KillSheetStorageService, type KillSheetFileKind } from './kill-sheet-storage.service';
 import { ConfirmKillSheetDto, QueryKillSheetsDto } from './kill-sheets.dto';
+import { killSheetWindow } from './kill-sheet-window';
 
 const number = (value: string | null | undefined) => value == null ? null : Number(value);
 const total = (rows: Array<Record<string, string | null>>, field: string) => rows.reduce((sum, row) => sum + (number(row[field]) ?? 0), 0);
@@ -165,6 +166,7 @@ export class KillSheetsService {
       ...(query.company_id ? [eq(schema.killSheetImport.company_id, query.company_id)] : []),
       ...(query.farm_id ? [eq(schema.killSheetImport.farm_id, query.farm_id)] : []),
       ...(query.status ? [eq(schema.killSheetImport.status, query.status)] : []),
+      killSheetWindow(query.date_from, query.date_to),
       ...(search ? [or(
         like(schema.killSheetImport.report_reference, `%${search}%`),
         like(schema.killSheetImport.report_batch_reference, `%${search}%`),

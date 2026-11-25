@@ -7,9 +7,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import JournalPanel from "../src/components/console/finance/journal-panel";
 import { api } from "../src/services/api-client";
 
+jest.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(window.location.search) }));
 jest.mock("../src/services/api-client", () => ({ api: { get: jest.fn(), post: jest.fn() } }));
 jest.mock("../src/hooks/useLanguage", () => ({ useLanguage: () => ({ t: (key: string, vars?: Record<string, unknown>) => (vars?.journalNo != null ? `${key}:${vars.journalNo}` : key) }) }));
-jest.mock("../src/hooks/useAuth", () => ({ getActiveCompanyId: () => "co-1" }));
+jest.mock("../src/hooks/useAuth", () => ({ getActiveCompanyId: () => "co-1", getActiveWorkspaceScope: () => "COMPANY" }));
 
 const entry = { journal_id: "j-2", journal_no: "JV-0002", status: "POSTED", posting_date: "2026-09-26", description: "Stock take", lines: [] };
 

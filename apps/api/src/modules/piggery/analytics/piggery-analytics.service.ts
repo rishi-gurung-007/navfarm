@@ -10,6 +10,8 @@ import {
 } from '../../../common/farm-scope';
 import { loadBatchDeaths, loadHeadMoves } from '../../production/batch-heads';
 import { bioEventSql } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
+import { saleDocumentsSql } from '../../inventory/bio-asset-ledger/sold-documents.sql';
+import { killSheetWindow } from '../../production/kill-sheets/kill-sheet-window';
 import { kpiBands, kpiLimits } from '../../production/lifecycle/kpi-limits';
 import { MonthlyOpsService } from '../reports/monthly-ops.service';
 import {
@@ -991,18 +993,7 @@ export class PiggeryAnalyticsService {
             eq(importTable.status, 'IMPORTED'),
             companyId ? eq(importTable.company_id, companyId) : undefined,
             inArray(importTable.farm_id, farmIds),
-            or(
-              and(
-                sql`${importTable.slaughter_from} IS NOT NULL`,
-                sql`${importTable.slaughter_from} <= ${to + ' 23:59:59'}`,
-                sql`coalesce(${importTable.slaughter_to}, ${importTable.slaughter_from}) >= ${from + ' 00:00:00'}`,
-              ),
-              and(
-                sql`${importTable.slaughter_from} IS NULL`,
-                sql`coalesce(${importTable.confirmed_at}, ${importTable.created_at}) >= ${from + ' 00:00:00'}`,
-                sql`coalesce(${importTable.confirmed_at}, ${importTable.created_at}) <= ${to + ' 23:59:59'}`,
-              ),
-            ),
+            killSheetWindow(from, to),
           ),
         )
         .groupBy(importTable.farm_id);
@@ -1092,19 +1083,7 @@ export class PiggeryAnalyticsService {
           )})
         GROUP BY b.farm_id, bal.document_no
       ) x
-      JOIN (
-        SELECT h.source_document_no AS doc_key, h.posting_date AS d,
-               SUM(l.debit_amount) AS proceeds
-        FROM journal_header h
-        JOIN journal_line l ON l.journal_id = h.journal_id
-        WHERE h.tenant_id = ${tenantId}
-          ${companyId ? sql`AND h.company_id = ${companyId}` : sql``}
-          AND h.source_document_type IN ('BATCH', 'SLAUGHTER_TO')
-          AND h.status = 'POSTED'
-          AND (h.description LIKE 'Sale%' OR h.description LIKE 'Kill sheet%')
-          AND h.posting_date BETWEEN ${from} AND ${to}
-        GROUP BY h.source_document_no, h.posting_date
-      ) p ON p.doc_key = x.doc_key
+      JOIN (${saleDocumentsSql(tenantId, companyId, from, to)}) p ON p.doc_key = x.doc_key
     `)) as unknown as [Array<Record<string, unknown>>, unknown];
     return rows.map((r) => ({
       farm_id: String(r.farm_id),

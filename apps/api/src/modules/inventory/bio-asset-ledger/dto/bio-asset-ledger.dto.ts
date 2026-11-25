@@ -161,6 +161,16 @@ export class QueryBioAssetLedgerEntriesDto {
   @IsIn(TRANSACTION_TYPES)
   transactionType?: (typeof TRANSACTION_TYPES)[number];
 
+  @ApiProperty({ description: "Only the entries of this farm's batches", required: false })
+  @IsOptional()
+  @IsUUID()
+  farmId?: string;
+
+  @ApiProperty({ description: 'Only sold disposals (those with a posted sale or kill-sheet journal); dateFrom and dateTo then bound the journal date', required: false, enum: ['true', 'false'] })
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  salesOnly?: 'true' | 'false';
+
   @ApiProperty({ description: 'Search document no., item, animal, batch or source GRN', required: false })
   @IsOptional()
   @IsString()

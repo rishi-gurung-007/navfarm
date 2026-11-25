@@ -34,6 +34,7 @@ import {
   BIO_DOCUMENT_TYPES,
   bioEventsCondition,
 } from './bio-asset-ledger.types';
+import { saleDocumentsSql } from './sold-documents.sql';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import {
   animalOnFarm,
@@ -219,19 +220,35 @@ export class BioAssetLedgerService {
   ) {
     const B = schema.bioAssetLedger;
     const loc = schema.locationMaster;
+    const salesOnly = query.salesOnly === 'true';
+    // The events the page shows; feed, overhead, amortisation and the other costs stay off it.
+    const listed = bioEventsCondition(B, [
+      'PURCHASE',
+      'ACQUISITION',
+      'MORTALITY',
+      'TRANSFER_IN',
+      'TRANSFER_OUT',
+      'COST_ALLOCATION',
+    ]);
+    // The disposals, which the page otherwise leaves off, and the test of one being what the GM Dashboard counts as
+    // sold. A window dates it by the sale journal: an animal can be dispatched days before.
+    const disposal = bioEventsCondition(B, ['TRANSFORMATION']);
+    const sold = (from?: string, to?: string) =>
+      sql`${B.document_no} IN (SELECT sold.doc_key FROM (${saleDocumentsSql(tenantId, query.companyId, from, to)}) sold)`;
     const conditions: SQL[] = [
       eq(B.tenant_id, tenantId),
       ...this.scopeConditions(),
-      // The events the page shows; feed, overhead, amortisation and the other costs stay off it.
-      bioEventsCondition(B, [
-        'PURCHASE',
-        'ACQUISITION',
-        'MORTALITY',
-        'TRANSFER_IN',
-        'TRANSFER_OUT',
-        'COST_ALLOCATION',
-      ]),
+      // "Sales only" shows the sold disposals alone. One entry asked for by id may also be a sold disposal, so that
+      // a "Sales only" row opens.
+      salesOnly
+        ? disposal
+        : entryId
+          ? or(listed, and(disposal, sold()))!
+          : listed,
     ];
+    // Added to the user's own scope, never in place of it.
+    if (query.farmId)
+      conditions.push(batchOnFarm(B.batch_id, query.farmId));
     if (entryId) conditions.push(eq(B.entry_id, entryId));
     if (query.companyId) conditions.push(eq(B.company_id, query.companyId));
     if (query.itemId) conditions.push(eq(B.bio_asset_item_id, query.itemId));
@@ -240,8 +257,12 @@ export class BioAssetLedgerService {
     if (query.entryType) conditions.push(eq(B.entry_type, query.entryType));
     if (query.transactionType)
       conditions.push(eq(B.transaction_type, query.transactionType));
-    if (query.dateFrom) conditions.push(gte(B.posting_date, query.dateFrom));
-    if (query.dateTo) conditions.push(lte(B.posting_date, query.dateTo));
+    if (salesOnly) {
+      conditions.push(sold(query.dateFrom, query.dateTo));
+    } else {
+      if (query.dateFrom) conditions.push(gte(B.posting_date, query.dateFrom));
+      if (query.dateTo) conditions.push(lte(B.posting_date, query.dateTo));
+    }
     if (query.documentNo?.trim()) {
       const q = `%${query.documentNo.trim()}%`;
       conditions.push(

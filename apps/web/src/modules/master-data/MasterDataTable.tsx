@@ -3,6 +3,7 @@
 import { DateInput } from '@/components/ui/date-input';
 import { NA } from '@/utils/na';
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { entityDisplayText } from '@/utils/code-name';
 import { ageBetween, formatAge } from './utils/age';
 import {
@@ -80,6 +81,7 @@ export { parentKeys, isFieldRequired, isFieldVisible, resolveEndpoint };
 import AnimalDetailPanel from './AnimalDetailPanel';
 import { MASTER_DATA_CONFIGS } from './configs';
 import { codeFieldOf } from './useCodeSeries';
+import { linkColumnFilters } from './link-filters';
 import { useCodeSeries } from './useCodeSeries';
 import { MasterRecordView } from './MasterRecordView';
 import { BcOwnershipNotice } from './BcOwnershipNotice';
@@ -715,8 +717,20 @@ export function MasterDataTable({
    * typing in the panel does not refetch on every keystroke, and closing it
    * without applying leaves the list exactly as it was.
    */
-  const [colFilters, setColFilters] = useState<Record<string, string>>({});
-  const [filterDraft, setFilterDraft] = useState<Record<string, string>>({});
+  // A link can arrive with filters (GM Dashboard to Budget). They belong to the
+  // master it opened, and are there from the start so the first request has them.
+  const searchParams = useSearchParams();
+  const [linked] = useState(() => ({
+    key: config.key,
+    filters: searchParams ? linkColumnFilters(searchParams, config) : {},
+  }));
+  const leftLinkedRef = useRef(false);
+  const [colFilters, setColFilters] = useState<Record<string, string>>(
+    linked.filters,
+  );
+  const [filterDraft, setFilterDraft] = useState<Record<string, string>>(
+    linked.filters,
+  );
   const [filterOpen, setFilterOpen] = useState(false);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -1129,8 +1143,11 @@ export function MasterDataTable({
   useEffect(() => {
     setSortKey('');
     setSortDir('asc');
-    setColFilters({});
-    setFilterDraft({});
+    if (config.key !== linked.key) leftLinkedRef.current = true;
+    const initial = leftLinkedRef.current ? {} : linked.filters;
+    // Fresh objects: the new reference is what makes the list load again.
+    setColFilters({ ...initial });
+    setFilterDraft({ ...initial });
     setFilterOpen(false);
   }, [config.key]);
 

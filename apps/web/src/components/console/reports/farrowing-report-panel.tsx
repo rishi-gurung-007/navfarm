@@ -2,11 +2,12 @@
 
 import { DateInput } from '@/components/ui/date-input';
 import { formatDateTime } from '@/utils/date-short';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, FileSpreadsheet, Loader2, Play, RefreshCw } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { getActiveCompanyId, getActiveFarmId } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
+import { useDrillParams } from '@/hooks/useDrillParams';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { SearchableSelect } from '@/components/ui/searchable-select';
@@ -68,9 +69,16 @@ const PARITIES = Array.from({ length: 10 }, (_, i) => ({
 export default function FarrowingReportPanel() {
   const { t } = useLanguage();
   const [farms, setFarms] = useState<Row[]>([]);
-  const [farmId, setFarmId] = useState<string>(() => getActiveFarmId() || '');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [farmsLoaded, setFarmsLoaded] = useState(false);
+  const drill = useDrillParams();
+  // A dated link (GM Dashboard) brings its own farm, or none: the active farm is not what its figure counted.
+  const [farmId, setFarmId] = useState<string>(() =>
+    drill.from || drill.to ? drill.farmId : getActiveFarmId() || '',
+  );
+  const [dateFrom, setDateFrom] = useState(drill.from);
+  const [dateTo, setDateTo] = useState(drill.to);
+  /** A link with the farm and both dates generates the report by itself, once. */
+  const autoRun = useRef(Boolean(drill.farmId && drill.from && drill.to));
   const [batchId, setBatchId] = useState('');
   // Rishi, 2 Nov: Batch Type — All, Active or Closed batches.
   const [batchStatus, setBatchStatus] = useState<'ALL' | 'ACTIVE' | 'CLOSED'>(
@@ -95,7 +103,8 @@ export default function FarrowingReportPanel() {
     api
       .get(`/reports/farrowing/farms`)
       .then((res: any) => setFarms(unwrap<Row[]>(res) || []))
-      .catch(() => setFarms([]));
+      .catch(() => setFarms([]))
+      .finally(() => setFarmsLoaded(true));
   }, []);
   // The chosen farm's company: a tenant administrator may pick a farm of any company.
   const companyId =
@@ -173,6 +182,14 @@ export default function FarrowingReportPanel() {
       setLoading(false);
     }
   };
+
+  // The link's run waits for the farm list: it settles the farm's company, and that change clears the report. This
+  // effect stays below the farm-change effect, so when both run together the report is cleared first.
+  useEffect(() => {
+    if (!farmsLoaded || !autoRun.current) return;
+    autoRun.current = false;
+    generate();
+  }, [farmsLoaded]);
 
   const exportExcel = async () => {
     if (!report) return;

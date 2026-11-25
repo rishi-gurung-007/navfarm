@@ -8,6 +8,7 @@ import { api } from "@/services/api-client";
 import { getActiveCompanyId } from "@/hooks/useAuth";
 import { TableBody, TableFooter, TableRow, TableCell } from "@/components/ui/table";
 import { useLanguage } from "@/hooks/useLanguage";
+import { useDrillParams } from "@/hooks/useDrillParams";
 
 type Row = Record<string, any>;
 
@@ -61,8 +62,9 @@ function Section({ title, lines, total }: { title: string; lines: Row[]; total: 
 export default function ProfitLossPanel() {
   const { t } = useLanguage();
   const today = new Date().toISOString().slice(0, 10);
-  const [dateFrom, setDateFrom] = useState(`${today.slice(0, 4)}-01-01`);
-  const [dateTo, setDateTo] = useState(today);
+  const drill = useDrillParams();
+  const [dateFrom, setDateFrom] = useState(drill.from || `${today.slice(0, 4)}-01-01`);
+  const [dateTo, setDateTo] = useState(drill.to || today);
   const [report, setReport] = useState<Row | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");

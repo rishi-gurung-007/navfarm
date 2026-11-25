@@ -12,7 +12,12 @@ import {
   Weight,
 } from 'lucide-react';
 import { api } from '@/services/api-client';
-import { getActiveCompanyId } from '@/hooks/useAuth';
+import {
+  getActiveCompanyId,
+  getActiveWorkspaceScope,
+  getStoredUser,
+} from '@/hooks/useAuth';
+import { canOpen } from '@/utils/nav-permissions';
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import { useLanguage } from '@/hooks/useLanguage';
 import { Field } from '@/components/ui/field';
@@ -37,7 +42,16 @@ import {
   ProgressChart,
   ProgressPoint,
   Status,
+  FigureLinks,
 } from './gm-dashboard-widgets';
+import {
+  budgetHref,
+  DrillContext,
+  DrillFarm,
+  drillHref,
+  profitLossHref,
+  Span,
+} from './gm-drill-links';
 
 type Period = {
   period_id: string;
@@ -523,6 +537,53 @@ export default function PiggeryGmDashboard() {
     budget: byPeriod(yearCodes[i])?.pbt ?? null,
   }));
 
+  // Quick access (25 Nov): each stage 1 figure opens the page holding its records, with the farm and dates shown
+  // here. The dates and the custom flag come from the data on screen, not from the picker.
+  const drill: DrillContext | null = period && {
+    period,
+    custom: period.period_code === 'CUSTOM',
+    hasSales: (span, id) => data?.financial?.[span]?.[id ?? 'all'] != null,
+  };
+  const chosenFarm: DrillFarm | null = farmId
+    ? {
+        farm_id: farmId,
+        farm_name:
+          [...farms, ...allFarms].find((f) => f.farm_id === farmId)
+            ?.farm_name ?? '',
+      }
+    : null;
+  const user = getStoredUser();
+  const allow = (href: string | null) =>
+    href && canOpen(user, href) ? href : null;
+  const recordsLink = (key: string, span: Span, farm = chosenFarm) =>
+    drill ? allow(drillHref(key, span, drill, farm)) : null;
+  // The Budget master is a company's: in the tenant-wide workspace it only asks to switch workspace.
+  const tenantWide = getActiveWorkspaceScope() === 'TENANT';
+  const budgetLink = (key: string, span: Span) =>
+    drill && !tenantWide
+      ? allow(budgetHref(key, span, drill, chosenFarm))
+      : null;
+  const figureLinks = (key: string): FigureLinks => ({
+    month: recordsLink(key, 'month'),
+    ytd: recordsLink(key, 'ytd'),
+    monthBudget: budgetLink(key, 'month'),
+    ytdBudget: budgetLink(key, 'ytd'),
+  });
+  const rowHref = (key: string) => recordsLink(key, 'month');
+  // An All Farms alert names its own farm; a farm view alert is the chosen farm's.
+  const alertHref = (a: { metric_key: string; farm_id?: string }) =>
+    recordsLink(
+      a.metric_key,
+      'month',
+      a.farm_id
+        ? {
+            farm_id: a.farm_id,
+            farm_name:
+              farms.find((f) => f.farm_id === a.farm_id)?.farm_name ?? '',
+          }
+        : chosenFarm,
+    );
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3 rounded-md border border-(--border) bg-(--surface) p-3">
@@ -640,6 +701,7 @@ export default function PiggeryGmDashboard() {
             <KpiCard
               icon={PiggyBank}
               title={t('gmdPigsToSlaughter')}
+              links={figureLinks('pigs_to_slaughter')}
               unit={t('gmdHead')}
               month={salesFigure(
                 salesMonth,
@@ -658,6 +720,7 @@ export default function PiggeryGmDashboard() {
             <KpiCard
               icon={Weight}
               title={t('gmdAvgCdm')}
+              links={figureLinks('avg_cdm')}
               unit="kg"
               month={noSales('month', 'avg_cdm')}
               ytd={noSales('ytd', 'avg_cdm')}
@@ -666,6 +729,7 @@ export default function PiggeryGmDashboard() {
             <KpiCard
               icon={Coins}
               title={t('gmdCostOfSales')}
+              links={figureLinks('cost_of_sales')}
               unit={money}
               month={salesFigure(
                 salesMonth,
@@ -683,6 +747,7 @@ export default function PiggeryGmDashboard() {
               t={t}
               sub={{
                 label: t('gmdCosPerTonne'),
+                links: figureLinks('cos_per_tonne'),
                 unit: money,
                 month: noSales('month', 'cos_per_tonne'),
                 ytd: noSales('ytd', 'cos_per_tonne'),
@@ -692,6 +757,7 @@ export default function PiggeryGmDashboard() {
             <KpiCard
               icon={BarChart3}
               title={t('gmdGrossMargin')}
+              links={figureLinks('gross_margin')}
               unit={money}
               month={salesFigure(
                 salesMonth,
@@ -708,6 +774,7 @@ export default function PiggeryGmDashboard() {
               t={t}
               sub={{
                 label: t('gmdGrossMarginPct'),
+                links: figureLinks('gross_margin_pct'),
                 unit: '%',
                 month: salesFigure(
                   salesMonth,
@@ -727,6 +794,7 @@ export default function PiggeryGmDashboard() {
             <KpiCard
               icon={CalendarDays}
               title={t('gmdOtherOverheads')}
+              links={figureLinks('other_overheads')}
               unit={money}
               month={noSales('month', 'other_overheads')}
               ytd={noSales('ytd', 'other_overheads')}
@@ -734,6 +802,7 @@ export default function PiggeryGmDashboard() {
               t={t}
               sub={{
                 label: t('gmdStaffOverheads'),
+                links: figureLinks('staff_overheads'),
                 unit: money,
                 month: noSales('month', 'staff_overheads'),
                 ytd: noSales('ytd', 'staff_overheads'),
@@ -750,6 +819,7 @@ export default function PiggeryGmDashboard() {
               <FarmMatrix
                 icon={PiggyBank}
                 title={t('gmdBreedingMatrix')}
+                rowHref={rowHref}
                 rows={farmView.breeding}
                 t={t}
                 note={period.period_code}
@@ -757,6 +827,7 @@ export default function PiggeryGmDashboard() {
               <FarmMatrix
                 icon={Rat}
                 title={t('gmdWeanerGrowerMatrix')}
+                rowHref={rowHref}
                 rows={farmView.weaner_grower}
                 t={t}
                 note={period.period_code}
@@ -764,6 +835,7 @@ export default function PiggeryGmDashboard() {
               <FarmMatrix
                 icon={Ham}
                 title={t('gmdFinancialMatrix')}
+                rowHref={rowHref}
                 rows={farmFinancial}
                 t={t}
                 budgeted
@@ -778,6 +850,8 @@ export default function PiggeryGmDashboard() {
               <Matrix
                 icon={PiggyBank}
                 title={t('gmdBreedingMatrix')}
+                rowHref={rowHref}
+                onFarm={chooseFarm}
                 rows={breeding}
                 farms={farms}
                 t={t}
@@ -787,6 +861,8 @@ export default function PiggeryGmDashboard() {
               <Matrix
                 icon={Rat}
                 title={t('gmdWeanerGrowerMatrix')}
+                rowHref={rowHref}
+                onFarm={chooseFarm}
                 rows={data!.weaner_grower}
                 farms={farms}
                 t={t}
@@ -796,6 +872,8 @@ export default function PiggeryGmDashboard() {
               <Matrix
                 icon={Ham}
                 title={t('gmdFinancialMatrix')}
+                rowHref={rowHref}
+                onFarm={chooseFarm}
                 rows={financial}
                 farms={farms}
                 t={t}
@@ -817,12 +895,14 @@ export default function PiggeryGmDashboard() {
             <ProgressChart
               icon={PiggyBank}
               title={t('gmdPigsToSlaughterProgress')}
+              href={recordsLink('pigs_to_slaughter', 'ytd')}
               points={yearPoints}
               t={t}
             />
             <ProgressChart
               icon={DollarSign}
               title={t('gmdPbtProgress')}
+              href={drill ? allow(profitLossHref(drill, chosenFarm)) : null}
               points={pbtPoints}
               t={t}
             />
@@ -837,9 +917,18 @@ export default function PiggeryGmDashboard() {
                       'ytd',
                       'kg_sold_per_sow_year',
                     )}
+                    // The main figure here is the year to date.
+                    links={{
+                      month: recordsLink('kg_sold_per_sow_year', 'ytd'),
+                      monthBudget: budgetLink('kg_sold_per_sow_year', 'ytd'),
+                    }}
                     t={t}
                   />
-                  <FarmAlertsPanel alerts={farmView.alerts} t={t} />
+                  <FarmAlertsPanel
+                    alerts={farmView.alerts}
+                    alertHref={alertHref}
+                    t={t}
+                  />
                 </>
               ) : (
                 <>
@@ -848,9 +937,14 @@ export default function PiggeryGmDashboard() {
                     title={t('gmdKgSoldPerSowYear')}
                     main={kgMonth}
                     ytd={kgYtd}
+                    links={figureLinks('kg_sold_per_sow_year')}
                     t={t}
                   />
-                  <AlertsPanel alerts={data!.alerts} t={t} />
+                  <AlertsPanel
+                    alerts={data!.alerts}
+                    alertHref={alertHref}
+                    t={t}
+                  />
                 </>
               )}
             </div>

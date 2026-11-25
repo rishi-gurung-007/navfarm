@@ -385,6 +385,8 @@ export function stageFigures(exits: StageExit[]): StageFigures {
 export interface Alert {
   farm_id: string;
   farm_name: string;
+  /** The row's key. */
+  metric_key: string;
   metric: string;
   unit: string;
   value: number;
@@ -406,6 +408,7 @@ export function alertsFrom(
       out.push({
         farm_id: farm.farm_id,
         farm_name: farm.farm_name,
+        metric_key: row.key,
         metric: row.label,
         unit: row.unit,
         value: c.value,
@@ -517,6 +520,8 @@ export function farmRow(
 }
 
 export interface FarmAlert {
+  /** The row's key. */
+  metric_key: string;
   metric: string;
   unit: string;
   value: number;
@@ -532,6 +537,7 @@ export function farmAlerts(rows: FarmRow[]): FarmAlert[] {
   return rows
     .filter((r) => r.values.this_week != null && r.status)
     .map((r) => ({
+      metric_key: r.key,
       metric: r.label,
       unit: r.unit,
       value: r.values.this_week as number,

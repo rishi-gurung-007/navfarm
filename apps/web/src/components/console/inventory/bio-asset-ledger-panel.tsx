@@ -24,6 +24,8 @@ import { apiDownload } from '@/lib/api-client';
 import { showToast, Toast } from '@/components/ui/toast';
 import { Pagination } from '@/components/ui/pagination';
 import { getActiveCompanyId } from '@/hooks/useAuth';
+import { useDrillParams } from '@/hooks/useDrillParams';
+import { useFarmPickerOptions } from '@/hooks/useFarmPickerOptions';
 import {
   TableHeader,
   TableBody,
@@ -79,6 +81,8 @@ const qtyText = (qty: number) =>
 export default function BioAssetLedgerPanel() {
   const { t } = useLanguage();
   const { formatMoney } = useCompanyCurrency();
+  // A GM Dashboard link arrives with filters; they only seed the page's own, which stay editable.
+  const drill = useDrillParams();
 
   const [rows, setRows] = useState<Row[]>([]);
   const [items, setItems] = useState<Row[]>([]);
@@ -94,13 +98,16 @@ export default function BioAssetLedgerPanel() {
   const [sortBy, setSortBy] = useState<'created_at' | 'posting_date'>(
     'created_at',
   );
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [dateFrom, setDateFrom] = useState(drill.from);
+  const [dateTo, setDateTo] = useState(drill.to);
+  const [farmId, setFarmId] = useState(drill.farmId);
+  const [salesOnly, setSalesOnly] = useState(drill.salesOnly);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
   const [viewingEntry, setViewingEntry] = useState<Row | null>(null);
 
   const companyId = getActiveCompanyId();
+  const farms = useFarmPickerOptions(farmId, drill.farmId, companyId);
 
   const filterParams = () => {
     const params = new URLSearchParams();
@@ -113,6 +120,8 @@ export default function BioAssetLedgerPanel() {
     if (sortBy) params.set('sortBy', sortBy);
     if (dateFrom) params.set('dateFrom', dateFrom);
     if (dateTo) params.set('dateTo', dateTo);
+    if (farmId) params.set('farmId', farmId);
+    if (salesOnly) params.set('salesOnly', 'true');
     return params;
   };
 
@@ -144,6 +153,8 @@ export default function BioAssetLedgerPanel() {
     sortBy,
     dateFrom,
     dateTo,
+    farmId,
+    salesOnly,
   ]);
 
   useEffect(() => {
@@ -157,6 +168,8 @@ export default function BioAssetLedgerPanel() {
     sortBy,
     dateFrom,
     dateTo,
+    farmId,
+    salesOnly,
     pageSize,
   ]);
 
@@ -228,7 +241,9 @@ export default function BioAssetLedgerPanel() {
     transactionType ||
     documentNo ||
     dateFrom ||
-    dateTo,
+    dateTo ||
+    farmId ||
+    salesOnly,
   );
 
   const resetFilters = () => {
@@ -239,6 +254,8 @@ export default function BioAssetLedgerPanel() {
     setDocumentNo('');
     setDateFrom('');
     setDateTo('');
+    setFarmId('');
+    setSalesOnly(false);
   };
 
   const exportButton = (format: 'xlsx' | 'csv') => (
@@ -305,6 +322,30 @@ export default function BioAssetLedgerPanel() {
             <Search
               className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2"
               style={S.muted}
+            />
+          </div>
+        </Field>
+
+        {/* Farm */}
+        <Field label={t('balFarm')} htmlFor="bal-farm">
+          <div className="min-w-[12rem] max-w-[190px]">
+            <SearchableSelect
+              id="bal-farm"
+              ariaLabel={t('balFarm')}
+              value={farmId}
+              onChange={setFarmId}
+              options={[
+                { value: '', label: t('balAllFarms') },
+                ...farms.map((farm) => ({
+                  value: farm.location_id,
+                  label: farm.location_code
+                    ? `${farm.location_code} — ${farm.location_name}`
+                    : farm.location_name,
+                })),
+              ]}
+              columnHeaders={false}
+              placeholder={t('balAllFarms')}
+              triggerClassName="nf-input-sm w-full h-9"
             />
           </div>
         </Field>
@@ -465,6 +506,16 @@ export default function BioAssetLedgerPanel() {
             style={S.input}
           />
         </Field>
+
+        {/* Sales only: the sold animals, dated by the sale journal. */}
+        <label className="flex h-9 items-center gap-2 text-sm" style={S.primary}>
+          <input
+            type="checkbox"
+            checked={salesOnly}
+            onChange={(e) => setSalesOnly(e.target.checked)}
+          />
+          {t('balSalesOnly')}
+        </label>
       </div>
 
       <Toast variant="danger" message={error} onClose={() => setError('')} />
