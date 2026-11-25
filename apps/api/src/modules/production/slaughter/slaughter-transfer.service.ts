@@ -145,7 +145,10 @@ export class SlaughterTransferService {
         eq(schema.batchHeader.costing_method, 'BIO_ASSET'), isNull(schema.batchHeader.deleted_at), sql`${schema.batchBioAssetState.current_quantity} > 0`,
       ))
       .orderBy(asc(schema.batchHeader.batch_no));
-    const out = [];
+    const out: {
+      batch_id: string; batch_no: string; stage: string | null; lot_no: string | null; location_id: string | null;
+      head: number; carrying_value: number; value_per_head: number; withdrawals: Awaited<ReturnType<SlaughterTransferService['withdrawalBlocks']>>;
+    }[] = [];
     for (const r of rows.filter((x) => isCurrentBioLot(x.b))) {
       const head = Number(r.s.current_quantity);
       const value = Number(r.s.nca_book_value) || 0;

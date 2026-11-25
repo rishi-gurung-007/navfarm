@@ -481,6 +481,8 @@ describe('FeedForecastPanel — admin', () => {
     render(<FeedForecastPanel />);
     await screen.findByRole('table');
     // Date From and Date To share a container, so a wrap can never leave "Date To" alone.
+    const from = document.querySelector('label[for="ff-from"]') as HTMLElement;
+    const to = document.querySelector('label[for="ff-to"]') as HTMLElement;
     expect(from.closest('div')!.parentElement).toBe(
       to.closest('div')!.parentElement,
     );

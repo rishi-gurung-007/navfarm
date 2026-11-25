@@ -1737,6 +1737,9 @@ export const translations = {
     rqNewPurposeFaHint: 'Request a fixed asset to be bought.',
     rqNewPurposeService: 'Service',
     rqNewPurposeServiceHint: 'Request a service to be bought.',
+    rqNewPurposeSemen: 'Semen requisition',
+    rqNewPurposeSemenHint: "Request semen doses of a breeding line from the AI Station's store to the farm's store.",
+    rqTypeSemen: 'Semen',
     rqNewItemStore: 'Store: transfer from a store',
     rqNewItemPurchase: 'Purchase: buy it',
     // Gap #16 (audit, Req r43-r56): the workbook's own words for the manual

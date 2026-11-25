@@ -47,6 +47,8 @@ const dispositionsFor = (source: string): string[] =>
 const STATUS_FILTERS = [
   { value: "", label: "All" },
   { value: "OPEN", label: "Open" },
+  // Multi-round inspections with a round due today or overdue: the daily semen checks.
+  { value: "DUE", label: "Due today" },
   { value: "PENDING_APPROVAL", label: "Pending approval" },
   { value: "CLOSED", label: "Closed" },
 ];
@@ -79,6 +81,9 @@ function SectionTitle({ children, aside }: { children: React.ReactNode; aside?: 
   );
 }
 
+/** "Day 0 (collection)", "Day 1" ...: the round's name, counted from the collection or receipt date. */
+const roundLabel = (roundNo: number) => (roundNo === 0 ? "Day 0 (collection)" : `Day ${roundNo}`);
+
 function ResultBadge({ result }: { result: "PASS" | "FAIL" | null | undefined }) {
   const { tLabel } = useLanguage();
   if (!result) return <span style={S.muted}>–</span>;
@@ -102,12 +107,15 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
   // What becomes of the rejected quantity: chosen on completion, on refusing a deviation, or later for one held for a decision.
   const [disposition, setDisposition] = useState("");
   const [rejectionRef, setRejectionRef] = useState("");
+  // A multi-round inspection (the semen QC: collection day + 4 days) shows one round's checks at a time.
+  const [viewRound, setViewRound] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setError("");
     try {
       const data = unwrap<Row>(await api.get(`/qc-inspection/${id}`));
       setInsp(data);
+      setViewRound(null);
       setDisposition(data.rejection_disposition && data.rejection_disposition !== "HOLD" ? data.rejection_disposition : "");
       setRejectionRef(data.rejection_ref || "");
       setEntries(Object.fromEntries((data.lines || []).map((l: Row) => [l.line_id, {
@@ -119,15 +127,38 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
 
   const open = insp?.status === "OPEN";
   const quantity = Number(insp?.quantity ?? 0);
-  const lines: Row[] = insp?.lines || [];
-  const verdicts = lines.map((l) => judge(l, entries[l.line_id] ?? { value: "", verdict: "" }));
-  const failed = lines.some((l, i) => l.is_mandatory && verdicts[i] === "FAIL");
-  const missing = lines.some((l, i) => l.is_mandatory && verdicts[i] === null);
+  const allLines: Row[] = insp?.lines || [];
+  const rounds: Row[] = insp?.round_list || [];
+  const multiRound = Number(insp?.rounds ?? 1) > 1 && rounds.length > 1;
+  const lastRound = rounds.length ? rounds[rounds.length - 1] : null;
+  const roundFailed = rounds.some((r) => r.status === "DONE" && r.result === "FAIL");
+  // The round being entered now: the first one not recorded. After a failure nothing more is entered; the inspection is completed (rejected).
+  const currentRound: Row | null = multiRound && !roundFailed ? rounds.find((r) => r.status === "PENDING") ?? null : null;
+  const currentDue = !currentRound || day(currentRound.due_date) <= todayStr();
+  const completingNow = !multiRound || roundFailed || (currentRound && currentRound.round_no === lastRound?.round_no);
+  const shownRound = multiRound ? (viewRound ?? currentRound?.round_no ?? lastRound?.round_no ?? 0) : null;
+  const lines: Row[] = multiRound ? allLines.filter((l) => Number(l.round_no) === shownRound) : allLines;
+  // What is entered now: the current round's checks (all checks on a single-round inspection).
+  const enteringLines: Row[] = multiRound ? (currentRound ? allLines.filter((l) => Number(l.round_no) === currentRound.round_no) : []) : allLines;
+  const enteringIds = new Set(enteringLines.map((l) => l.line_id));
+  const verdictOf = (l: Row) => (enteringIds.has(l.line_id) && open ? judge(l, entries[l.line_id] ?? { value: "", verdict: "" }) : (l.result as "PASS" | "FAIL" | null) ?? null);
+  const verdicts = lines.map(verdictOf);
+  const failed = roundFailed || enteringLines.some((l) => l.is_mandatory && verdictOf(l) === "FAIL");
+  const missing = enteringLines.some((l) => l.is_mandatory && verdictOf(l) === null);
   // A failed lot is rejected whole unless it goes through as a deviation; a passing lot is accepted whole.
   const acceptedQty = failed && !deviation ? 0 : quantity;
   const rejectedQty = Math.round((quantity - acceptedQty) * 1e4) / 1e4;
   const needsReason = failed || rejectedQty > 0;
   const editable = open && canEdit;
+  const lineEditable = (l: Row) => editable && enteringIds.has(l.line_id) && currentDue;
+  const lineEntry = (l: Row) => {
+    const e = entries[l.line_id] ?? { value: "", verdict: "", text: "" };
+    return {
+      line_id: l.line_id,
+      ...(l.sampling_type === "VALUE" ? { actual_value: e.value === "" ? null : Number(e.value) } : { result: e.verdict || null }),
+      actual_text: e.text || null,
+    };
+  };
   const source = String(insp?.source_doc_type ?? "");
   const fromTransferReceipt = TRANSFER_SOURCES.includes(source);
   const choices = dispositionsFor(source);
@@ -145,14 +176,7 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
     setError("");
     try {
       await api.post(`/qc-inspection/${id}/complete`, {
-        lines: lines.map((l) => {
-          const e = entries[l.line_id] ?? { value: "", verdict: "", text: "" };
-          return {
-            line_id: l.line_id,
-            ...(l.sampling_type === "VALUE" ? { actual_value: e.value === "" ? null : Number(e.value) } : { result: e.verdict || null }),
-            actual_text: e.text || null,
-          };
-        }),
+        lines: enteringLines.map(lineEntry),
         accepted_qty: acceptedQty,
         rejected_qty: rejectedQty,
         reason_id: reasonId || undefined,
@@ -162,6 +186,20 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
         ...(needsDisposition ? { rejection_disposition: disposition, rejection_ref: rejectionRef.trim() || undefined } : {}),
       });
       showToast.success(tLabel("QC inspection completed."));
+      onChanged();
+      await load();
+    } catch (e: any) { setError(e?.message || String(e)); }
+    finally { setBusy(false); }
+  };
+
+  /** Saves one round of a multi-round inspection (not the last: completing the inspection records that one). */
+  const recordRound = async () => {
+    if (!currentRound) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.post(`/qc-inspection/${id}/rounds/${currentRound.round_no}`, { lines: enteringLines.map(lineEntry) });
+      showToast.success(tLabel("QC round recorded."));
       onChanged();
       await load();
     } catch (e: any) { setError(e?.message || String(e)); }
@@ -232,7 +270,9 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
       footer={
         <div className="flex w-full items-center justify-between gap-3">
           <span className="text-xs" style={S.muted}>
-            {editable && missing ? tLabel("Enter a result for every mandatory check to complete.") : ""}
+            {editable && currentRound && !currentDue
+              ? `${tLabel(roundLabel(currentRound.round_no))} ${tLabel("is due on")} ${day(currentRound.due_date)}.`
+              : editable && missing ? tLabel("Enter a result for every mandatory check to complete.") : ""}
           </span>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="outline" onClick={onClose}>{tLabel("Close")}</Button>
@@ -245,8 +285,13 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
             {settlable && (
               <Button size="sm" disabled={busy || !disposition} onClick={settle}>{busy ? tLabel("Saving...") : tLabel("Record disposition")}</Button>
             )}
-            {editable && (
-              <Button size="sm" disabled={busy || missing || (needsReason && !reasonId) || (needsDisposition && !disposition)} onClick={complete}>
+            {editable && !completingNow && currentRound && (
+              <Button size="sm" disabled={busy || missing || !currentDue} onClick={recordRound}>
+                {busy ? tLabel("Saving...") : `${tLabel("Record")} ${tLabel(roundLabel(currentRound.round_no))}`}
+              </Button>
+            )}
+            {editable && completingNow && (
+              <Button size="sm" disabled={busy || missing || !currentDue || (needsReason && !reasonId) || (needsDisposition && !disposition)} onClick={complete}>
                 {busy ? tLabel("Saving...") : tLabel("Complete inspection")}
               </Button>
             )}
@@ -281,8 +326,34 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
             </div>
           </section>
 
+          {multiRound && (
+            <section>
+              <SectionTitle aside={`${rounds.filter((r) => r.status === "DONE").length} / ${rounds.length} ${tLabel("recorded")}`}>{tLabel("QC rounds")}</SectionTitle>
+              <div className="flex flex-wrap gap-2" role="tablist" aria-label={tLabel("QC rounds")}>
+                {rounds.map((r) => {
+                  const active = r.round_no === shownRound;
+                  const overdue = r.status === "PENDING" && day(r.due_date) < todayStr();
+                  const tone = r.status === "CANCELLED" ? "var(--text-muted)" : r.result === "FAIL" ? "var(--danger)" : r.result === "PASS" ? "var(--success)" : overdue ? "var(--warning)" : "var(--text-secondary)";
+                  const state = r.status === "DONE" ? tLabel(r.result === "FAIL" ? "Fail" : "Pass") : r.status === "CANCELLED" ? tLabel("Cancelled") : overdue ? tLabel("Overdue") : day(r.due_date) <= todayStr() ? tLabel("Due") : tLabel("Pending");
+                  return (
+                    <button key={r.round_no} type="button" role="tab" aria-selected={active} onClick={() => setViewRound(r.round_no)}
+                      className="flex min-w-[7.5rem] cursor-pointer flex-col items-start rounded-[var(--radius-sm)] border px-3 py-2 text-left"
+                      style={{ borderColor: active ? "var(--accent)" : "var(--border)", backgroundColor: active ? "var(--surface-raised)" : "var(--surface)" }}>
+                      <span className="text-xs font-semibold" style={S.primary}>{tLabel(roundLabel(r.round_no))}</span>
+                      <span className="text-[11px]" style={S.muted}>{day(r.due_date)}</span>
+                      <span className="text-[11px] font-semibold" style={{ color: tone }}>{state}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {roundFailed && open && (
+                <p className="mt-2 text-xs" style={{ color: "var(--danger)" }}>{tLabel("A round has failed. Complete the inspection to reject the lot; the rounds still to come are cancelled.")}</p>
+              )}
+            </section>
+          )}
+
           <section>
-            <SectionTitle aside={`${lines.length} ${tLabel(lines.length === 1 ? "check" : "checks")}`}>{tLabel("Checks")}</SectionTitle>
+            <SectionTitle aside={`${lines.length} ${tLabel(lines.length === 1 ? "check" : "checks")}`}>{multiRound && shownRound != null ? `${tLabel("Checks")} · ${tLabel(roundLabel(shownRound))}` : tLabel("Checks")}</SectionTitle>
             <div className="overflow-x-auto rounded-[var(--radius-md)] border" style={S.surface}>
               <table className="w-full min-w-[820px] border-collapse text-left text-sm">
                 <TableHeader>
@@ -308,16 +379,16 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
                         <TableCell style={S.sub}>{specOf(l) || "–"}</TableCell>
                         <TableCell>
                           {l.sampling_type === "VALUE" ? (
-                            <input className={`${control} text-right font-mono`} type="number" step="any" value={e.value} disabled={!editable} placeholder="0.00"
+                            <input className={`${control} text-right font-mono`} type="number" step="any" value={e.value} disabled={!lineEditable(l)} placeholder="0.00"
                               onChange={(ev) => set({ value: ev.target.value })} aria-label={l.measurement_code} />
                           ) : (
                             <div className="flex items-center gap-2">
-                              <select className={`${control} max-w-[7.5rem] shrink-0`} value={e.verdict} disabled={!editable} onChange={(ev) => set({ verdict: ev.target.value })} aria-label={l.measurement_code}>
+                              <select className={`${control} max-w-[7.5rem] shrink-0`} value={e.verdict} disabled={!lineEditable(l)} onChange={(ev) => set({ verdict: ev.target.value })} aria-label={l.measurement_code}>
                                 <option value="">{tLabel("Select...")}</option>
                                 <option value="PASS">{tLabel("Pass")}</option>
                                 <option value="FAIL">{tLabel("Fail")}</option>
                               </select>
-                              <input className={control} value={e.text} placeholder={tLabel("What was observed")} disabled={!editable} onChange={(ev) => set({ text: ev.target.value })} />
+                              <input className={control} value={e.text} placeholder={tLabel("What was observed")} disabled={!lineEditable(l)} onChange={(ev) => set({ text: ev.target.value })} />
                             </div>
                           )}
                         </TableCell>
@@ -330,7 +401,7 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
             </div>
           </section>
 
-          {editable ? (
+          {editable && completingNow ? (
             <section>
               <SectionTitle>{tLabel("Outcome")}</SectionTitle>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -351,7 +422,7 @@ function InspectionDialog({ id, onClose, onChanged }: { id: string; onClose: () 
                 {rejectedQty > 0 && fromTransferReceipt ? ` ${tLabel("The rejected quantity goes back to the location it was sent from.")}` : ""}
               </p>
             </section>
-          ) : (
+          ) : editable ? null : (
             (insp.remarks || insp.reason_code || insp.rejection_disposition) && (
               <section>
                 <SectionTitle>{tLabel("Outcome")}</SectionTitle>
@@ -406,7 +477,8 @@ export default function QcInspectionPanel() {
       const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(page * PAGE_SIZE) });
       const company = getActiveCompanyId();
       if (company) params.set("companyId", company);
-      if (status) params.set("status", status);
+      if (status === "DUE") params.set("due", "DUE");
+      else if (status) params.set("status", status);
       if (query.trim()) params.set("search", query.trim());
       setRows(unwrap<Row[]>(await api.get(`/qc-inspection?${params.toString()}`)) || []);
     } catch (e: any) { setError(e?.message || String(e)); }
@@ -492,7 +564,15 @@ export default function QcInspectionPanel() {
                     <div className="text-[11px]" style={S.muted}>{r.item_name}</div>
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-right font-mono">{formatQuantity(Number(r.quantity))} {r.uom}</TableCell>
-                  <TableCell className="whitespace-nowrap"><StatusBadge status={r.status} label={tLabel(STATUS_LABEL[r.status] || r.status)} /></TableCell>
+                  <TableCell className="whitespace-nowrap">
+                    <StatusBadge status={r.status} label={tLabel(STATUS_LABEL[r.status] || r.status)} />
+                    {Number(r.rounds) > 1 && (
+                      <div className="mt-1 text-[11px]" style={r.status === "OPEN" && r.next_due_date && day(r.next_due_date) <= todayStr() ? { color: "var(--warning)" } : S.muted}>
+                        {tLabel("Rounds")} {Number(r.rounds_done ?? 0)}/{Number(r.rounds)}
+                        {r.status === "OPEN" && r.next_due_date ? ` · ${tLabel("next due")} ${day(r.next_due_date)}` : ""}
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell className="whitespace-nowrap">
                     {r.result ? <StatusBadge status={r.result === "PASS" ? "COMPLETED" : r.result === "DEVIATION" ? "PENDING" : "REJECTED"} label={tLabel(r.result === "PASS" ? "Pass" : r.result === "FAIL" ? "Fail" : "Deviation")} /> : <span style={S.muted}>–</span>}
                     {r.rejection_disposition && (

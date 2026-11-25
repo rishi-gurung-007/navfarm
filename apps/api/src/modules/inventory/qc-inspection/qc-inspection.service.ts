@@ -9,9 +9,13 @@ import { assertCompanyInScope, farmScope, locationReferenceScopeConditions, rest
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
+import { recordQcScrap } from '../../piggery/breeding/semen-disposal.record';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
-import { ApproveQcDeviationDto, CompleteQcInspectionDto, QueryQcInspectionDto, RefuseQcDeviationDto, SettleQcRejectionDto } from './dto/qc-inspection.dto';
-import { decideOutcome, judgeLine, resolveDisposition, settleProblem, type InspectionLineSpec, type LineResult } from './qc-inspection.rules';
+import { ApproveQcDeviationDto, CompleteQcInspectionDto, QueryQcInspectionDto, RecordQcRoundDto, RefuseQcDeviationDto, SettleQcRejectionDto } from './dto/qc-inspection.dto';
+import {
+  completionPlan, decideOutcome, judgeLine, resolveDisposition, roundDueDate, roundResult, roundsFor, roundToRecordProblem, settleProblem, specLinesForSource,
+  type InspectionLineSpec, type LineResult,
+} from './qc-inspection.rules';
 
 /** The Number Series master's "Applies To" key for QC inspections. */
 export const QC_INSPECTION_SERIES = 'QC_INSPECTION';
@@ -148,15 +152,21 @@ export class QcInspectionService {
    */
   async raise(p: RaiseInspection): Promise<{ inspection_id: string; inspection_no: string }> {
     const [item] = await this.db
-      .select({ item_code: schema.itemMaster.item_code })
+      .select({ item_code: schema.itemMaster.item_code, qc_rounds: schema.itemMaster.qc_rounds })
       .from(schema.itemMaster)
       .where(eq(schema.itemMaster.item_id, p.itemId))
       .limit(1);
-    const specs = await this.db
-      .select()
-      .from(schema.itemQcSpecLine)
-      .where(and(eq(schema.itemQcSpecLine.item_id, p.itemId), eq(schema.itemQcSpecLine.is_active, true)))
-      .orderBy(asc(schema.itemQcSpecLine.line_no));
+    // The lot's own QC runs in as many dated rounds as the item says (the semen item: collection day + 4 days); a transfer receipt is one check.
+    const rounds = roundsFor(p.sourceDocType, item?.qc_rounds);
+    // A transfer receipt takes the item's farm-receipt checks; the lot's own QC takes the rest (specLinesForSource).
+    const specs = specLinesForSource(
+      p.sourceDocType,
+      await this.db
+        .select()
+        .from(schema.itemQcSpecLine)
+        .where(and(eq(schema.itemQcSpecLine.item_id, p.itemId), eq(schema.itemQcSpecLine.is_active, true)))
+        .orderBy(asc(schema.itemQcSpecLine.line_no)),
+    );
     if (!specs.length) {
       throw new BadRequestException(
         `Item '${item?.item_code ?? p.itemId}' requires QC but has no QC specification. Add at least one check on the item's QC Specification tab, then try again.`,
@@ -193,13 +203,17 @@ export class QcInspectionService {
       entry_type: p.entryType ?? null,
       parent_doc_no: p.parentDocNo ?? null,
       return_warehouse_id: p.returnWarehouseId ?? null,
+      rounds,
       created_by: p.userId ?? null,
     });
+    // One set of checks per round; a round's line numbers follow the previous round's.
+    const roundNos = Array.from({ length: rounds }, (_, r) => r);
     await this.db.insert(schema.qcInspectionLine).values(
-      specs.map((s, i) => ({
+      roundNos.flatMap((roundNo) => specs.map((s, i) => ({
         line_id: randomUUID(),
         inspection_id: inspectionId,
-        line_no: (i + 1) * 10000,
+        round_no: roundNo,
+        line_no: roundNo * 1_000_000 + (i + 1) * 10000,
         spec_line_id: s.spec_line_id,
         stage: s.stage,
         measurement_code: s.measurement_code,
@@ -211,8 +225,19 @@ export class QcInspectionService {
         target_value: s.target_value,
         acceptance_text: s.acceptance_text,
         is_mandatory: s.is_mandatory,
-      })),
+      }))),
     );
+    if (rounds > 1) {
+      await this.db.insert(schema.qcInspectionRound).values(
+        roundNos.map((roundNo) => ({
+          round_id: randomUUID(),
+          inspection_id: inspectionId,
+          round_no: roundNo,
+          due_date: roundDueDate(p.sourcePostingDate, roundNo),
+          status: 'PENDING',
+        })),
+      );
+    }
     await this.auditService.log({
       tenantId: p.tenantId,
       companyId: p.companyId,
@@ -220,7 +245,7 @@ export class QcInspectionService {
       action: 'CREATE',
       entityName: 'qc_inspection',
       entityId: inspectionId,
-      newValues: { inspection_no: inspectionNo, source_doc_type: p.sourceDocType, source_doc_no: p.sourceDocNo, item_id: p.itemId, quantity: p.quantity },
+      newValues: { inspection_no: inspectionNo, source_doc_type: p.sourceDocType, source_doc_no: p.sourceDocNo, item_id: p.itemId, quantity: p.quantity, rounds },
     });
     return { inspection_id: inspectionId, inspection_no: inspectionNo };
   }
@@ -244,6 +269,9 @@ export class QcInspectionService {
         supplier_name: schema.supplierMaster.supplier_name,
         warehouse_name: schema.locationMaster.location_name,
         reason_code: schema.reasonMaster.reason_code,
+        // Multi-round progress (0263): rounds recorded, and the date the next one is due.
+        rounds_done: sql<number>`(select count(*) from qc_inspection_round r where r.inspection_id = ${schema.qcInspection.inspection_id} and r.status = 'DONE')`,
+        next_due_date: sql<string | null>`(select min(r.due_date) from qc_inspection_round r where r.inspection_id = ${schema.qcInspection.inspection_id} and r.status = 'PENDING')`,
       })
       .from(schema.qcInspection)
       .innerJoin(schema.itemMaster, eq(schema.itemMaster.item_id, schema.qcInspection.item_id))
@@ -257,6 +285,10 @@ export class QcInspectionService {
     if (query.companyId) conditions.push(eq(schema.qcInspection.company_id, query.companyId));
     if (query.status) conditions.push(eq(schema.qcInspection.status, query.status));
     if (query.itemId) conditions.push(eq(schema.qcInspection.item_id, query.itemId));
+    if (query.due === 'DUE') {
+      conditions.push(eq(schema.qcInspection.status, 'OPEN'));
+      conditions.push(sql`exists (select 1 from qc_inspection_round r where r.inspection_id = ${schema.qcInspection.inspection_id} and r.status = 'PENDING' and r.due_date <= ${today()})`);
+    }
     if (query.search) {
       const like_ = `%${query.search}%`;
       conditions.push(or(
@@ -271,7 +303,7 @@ export class QcInspectionService {
       .orderBy(desc(schema.qcInspection.created_at), desc(schema.qcInspection.inspection_no))
       .limit(query.limit || 50)
       .offset(query.offset || 0);
-    return rows.map(({ inspection, ...rest }) => ({ ...inspection, ...rest }));
+    return rows.map(({ inspection, rounds_done, ...rest }) => ({ ...inspection, ...rest, rounds_done: Number(rounds_done ?? 0) }));
   }
 
   async findOne(id: string) {
@@ -282,8 +314,76 @@ export class QcInspectionService {
       .from(schema.qcInspectionLine)
       .where(eq(schema.qcInspectionLine.inspection_id, id))
       .orderBy(asc(schema.qcInspectionLine.line_no));
-    const { inspection, ...rest } = row;
-    return { ...inspection, ...rest, lines };
+    const rounds = await this.db
+      .select()
+      .from(schema.qcInspectionRound)
+      .where(eq(schema.qcInspectionRound.inspection_id, id))
+      .orderBy(asc(schema.qcInspectionRound.round_no));
+    const { inspection, rounds_done, ...rest } = row;
+    return { ...inspection, ...rest, rounds_done: Number(rounds_done ?? 0), lines, round_list: rounds };
+  }
+
+  // ---------------------------------------------------------------- rounds (0263)
+
+  /**
+   * Records one dated round of a multi-round inspection: its readings and whether it passed. Nothing is posted. Rounds go in order, each on
+   * or after its due date; the last is recorded by completing the inspection. A failed round leaves the inspection open to be completed (rejected).
+   */
+  async recordRound(id: string, roundNo: number, dto: RecordQcRoundDto, tenantId: string, user?: { userId?: string }) {
+    return withTenantTransaction(this.cls, async () => {
+      const inspection = await this.findOne(id);
+      assertCompanyInScope(farmScope(this.cls), inspection.company_id);
+      if (inspection.status !== 'OPEN') {
+        throw new BadRequestException(`QC inspection ${inspection.inspection_no} is ${inspection.status}; no more rounds can be recorded.`);
+      }
+      if (inspection.rounds <= 1) throw new BadRequestException(`QC inspection ${inspection.inspection_no} has a single check: complete it instead.`);
+      const problem = roundToRecordProblem(inspection.round_list, roundNo, today());
+      if (problem) throw new BadRequestException(problem);
+
+      const roundLines = inspection.lines.filter((l) => l.round_no === roundNo);
+      const known = new Set(roundLines.map((l) => l.line_id));
+      if (dto.lines.some((l) => !known.has(l.line_id))) throw new BadRequestException('A result was sent for a check that is not in this round.');
+      const judged = roundLines.map((line) => {
+        const entry = dto.lines.find((l) => l.line_id === line.line_id);
+        return { line, entry, verdict: judgeLine(line as InspectionLineSpec, entry) };
+      });
+      const missing = judged.filter(({ line, verdict }) => line.is_mandatory && !verdict).map(({ line }) => line.measurement_code);
+      if (missing.length) throw new BadRequestException(`Enter a result for every mandatory check. Missing: ${missing.join(', ')}.`);
+      const result = roundResult(judged.map(({ line, verdict }) => ({ is_mandatory: line.is_mandatory, result: verdict?.result ?? null })));
+
+      // Claim the round before writing its lines, so two people recording the same round cannot both save.
+      const [claim] = await this.db
+        .update(schema.qcInspectionRound)
+        .set({ status: 'DONE', result, inspected_by: user?.userId ?? null, inspected_at: timestamp() as any, remarks: dto.remarks ?? null })
+        .where(and(eq(schema.qcInspectionRound.inspection_id, id), eq(schema.qcInspectionRound.round_no, roundNo), eq(schema.qcInspectionRound.status, 'PENDING')));
+      if (claim.affectedRows === 0) throw new BadRequestException('This round was recorded by someone else.');
+      await this.writeLineResults(judged);
+
+      await this.auditService.log({
+        tenantId,
+        companyId: inspection.company_id,
+        userId: user?.userId,
+        action: 'UPDATE',
+        entityName: 'qc_inspection',
+        entityId: id,
+        newValues: { round_no: roundNo, round_result: result },
+      });
+      return this.findOne(id);
+    });
+  }
+
+  private async writeLineResults(judged: { line: { line_id: string }; entry?: { actual_text?: string | null; remarks?: string | null }; verdict: ReturnType<typeof judgeLine> }[]) {
+    for (const { line, entry, verdict } of judged) {
+      await this.db
+        .update(schema.qcInspectionLine)
+        .set({
+          actual_value: verdict?.actual_value != null ? dec(verdict.actual_value) : null,
+          actual_text: verdict?.actual_text ?? entry?.actual_text ?? null,
+          result: verdict?.result ?? null,
+          remarks: entry?.remarks ?? null,
+        })
+        .where(eq(schema.qcInspectionLine.line_id, line.line_id));
+    }
   }
 
   // ---------------------------------------------------------------- completing
@@ -300,15 +400,32 @@ export class QcInspectionService {
         throw new BadRequestException(`QC inspection ${inspection.inspection_no} is ${inspection.status} and cannot be completed again.`);
       }
 
-      const known = new Set(inspection.lines.map((l) => l.line_id));
+      // A multi-round inspection (0263) completes with its last round's readings, once every other round is recorded, or at once after a
+      // failed round (the rounds still to come are cancelled). The rounds already recorded keep their results.
+      let completingRound: number | null = null;
+      let cancelRounds: number[] = [];
+      if (inspection.rounds > 1) {
+        const plan = completionPlan(inspection.round_list, today());
+        if ('error' in plan) throw new BadRequestException(plan.error);
+        completingRound = plan.completing;
+        cancelRounds = plan.cancel;
+      }
+      const recorded = inspection.lines.filter((l) => inspection.rounds > 1 && l.round_no !== completingRound && !cancelRounds.includes(l.round_no));
+      const entering = inspection.rounds > 1 ? inspection.lines.filter((l) => l.round_no === completingRound) : inspection.lines;
+
+      const known = new Set(entering.map((l) => l.line_id));
       const stray = dto.lines.find((l) => !known.has(l.line_id));
       if (stray) throw new BadRequestException('A result was sent for a check that is not on this inspection.');
 
-      const judged = inspection.lines.map((line) => {
+      const judged = entering.map((line) => {
         const entry = dto.lines.find((l) => l.line_id === line.line_id);
         const verdict = judgeLine(line as InspectionLineSpec, entry);
         return { line, entry, verdict };
       });
+      const judgedForOutcome = [
+        ...recorded.map((line) => ({ line, verdict: line.result ? { result: line.result as LineResult } : null })),
+        ...judged,
+      ];
 
       let reasonId: string | null = null;
       if (dto.reason_id) {
@@ -329,7 +446,7 @@ export class QcInspectionService {
         sampleQty: dto.sample_qty ?? null,
         deviation: dto.deviation === true,
         hasReason: !!reasonId,
-        lines: judged.map(({ line, verdict }) => ({ code: line.measurement_code, is_mandatory: line.is_mandatory, result: (verdict?.result ?? null) as LineResult | null })),
+        lines: judgedForOutcome.map(({ line, verdict }) => ({ code: line.measurement_code, is_mandatory: line.is_mandatory, result: (verdict?.result ?? null) as LineResult | null })),
       });
       if ('error' in decided) throw new BadRequestException(decided.error);
       const { outcome } = decided;
@@ -359,16 +476,23 @@ export class QcInspectionService {
         .where(and(eq(schema.qcInspection.inspection_id, id), eq(schema.qcInspection.status, 'OPEN')));
       if (claim.affectedRows === 0) throw new BadRequestException('This inspection was completed by someone else.');
 
-      for (const { line, entry, verdict } of judged) {
+      await this.writeLineResults(judged);
+      if (completingRound !== null) {
         await this.db
-          .update(schema.qcInspectionLine)
+          .update(schema.qcInspectionRound)
           .set({
-            actual_value: verdict?.actual_value != null ? dec(verdict.actual_value) : null,
-            actual_text: verdict?.actual_text ?? entry?.actual_text ?? null,
-            result: verdict?.result ?? null,
-            remarks: entry?.remarks ?? null,
+            status: 'DONE',
+            result: roundResult(judged.map(({ line, verdict }) => ({ is_mandatory: line.is_mandatory, result: verdict?.result ?? null }))),
+            inspected_by: user?.userId ?? null,
+            inspected_at: timestamp() as any,
           })
-          .where(eq(schema.qcInspectionLine.line_id, line.line_id));
+          .where(and(eq(schema.qcInspectionRound.inspection_id, id), eq(schema.qcInspectionRound.round_no, completingRound)));
+      }
+      if (cancelRounds.length) {
+        await this.db
+          .update(schema.qcInspectionRound)
+          .set({ status: 'CANCELLED' })
+          .where(and(eq(schema.qcInspectionRound.inspection_id, id), inArray(schema.qcInspectionRound.round_no, cancelRounds)));
       }
 
       let ledgerEntryId: string | null = null;
@@ -378,6 +502,10 @@ export class QcInspectionService {
       // A deviation is settled when it is approved; everything else is settled now.
       if (outcome.status === 'CLOSED') await this.settleSource(inspection, outcome.postNow, !!ledgerEntryId);
       if (outcome.status === 'CLOSED') await this.returnRejected(inspection, quantity - outcome.postNow, postingDate, user?.userId);
+      // Semen doses a collection's QC rejected and scrapped are recorded as destroyed (the AI Station report).
+      if (outcome.status === 'CLOSED') {
+        await recordQcScrap(this.db, this.numberSeriesService, { inspection, disposition: rejection.disposition, doses: quantity - outcome.postNow, date: postingDate, userId: user?.userId });
+      }
 
       await this.db
         .update(schema.qcInspection)
@@ -499,6 +627,7 @@ export class QcInspectionService {
       if (claim.affectedRows === 0) throw new BadRequestException('This inspection was already decided by someone else.');
       await this.settleSource(inspection, 0, false);
       await this.returnRejected(inspection, Number(inspection.quantity), today(), user?.userId);
+      await recordQcScrap(this.db, this.numberSeriesService, { inspection, disposition: rejection.disposition, doses: Number(inspection.quantity), date: today(), userId: user?.userId });
       await this.auditService.log({
         tenantId,
         companyId: inspection.company_id,
@@ -538,6 +667,8 @@ export class QcInspectionService {
             : isNull(schema.qcInspection.rejection_disposition),
         ));
       if (claim.affectedRows === 0) throw new BadRequestException('This rejected quantity was settled by someone else.');
+      // A held semen rejection settled as scrapped is recorded as destroyed now.
+      await recordQcScrap(this.db, this.numberSeriesService, { inspection, disposition: dto.rejection_disposition, doses: Number(inspection.rejected_qty ?? 0), date: today(), userId: user?.userId });
 
       await this.auditService.log({
         tenantId,

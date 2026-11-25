@@ -16,6 +16,9 @@ import { AnimalMovementLogController } from '../modules/piggery/animal-movement-
 import { BreedingController } from '../modules/piggery/breeding/breeding.controller';
 import { BoarSelectionController } from '../modules/piggery/breeding/boar-selection.controller';
 import { CollectionPlanController } from '../modules/piggery/breeding/collection-plan.controller';
+import { SemenDisposalController } from '../modules/piggery/breeding/semen-disposal.controller';
+import { SemenRequestController } from '../modules/piggery/breeding/semen-request.controller';
+import { AiStationDashboardController } from '../modules/piggery/breeding/ai-station-dashboard.controller';
 import { BoarConditionController } from '../modules/piggery/boar-condition/boar-condition.controller';
 import { GiltSelectionController } from '../modules/piggery/gilt-selection/gilt-selection.controller';
 import { PiggeryAnalyticsController } from '../modules/piggery/analytics/piggery-analytics.controller';
@@ -50,6 +53,8 @@ import { BreedLifecycleStageController } from '../modules/master-data/breed/bree
 import { FarmController } from '../modules/master-data/farm/farm.controller';
 import { LogisticsTripController } from '../modules/logistics/logistics-trip.controller';
 import { BudgetController } from '../modules/piggery/budget/budget.controller';
+import { FaConversionController } from '../modules/piggery/animal/fa-conversion/fa-conversion.controller';
+import { KillSheetsController } from '../modules/production/kill-sheets/kill-sheets.controller';
 
 /**
  * Farm scope is opt-in per controller, and a controller that forgets it reads
@@ -84,6 +89,9 @@ const SCOPED = {
   BreedingController,
   BoarSelectionController,
   CollectionPlanController,
+  SemenDisposalController,
+  SemenRequestController,
+  AiStationDashboardController,
   BoarConditionController,
   GiltSelectionController,
   PiggeryAnalyticsController,
@@ -118,6 +126,8 @@ const SCOPED = {
   FarmController,
   LogisticsTripController,
   BudgetController,
+  FaConversionController,
+  KillSheetsController,
 };
 
 const EXEMPT: Record<string, string> = {

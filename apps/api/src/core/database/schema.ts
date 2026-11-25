@@ -1636,6 +1636,10 @@ export const itemMaster = mysqlTable(
     is_inventoriable: boolean('is_inventoriable').default(true).notNull(),
     // Incoming QC (0239): a received quantity is not written to the Inventory Ledger until its QC inspection is completed and accepted.
     is_qc_required: boolean('is_qc_required').default(false).notNull(),
+    // How many dated rounds an inspection of this item has (0263): 1 = one check, as before; the semen item's 5 = collection day + 4 days.
+    qc_rounds: int('qc_rounds').default(1).notNull(),
+    // A semen item (0266): only these are offered for a semen collection, a semen request and a breeding line's semen item.
+    is_semen: boolean('is_semen').default(false).notNull(),
     min_stock_level: decimal('min_stock_level', { precision: 18, scale: 4 }),
     max_stock_level: decimal('max_stock_level', { precision: 18, scale: 4 }),
     reorder_level: decimal('reorder_level', { precision: 18, scale: 4 }),
@@ -7061,6 +7065,8 @@ export const qcInspection = mysqlTable(
     deviation: boolean('deviation').default(false).notNull(),
     posting_date: date('posting_date', { mode: 'string' }),
     remarks: varchar('remarks', { length: 500 }),
+    // How many dated rounds this inspection has (0263); 1 = a single check with no round rows.
+    rounds: int('rounds').default(1).notNull(),
     inspected_by: varchar('inspected_by', { length: 36 }),
     inspected_at: timestamp('inspected_at', { mode: 'string' }),
     approved_by: varchar('approved_by', { length: 36 }),
@@ -7088,6 +7094,8 @@ export const qcInspectionLine = mysqlTable(
       .notNull()
       .references(() => qcInspection.inspection_id, { onDelete: 'cascade' }),
     line_no: int('line_no').notNull(),
+    // The round this check belongs to (0263): 0 = the first (collection day), 1..N-1 the following days.
+    round_no: int('round_no').default(0).notNull(),
     spec_line_id: varchar('spec_line_id', { length: 36 }),
     stage: varchar('stage', { length: 50 }).notNull(),
     measurement_code: varchar('measurement_code', { length: 50 }).notNull(),
@@ -7105,6 +7113,92 @@ export const qcInspectionLine = mysqlTable(
     remarks: varchar('remarks', { length: 500 }),
   },
   (table) => [index('idx_qc_inspection_line_insp').on(table.inspection_id)],
+);
+
+/**
+ * A farm's semen request line served by a collection plan (0265), and the lot allocated to it once collected and clear of QC.
+ * One link per requisition line. A stand-alone lot allocated to a request has a link with no plan.
+ */
+export const semenPlanRequisition = mysqlTable(
+  'semen_plan_requisition',
+  {
+    link_id: varchar('link_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    plan_id: varchar('plan_id', { length: 36 }).references(() => semenCollectionPlan.plan_id, { onDelete: 'cascade' }),
+    requisition_id: varchar('requisition_id', { length: 36 }).notNull(),
+    requisition_line_id: varchar('requisition_line_id', { length: 36 }).notNull(),
+    doses: decimal('doses', { precision: 10, scale: 2 }).notNull(),
+    semen_batch_id: varchar('semen_batch_id', { length: 36 }),
+    allocated_at: timestamp('allocated_at', { mode: 'string' }),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_semen_plan_requisition_line').on(table.requisition_line_id),
+    index('idx_semen_plan_requisition_plan').on(table.plan_id),
+  ],
+);
+
+/**
+ * Destroyed semen doses (0264): written off from a store's stock (MANUAL, with a VARIANCE_NEGATIVE ledger entry) or rejected and scrapped by a
+ * QC inspection (QC_REJECTION, never stock, no entry). The AI Station report's "Destroyed".
+ */
+export const semenDoseDisposal = mysqlTable(
+  'semen_dose_disposal',
+  {
+    disposal_id: varchar('disposal_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    tenant_id: varchar('tenant_id', { length: 36 }).notNull(),
+    company_id: varchar('company_id', { length: 36 }).notNull(),
+    disposal_no: varchar('disposal_no', { length: 30 }).notNull(),
+    semen_batch_id: varchar('semen_batch_id', { length: 36 })
+      .notNull()
+      .references(() => semenBatch.semen_batch_id, { onDelete: 'restrict' }),
+    lot_no: varchar('lot_no', { length: 50 }),
+    item_id: varchar('item_id', { length: 36 }),
+    warehouse_id: varchar('warehouse_id', { length: 36 }),
+    farm_id: varchar('farm_id', { length: 36 }),
+    doses: decimal('doses', { precision: 10, scale: 2 }).notNull(),
+    disposal_date: date('disposal_date', { mode: 'string' }).notNull(),
+    reason_type: varchar('reason_type', { length: 20 }).notNull(), // QC_FAILED, EXPIRED, DAMAGED, OTHER
+    reason_id: varchar('reason_id', { length: 36 }),
+    source: varchar('source', { length: 20 }).default('MANUAL').notNull(), // MANUAL, QC_REJECTION
+    qc_inspection_id: varchar('qc_inspection_id', { length: 36 }),
+    ledger_entry_id: varchar('ledger_entry_id', { length: 36 }),
+    amount: decimal('amount', { precision: 18, scale: 4 }),
+    remarks: varchar('remarks', { length: 500 }),
+    created_by: varchar('created_by', { length: 36 }),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('uq_semen_dose_disposal_no').on(table.tenant_id, table.company_id, table.disposal_no),
+    index('idx_semen_dose_disposal_lot').on(table.semen_batch_id),
+    index('idx_semen_dose_disposal_farm_date').on(table.tenant_id, table.farm_id, table.disposal_date),
+  ],
+);
+
+/** One dated round of a multi-round QC inspection (0263): due on the source's posting date + round_no days, recorded once. */
+export const qcInspectionRound = mysqlTable(
+  'qc_inspection_round',
+  {
+    round_id: varchar('round_id', { length: 36 })
+      .primaryKey()
+      .$defaultFn(() => randomUUID()),
+    inspection_id: varchar('inspection_id', { length: 36 })
+      .notNull()
+      .references(() => qcInspection.inspection_id, { onDelete: 'cascade' }),
+    round_no: int('round_no').notNull(),
+    due_date: date('due_date', { mode: 'string' }).notNull(),
+    status: varchar('status', { length: 12 }).default('PENDING').notNull(), // PENDING, DONE, CANCELLED
+    result: varchar('result', { length: 10 }), // PASS, FAIL
+    inspected_by: varchar('inspected_by', { length: 36 }),
+    inspected_at: timestamp('inspected_at', { mode: 'string' }),
+    remarks: varchar('remarks', { length: 500 }),
+    created_at: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex('uq_qc_inspection_round_no').on(table.inspection_id, table.round_no)],
 );
 
 // Individual animal lifetime identity — permanent record from entry to disposal, never
@@ -8006,6 +8100,8 @@ export const semenBatch = mysqlTable('semen_batch', {
   doses_sold: decimal('doses_sold', { precision: 10, scale: 2 }).default(
     '0.00',
   ),
+  // Doses written off from stock (0264, semen_dose_disposal): doses left = collected - used - sold - destroyed.
+  doses_destroyed: decimal('doses_destroyed', { precision: 10, scale: 2 }).default('0').notNull(),
   output_item_id: varchar('output_item_id', { length: 36 }).references(
     () => itemMaster.item_id,
     { onDelete: 'set null' },
@@ -8109,6 +8205,8 @@ export const breedingLineSetup = mysqlTable(
     pooling_allowed: boolean('pooling_allowed').default(true).notNull(),
     min_boars_per_lot: int('min_boars_per_lot'),
     max_boars_per_lot: int('max_boars_per_lot'),
+    // The semen item this line's collections and requests use (0266): an item marked as semen.
+    semen_item_id: varchar('semen_item_id', { length: 36 }),
     // A colorant is recorded on the lot by name (migration 0256 removed the stock item and quantity).
     colorant_name: varchar('colorant_name', { length: 50 }),
     // Tokens such as {PREFIX} {LINE} {BOAR_TAG} {WEEK} {YEAR} {DATE}; read when the lot is labelled (Phase 5).
@@ -8434,6 +8532,8 @@ export const semenCollectionPlan = mysqlTable(
     // The outside reference the line asks for (Breeding Web, for Z-Line).
     reference: varchar('reference', { length: 100 }),
     destination_farm_id: varchar('destination_farm_id', { length: 36 }),
+    // The doses the farms' requests linked to this plan add up to (0265, semen_plan_requisition).
+    target_doses: decimal('target_doses', { precision: 10, scale: 2 }),
     notes: varchar('notes', { length: 500 }),
     cancel_reason: varchar('cancel_reason', { length: 200 }),
     created_by: varchar('created_by', { length: 36 }),
@@ -9176,6 +9276,8 @@ export const requisition = mysqlTable(
     released_at: timestamp('released_at', { mode: 'string' }),
     // Feed requisition header (Requisition and Loading Sheet §1). Null on ITEM/FA/SERVICE documents.
     requisition_type: varchar('requisition_type', { length: 20 }), // FEED_FORECAST, MANUAL (row 7)
+    // A semen request (0265): the breeding line whose semen the farm asks for. NULL on every other requisition.
+    breed_id: varchar('breed_id', { length: 36 }),
     source: varchar('source', { length: 30 }), // AUTO_FORECAST, MANUAL_ENTRY, STOCK_TAKE_TRIGGERED, DIET_CHANGE_UPCOMING (row 8)
     purpose: varchar('purpose', { length: 30 }), // FEED: INTERNAL_TRANSFER (row 31). Common requisitions: STORE | PURCHASE (Task 8).
     supply_source: varchar('supply_source', { length: 20 }), // MILL (row 30)

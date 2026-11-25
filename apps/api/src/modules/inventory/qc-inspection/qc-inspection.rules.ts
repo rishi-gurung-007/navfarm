@@ -75,6 +75,8 @@ export function specLineFromParameter(param: QcParameterForSpec): SpecLineInput 
 export function specLineProblem(line: SpecLineInput): string | null {
   const code = line.measurement_code?.trim();
   if (!code) return 'Every check needs a QC Code.';
+  const stage = (line.stage || 'INCOMING').trim().toUpperCase();
+  if (!(QC_STAGES as readonly string[]).includes(stage)) return `'${code}': Applies at must be INCOMING or FARM_RECEIPT.`;
   if (!SAMPLING_TYPES.includes(line.sampling_type as SamplingType)) {
     return `'${code}': QC Type must be VALUE or DESCRIPTIVE.`;
   }
@@ -313,4 +315,101 @@ export function settleProblem(input: {
 /** The 10000-step line numbers the rest of the application uses. */
 export function lineNumber(index: number): number {
   return (index + 1) * 10000;
+}
+
+// ---------------------------------------------------------------- rounds (0263)
+
+/** The most rounds an item's QC may have: the client's semen QC needs 5 (collection day + 4 days). */
+export const MAX_QC_ROUNDS = 10;
+
+export interface RoundState {
+  round_no: number;
+  due_date: string;
+  status: string; // PENDING, DONE, CANCELLED
+  result: string | null; // PASS, FAIL
+}
+
+const dayLabel = (r: RoundState) => (r.round_no === 0 ? 'the collection-day check (day 0)' : `the day ${r.round_no} check`);
+
+/** How many rounds an inspection is raised with: the item's setting for the lot's own QC, one for a transfer receipt (the farm's check on arrival). */
+export function roundsFor(sourceDocType: string, itemRounds: number | null | undefined): number {
+  if (sourceDocType === 'TRANSFER_RECEIPT' || sourceDocType === 'TRANSFER_EVENT') return 1;
+  const n = Math.floor(Number(itemRounds ?? 1));
+  return Number.isFinite(n) ? Math.min(Math.max(n, 1), MAX_QC_ROUNDS) : 1;
+}
+
+/** The date a round is due: the source's posting date + round_no days. */
+export function roundDueDate(sourcePostingDate: string, roundNo: number): string {
+  const d = new Date(`${sourcePostingDate.slice(0, 10)}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + roundNo);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Whether the readings of one round may be recorded now. Rounds are recorded in order, each on or after its due date. The last round is
+ * not recorded on its own: completing the inspection records it. Once a round has failed the lot is rejected, so nothing more is recorded.
+ */
+export function roundToRecordProblem(rounds: RoundState[], roundNo: number, today: string): string | null {
+  const ordered = [...rounds].sort((a, b) => a.round_no - b.round_no);
+  const round = ordered.find((r) => r.round_no === roundNo);
+  if (!round) return `This inspection has no round ${roundNo}.`;
+  if (round.status !== 'PENDING') return `${capital(dayLabel(round))} is already ${round.status === 'DONE' ? 'recorded' : 'cancelled'}.`;
+  if (ordered.some((r) => r.status === 'DONE' && r.result === 'FAIL')) {
+    return 'A check has already failed: complete the inspection to reject the lot.';
+  }
+  const earlier = ordered.find((r) => r.round_no < roundNo && r.status === 'PENDING');
+  if (earlier) return `Record ${dayLabel(earlier)} (due ${earlier.due_date}) first.`;
+  if (round.round_no === ordered[ordered.length - 1].round_no) return `${capital(dayLabel(round))} is the last: complete the inspection to record it.`;
+  if (round.due_date > today) return `${capital(dayLabel(round))} is due on ${round.due_date}; it cannot be recorded before.`;
+  return null;
+}
+
+/**
+ * Which round completing a multi-round inspection records, and which it cancels. A lot passes only after every round is done: the last
+ * round's readings come with the completion, on or after its due date. A failed round lets the inspection be completed at once (the lot
+ * is rejected) and cancels the rounds still to come.
+ */
+export function completionPlan(rounds: RoundState[], today: string): { completing: number | null; cancel: number[] } | { error: string } {
+  const ordered = [...rounds].sort((a, b) => a.round_no - b.round_no);
+  const pending = ordered.filter((r) => r.status === 'PENDING');
+  if (ordered.some((r) => r.status === 'DONE' && r.result === 'FAIL')) {
+    return { completing: null, cancel: pending.map((r) => r.round_no) };
+  }
+  if (!pending.length) return { error: 'Every round is already recorded.' };
+  const last = ordered[ordered.length - 1];
+  if (pending[0].round_no !== last.round_no) {
+    return { error: `Record ${dayLabel(pending[0])} (due ${pending[0].due_date}) before completing the inspection.` };
+  }
+  if (last.due_date > today) return { error: `${capital(dayLabel(last))} is due on ${last.due_date}; the inspection cannot be completed before.` };
+  return { completing: last.round_no, cancel: [] };
+}
+
+/** A round passes when none of its mandatory checks failed. */
+export function roundResult(lines: { is_mandatory: boolean; result: string | null }[]): 'PASS' | 'FAIL' {
+  return lines.some((l) => l.is_mandatory && l.result === 'FAIL') ? 'FAIL' : 'PASS';
+}
+
+function capital(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// ---------------------------------------------------------------- stages (Phase 2, 24 Nov 2026)
+
+/**
+ * Where a check applies. INCOMING: the lot's own QC (a goods receipt, a semen collection, every round of it). FARM_RECEIPT: when a transfer
+ * brings the lot to a farm (the client: semen is checked again at the farm before insemination).
+ */
+export const QC_STAGES = ['INCOMING', 'FARM_RECEIPT'] as const;
+
+/**
+ * The checks an inspection is raised with. A transfer receipt takes the item's FARM_RECEIPT checks, or every check when it has none (as it did
+ * before stages were read). Any other source takes everything but the FARM_RECEIPT checks.
+ */
+export function specLinesForSource<T extends { stage?: string | null }>(sourceDocType: string, lines: T[]): T[] {
+  const stageOf = (l: T) => (l.stage || 'INCOMING').trim().toUpperCase();
+  if (sourceDocType === 'TRANSFER_RECEIPT' || sourceDocType === 'TRANSFER_EVENT') {
+    const farm = lines.filter((l) => stageOf(l) === 'FARM_RECEIPT');
+    return farm.length ? farm : lines;
+  }
+  return lines.filter((l) => stageOf(l) !== 'FARM_RECEIPT');
 }

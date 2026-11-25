@@ -18,6 +18,8 @@ export class CreateCollectionPlanDto {
   @IsOptional() @IsString() @MaxLength(100) reference?: string;
   @IsOptional() @IsUUID() destination_farm_id?: string;
   @IsOptional() @IsString() @MaxLength(500) notes?: string;
+  /** Farms' semen requests (requisition line ids) this collection serves (0265): approved, of this line, not planned elsewhere. */
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @IsUUID('all', { each: true }) requisition_line_ids?: string[];
 }
 
 export class QueryCollectionPlansDto {

@@ -18,6 +18,8 @@ import {
   Sprout,
   BellRing,
   Trophy,
+  LayoutDashboard,
+  CalendarDays,
 } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { Button } from '@/components/ui/button';
@@ -46,6 +48,9 @@ import {
 import { formatQuantity } from '@/lib/utils';
 import { SemenLotDetails } from './semen-lot-details';
 import { QcLink } from '../inventory/qc-link';
+import { SemenRequestsPanel } from './semen-requests-panel';
+import { AiStationDashboard } from './ai-station-dashboard';
+import { CollectionPlansPanel } from './collection-plans';
 import {
   PageHeader,
   StatTiles,
@@ -176,8 +181,8 @@ export function BreedingPanel({
   const { formatMoney } = useCompanyCurrency();
   const { t } = useLanguage();
   const [subTab, setSubTab] = useState<
-    'mating' | 'farrowing' | 'semen' | 'selection' | 'condition' | 'gilts'
-  >(section === 'ai-station' ? 'semen' : 'mating');
+    'mating' | 'farrowing' | 'dashboard' | 'semen' | 'plans' | 'selection' | 'condition' | 'gilts'
+  >(section === 'ai-station' ? 'dashboard' : 'mating');
   const [giltSelections, setGiltSelections] = useState<Row[]>([]);
   // BBP: gilts are selected once per litter, before it is weaned. A cancelled selection does not count.
   const giltSelectionOf = (farrowId: string) =>
@@ -258,10 +263,11 @@ export function BreedingPanel({
   const [breeds, setBreeds] = useState<Row[]>([]);
   // Locations, for the pens a new weaner batch can be placed in.
   const [locations, setLocations] = useState<Row[]>([]);
-  // Any item the farm uses for semen: nothing is fixed.
+  // The items marked as semen on their item card.
   const pagedSemenItems = usePagedOptions({
     path: '/item',
-    params: { isActive: true, isBlocked: false },
+    // Only items marked as semen (0266): a vaccine counted in doses is never offered.
+    params: { isActive: true, isBlocked: false, isSemen: true },
     idKey: 'item_id',
   });
   const semenItems = pagedSemenItems.options.filter(
@@ -1065,21 +1071,25 @@ export function BreedingPanel({
   const allTabItems: TabItem<typeof subTab>[] = [
     { key: 'mating', label: tabName('brpTabMating'), icon: Heart, count: matings.length },
     { key: 'farrowing', label: tabName('brpTabFarrowing'), icon: Baby, count: farrowings.length },
+    { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { key: 'semen', label: section === 'ai-station' ? 'Semen Collection' : tabName('brpTabSemen'), icon: FlaskConical, count: semenBatches.length },
     { key: 'selection', label: 'Boar Selection', icon: Trophy },
+    { key: 'plans', label: 'Planned Collections', icon: CalendarDays },
     { key: 'condition', label: 'Boar Condition', icon: Activity },
     { key: 'gilts', label: tabName('brpTabGilts'), icon: Sprout, count: postedGiltSelections.length },
   ];
   // The sows' side and the AI Station are two pages over one set of records.
   const sectionTabs: Record<BreedingSection, (typeof subTab)[]> = {
     breeding: ['mating', 'farrowing', 'gilts'],
-    'ai-station': ['semen', 'selection', 'condition'],
+    'ai-station': ['dashboard', 'semen', 'selection', 'plans', 'condition'],
   };
   const tabItems = allTabItems.filter((tab) => sectionTabs[section].includes(tab.key));
   const tabMeta = {
     mating: { icon: Heart, title: 'Mating & Insemination', subtitle: 'Record each service and follow every sow from mating to farrowing.' },
     farrowing: { icon: Baby, title: 'Farrowing & Litters', subtitle: 'Litters born, piglet survival and weaning.' },
     semen: { icon: FlaskConical, title: section === 'ai-station' ? 'Semen Collection' : 'Boar Semen AI Station', subtitle: 'Semen collected from the boars: doses, cost per dose and where each lot is used.' },
+    dashboard: { icon: LayoutDashboard, title: 'AI Station Dashboard', subtitle: 'Requested, received, used and destroyed doses by request, farm and lot, under one set of filters.' },
+    plans: { icon: CalendarDays, title: 'Planned Collections', subtitle: "Farms' semen requisitions to serve, then every collection planned: plan, allocate a lot, record it, skip a boar or cancel it." },
     selection: { icon: Trophy, title: 'Boar Selection', subtitle: "Rank each line's boars and plan the next collection day." },
     condition: { icon: Activity, title: 'Boar Condition', subtitle: 'Body-condition scores (SOP 21), feed levels and when each boar is next due.' },
     gilts: { icon: Sprout, title: 'Gilt Selections', subtitle: 'Gilts chosen from litters to join the breeding herd.' },
@@ -1094,7 +1104,7 @@ export function BreedingPanel({
           : null;
   const countWhere = (rows: Row[], test: (r: Row) => boolean) => rows.filter(test).length;
   const semenLeft = semenBatches.reduce(
-    (n, x) => n + Math.max(0, (Number(x.doses_collected) || 0) - (Number(x.doses_used_internal) || 0) - (Number(x.doses_sold) || 0)),
+    (n, x) => n + Math.max(0, (Number(x.doses_collected) || 0) - (Number(x.doses_used_internal) || 0) - (Number(x.doses_sold) || 0) - (Number(x.doses_destroyed) || 0)),
     0,
   );
   const semenCost = semenBatches.reduce((n, x) => n + (Number(x.running_cost_period) || 0), 0);
@@ -1115,9 +1125,12 @@ export function BreedingPanel({
     semen: [
       { label: 'Lots collected', value: semenBatches.length, caption: 'Semen collections', icon: FlaskConical, tone: 'accent' },
       { label: 'Doses collected', value: totalDoses, caption: 'From all boars', icon: Activity, tone: 'info' },
-      { label: 'Doses left', value: semenLeft, caption: 'Not yet used or sold', icon: CheckCircle2, tone: 'success' },
+      { label: 'Doses left', value: semenLeft, caption: 'Not yet used, sold or destroyed', icon: CheckCircle2, tone: 'success' },
       { label: 'Average cost per dose', value: totalDoses > 0 ? formatMoney(semenCost / totalDoses) : '--', caption: 'Lot costs ÷ doses', icon: Clock, tone: 'warning' },
     ],
+    // The dashboard carries its own tiles under its filters; the plans table its own counts.
+    dashboard: [],
+    plans: [],
     selection: [
       { label: 'Breeding lines', value: selectionSummary.lines.length, caption: 'With live boars', icon: Trophy, tone: 'accent' },
       { label: 'Live boars', value: selectionSummary.lines.reduce((n, l) => n + (Number(l.boars) || 0), 0), caption: 'Across all lines', icon: Activity, tone: 'info' },
@@ -1162,7 +1175,7 @@ export function BreedingPanel({
         onClose={() => setSuccess(null)}
       />
 
-      <StatTiles stats={tabStats} />
+      {tabStats.length > 0 && <StatTiles stats={tabStats} />}
 
       <TabBar tabs={tabItems} value={subTab} onChange={setSubTab} />
 
@@ -1766,6 +1779,26 @@ export function BreedingPanel({
               onSummary={setSelectionSummary}
               onCollect={startCollectionFromPlan}
             />
+          )}
+
+          {/* TAB: AI STATION DASHBOARD (every figure under one set of filters, and the Requested / Received / Used / Destroyed report) */}
+          {subTab === 'dashboard' && <AiStationDashboard />}
+
+          {/* TAB: SEMEN REQUESTS (farms' requisitions for doses, the collections planned for them and the lots allocated) */}
+
+          {/* TAB: PLANNED COLLECTIONS (every plan in a table: record, skip a boar, cancel) */}
+          {subTab === 'plans' && (
+            <div className="space-y-6">
+              {/* Farms raise semen requisitions on the Requisition page; here the AI Station plans the collection for them and allocates a lot. */}
+              <section className="space-y-2">
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Semen requisitions to serve</h3>
+                <SemenRequestsPanel onChanged={() => setSelectionVersion((v) => v + 1)} />
+              </section>
+              <section className="space-y-2">
+                <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Planned collections</h3>
+                <CollectionPlansPanel version={selectionVersion} onCollect={startCollectionFromPlan} onChanged={() => setSelectionVersion((v) => v + 1)} />
+              </section>
+            </div>
           )}
 
           {/* TAB: BOAR CONDITION (SOP 21: each boar's body condition score, feed level and when he is next due) */}

@@ -36,8 +36,8 @@ import { collectionRuleResult } from '../../master-data/breeding-line/breeding-l
 import { boarResultIssues, lotTotals } from './semen-boar-result.rules';
 import { MIN_GILT_TEATS } from '../gilt-selection/gilt-selection.rules';
 import {
-  dayAfter,
   periodCostsOf,
+  semenCostPeriodOf,
   type PeriodCosts,
   type PostedCost,
 } from './semen-cost';
@@ -2167,19 +2167,24 @@ export class BreedingService {
         () => (amort + feed + drug + overhead) / allBoars.length,
       );
     } else {
-      const perBoar: { from: string; to: string; costs: PeriodCosts }[] = [];
+      const perBoar: { from: string | null; to: string | null; costs: PeriodCosts }[] = [];
       for (const b of allBoars) {
         const p = await this.semenCostPeriod(b, dto, tenantId);
-        perBoar.push({
-          ...p,
-          costs: await this.postedAnimalCosts(
-            b,
-            boarBatchId,
-            p.from,
-            p.to,
-            tenantId,
-          ),
-        });
+        perBoar.push(
+          p
+            ? {
+                ...p,
+                costs: await this.postedAnimalCosts(
+                  b,
+                  boarBatchId,
+                  p.from,
+                  p.to,
+                  tenantId,
+                ),
+              }
+            : // His costs to this date were charged to his lot of the same day (or a later one): nothing is charged again.
+              { from: null, to: null, costs: { feed: 0, drug: 0, overhead: 0, amortisation: 0 } },
+        );
       }
       const sum = (pick: (c: PeriodCosts) => number) =>
         perBoar.reduce((t, x) => t + pick(x.costs), 0);
@@ -2192,13 +2197,10 @@ export class BreedingService {
         (x) =>
           x.costs.feed + x.costs.drug + x.costs.overhead + x.costs.amortisation,
       );
-      period = {
-        from: perBoar.map((x) => x.from).sort()[0],
-        to: perBoar
-          .map((x) => x.to)
-          .sort()
-          .slice(-1)[0],
-      };
+      // The lot's period spans the boars that had one; a lot none of whose boars had one covers no period.
+      const froms = perBoar.map((x) => x.from).filter((d): d is string => !!d).sort();
+      const tos = perBoar.map((x) => x.to).filter((d): d is string => !!d).sort();
+      period = { from: froms[0] ?? null, to: tos.slice(-1)[0] ?? null };
     }
     const runningCost = amort + feed + drug + overhead;
     const unitCostPerDose =
@@ -2384,7 +2386,9 @@ export class BreedingService {
       message:
         `Semen collection logged${label ? ` as ${label}` : ''}: ${dosesCollected} doses collected${poolBoars.length ? ` as one pooled lot from ${allBoars.length} boars (${allBoars.map((b) => b.animal_code).join(', ')})` : ''} at computed unit cost of ${lotUnitCost.toFixed(4)}/dose` +
         (derived
-          ? ` (worked out from ${poolBoars.length ? 'their' : 'his'} posted costs ${period.from} to ${period.to})`
+          ? period.from && period.to
+            ? ` (worked out from ${poolBoars.length ? 'their' : 'his'} posted costs ${period.from} to ${period.to})`
+            : ` (no cost: ${poolBoars.length ? 'their' : 'his'} costs up to ${dto.collection_date} were charged to ${poolBoars.length ? 'their' : 'his'} earlier lot of that day, or a later one)`
           : '') +
         '.' +
         (posted?.qc_inspection_no
@@ -2462,15 +2466,19 @@ export class BreedingService {
     });
   }
 
-  /** The period a collection's cost covers: as given, else from the day after his last collection (or his entry) to this one. */
+  /**
+   * The period a collection's cost covers: as given, else from the day after his latest collection (or his entry) to this one.
+   * `null` when his latest lot is on the same day or later: those costs were already charged to it (semenCostPeriodOf, D2).
+   */
   private async semenCostPeriod(
     boar: typeof schema.animalRegister.$inferSelect,
     dto: CreateSemenCollectionDto,
     tenantId: string,
-  ): Promise<{ from: string; to: string }> {
+  ): Promise<{ from: string; to: string } | null> {
     const to = dto.period_to || dto.collection_date;
     if (dto.period_from) return { from: dto.period_from, to };
-    // His last collection is a lot he was the primary boar of, or one he was pooled into.
+    // His latest collection is a lot he was the primary boar of, or one he was pooled into, of any date: a lot recorded the same
+    // day, or after this one, has already taken his costs up to its date. Whether its QC passed does not matter.
     const [last] = await this.db
       .select({ collection_date: schema.semenBatch.collection_date })
       .from(schema.semenBatch)
@@ -2481,15 +2489,16 @@ export class BreedingService {
             eq(schema.semenBatch.boar_animal_id, boar.animal_id),
             sql`${schema.semenBatch.semen_batch_id} IN (SELECT semen_batch_id FROM semen_batch_boar WHERE boar_animal_id = ${boar.animal_id})`,
           ),
-          lt(schema.semenBatch.collection_date, dto.collection_date),
         ),
       )
       .orderBy(desc(schema.semenBatch.collection_date))
       .limit(1);
-    const from = last
-      ? dayAfter(String(last.collection_date))
-      : String(boar.entry_date ?? dto.collection_date).slice(0, 10);
-    return { from, to };
+    return semenCostPeriodOf({
+      collectionDate: dto.collection_date,
+      periodTo: dto.period_to,
+      latestCollection: last ? String(last.collection_date) : null,
+      entryDate: boar.entry_date ? String(boar.entry_date) : null,
+    });
   }
 
   /** What was posted for an animal over a period: her or his consumption, overhead and amortisation, with the batch share (G7). */
@@ -2592,6 +2601,7 @@ export class BreedingService {
         unit_cost_per_dose: schema.semenBatch.unit_cost_per_dose,
         doses_used_internal: schema.semenBatch.doses_used_internal,
         doses_sold: schema.semenBatch.doses_sold,
+        doses_destroyed: schema.semenBatch.doses_destroyed,
         inventory_posted: schema.semenBatch.inventory_posted,
         lot_no: schema.semenBatch.lot_no,
         expiry_date: schema.semenBatch.expiry_date,
@@ -2845,7 +2855,8 @@ export class BreedingService {
       boars,
       results,
       services,
-      doses_remaining: Math.max(0, collected - used),
+      // Destroyed doses (0264, semen_dose_disposal) are no longer there either.
+      doses_remaining: Math.max(0, collected - used - Number(lot.doses_destroyed ?? 0)),
     };
   }
 }

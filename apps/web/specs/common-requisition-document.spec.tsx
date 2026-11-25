@@ -406,13 +406,14 @@ describe("CommonRequisitionDocument — FA/Service is Description + Qty only", (
     expect(screen.queryByLabelText('crqResourceFor:{"line":1}')).toBeNull();
   });
 
-  it("does not show a Resource stored on an older Service line", () => {
+  // Rishi, 22 Nov: a Service line picks its item from the Resource master again, so a stored Resource shows.
+  it("shows the Resource a Service line names", () => {
     const view = { ...emptyCommonRequisition("co-1", "SERVICE", "PURCHASE", "2026-10-05"), requisition_id: "r", req_no: "RQ-00032",
       approval_status: "APPROVED", document_status: "RELEASED",
       lines: [{ ...emptyLine(), line_id: "l1", line_seq: 1, description: "Electrician call-out", quantity: "2", resource_id: "r1", resource_code: "RES-1", resource_name: "Electrician" }] };
     const { container } = render(<CommonRequisitionDocument view={view as any} editable={false} options={options} />);
     expect(headers(container)).toEqual(ALL_LINE_HEADERS);
-    expect(screen.queryByText(/RES-1/)).toBeNull();
+    expect(screen.getByText("RES-1")).toBeTruthy();
   });
 
   it("keeps the API-required unit internal instead of exposing an extra column", () => {

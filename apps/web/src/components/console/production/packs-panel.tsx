@@ -4,7 +4,7 @@ import { formatDate } from '@/utils/date-short';
 import { NA } from '@/utils/na';
 import { useEffect, useState } from 'react';
 import { Search, Loader2, Inbox, Ban, Eye } from 'lucide-react';
-import QRCode from 'react-qr-code';
+import { Barcode } from '../barcode';
 import { api } from '@/services/api-client';
 import { Dialog } from '@/components/ui/dialog';
 import { Toast } from '@/components/ui/toast';
@@ -284,7 +284,7 @@ export default function PacksPanel() {
                 <TableCell>
                   <div className="flex items-center gap-3">
                     <div className="shrink-0 rounded bg-white p-1">
-                      <QRCode value={JSON.stringify(row.qr_data)} size={36} />
+                      <Barcode value={row.pack_no} height={32} className="h-8 w-24" />
                     </div>
                     <span
                       className="whitespace-nowrap font-mono font-semibold"
@@ -383,7 +383,7 @@ export default function PacksPanel() {
         {viewing && (
           <div className="flex flex-col items-center gap-4">
             <div className="rounded-[var(--radius-sm)] bg-white p-4">
-              <QRCode value={JSON.stringify(viewing.qr_data)} size={200} />
+              <Barcode value={viewing.pack_no} height={80} className="h-20 w-64 max-w-full" />
             </div>
             <div className="grid w-full grid-cols-2 gap-3 text-xs">
               <div>

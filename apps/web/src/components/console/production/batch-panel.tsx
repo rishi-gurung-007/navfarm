@@ -22,7 +22,7 @@ import {
   AlertTriangle,
   ArrowUpDown,
 } from 'lucide-react';
-import QRCode from 'react-qr-code';
+import { Barcode } from '../barcode';
 import { api } from '@/services/api-client';
 import { Dialog } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -5327,9 +5327,10 @@ export default function BatchPanel() {
                 {generatedPack.pack_no}
               </p>
               <div className="rounded-[var(--radius-sm)] bg-white p-4">
-                <QRCode
-                  value={JSON.stringify(generatedPack.qr_data)}
-                  size={200}
+                <Barcode
+                  value={generatedPack.pack_no}
+                  height={80}
+                  className="h-20 w-64 max-w-full"
                 />
               </div>
               <p className="text-xs" style={S.sub}>

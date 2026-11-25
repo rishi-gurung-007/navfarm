@@ -61,7 +61,13 @@ export class BreedingLineSetupService {
     if (query.breedId) conditions.push(eq(table.breed_id, query.breedId));
     conditions.push(...listFilterConditions(table, query.filter));
     const list = await runMasterList(this.db, table, conditions, query, table.created_at);
-    return { ...list, data: await withLineLabels(this.db, list.data as { breed_id: string | null }[]) as any };
+    const labelled = await withLineLabels(this.db, list.data as { breed_id: string | null; semen_item_id?: string | null }[]);
+    // The line's semen item by its code, for the list (0266).
+    const itemIds = [...new Set(labelled.map((r) => r.semen_item_id).filter((v): v is string => !!v))];
+    const items = itemIds.length
+      ? await this.db.select({ id: schema.itemMaster.item_id, code: schema.itemMaster.item_code }).from(schema.itemMaster).where(inArray(schema.itemMaster.item_id, itemIds))
+      : [];
+    return { ...list, data: labelled.map((r) => ({ ...r, semen_item_code: items.find((i) => i.id === r.semen_item_id)?.code ?? null })) as any };
   }
 
   /**
@@ -100,6 +106,19 @@ export class BreedingLineSetupService {
     if (ids.some((id) => !rows.some((r) => r.id === id))) {
       throw new BadRequestException('Select active farms of this company as the destination.');
     }
+  }
+
+  /** A line's semen item must be an active item of this tenant marked as semen. */
+  private async assertSemenItem(itemId: string | null | undefined, tenantId: string) {
+    if (!itemId) return;
+    const [item] = await this.db
+      .select({ code: schema.itemMaster.item_code, is_semen: schema.itemMaster.is_semen, is_active: schema.itemMaster.is_active })
+      .from(schema.itemMaster)
+      .where(and(eq(schema.itemMaster.item_id, itemId), eq(schema.itemMaster.tenant_id, tenantId)))
+      .limit(1);
+    if (!item) throw new BadRequestException('The semen item was not found.');
+    if (!item.is_semen) throw new BadRequestException(`${item.code} is not marked as a semen item. Switch on Semen item on its item card first.`);
+    if (!item.is_active) throw new BadRequestException(`${item.code} is not active.`);
   }
 
   private assertValid(values: LineSetupValues) {
@@ -145,6 +164,7 @@ export class BreedingLineSetupService {
     const companyId = dto.company_id ?? null;
     this.assertValid(newSetupValues(dto as Partial<LineSetupValues>));
     await this.assertFarms(dto.destination_farm_ids, tenantId, companyId);
+    await this.assertSemenItem(dto.semen_item_id, tenantId);
     await this.assertLineFree(dto.breed_id ?? null, tenantId, companyId);
 
     const setup_id = randomUUID();
@@ -170,6 +190,7 @@ export class BreedingLineSetupService {
     const { breed_id: _ignored, ...changes } = dto;
     this.assertValid(editedSetupValues(valuesOf(before), changes as Partial<LineSetupValues>));
     if (changes.destination_farm_ids !== undefined) await this.assertFarms(changes.destination_farm_ids, tenantId, before.company_id);
+    if (changes.semen_item_id !== undefined) await this.assertSemenItem(changes.semen_item_id, tenantId);
 
     await this.db
       .update(table)

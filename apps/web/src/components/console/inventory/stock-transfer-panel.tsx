@@ -27,6 +27,7 @@ import {
   Copy,
   Check,
   History,
+  ShieldCheck,
 } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -53,6 +54,7 @@ import { LotSerialPicker } from '@/components/ui/lot-serial-picker';
 import ReceiveStockPanel from './receive-stock-panel';
 import { confirmAction } from '@/components/ui/confirm-dialog';
 import { transferStatusText } from './stock-transfer-status';
+import { QcLink, qcStateOf } from './qc-link';
 import { transferSourceLinks } from './transfer-source-links';
 import {
   itemCodeOf,
@@ -1310,7 +1312,14 @@ export default function StockTransferPanel({
 
   const warehouseLabel = (id: string) => {
     const w = warehouses.find((wh) => wh.warehouse_id === id);
-    if (!w) return NA;
+    if (!w) {
+      // A store on another farm is not in this farm's list: the open transfer names it.
+      const side = editingTransfer?.from_warehouse_id === id ? 'from' : editingTransfer?.to_warehouse_id === id ? 'to' : null;
+      const code = side ? editingTransfer?.[`${side}_warehouse_code`] : null;
+      const name = side ? editingTransfer?.[`${side}_warehouse_name`] : null;
+      if (code || name) return code && name ? `${code} (${name})` : code || name;
+      return NA;
+    }
     return w.warehouse_code
       ? `${w.warehouse_code} (${w.warehouse_name})`
       : w.warehouse_name || NA;
@@ -1329,6 +1338,8 @@ export default function StockTransferPanel({
   // Location & Farm authorization helpers
   const getWarehouseFarm = (
     warehouseId: string | undefined,
+    // The store's code as the transfer carries it: a store on another farm is not in this farm's list.
+    knownCode?: string | null,
   ): { farm_id: string | null; farm_code: string | null } => {
     if (!warehouseId) return { farm_id: null, farm_code: null };
     const wh = warehouses.find(
@@ -1340,22 +1351,29 @@ export default function StockTransferPanel({
       (wh?.location_type === 'FARM' ? wh.location_id : null) ||
       null;
 
-    // Find farm in farms list or in warehouses
+    // Find farm in farms list or in warehouses. Only by a known farm id: an
+    // unknown one (null) must not match a farm row whose own id field is empty —
+    // that made another farm's store look like the active farm's.
     const farmObj =
-      farms.find(
-        (f) => f.location_id === farmId || f.warehouse_id === farmId,
-      ) ||
+      (farmId
+        ? farms.find(
+            (f) => f.location_id === farmId || f.warehouse_id === farmId,
+          )
+        : undefined) ||
       farms.find((f) => f.location_id === warehouseId) ||
-      warehouses.find(
-        (w) =>
-          (w.location_id === farmId || w.warehouse_id === farmId) &&
-          (w.location_type === 'FARM' || !w.parent_location_id),
-      );
+      (farmId
+        ? warehouses.find(
+            (w) =>
+              (w.location_id === farmId || w.warehouse_id === farmId) &&
+              (w.location_type === 'FARM' || !w.parent_location_id),
+          )
+        : undefined);
 
+    const storeCode = wh?.warehouse_code || knownCode || null;
     const farmCode =
       farmObj?.location_code ||
       farmObj?.warehouse_code ||
-      (wh?.warehouse_code ? wh.warehouse_code.split('/')[0] : null);
+      (storeCode ? storeCode.split('/')[0] : null);
 
     return {
       farm_id: farmId || farmObj?.location_id || null,
@@ -1380,12 +1398,15 @@ export default function StockTransferPanel({
     return f?.location_code || f?.warehouse_code || null;
   }, [activeFarmId, farms, warehouses]);
 
-  const isLocationOnActiveFarm = (locationId: string | undefined): boolean => {
+  const isLocationOnActiveFarm = (
+    locationId: string | undefined,
+    knownCode?: string | null,
+  ): boolean => {
     if (!locationId) return false;
     // If no farm is pinned (unrestricted company/tenant view), all locations are in scope
     if (!activeFarmId) return true;
 
-    const { farm_id, farm_code } = getWarehouseFarm(locationId);
+    const { farm_id, farm_code } = getWarehouseFarm(locationId, knownCode);
 
     // 1. Direct UUID match
     if (farm_id && farm_id === activeFarmId) return true;
@@ -1432,7 +1453,7 @@ export default function StockTransferPanel({
     if (!hasRemainingToShip) return false;
 
     // Source warehouse must be on user's active farm (or user is global admin)
-    return isLocationOnActiveFarm(transfer.from_warehouse_id);
+    return isLocationOnActiveFarm(transfer.from_warehouse_id, transfer.from_warehouse_code);
   };
 
   // Can the current user/farm receive this transfer order?
@@ -1458,7 +1479,7 @@ export default function StockTransferPanel({
     if (!hasInTransit) return false;
 
     // Destination warehouse must be on user's active farm (or user is global admin)
-    return isLocationOnActiveFarm(transfer.to_warehouse_id);
+    return isLocationOnActiveFarm(transfer.to_warehouse_id, transfer.to_warehouse_code);
   };
 
   // Warehouse options
@@ -1476,14 +1497,28 @@ export default function StockTransferPanel({
         own.includes(w.warehouse_id) &&
         !storeWarehouses.some((s) => s.warehouse_id === w.warehouse_id),
     );
-    return [...storeWarehouses, ...extra];
+    // A store on another farm (a transfer between farms) is not in this farm's
+    // warehouse list: it is named from the transfer itself, so the field shows it.
+    const known = [...storeWarehouses, ...extra];
+    const elsewhere = (['from', 'to'] as const)
+      .filter((side) => {
+        const id = editingTransfer[`${side}_warehouse_id`];
+        return id && !known.some((w) => w.warehouse_id === id);
+      })
+      .map((side) => ({
+        warehouse_id: editingTransfer[`${side}_warehouse_id`],
+        warehouse_code: editingTransfer[`${side}_warehouse_code`] ?? '',
+        warehouse_name: editingTransfer[`${side}_warehouse_name`] ?? '',
+        location_type: 'STORE',
+      }));
+    return [...known, ...elsewhere];
   }, [editingTransfer, warehouses, storeWarehouses]);
 
   const sourceWarehouseOptions = useMemo(() => {
     return pickableWarehouses.map((w) => ({
       value: w.warehouse_id,
       label: `${w.warehouse_code} — ${w.warehouse_name}`,
-      shortLabel: w.warehouse_name ?? '',
+      shortLabel: [w.warehouse_code, w.warehouse_name].filter(Boolean).join(' · '),
     }));
   }, [pickableWarehouses]);
 
@@ -1493,7 +1528,8 @@ export default function StockTransferPanel({
       .map((w) => ({
         value: w.warehouse_id,
         label: `${w.warehouse_code} — ${w.warehouse_name}`,
-        shortLabel: w.warehouse_name ?? '',
+        // Code and name: two farms' stores often share a name.
+        shortLabel: [w.warehouse_code, w.warehouse_name].filter(Boolean).join(' · '),
       }));
   }, [pickableWarehouses, header.from_warehouse_id]);
 
@@ -1813,12 +1849,12 @@ export default function StockTransferPanel({
                                   row.from_warehouse_name,
                               )}
                             </span>
-                            {warehouseName(row.from_warehouse_id) && (
+                            {(warehouseName(row.from_warehouse_id) || row.from_warehouse_name) && (
                               <span
                                 className="text-[11px] truncate max-w-[220px]"
                                 style={S.sub}
                               >
-                                {warehouseName(row.from_warehouse_id)}
+                                {warehouseName(row.from_warehouse_id) || row.from_warehouse_name}
                               </span>
                             )}
                           </div>
@@ -1834,12 +1870,12 @@ export default function StockTransferPanel({
                                 row.to_warehouse_code || row.to_warehouse_name,
                               )}
                             </span>
-                            {warehouseName(row.to_warehouse_id) && (
+                            {(warehouseName(row.to_warehouse_id) || row.to_warehouse_name) && (
                               <span
                                 className="text-[11px] truncate max-w-[220px]"
                                 style={S.sub}
                               >
-                                {warehouseName(row.to_warehouse_id)}
+                                {warehouseName(row.to_warehouse_id) || row.to_warehouse_name}
                               </span>
                             )}
                           </div>
@@ -1877,6 +1913,17 @@ export default function StockTransferPanel({
                             status={row.status}
                             label={statusLabel(row.status)}
                           />
+                          {/* Received but held by the destination's QC: not stock until the inspection accepts it. */}
+                          {(row.qc_inspections ?? []).length > 0 && (() => {
+                            const qcs: Row[] = row.qc_inspections;
+                            const open = qcs.filter((q) => qcStateOf(q as any) === 'PENDING').length;
+                            const failed = qcs.filter((q) => qcStateOf(q as any) === 'REJECTED').length;
+                            return (
+                              <div className="mt-1 text-[11px] font-medium" style={{ color: open ? 'var(--warning)' : failed ? 'var(--danger)' : 'var(--success)' }}>
+                                {open ? `QC pending (${open})` : failed ? `QC failed (${failed})` : 'QC passed'}
+                              </div>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="text-right">
                           <div
@@ -1978,12 +2025,21 @@ export default function StockTransferPanel({
                         </span>
                       </span>
                     )}
-                  {editingTransfer && editingTransfer.status === 'RECEIVED' && (
-                    <span className="inline-flex items-center gap-1.5 text-xs text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-md font-semibold">
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                      Transfer Completed &amp; Stock Received
-                    </span>
-                  )}
+                  {editingTransfer && editingTransfer.status === 'RECEIVED' && (() => {
+                    // Received but still under the destination's QC: arrived, not yet stock.
+                    const pendingQc = ((editingTransfer.qc_inspections ?? []) as Row[]).filter((q) => qcStateOf(q as any) === 'PENDING');
+                    return pendingQc.length ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold" style={{ color: 'var(--warning)', borderColor: 'var(--warning)' }}>
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                        Received — held for QC ({pendingQc.map((q) => q.inspection_no).join(', ')}); stock posts when accepted
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-emerald-500 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-1 rounded-md font-semibold">
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Transfer Completed &amp; Stock Received
+                      </span>
+                    );
+                  })()}
                 </div>
 
                 {/* Right side: All action buttons aligned together */}
@@ -2309,6 +2365,8 @@ export default function StockTransferPanel({
                     </label>
                     <SearchableSelect
                       ariaLabel="Transfer-from Location"
+                      // Code and name: two farms' stores often share a name.
+                      getSelectedLabel={(o) => String(o.label ?? '')}
                       value={header.from_warehouse_id}
                       disabled={isFromLocationLocked || !!editingTransfer}
                       onChange={(val) => {
@@ -2332,6 +2390,8 @@ export default function StockTransferPanel({
                     </label>
                     <SearchableSelect
                       ariaLabel="Transfer-to Location"
+                      // Code and name: two farms' stores often share a name.
+                      getSelectedLabel={(o) => String(o.label ?? '')}
                       value={header.to_warehouse_id}
                       onChange={(val) =>
                         setHeader((h) => ({ ...h, to_warehouse_id: val }))
@@ -3827,6 +3887,48 @@ export default function StockTransferPanel({
                   </div>
                 </div>
               </div>
+
+              {/* Receipt QC: an item with QC on is inspected at the destination when it is received; it is stock only once accepted. */}
+              {editingTransfer && (editingTransfer.qc_inspections ?? []).length > 0 && (
+                <div className="rounded-[var(--radius-md)] border p-4 shadow-2xs" style={S.raised}>
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="h-4 w-4" style={S.accent} />
+                      <h3 className="text-xs font-semibold uppercase tracking-wider" style={S.primary}>
+                        Receipt QC at destination
+                      </h3>
+                    </div>
+                    <span className="text-[11px]" style={S.muted}>
+                      Received stock is held until its inspection is accepted
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="text-[10px] uppercase tracking-wider" style={S.muted}>
+                        <tr>
+                          <th className="px-2 py-1.5 font-semibold">Inspection</th>
+                          <th className="px-2 py-1.5 font-semibold">Item</th>
+                          <th className="px-2 py-1.5 font-semibold">Lot</th>
+                          <th className="px-2 py-1.5 text-right font-semibold">Quantity</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(editingTransfer.qc_inspections as Row[]).map((q) => {
+                          const item = items.find((it) => it.item_id === q.item_id);
+                          return (
+                            <tr key={q.inspection_id} className="border-t" style={{ borderColor: 'var(--border)', ...S.primary }}>
+                              <td className="px-2 py-2"><QcLink qc={q as any} /></td>
+                              <td className="px-2 py-2">{item ? `${item.item_code} · ${item.item_name}` : '—'}</td>
+                              <td className="px-2 py-2 font-mono">{q.lot_no ?? '—'}</td>
+                              <td className="px-2 py-2 text-right font-mono">{formatQuantity(Number(q.quantity))}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               {/* Section 4: Dedicated Transaction History (Shipment Dispatches & Receipt GRNs) */}
               {editingTransfer && editingTransfer.status !== 'DRAFT' && (

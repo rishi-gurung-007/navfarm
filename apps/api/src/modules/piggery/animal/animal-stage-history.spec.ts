@@ -203,6 +203,7 @@ describe('AnimalService.transitionStage writes stage history (checklist 6)', () 
             addTransaction: jest.fn(),
             syncSchedulerCounts: jest.fn().mockResolvedValue(undefined),
             alignSchedulerToStageEntry: jest.fn().mockResolvedValue(null),
+            openSchedulerForAnimalStage: jest.fn().mockResolvedValue(null),
             recordAnimalExit: jest
               .fn()
               .mockResolvedValue({ valueRelieved: null, batch: null }),

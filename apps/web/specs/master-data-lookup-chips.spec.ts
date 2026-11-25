@@ -53,7 +53,8 @@ describe("master-data lookup chips", () => {
       // for whichever of the two is selected, so Number Series is a lookup the
       // Item form now names.
       "number-series",
-      "gl-account",
+      // An item takes its GL accounts from the Posting Group it picks, not from accounts picked one by one.
+      "gl-posting-group",
       "item-attribute",
       "feed-formula",
     ]);

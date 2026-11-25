@@ -1,4 +1,4 @@
-import { lotBalances, serialsInStock } from './lot-balance';
+import { lotBalances, lotCostLayers, serialsInStock } from './lot-balance';
 
 /** A db that answers each `.select().from().where()[.groupBy()]` read, in order. */
 const dbAnswering = (...answers: any[][]) => {
@@ -58,5 +58,27 @@ describe('serials in stock', () => {
     const db = dbAnswering([entry('SN10', '1'), entry('SN1', '-1')], []);
     // SN1 was never received, so issuing it is a deficit of its own; SN10 is untouched and in stock
     expect((await serialsInStock(db, scope)).map((s) => s.serial_no)).toEqual(['SN10']);
+  });
+});
+
+describe('lotCostLayers — a lot drawn at its own cost (D3)', () => {
+  const layer = (id: string, lot: string | null, remaining: number) => ({ id, lot_no: lot, remaining_quantity: String(remaining) });
+  const layers = [layer('older', 'LOT-00053', 51), layer('other', 'LOT-00054', 12), layer('own', 'LOT-00057', 4)];
+
+  it('draws only the receipts that carry the lot, when they hold the quantity', () => {
+    expect(lotCostLayers(layers, 'LOT-00057', 4).map((l) => l.id)).toEqual(['own']);
+  });
+
+  it('keeps every receipt of the lot, oldest first (a lot received in twice)', () => {
+    const two = [layer('a', 'L1', 2), layer('b', 'L2', 5), layer('c', 'L1', 3)];
+    expect(lotCostLayers(two, 'L1', 4).map((l) => l.id)).toEqual(['a', 'c']);
+  });
+
+  it('falls back to every layer when the lot\'s receipts were already costed away', () => {
+    expect(lotCostLayers([layer('older', 'LOT-00053', 51), layer('own', 'LOT-00057', 0)], 'LOT-00057', 4).map((l) => l.id)).toEqual(['older', 'own']);
+  });
+
+  it('is the ordinary order without a lot', () => {
+    expect(lotCostLayers(layers, undefined, 4)).toBe(layers);
   });
 });

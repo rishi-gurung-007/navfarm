@@ -163,3 +163,20 @@ export async function serialsInStock(
     .filter(([, v]) => v.net > 0)
     .map(([serial_no, v]) => ({ serial_no, warehouse_id: v.warehouse_id, expiry_date: v.expiry_date, receipt_date: v.receipt_date, unit_cost: v.unit_cost }));
 }
+
+/**
+ * The receipt layers a lot's own cost is drawn from (D3, 24 Nov 2026): of the layers at the location, oldest first, the
+ * ones carrying the lot — when they still hold the whole quantity. Otherwise all the layers, in the ordinary order, so stock
+ * whose lot receipt was already costed away by an older draw still moves. A shipment of semen lot LOT-00057 was valued at
+ * 47.93 from LOT-00053's receipt instead of the lot's own 1,199.23, and the lot's receipt was left showing 4 remaining.
+ */
+export function lotCostLayers<T extends { lot_no: string | null; remaining_quantity: string | number | null }>(
+  layers: T[],
+  lotNo: string | null | undefined,
+  quantity: number,
+): T[] {
+  if (!lotNo) return layers;
+  const own = layers.filter((l) => l.lot_no === lotNo);
+  const held = own.reduce((n, l) => n + Math.max(0, Number(l.remaining_quantity ?? 0)), 0);
+  return held + 0.00005 >= quantity ? own : layers;
+}

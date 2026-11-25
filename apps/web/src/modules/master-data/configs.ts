@@ -2825,6 +2825,30 @@ const item: MasterDataConfig = {
         'Each received lot is inspected first. It enters stock only when the QC inspection is completed and accepted. Add the checks under QC Specification.',
       section: 'Inventory',
     },
+    // QC rounds (0263, the client's semen QC): an inspection of this item is done in this many dated rounds, the first on the receipt or
+    // collection date and one more each following day. The lot enters stock only after the last round passes.
+    {
+      key: 'qc_rounds',
+      label: 'QC Rounds',
+      type: 'number',
+      step: '1',
+      min: 1,
+      max: 10,
+      visibleWhen: { allOf: [{ key: 'is_qc_required', equals: true }] },
+      helpText:
+        'How many daily checks a lot needs before it passes. 1 = a single check. Semen: 5 (collection day + 4 days). A transfer receipt at a farm is always one check.',
+      section: 'Inventory',
+    },
+    // Semen item (0266): only items marked so are offered for a semen collection, a semen request and a breeding line's semen item.
+    {
+      key: 'is_semen',
+      label: 'Semen Item',
+      type: 'boolean',
+      visibleWhen: { allOf: [{ key: 'is_biological_asset', notEquals: true }] },
+      helpText:
+        "Boar semen, counted in doses. Only semen items can be collected, requested by a farm or set as a breeding line's semen item.",
+      section: 'Inventory',
+    },
     {
       key: 'min_stock_level',
       label: 'Min Stock Level',
@@ -6157,6 +6181,7 @@ const breedingLineSetup: MasterDataConfig = {
     { key: 'collection_weekdays', label: 'Days' },
     { key: 'pooling_allowed', label: 'Pooled' },
     { key: 'max_boars_per_lot', label: 'Max Boars / Lot' },
+    { key: 'semen_item_code', label: 'Semen Item' },
     { key: 'colorant_name', label: 'Colorant' },
     { key: 'label_template', label: 'Label' },
     { key: 'destination_rule', label: 'Destination' },
@@ -6194,6 +6219,19 @@ const breedingLineSetup: MasterDataConfig = {
       entityLabelKeys: ['breed_code', 'breed_name'],
       helpText:
         'The line these rules are for. Fixed after create. Leave blank for the company default, read for any line that has no setup of its own.',
+      section: 'Line',
+    },
+    // The semen item the line's collections and requests use (0266): only items marked as semen are offered.
+    {
+      key: 'semen_item_id',
+      label: 'Semen Item',
+      type: 'select-entity',
+      searchable: true,
+      entityEndpoint: '/item?isSemen=true&isActive=true',
+      entityValueKey: 'item_id',
+      entityLabelKeys: ['item_code', 'item_name'],
+      helpText:
+        "The item this line's semen is collected and requested as. Only items with Semen Item switched on are listed.",
       section: 'Line',
     },
     {

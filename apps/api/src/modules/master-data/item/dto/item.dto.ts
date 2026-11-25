@@ -215,6 +215,18 @@ export class CreateItemDto extends ItemBioCostingDto {
   @IsOptional()
   is_qc_required?: boolean;
 
+  @ApiProperty({ description: 'How many dated rounds a QC inspection of this item has (1 = a single check). The semen item uses 5: collection day + 4 days. A transfer receipt is always one check.', default: 1, required: false, minimum: 1, maximum: 10 })
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  @IsOptional()
+  qc_rounds?: number;
+
+  @ApiProperty({ description: 'A semen item: offered for semen collections, semen requests and as a breeding line\'s semen item. Not for an animal item.', default: false, required: false })
+  @IsBoolean()
+  @IsOptional()
+  is_semen?: boolean;
+
   @ApiProperty({ type: [ItemQcSpecLineDto], description: 'The QC checks (QC Code, Description, QC Type, Min/Max) saved with a new QC-required item. Edit them later through /item-qc-spec.', required: false })
   @IsArray()
   @IsOptional()
@@ -444,6 +456,18 @@ export class UpdateItemDto extends ItemBioCostingDto {
   @IsOptional()
   is_qc_required?: boolean;
 
+  @ApiProperty({ description: 'How many dated rounds a QC inspection of this item has (1 = a single check). The semen item uses 5: collection day + 4 days. A transfer receipt is always one check.', default: 1, required: false, minimum: 1, maximum: 10 })
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  @IsOptional()
+  qc_rounds?: number;
+
+  @ApiProperty({ description: 'A semen item: offered for semen collections, semen requests and as a breeding line\'s semen item. Not for an animal item.', default: false, required: false })
+  @IsBoolean()
+  @IsOptional()
+  is_semen?: boolean;
+
   @ApiProperty({ required: false })
   @IsNumber()
   @IsOptional()
@@ -597,6 +621,12 @@ export class QueryItemDto extends MasterListQueryDto {
   @Transform(({ value }) => (value === 'true' || value === true || value === 1 || value === '1' ? true : value === 'false' || value === false || value === 0 || value === '0' ? false : value))
   @IsBoolean()
   isBlocked?: any;
+
+  @ApiProperty({ description: 'Only semen items (true) or only other items (false)', required: false })
+  @IsOptional()
+  @Transform(({ value }) => (value === 'true' || value === true || value === 1 || value === '1' ? true : value === 'false' || value === false || value === 0 || value === '0' ? false : value))
+  @IsBoolean()
+  isSemen?: any;
 
   @ApiProperty({ description: 'Filter by item template code (supports trailing * wildcard)', required: false })
   @IsOptional()
