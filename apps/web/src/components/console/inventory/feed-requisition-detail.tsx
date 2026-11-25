@@ -180,6 +180,40 @@ export function FeedRequisitionDetail({
     };
   }, [view.requisition_id, editable, view.farm_id]);
 
+  // Why the saved lines cannot be sent today (Sunday + posted count). Asked again for each new view, since Save
+  // keeps the same requisition id. While loading, or if it fails, nothing is blocked: the server decides on submit.
+  const [gate, setGate] = useState<{
+    view: RequisitionView;
+    problems: string[];
+  } | null>(null);
+  useEffect(() => {
+    if (!view.requisition_id || !editable) return;
+    let live = true;
+    api
+      .get(`/feed-requisition/${view.requisition_id}/submit-gate`)
+      .then((res) => {
+        const check = unwrap<{ allowed?: boolean; problems?: string[] }>(res);
+        if (live)
+          setGate(
+            check?.allowed === false && Array.isArray(check.problems)
+              ? { view, problems: check.problems }
+              : null,
+          );
+      })
+      .catch(() => {
+        if (live) setGate(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [view, editable]);
+  const sendProblems = editable && gate?.view === view ? gate.problems : null;
+  // An unsaved silo or item is not what the check looked at: let the server answer for it.
+  const retargeted = Object.values(edits).some(
+    (e) => e.destinationId !== undefined || e.itemId !== undefined,
+  );
+  const sendBlocked = !!sendProblems && !retargeted;
+
   const save = () =>
     run(async () => {
       const result = unwrap<RequisitionView>(
@@ -319,6 +353,18 @@ export function FeedRequisitionDetail({
         </div>
       )}
       <DialogHeaderActions>{actionBar}</DialogHeaderActions>
+      {sendProblems && (
+        <div className="mb-4 shrink-0" data-testid="feed-send-blocked">
+          <InlineAlert variant="warning">
+            <span className="font-semibold">{t('rqSendBlocked')}</span>
+            {sendProblems.map((problem) => (
+              <span key={problem} className="block">
+                {problem}
+              </span>
+            ))}
+          </InlineAlert>
+        </div>
+      )}
       {workflowNotice && (
         <div className="mb-4 shrink-0" data-testid="feed-workflow-notice">
           <InlineAlert variant={workflowNotice.variant}>
@@ -388,7 +434,11 @@ export function FeedRequisitionDetail({
           <Button size="sm" variant="outline" onClick={save} disabled={busy}>
             {t('rqSave')}
           </Button>
-          <Button size="sm" onClick={submit} disabled={busy || remarksMissing}>
+          <Button
+            size="sm"
+            onClick={submit}
+            disabled={busy || remarksMissing || sendBlocked}
+          >
             {t('rqSubmit')}
           </Button>
         </DialogFooterActions>

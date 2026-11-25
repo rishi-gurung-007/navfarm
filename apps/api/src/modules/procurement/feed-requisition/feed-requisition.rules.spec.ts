@@ -22,6 +22,10 @@ import {
   roundOrderKg,
   runKeyFor,
   serverToday,
+  lineKey,
+  isSundayDay,
+  sendGateProblems,
+  type SendGateLine,
   feedListStatusFilter,
   isOffBulkMultiple,
   projectedSiloStockKg,
@@ -1714,4 +1718,100 @@ describe('requisitionCover — a run-down another open requisition already solve
       ).covered,
     ).toBe(false);
   });
+});
+
+describe('sendGateProblems', () => {
+  const SUNDAY = '2026-11-29';
+  const line = (over: Partial<SendGateLine> = {}): SendGateLine => ({
+    lineSeq: 10000,
+    itemName: 'Weaner Diet R1',
+    itemId: 'item-1',
+    destinationId: 'silo-1',
+    destinationCode: 'GRS/SILO-001',
+    isStore: false,
+    ...over,
+  });
+  const run = (
+    over: Partial<Parameters<typeof sendGateProblems>[0]> = {},
+  ) =>
+    sendGateProblems({
+      today: SUNDAY,
+      lines: [line()],
+      countedPairs: new Set(),
+      countedSilos: new Set(),
+      countablePairs: new Set([lineKey('silo-1', 'item-1')]),
+      countableSilos: new Set(['silo-1']),
+      ...over,
+    });
+  const NOT_COUNTED =
+    'Line 10000: Weaner Diet R1 in GRS/SILO-001 has no posted stock count dated today.';
+
+  it('knows a Sunday', () => {
+    expect(isSundayDay(SUNDAY)).toBe(true);
+    expect(isSundayDay('2026-11-28')).toBe(false);
+  });
+
+  it.each([
+    ['2026-11-28', 'Saturday'],
+    ['2026-11-30', 'Monday'],
+  ])('refuses %s with only the Sunday message', (today, weekday) => {
+    expect(run({ today })).toEqual([
+      `Feed requisitions can be sent only on Sunday. It is ${weekday} on this farm.`,
+    ]);
+  });
+
+  it('allows a counted silo and item', () => {
+    expect(
+      run({
+        countedPairs: new Set([lineKey('silo-1', 'item-1')]),
+        countedSilos: new Set(['silo-1']),
+      }),
+    ).toEqual([]);
+  });
+
+  it('refuses a countable pair when the silo was counted only for another item', () => {
+    expect(run({ countedSilos: new Set(['silo-1']) })).toEqual([NOT_COUNTED]);
+  });
+
+  it('needs no count for a store line', () => {
+    expect(run({ lines: [line({ isStore: true })] })).toEqual([]);
+  });
+
+  it('accepts a diet change when the silo was counted, and refuses it when not', () => {
+    const countablePairs = new Set<string>();
+    expect(
+      run({ countablePairs, countedSilos: new Set(['silo-1']) }),
+    ).toEqual([]);
+    expect(run({ countablePairs })).toEqual([NOT_COUNTED]);
+  });
+
+  it('needs no count for a silo that has never held feed', () => {
+    expect(
+      run({ countablePairs: new Set(), countableSilos: new Set() }),
+    ).toEqual([]);
+  });
+
+  it('reports each uncounted line in line order', () => {
+    expect(
+      run({
+        lines: [
+          line(),
+          line({ lineSeq: 20000, itemName: 'Grower Diet' }),
+        ],
+        countablePairs: new Set(),
+      }),
+    ).toEqual([
+      NOT_COUNTED,
+      'Line 20000: Grower Diet in GRS/SILO-001 has no posted stock count dated today.',
+    ]);
+  });
+
+  it.each([[{ destinationId: null }], [{ itemId: null }]])(
+    'refuses a line without a destination or item (%o)',
+    (over) => {
+      expect(run({ lines: [line(over)] })).toEqual([
+        'Line 10000 has no destination or feed item.',
+      ]);
+    },
+  );
 });

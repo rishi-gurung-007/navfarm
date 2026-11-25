@@ -555,3 +555,92 @@ describe('FeedRequisitionDetail workflow actions', () => {
     });
   });
 });
+
+// Rishi, 25 Nov: sending is checked on the farm's Sunday against that day's posted count; the screen says why not.
+describe('FeedRequisitionDetail sending check', () => {
+  const GATE = '/feed-requisition/req-1/submit-gate';
+  const PROBLEM =
+    'Feed requisitions can be sent only on Sunday. It is Monday on this farm.';
+  const OPTIONS = {
+    destinations: [
+      { location_id: 'silo-2', location_code: 'S2', location_name: 'Silo two' },
+    ],
+    items: [],
+  };
+  const answer = (gate: () => Promise<unknown>) =>
+    get.mockImplementation((url: string) =>
+      url === GATE ? gate() : Promise.resolve({ data: OPTIONS }),
+    );
+  const blocked = () =>
+    answer(async () => ({
+      data: { allowed: false, today: '2026-11-30', problems: [PROBLEM] },
+    }));
+  const submitButton = () => screen.getByRole('button', { name: 'rqSubmit' });
+  const saveButton = () => screen.getByRole('button', { name: 'rqSave' });
+  const gateCalls = () => get.mock.calls.filter(([url]) => url === GATE).length;
+  const view = { ...draftView, remarks: 'ok' };
+
+  it('shows why it cannot be sent, disables Submit and leaves Save', async () => {
+    blocked();
+    renderDetail(view);
+    expect(await screen.findByText(PROBLEM)).toBeTruthy();
+    expect(screen.getByText('rqSendBlocked')).toBeTruthy();
+    expect((submitButton() as HTMLButtonElement).disabled).toBe(true);
+    expect((saveButton() as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('says nothing when it may be sent', async () => {
+    answer(async () => ({
+      data: { allowed: true, today: '2026-11-29', problems: [] },
+    }));
+    renderDetail(view);
+    await waitFor(() => expect(gateCalls()).toBe(1));
+    await act(async () => undefined);
+    expect(screen.queryByText('rqSendBlocked')).toBeNull();
+    expect((submitButton() as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('leaves the server to decide when the check cannot be loaded', async () => {
+    answer(() => Promise.reject(new Error('down')));
+    renderDetail(view);
+    await waitFor(() => expect(gateCalls()).toBe(1));
+    await act(async () => undefined);
+    expect((submitButton() as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('enables Submit after an unsaved silo change', async () => {
+    blocked();
+    renderDetail(view);
+    await screen.findByText(PROBLEM);
+    fireEvent.click(
+      await screen.findByRole('button', { name: /rqdSiloFor/ }),
+    );
+    fireEvent.click(await screen.findByRole('option', { name: /Silo two/ }));
+    expect((submitButton() as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('checks again after Save, which hands back a new view', async () => {
+    blocked();
+    const element = (v: RequisitionView) => (
+      <Dialog open onClose={jest.fn()} title={v.req_no} presentation="page">
+        <FeedRequisitionDetail
+          view={v}
+          onView={jest.fn()}
+          onBack={jest.fn()}
+          embedded
+        />
+      </Dialog>
+    );
+    const { rerender } = render(element(view));
+    await waitFor(() => expect(gateCalls()).toBe(1));
+    rerender(element({ ...view }));
+    await waitFor(() => expect(gateCalls()).toBe(2));
+  });
+
+  it('does not ask for a requisition that can no longer be changed', async () => {
+    blocked();
+    renderDetail(base());
+    await act(async () => undefined);
+    expect(gateCalls()).toBe(0);
+  });
+});

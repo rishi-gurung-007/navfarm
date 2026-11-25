@@ -424,6 +424,21 @@ export class FeedRequisitionController {
     return { success: true, message: 'Feed requisition saved.', data };
   }
 
+  @Get(':id/submit-gate')
+  @RequirePermission('PROCUREMENT', 'REQUISITION', 'create')
+  @ApiOperation({
+    summary:
+      "Whether the saved lines can be sent now: only on the farm's Sunday, after that day's posted stock count",
+  })
+  async submitGate(@Param('id', ParseUUIDPipe) id: string, @Req() req: any) {
+    const data = await this.feedRequisitions.submitGate(
+      id,
+      req.user?.tenantId || req['tenantId'],
+      req.user,
+    );
+    return { success: true, message: 'Feed requisition sending check.', data };
+  }
+
   @Post(':id/submit')
   @HttpCode(200)
   @RequirePermission('PROCUREMENT', 'REQUISITION', 'create')

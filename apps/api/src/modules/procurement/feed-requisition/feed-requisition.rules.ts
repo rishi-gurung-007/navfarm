@@ -1063,3 +1063,71 @@ export function requisitionCover(
     by: [...new Set(by.map((r) => r.req_no))],
   };
 }
+
+/** One saved line as the sending rule reads it. */
+export interface SendGateLine {
+  lineSeq: number;
+  itemName: string;
+  itemId: string | null;
+  destinationId: string | null;
+  destinationCode: string;
+  isStore: boolean;
+}
+
+const WEEKDAYS = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+];
+
+const weekdayOf = (day: string) => new Date(`${day}T00:00:00Z`).getUTCDay();
+
+/** `day` is the farm's calendar day, 'YYYY-MM-DD'. */
+export function isSundayDay(day: string): boolean {
+  return weekdayOf(day) === 0;
+}
+
+/**
+ * Rishi, 25 Nov: a feed requisition is sent only on the farm's Sunday, after that day's posted stock
+ * count. Sunday is fixed. A store needs no count (nothing counts one). A count only has lines for silo and
+ * item pairs with ledger history, so: a pair with history must itself be counted; a new item in a silo
+ * with other history (a diet change) needs the silo counted; a silo that never held feed needs none —
+ * otherwise the first order of a diet could never be sent.
+ */
+export function sendGateProblems(args: {
+  today: string;
+  lines: SendGateLine[];
+  /** lineKey(silo, item) in a POSTED count dated today, and the silos of those counts. */
+  countedPairs: ReadonlySet<string>;
+  countedSilos: ReadonlySet<string>;
+  /** lineKey(silo, item) with ledger history, and the silos with any. */
+  countablePairs: ReadonlySet<string>;
+  countableSilos: ReadonlySet<string>;
+}): string[] {
+  if (!isSundayDay(args.today))
+    return [
+      `Feed requisitions can be sent only on Sunday. It is ${WEEKDAYS[weekdayOf(args.today)]} on this farm.`,
+    ];
+  const problems: string[] = [];
+  for (const line of args.lines) {
+    if (!line.destinationId || !line.itemId) {
+      problems.push(`Line ${line.lineSeq} has no destination or feed item.`);
+      continue;
+    }
+    if (line.isStore) continue;
+    const key = lineKey(line.destinationId, line.itemId);
+    if (args.countedPairs.has(key)) continue;
+    if (!args.countablePairs.has(key)) {
+      if (!args.countableSilos.has(line.destinationId)) continue;
+      if (args.countedSilos.has(line.destinationId)) continue;
+    }
+    problems.push(
+      `Line ${line.lineSeq}: ${line.itemName} in ${line.destinationCode} has no posted stock count dated today.`,
+    );
+  }
+  return problems;
+}

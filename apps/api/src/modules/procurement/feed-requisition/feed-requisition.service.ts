@@ -56,6 +56,7 @@ import {
 import {
   addDays,
   utcTimestamp,
+  todayInZone,
   type ForecastSource,
 } from '../../inventory/feed-forecast/feed-forecast.engine';
 import {
@@ -98,6 +99,8 @@ import {
   lifecycleRefLabel,
   lineChangeProblems,
   lineKey,
+  isSundayDay,
+  sendGateProblems,
   runLineEvidence,
   countedRequisitions,
   requisitionCover,
@@ -3630,6 +3633,10 @@ export class FeedRequisitionService implements OnModuleInit {
           companyId,
           tenantId,
         );
+        // Inside the transaction and after the edits: a refusal rolls them back, and the pair checked is the one sent.
+        const gate = await this.sendGate(id, farmId, companyId, tenantId);
+        if (gate.problems.length)
+          throw new BadRequestException(gate.problems.join(' '));
         const totalKg = lines.reduce((sum, l) => sum + l.quantityKg, 0);
         const requestId = await this.approvals.submitFarmDocument(
           {
@@ -3668,6 +3675,133 @@ export class FeedRequisitionService implements OnModuleInit {
     );
     await this.afterSubmitAlerts(view, id, { farmId, companyId, tenantId });
     return view;
+  }
+
+  /** Whether the saved lines could be sent now, so the open requisition can say why not. Reads only. */
+  async submitGate(id: string, tenantId: string, user: UserCtx) {
+    const { farmId, companyId } = await this.resolveOwnFarm(id, tenantId, user);
+    return this.forecast.withFarmScope(farmId, companyId, () =>
+      this.sendGate(id, farmId, companyId, tenantId),
+    );
+  }
+
+  /** The facts sendGateProblems reads: the saved lines, today's posted counts and the silos' ledger history. */
+  private async sendGate(
+    requisitionId: string,
+    farmId: string,
+    companyId: string,
+    tenantId: string,
+  ): Promise<{ allowed: boolean; today: string; problems: string[] }> {
+    const { today, timeZone } = await this.forecast.farmToday(
+      companyId,
+      tenantId,
+    );
+    const countedPairs = new Set<string>();
+    const countedSilos = new Set<string>();
+    const countablePairs = new Set<string>();
+    const countableSilos = new Set<string>();
+    const result = (lines: Parameters<typeof sendGateProblems>[0]['lines']) => {
+      const problems = sendGateProblems({
+        today,
+        lines,
+        countedPairs,
+        countedSilos,
+        countablePairs,
+        countableSilos,
+      });
+      return { allowed: !problems.length, today, problems };
+    };
+    // Not Sunday: the rule answers without looking at a line.
+    if (!isSundayDay(today)) return result([]);
+
+    const rows = await this.db
+      .select({
+        line_seq: schema.requisitionLine.line_seq,
+        item_id: schema.requisitionLine.item_id,
+        destination_location_id: schema.requisitionLine.destination_location_id,
+        item_name: schema.itemMaster.item_name,
+        location_code: schema.locationMaster.location_code,
+        location_type: schema.locationMaster.location_type,
+      })
+      .from(schema.requisitionLine)
+      .leftJoin(
+        schema.itemMaster,
+        eq(schema.itemMaster.item_id, schema.requisitionLine.item_id),
+      )
+      .leftJoin(
+        schema.locationMaster,
+        eq(
+          schema.locationMaster.location_id,
+          schema.requisitionLine.destination_location_id,
+        ),
+      )
+      .where(eq(schema.requisitionLine.requisition_id, requisitionId))
+      .orderBy(schema.requisitionLine.line_seq);
+    const lines = rows.map((r) => ({
+      lineSeq: r.line_seq,
+      itemName: r.item_name ?? '',
+      itemId: r.item_id,
+      destinationId: r.destination_location_id,
+      destinationCode: r.location_code ?? '',
+      isStore: r.location_type === 'STORE',
+    }));
+    const siloIds = [
+      ...new Set(
+        lines.flatMap((l) =>
+          !l.isStore && l.destinationId ? [l.destinationId] : [],
+        ),
+      ),
+    ];
+    if (!siloIds.length) return result(lines);
+
+    const C = schema.feedStockCount;
+    const CL = schema.feedStockCountLine;
+    const since = Math.floor(Date.now() / 1000) - 3 * 86_400;
+    const counts = await this.db
+      .select({
+        silo_id: CL.silo_id,
+        item_id: CL.item_id,
+        // counted_at holds the session's wall clock (FROM_UNIXTIME): read the instant, never the string.
+        epoch: sql<number>`UNIX_TIMESTAMP(${C.counted_at})`,
+      })
+      .from(CL)
+      .innerJoin(C, eq(C.count_id, CL.count_id))
+      .where(
+        and(
+          eq(C.tenant_id, tenantId),
+          eq(C.company_id, companyId),
+          eq(C.farm_id, farmId),
+          eq(C.status, 'POSTED'),
+          inArray(CL.silo_id, siloIds),
+          sql`${C.counted_at} >= FROM_UNIXTIME(${since})`,
+        ),
+      );
+    for (const c of counts) {
+      if (todayInZone(timeZone, Number(c.epoch) * 1000) !== today) continue;
+      countedSilos.add(c.silo_id);
+      countedPairs.add(lineKey(c.silo_id, c.item_id));
+    }
+
+    // The same history a count builds its lines from (InventoryLedgerService.getSiloStockEvidenceAsOf).
+    const L = schema.inventoryLedger;
+    const history = await this.db
+      .select({ warehouse_id: L.warehouse_id, item_id: L.item_id })
+      .from(L)
+      .where(
+        and(
+          eq(L.tenant_id, tenantId),
+          eq(L.company_id, companyId),
+          inArray(L.warehouse_id, siloIds),
+          inArray(L.entry_type, ['POSITIVE', 'NEGATIVE', 'TRANSFER']),
+        ),
+      )
+      .groupBy(L.warehouse_id, L.item_id);
+    for (const h of history) {
+      if (!h.warehouse_id || !h.item_id) continue;
+      countableSilos.add(h.warehouse_id);
+      countablePairs.add(lineKey(h.warehouse_id, h.item_id));
+    }
+    return result(lines);
   }
 
   /**

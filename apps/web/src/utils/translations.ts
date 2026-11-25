@@ -1723,6 +1723,7 @@ export const translations = {
     rqRemarksWhyLate: 'the submission deadline has passed',
     rqSave: 'Save',
     rqSubmit: 'Submit for approval',
+    rqSendBlocked: 'This requisition cannot be sent yet:',
     rqSaved: 'Saved.',
     rqSubmitted: 'Submitted for approval.',
     rqWaiting: 'Waiting for approval.',

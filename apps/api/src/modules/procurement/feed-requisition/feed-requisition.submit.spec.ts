@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+import { MySqlDialect } from 'drizzle-orm/mysql-core';
 import type { ClsService } from 'nestjs-cls';
 import { transactionCls } from '../../../test-utils/transaction-cls';
 import { FARM_SCOPE_KEY, type FarmScope } from '../../../common/farm-scope';
@@ -11,6 +12,8 @@ import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { ApprovalService } from '../../production/approval/approval.service';
 import { FeedForecastService } from '../../inventory/feed-forecast/feed-forecast.service';
 import { addDaysIso, serverToday } from './feed-requisition.rules';
+import { RequestMethod } from '@nestjs/common';
+import { FeedRequisitionController } from './feed-requisition.controller';
 import {
   FeedRequisitionService,
   isEditableFeedRequisition,
@@ -37,6 +40,7 @@ interface Entry {
   values?: any;
   set?: any;
   inTx?: boolean;
+  where?: unknown;
 }
 
 function recordingDb(queues: Map<unknown, unknown[][]>, cls: () => ClsService) {
@@ -53,8 +57,12 @@ function recordingDb(queues: Map<unknown, unknown[][]>, cls: () => ClsService) {
         },
         leftJoin: () => self,
         innerJoin: () => self,
-        where: () => self,
+        where: (c: unknown) => {
+          entry.where = c;
+          return self;
+        },
         orderBy: () => self,
+        groupBy: () => self,
         limit: () => self,
         for: () => self,
         then: (ok: any, err: any) =>
@@ -84,6 +92,19 @@ function recordingDb(queues: Map<unknown, unknown[][]>, cls: () => ClsService) {
   };
   return { db, log };
 }
+
+// The sending rule allows only the farm's Sunday, so the clock is pinned to one (29 Nov 2026).
+jest
+  .useFakeTimers({
+    doNotFake: [
+      'nextTick',
+      'setImmediate',
+      'setTimeout',
+      'setInterval',
+      'queueMicrotask',
+    ],
+  })
+  .setSystemTime(new Date('2026-11-29T12:00:00'));
 
 const TODAY = serverToday();
 const REQ_ROW = {
@@ -205,7 +226,16 @@ function setup(queues: Map<unknown, unknown[][]>) {
         newValues: v.new_values,
         oldValues: v.old_values,
       }));
-  return { service, approvals, forecast, evaluated, as, writes, audits };
+  return {
+    service,
+    approvals,
+    forecast,
+    evaluated,
+    as,
+    writes,
+    audits,
+    log,
+  };
 }
 
 describe('isEditableFeedRequisition (D25)', () => {
@@ -540,11 +570,12 @@ describe('FeedRequisitionService.submit (D25)', () => {
           [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW], VIEW],
         ],
         [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
-        // linesForCheck, then the lines' stored balance and shortage the approval's urgency is worked out from.
+        // linesForCheck, the sending rule's lines, then the stored balance and shortage the urgency is worked out from.
         [
           schema.requisitionLine,
           [
             [LINE_6000],
+            [],
             [
               {
                 location_type: 'SILO',
@@ -640,7 +671,7 @@ describe('FeedRequisitionService.submit (D25)', () => {
           [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [late], VIEW],
         ],
         [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
-        [schema.requisitionLine, [[LINE_6000], []]],
+        [schema.requisitionLine, [[LINE_6000], [], []]],
         [schema.approvalRequest, [[]]],
       ]),
     );
@@ -1053,7 +1084,7 @@ describe('A1 (10 Oct) — checkpoint 16 and Requisition row 34 on submit and edi
           [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW], VIEW],
         ],
         [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
-        [schema.requisitionLine, [[LINE_6000], urgencyRows, []]],
+        [schema.requisitionLine, [[LINE_6000], [], urgencyRows, []]],
         [schema.approvalRequest, [[]]],
       ]),
     );
@@ -1081,5 +1112,230 @@ describe('A1 (10 Oct) — checkpoint 16 and Requisition row 34 on submit and edi
         urgencyRow({ location_type: 'STORE', system_balance_kg: '0.0000' }),
       ]),
     ).toBe('MEDIUM');
+  });
+});
+
+// Rishi, 25 Nov: checked on send only — the farm's Sunday, with that day's posted stock count.
+describe('send rule: Sunday + posted count', () => {
+  const at = (iso: string) => jest.setSystemTime(new Date(iso));
+  const epoch = (iso: string) => Date.parse(iso) / 1000;
+  const SUNDAY_NOON = '2026-11-29T12:00:00';
+  afterEach(() => at(SUNDAY_NOON));
+
+  const gateRow = (over: Record<string, unknown> = {}) => ({
+    line_seq: 10000,
+    item_id: 'item-1',
+    destination_location_id: 'silo-1',
+    item_name: 'Weaner Diet R1',
+    location_code: 'GRS/SILO-001',
+    location_type: 'SILO',
+    ...over,
+  });
+  const counted = (iso: string) => ({
+    silo_id: 'silo-1',
+    item_id: 'item-1',
+    epoch: epoch(iso),
+  });
+  const HISTORY = [{ warehouse_id: 'silo-1', item_id: 'item-1' }];
+  const NOT_COUNTED =
+    'Line 10000: Weaner Diet R1 in GRS/SILO-001 has no posted stock count dated today.';
+
+  const sending = ({
+    countRows = [] as unknown[],
+    history = HISTORY as unknown[],
+    zone = null as string | null,
+  } = {}) =>
+    setup(
+      new Map<unknown, unknown[][]>([
+        [
+          schema.requisition,
+          [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW], VIEW],
+        ],
+        [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
+        [schema.requisitionLine, [[LINE_6000], [gateRow()], [], []]],
+        [schema.companyMaster, [[{ zone }], [{ zone }]]],
+        [schema.feedStockCountLine, [countRows]],
+        [schema.inventoryLedger, [history]],
+        [schema.approvalRequest, [[]]],
+      ]),
+    );
+  const send = (s: ReturnType<typeof setup>) =>
+    s.as(COMPANY_ADMIN_SCOPE, () =>
+      s.service.submit('req-1', {}, 'tenant-1', ADMIN),
+    );
+
+  it('refuses on a Monday, writing nothing', async () => {
+    at('2026-11-30T12:00:00');
+    const s = sending({ countRows: [counted('2026-11-30T08:00:00')] });
+    await expect(send(s)).rejects.toThrow(/only on Sunday/);
+    expect(s.writes()).toEqual([]);
+  });
+
+  it('refuses an uncounted silo on Sunday, writing nothing', async () => {
+    const s = sending();
+    await expect(send(s)).rejects.toThrow(new BadRequestException(NOT_COUNTED));
+    expect(s.writes()).toEqual([]);
+  });
+
+  it('sends with a posted count dated today', async () => {
+    const s = sending({ countRows: [counted('2026-11-29T08:00:00')] });
+    await expect(send(s)).resolves.toMatchObject({
+      status: 'PENDING_APPROVAL',
+    });
+  });
+
+  it("refuses last Sunday's count, whenever it was posted", async () => {
+    const s = sending({ countRows: [counted('2026-11-22T08:00:00')] });
+    await expect(send(s)).rejects.toThrow(NOT_COUNTED);
+  });
+
+  it("dates a count by the farm's zone: Saturday 23:30 UTC is Sunday in Harare", async () => {
+    at('2026-11-29T09:00:00Z');
+    const s = sending({
+      zone: 'Africa/Harare',
+      countRows: [counted('2026-11-28T23:30:00Z')],
+    });
+    await expect(send(s)).resolves.toMatchObject({
+      status: 'PENDING_APPROVAL',
+    });
+  });
+
+  it('asks only for POSTED counts of this farm', async () => {
+    const s = sending({ countRows: [counted('2026-11-29T08:00:00')] });
+    await send(s);
+    const query = s.log.find((e) => e.table === schema.feedStockCountLine)!;
+    const rendered = new MySqlDialect().sqlToQuery(query.where as any);
+    expect(rendered.sql).toContain('`feed_stock_count`.`status` = ?');
+    expect(rendered.params).toEqual(
+      expect.arrayContaining(['POSTED', 'farm-grs', 'co-1', 'tenant-1']),
+    );
+  });
+
+  it('checks the item a line edit changes to, and refuses before submitting', async () => {
+    const s = setup(
+      new Map<unknown, unknown[][]>([
+        [
+          schema.requisition,
+          [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW]],
+        ],
+        [
+          schema.locationMaster,
+          [
+            [{ location_id: 'farm-grs' }],
+            [{ location_code: 'GRS' }],
+            [
+              {
+                location_id: 'silo-1',
+                location_code: 'GRS/SILO-001',
+                location_type: 'SILO',
+                farm_id: 'farm-grs',
+                is_active: true,
+              },
+            ],
+          ],
+        ],
+        [
+          schema.requisitionLine,
+          [
+            [
+              {
+                line_id: 'line-1',
+                line_seq: 10000,
+                feed_type: 'BULK',
+                quantity: '6000.0000',
+                item_id: 'item-1',
+                destination_location_id: 'silo-1',
+                lifecycle_ref_id: null,
+                description: 'Weaner Diet R1',
+              },
+            ],
+            [],
+            [LINE_6000],
+            [gateRow({ item_id: 'item-2', item_name: 'Grower Diet' })],
+          ],
+        ],
+        [
+          schema.itemMaster,
+          [[{ item_id: 'item-2', item_name: 'Grower Diet' }]],
+        ],
+        [schema.inventoryLedger, [HISTORY]],
+      ]),
+    );
+    (s.service as any).siloFeed = { currentItems: async () => new Map() };
+    await expect(
+      s.as(COMPANY_ADMIN_SCOPE, () =>
+        s.service.submit(
+          'req-1',
+          { lines: [{ line_id: 'line-1', item_id: 'item-2' }] },
+          'tenant-1',
+          ADMIN,
+        ),
+      ),
+    ).rejects.toThrow(/Grower Diet in GRS\/SILO-001 has no posted stock count/);
+    // The edit itself was written inside the rejected transaction; MySQL proves the rollback.
+    expect(s.writes().filter((e) => e.table === schema.approvalRequest)).toEqual(
+      [],
+    );
+    expect(s.writes().filter((e) => e.table === schema.requisition)).toEqual([]);
+    expect(s.writes().every((e) => e.inTx)).toBe(true);
+  });
+
+  const gate = (user: any = ADMIN, scope: FarmScope = COMPANY_ADMIN_SCOPE) => {
+    const s = sending();
+    return s.as(scope, () => s.service.submitGate('req-1', 'tenant-1', user));
+  };
+
+  it('tells the open requisition why it cannot be sent', async () => {
+    at('2026-11-30T12:00:00');
+    await expect(gate()).resolves.toEqual({
+      allowed: false,
+      today: '2026-11-30',
+      problems: [
+        'Feed requisitions can be sent only on Sunday. It is Monday on this farm.',
+      ],
+    });
+  });
+
+  it('answers the check as not found for a farm user of another farm', async () => {
+    await expect(
+      gate(FARM_USER, { ...OWN_FARM_SCOPE, farmId: 'farm-other' }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('still saves a draft on a Monday', async () => {
+    at('2026-11-30T12:00:00');
+    // A remarks-only save reads lines once, for the view.
+    const s = setup(
+      new Map<unknown, unknown[][]>([
+        [
+          schema.requisition,
+          [[{ farm_id: 'farm-grs', company_id: 'co-1' }], [REQ_ROW], VIEW],
+        ],
+        [schema.locationMaster, [[{ location_id: 'farm-grs' }], [FARM]]],
+        [schema.requisitionLine, [[]]],
+      ]),
+    );
+    await s.as(COMPANY_ADMIN_SCOPE, () =>
+      s.service.update('req-1', { remarks: 'x' }, 'tenant-1', ADMIN),
+    );
+    expect(
+      s.writes().find((e) => e.table === schema.requisition)!.set,
+    ).toMatchObject({ remarks: 'x' });
+  });
+});
+
+// A route decorator lost in an edit passes every service test: the URL just stops existing.
+describe('feed requisition sending routes', () => {
+  const route = (name: 'submit' | 'submitGate') => {
+    const handler = FeedRequisitionController.prototype[name];
+    return [
+      Reflect.getMetadata('method', handler),
+      Reflect.getMetadata('path', handler),
+    ];
+  };
+
+  it('serves POST :id/submit and GET :id/submit-gate', () => {
+    expect(route('submit')).toEqual([RequestMethod.POST, ':id/submit']);
+    expect(route('submitGate')).toEqual([RequestMethod.GET, ':id/submit-gate']);
   });
 });
