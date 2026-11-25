@@ -129,7 +129,7 @@ export function FeedConsolidationsPanel() {
             <div className="max-h-[50vh] shrink-0 overflow-x-auto overflow-y-auto rounded-md border border-(--border) bg-(--surface)">
               <table aria-label={t("fcsLinesLabel")} className="w-max min-w-full border-separate border-spacing-0 text-left">
                 <thead><tr>
-                  {([["fcsColRequisition", ""], ["fcsColFarm", ""], ["fcsColDestination", ""], ["fcsColItem", "min-w-48"], ["fcsColBin", "min-w-40"], ["fcsColRequested", "text-right"], ["fcsColDietTotal", "text-right"], ["fcsColCapacity", "text-right"], ["fcsColApproved", "text-right"], ["fcsColReason", "min-w-40"], ["fcsColTransfer", ""], ["fcsColLoadingSheet", ""]] as const).map(([key, cls]) => <th key={key} className={`${TH} ${cls}`}>{t(key)}</th>)}
+                  {([["fcsColRequisition", ""], ["fcsColFarm", ""], ["fcsColDestination", ""], ["fcsColItem", "min-w-48"], ["fcsColRequested", "text-right"], ["fcsColApproved", "text-right"], ["fcsColReason", "min-w-40"], ["fcsColTransfer", ""], ["fcsColLoadingSheet", ""], ["fcsColCapacity", "text-right"], ["fcsColDietTotal", "text-right"], ["fcsColBin", "min-w-40"]] as const).map(([key, cls]) => <th key={key} className={`${TH} ${cls}`}>{t(key)}</th>)}
                 </tr></thead>
                 <tbody>
                   {selected.lines?.map((line) => (
@@ -141,14 +141,14 @@ export function FeedConsolidationsPanel() {
                         <div>{line.item_code ? <RecordLink code={line.item_code} href={itemHref(line.item_id)} /> : na}{line.diet_no == null ? null : <span className="ml-1 text-xs text-(--text-secondary)">{t("fcdDiet", { no: line.diet_no })}</span>}</div>
                         <div className="text-xs text-(--text-secondary)">{line.item_name || t("fcsNoDescription")}</div>
                       </td>
-                      <td className={`${TD} whitespace-normal break-words`}>{line.mill_loading_bin_code ? <><RecordLink code={line.mill_loading_bin_code} href={line.mill_loading_bin_id ? locationHref(line.mill_loading_bin_id) : null} /><div className="text-xs text-(--text-secondary)">{line.mill_loading_bin_name || ""}</div></> : t("flsNotConfigured")}</td>
                       <td className={`${TD} ${NUM}`}>{kgText(line.requested_qty_kg, na)} KG</td>
-                      <td className={`${TD} ${NUM}`}>{kgText(line.total_all_farms_kg, na)} KG</td>
-                      <td className={`${TD} ${NUM}`}>{millCapacityText(line.mill_capacity_state, line.available_mill_output_kg, t)}</td>
                       <td className={`${TD} ${NUM}`}>{kgText(line.mill_approved_qty_kg, na)} KG</td>
                       <td className={`${TD} min-w-40 whitespace-normal break-words`}>{line.adjustment_reason || t("fcsNoAdjustment")}</td>
                       <td className={`${TD} whitespace-nowrap`}>{line.transfer_no ? <RecordLink code={line.transfer_no} href={line.transfer_id ? transferHref(line.transfer_id) : null} /> : t("fcsNotReleased")}</td>
                       <td className={`${TD} whitespace-nowrap`}>{line.loading_sheet_no ? <RecordLink code={line.loading_sheet_no} href={line.loading_sheet_id ? loadingSheetHref(line.loading_sheet_id) : null} /> : t("fcsNotCreated")}</td>
+                      <td className={`${TD} ${NUM}`}>{millCapacityText(line.mill_capacity_state, line.available_mill_output_kg, t)}</td>
+                      <td className={`${TD} ${NUM}`}>{kgText(line.total_all_farms_kg, na)} KG</td>
+                      <td className={`${TD} whitespace-normal break-words`}>{line.mill_loading_bin_code ? <><RecordLink code={line.mill_loading_bin_code} href={line.mill_loading_bin_id ? locationHref(line.mill_loading_bin_id) : null} /><div className="text-xs text-(--text-secondary)">{line.mill_loading_bin_name || ""}</div></> : t("flsNotConfigured")}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -46,6 +46,11 @@ describe("FeedConsolidationsPanel", () => {
     const lines = await screen.findByRole("table", { name: "fcsLinesLabel" });
     expect(screen.getByText("Feed Mill Manager One")).toBeTruthy();
     const cell = within(lines);
+    // Rishi, 25 Nov: requested beside approved, release links next; mill capacity figures after.
+    const headers = cell.getAllByRole("columnheader").map((h) => h.textContent);
+    expect(headers).toEqual(["Requisition", "Farm", "Destination", "Item", "Requested", "Approved", "Reason", "Transfer", "LoadingSheet", "Capacity", "DietTotal", "Bin"].map((k) => `fcsCol${k}`));
+    const values = cell.getAllByRole("cell").map((c) => c.textContent);
+    expect(values.slice(4)).toEqual(["6,000 KG", "6,000 KG", "fcsNoAdjustment", "TO-0001", "LOAD-REQ-MUL100-2026-00001-10000", "150,000", "9,000 KG", "MILL-001/BIN-001Bin 1"]);
     expect(cell.getByText("fcdDiet:8")).toBeTruthy();
     expect(cell.getByText("150,000")).toBeTruthy();
     expect(cell.getByText("9,000 KG")).toBeTruthy();

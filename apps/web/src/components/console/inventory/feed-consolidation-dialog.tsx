@@ -370,22 +370,20 @@ export function FeedConsolidationDialog({
                   >
                     {t('fcdColFarm')}
                   </th>
-                  {th(t('fcdColPriorityNo'), 'text-right')}
-                  {th(t('fcdColFirstShortage'))}
-                  {th(t('fcdColDaysRemaining'), 'text-right')}
-                  {th(t('fcdColLifecycle'), 'min-w-52')}
-                  {th(t('fcdColDaysBeforeDiet'), 'text-right')}
                   {th(t('fcdColSiloCode'), 'min-w-28')}
                   {th(t('fcdColSiloName'), 'min-w-40')}
-                  {th(t('fcdColSiloCapacity'), 'text-right')}
-                  {th(t('fcdColSystemBalance'), 'text-right')}
-                  {th(t('fcdColDailyUse'), 'text-right')}
                   {th(t('fcdColItemNo'), 'min-w-32')}
                   {th(t('fcdColItemName'), 'min-w-56')}
-                  {th(t('fcdColBatches'), 'min-w-52')}
-                  {th(t('fcdColDelivery'))}
                   {th(t('fcdColRequested'), 'text-right')}
                   {th(t('fcdColRecommended'), 'text-right')}
+                  {th(t('fcdColApproved'), 'text-right')}
+                  {th(t('fcdColReason'), 'min-w-52')}
+                  {th(t('feedPlanColCapacity'), 'min-w-36')}
+                  {th(t('fcdColDelivery'))}
+                  {th(t('fcdColFirstShortage'))}
+                  {th(t('fcdColDaysRemaining'), 'text-right')}
+                  {th(t('fcdColPriorityNo'), 'text-right')}
+                  {th(t('fcdColNotes'), 'min-w-40')}
                   {forecastDates.map((date) => (
                     <th
                       key={date}
@@ -398,12 +396,14 @@ export function FeedConsolidationDialog({
                       {formatDateShort(date)}
                     </th>
                   ))}
-                  {th(t('fcdColNotes'), 'min-w-40')}
+                  {th(t('fcdColSiloCapacity'), 'text-right')}
+                  {th(t('fcdColSystemBalance'), 'text-right')}
+                  {th(t('fcdColDailyUse'), 'text-right')}
+                  {th(t('fcdColBatches'), 'min-w-52')}
+                  {th(t('fcdColLifecycle'), 'min-w-52')}
+                  {th(t('fcdColDaysBeforeDiet'), 'text-right')}
                   {th(t('fcdColBin'), 'min-w-28')}
                   {th(t('fcdColBinName'), 'min-w-44')}
-                  {th(t('feedPlanColCapacity'), 'min-w-36')}
-                  {th(t('fcdColApproved'), 'text-right')}
-                  {th(t('fcdColReason'), 'min-w-52')}
                   {th(t('fcdColFigures'))}
                 </tr>
               </thead>
@@ -461,84 +461,17 @@ export function FeedConsolidationDialog({
                           {row.farm_name}
                         </div>
                       </td>
-                      <td className={`${TD} ${NUM}`}>
-                        {row.priority_no ?? NA}
-                      </td>
-                      <td className={`${TD} whitespace-nowrap`}>
-                        {row.first_shortage_date
-                          ? formatDateShort(row.first_shortage_date)
-                          : row.figures_source === 'NONE'
-                            ? NA
-                            : t('fcdNoShortage')}
-                      </td>
-                      <td className={`${TD} ${NUM}`}>
-                        {row.days_remaining == null
-                          ? NA
-                          : Number(row.days_remaining).toFixed(1)}
-                      </td>
-                      <td
-                        className={`${TD} whitespace-normal break-words text-xs`}
-                      >
-                        {row.lifecycle_ref_label ?? (
-                          <HoverHint hint={t('fcdNaLifecycle')}>{NA}</HoverHint>
-                        )}
-                      </td>
-                      <td className={`${TD} ${NUM}`}>
-                        {row.days_before_diet_change ?? (
-                          <HoverHint
-                            hint={t(
-                              row.is_next_diet
-                                ? 'fcdNaLifecycle'
-                                : 'fcdNaNotNextDiet',
-                            )}
-                          >
-                            {NA}
-                          </HoverHint>
-                        )}
-                      </td>
                       <td className={`${TD} whitespace-nowrap`}>
                         {siloCode(row)}
                       </td>
                       <td className={`${TD} whitespace-normal break-words`}>
                         {siloName(row)}
                       </td>
-                      <td className={`${TD} ${NUM}`}>
-                        {row.silo_capacity_kg == null
-                          ? NA
-                          : `${formatKg(row.silo_capacity_kg)} KG`}
-                      </td>
-                      <td className={`${TD} ${NUM}`}>
-                        {row.system_balance_kg == null
-                          ? NA
-                          : `${formatKg(row.system_balance_kg)} KG`}
-                      </td>
-                      <td className={`${TD} ${NUM}`}>
-                        {row.daily_requirement_kg == null
-                          ? NA
-                          : `${formatKg(row.daily_requirement_kg)} KG`}
-                      </td>
                       <td className={`${TD} whitespace-nowrap`}>
                         {itemCode(row)}
                       </td>
                       <td className={`${TD} whitespace-normal break-words`}>
                         {itemName(row)}
-                      </td>
-                      <td
-                        className={`${TD} whitespace-normal break-words text-xs`}
-                      >
-                        {row.batches?.length
-                          ? row.batches
-                              .map(
-                                (b) =>
-                                  `${b.batch_no ?? NA}${b.shed_code ? ` · ${b.shed_code}` : ''}${b.heads == null ? '' : ` · ${b.heads} ${t('fcdHeads')}`}`,
-                              )
-                              .join(', ')
-                          : NA}
-                      </td>
-                      <td className={`${TD} whitespace-nowrap`}>
-                        {row.proposed_delivery_date
-                          ? formatDateShort(row.proposed_delivery_date)
-                          : NA}
                       </td>
                       <td className={`${TD} ${NUM}`}>
                         {formatKg(row.quantity)} KG
@@ -547,30 +480,6 @@ export function FeedConsolidationDialog({
                         {row.recommended_qty_kg == null
                           ? NA
                           : `${formatKg(row.recommended_qty_kg)} KG`}
-                      </td>
-                      {forecastDates.map((date) => (
-                        <ForecastDayCell
-                          key={date}
-                          row={row}
-                          date={date}
-                          t={t}
-                          na={NA}
-                        />
-                      ))}
-                      <td
-                        className={`${TD} whitespace-normal break-words text-xs`}
-                        style={notes ? { color: 'var(--warning)' } : undefined}
-                      >
-                        {notes || NA}
-                      </td>
-                      <td className={`${TD} whitespace-nowrap`}>
-                        {binCode(row)}
-                      </td>
-                      <td className={`${TD} whitespace-normal break-words`}>
-                        {binName(row)}
-                      </td>
-                      <td className={TD}>
-                        <CapacityCell row={row} t={t} />
                       </td>
                       <td className={TD}>
                         {isSelected ? (
@@ -619,6 +528,97 @@ export function FeedConsolidationDialog({
                             {t('fcdSelectToEdit')}
                           </span>
                         )}
+                      </td>
+                      <td className={TD}>
+                        <CapacityCell row={row} t={t} />
+                      </td>
+                      <td className={`${TD} whitespace-nowrap`}>
+                        {row.proposed_delivery_date
+                          ? formatDateShort(row.proposed_delivery_date)
+                          : NA}
+                      </td>
+                      <td className={`${TD} whitespace-nowrap`}>
+                        {row.first_shortage_date
+                          ? formatDateShort(row.first_shortage_date)
+                          : row.figures_source === 'NONE'
+                            ? NA
+                            : t('fcdNoShortage')}
+                      </td>
+                      <td className={`${TD} ${NUM}`}>
+                        {row.days_remaining == null
+                          ? NA
+                          : Number(row.days_remaining).toFixed(1)}
+                      </td>
+                      <td className={`${TD} ${NUM}`}>
+                        {row.priority_no ?? NA}
+                      </td>
+                      <td
+                        className={`${TD} whitespace-normal break-words text-xs`}
+                        style={notes ? { color: 'var(--warning)' } : undefined}
+                      >
+                        {notes || NA}
+                      </td>
+                      {forecastDates.map((date) => (
+                        <ForecastDayCell
+                          key={date}
+                          row={row}
+                          date={date}
+                          t={t}
+                          na={NA}
+                        />
+                      ))}
+                      <td className={`${TD} ${NUM}`}>
+                        {row.silo_capacity_kg == null
+                          ? NA
+                          : `${formatKg(row.silo_capacity_kg)} KG`}
+                      </td>
+                      <td className={`${TD} ${NUM}`}>
+                        {row.system_balance_kg == null
+                          ? NA
+                          : `${formatKg(row.system_balance_kg)} KG`}
+                      </td>
+                      <td className={`${TD} ${NUM}`}>
+                        {row.daily_requirement_kg == null
+                          ? NA
+                          : `${formatKg(row.daily_requirement_kg)} KG`}
+                      </td>
+                      <td
+                        className={`${TD} whitespace-normal break-words text-xs`}
+                      >
+                        {row.batches?.length
+                          ? row.batches
+                              .map(
+                                (b) =>
+                                  `${b.batch_no ?? NA}${b.shed_code ? ` · ${b.shed_code}` : ''}${b.heads == null ? '' : ` · ${b.heads} ${t('fcdHeads')}`}`,
+                              )
+                              .join(', ')
+                          : NA}
+                      </td>
+                      <td
+                        className={`${TD} whitespace-normal break-words text-xs`}
+                      >
+                        {row.lifecycle_ref_label ?? (
+                          <HoverHint hint={t('fcdNaLifecycle')}>{NA}</HoverHint>
+                        )}
+                      </td>
+                      <td className={`${TD} ${NUM}`}>
+                        {row.days_before_diet_change ?? (
+                          <HoverHint
+                            hint={t(
+                              row.is_next_diet
+                                ? 'fcdNaLifecycle'
+                                : 'fcdNaNotNextDiet',
+                            )}
+                          >
+                            {NA}
+                          </HoverHint>
+                        )}
+                      </td>
+                      <td className={`${TD} whitespace-nowrap`}>
+                        {binCode(row)}
+                      </td>
+                      <td className={`${TD} whitespace-normal break-words`}>
+                        {binName(row)}
                       </td>
                       <td
                         className={`${TD} whitespace-nowrap text-xs text-(--text-secondary)`}

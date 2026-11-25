@@ -111,6 +111,31 @@ describe('Mill consolidation sheet (Rishi, 30 Oct)', () => {
         '02/11/26',
       ]),
     );
+    // Rishi, 25 Nov: what is needed, where, the mill's decision and the urgency sit left of the days.
+    const days = headers.filter((h) => /^\d\d\/\d\d\/\d\d$/.test(h ?? ''));
+    expect(headers).toEqual([
+      ...['Select', 'Rank', 'ReqNo', 'Farm'].map((k) => `fcdCol${k}`),
+      ...['SiloCode', 'SiloName', 'ItemNo', 'ItemName', 'Requested'].map((k) => `fcdCol${k}`),
+      ...['Recommended', 'Approved', 'Reason'].map((k) => `fcdCol${k}`),
+      'feedPlanColCapacity',
+      ...['Delivery', 'FirstShortage', 'DaysRemaining', 'PriorityNo', 'Notes'].map((k) => `fcdCol${k}`),
+      ...days,
+      ...['SiloCapacity', 'SystemBalance', 'DailyUse', 'Batches', 'Lifecycle'].map((k) => `fcdCol${k}`),
+      ...['DaysBeforeDiet', 'Bin', 'BinName', 'Figures'].map((k) => `fcdCol${k}`),
+    ]);
+    // Each body cell sits under its own header.
+    const cellUnder = (row: HTMLElement, key: string) =>
+      row.querySelectorAll('td')[headers.indexOf(key)].textContent;
+    const body = within(table).getAllByRole('row')[1];
+    expect(cellUnder(body, 'fcdColSiloCode')).toBe('MGH6-G2');
+    expect(cellUnder(body, 'fcdColItemNo')).toBe('FEED000017');
+    expect(cellUnder(body, 'fcdColRequested')).toBe('3,000 KG');
+    expect(cellUnder(body, 'fcdColApproved')).toBe('fcdSelectToApprove');
+    expect(cellUnder(body, 'fcdColReason')).toBe('fcdSelectToEdit');
+    expect(cellUnder(body, 'fcdColPriorityNo')).toBe('1');
+    expect(cellUnder(body, 'fcdColSiloCapacity')).toBe('5,800 KG');
+    expect(cellUnder(body, 'fcdColLifecycle')).toBe('Z-LINE-SOW GROWER weeks 14–22');
+    expect(cellUnder(body, 'fcdColFigures')).toBe('fcdFiguresStored');
     const [first, second] = within(table).getAllByRole('row').slice(1);
     expect(
       within(first).getByText('Z-LINE-SOW GROWER weeks 14–22'),
