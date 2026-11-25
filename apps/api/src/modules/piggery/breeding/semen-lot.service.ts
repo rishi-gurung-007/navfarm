@@ -1,7 +1,7 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -14,6 +14,7 @@ import { QrCodeService } from '../../production/qr-code/qr-code.service';
 import { AnimalBookValueService } from '../../inventory/bio-asset-ledger/animal-book-value.service';
 import { bioCodes } from '../../inventory/bio-asset-ledger/bio-asset-ledger.types';
 import { QcInspectionService } from '../../inventory/qc-inspection/qc-inspection.service';
+import { doseSource } from './semen-dose-source.rules';
 
 export interface PostedSemenLot {
   lot_no: string;
@@ -101,6 +102,10 @@ export class SemenLotService {
       .limit(1);
     if (!item) throw new NotFoundException(`Semen item '${params.itemId}' not found.`);
     if (!item.is_active) throw new BadRequestException(`'${item.item_name}' is not active.`);
+    // Only an item marked as semen holds semen lots (0266), so a vaccine counted in doses cannot be picked by mistake.
+    if (!item.is_semen) {
+      throw new BadRequestException(`'${item.item_code} ${item.item_name}' is not marked as a semen item. Switch on Semen item on its item card, or pick the line's semen item.`);
+    }
 
     const [boarBatch] = params.boarBatchId
       ? await this.db.select().from(schema.batchHeader).where(eq(schema.batchHeader.batch_id, params.boarBatchId)).limit(1)
@@ -226,7 +231,7 @@ export class SemenLotService {
     use?: { sow: typeof schema.animalRegister.$inferSelect; batchId: string | null },
   ) {
     await this.assertNotHeldByQc(lot);
-    const remaining = Number(lot.doses_collected) - Number(lot.doses_used_internal ?? 0) - Number(lot.doses_sold ?? 0);
+    const remaining = Number(lot.doses_collected) - Number(lot.doses_used_internal ?? 0) - Number(lot.doses_sold ?? 0) - Number(lot.doses_destroyed ?? 0);
     if (quantity > remaining + 1e-9) {
       throw new BadRequestException(
         `The semen lot${lot.lot_no ? ` ${lot.lot_no}` : ''} has ${remaining} dose${remaining === 1 ? '' : 's'} left; ${quantity} cannot be used.`,
@@ -239,18 +244,23 @@ export class SemenLotService {
         .where(eq(schema.itemMaster.item_id, lot.output_item_id))
         .limit(1);
 
-      // The doses cost what THIS lot cost, whatever else is in the store: they are drawn from the lot's own receipt layer. Where that layer no longer holds them
-      // (some of the stock was transferred away) they are drawn the ordinary way, from the oldest receipt.
+      // Semen is used on the sow's farm: the doses come out of the store there that holds the lot, once that farm's receipt QC has accepted it (D1).
+      const warehouseId = await this.doseStore(lot, quantity, use?.sow);
+      // The doses cost what THIS lot cost, whatever else is in the store: they are drawn from the lot's own receipt layer (its collection OUTPUT in the
+      // collection store, its transfer receipt in a farm's store). Where that layer no longer holds them they are drawn the ordinary way, from the oldest receipt.
+      const L = schema.inventoryLedger;
       const [lotReceipt] = await this.db
-        .select({ ledger_id: schema.inventoryLedger.ledger_id, remaining_quantity: schema.inventoryLedger.remaining_quantity })
-        .from(schema.inventoryLedger)
+        .select({ ledger_id: L.ledger_id, remaining_quantity: L.remaining_quantity })
+        .from(L)
         .where(and(
-          eq(schema.inventoryLedger.item_id, lot.output_item_id),
-          eq(schema.inventoryLedger.warehouse_id, lot.warehouse_id),
-          eq(schema.inventoryLedger.lot_no, lot.lot_no),
-          eq(schema.inventoryLedger.transaction_type, 'OUTPUT'),
-          eq(schema.inventoryLedger.document_type, 'BREEDING'),
+          eq(L.item_id, lot.output_item_id),
+          eq(L.warehouse_id, warehouseId),
+          eq(L.lot_no, lot.lot_no),
+          ...(warehouseId === lot.warehouse_id
+            ? [eq(L.transaction_type, 'OUTPUT'), eq(L.document_type, 'BREEDING')]
+            : [eq(L.transaction_type, 'TRANSFER_RECEIPT'), gte(L.remaining_quantity, String(quantity))]),
         ))
+        .orderBy(asc(L.posting_date), asc(L.entry_no))
         .limit(1);
       const sourceLedgerId = lotReceipt && Number(lotReceipt.remaining_quantity ?? 0) >= quantity - 1e-9 ? lotReceipt.ledger_id : undefined;
 
@@ -289,7 +299,7 @@ export class SemenLotService {
         lotNo: lot.lot_no,
         sourceLedgerId,
         batchNo: sowBatch?.batch_no,
-        warehouseId: lot.warehouse_id,
+        warehouseId,
         userId: userPayload?.userId,
       });
       // Capitalised into the sow: out of the stock, into the class account she is carried in.
@@ -304,6 +314,42 @@ export class SemenLotService {
       .update(schema.semenBatch)
       .set({ doses_used_internal: String(Number(lot.doses_used_internal ?? 0) + quantity) })
       .where(eq(schema.semenBatch.semen_batch_id, lot.semen_batch_id));
+  }
+
+  /**
+   * The store a mating's doses come out of: one on the sow's farm holding the lot (semen-dose-source.rules.ts). Refused, naming why, when her farm has
+   * none of it: the lot was never sent there, its receipt is waiting for that farm's QC, or that QC rejected it. A sow with no location keeps the
+   * old rule (the collection store).
+   */
+  private async doseStore(lot: typeof schema.semenBatch.$inferSelect, quantity: number, sow?: typeof schema.animalRegister.$inferSelect): Promise<string> {
+    const sowFarmId = sow?.current_location_id ? await farmOfLocation(this.db, sow.current_location_id) : null;
+    if (!sowFarmId) return lot.warehouse_id!;
+    const L = schema.inventoryLedger;
+    const Q = schema.qcInspection;
+    const held = await this.db
+      .select({ warehouse_id: L.warehouse_id, qty: sql<string>`SUM(${L.quantity})` })
+      .from(L)
+      .where(and(eq(L.item_id, lot.output_item_id!), eq(L.lot_no, lot.lot_no!)))
+      .groupBy(L.warehouse_id);
+    const receipts = await this.db
+      .select({ inspection_no: Q.inspection_no, status: Q.status, ledger: Q.ledger_entry_id, warehouse_id: Q.warehouse_id })
+      .from(Q)
+      .where(and(eq(Q.item_id, lot.output_item_id!), eq(Q.lot_no, lot.lot_no!), inArray(Q.source_doc_type, ['TRANSFER_RECEIPT', 'TRANSFER_EVENT'])));
+    const farmOf = async (id: string | null) => (id ? farmOfLocation(this.db, id) : null);
+    const [farm] = sowFarmId
+      ? await this.db.select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name }).from(schema.locationMaster).where(eq(schema.locationMaster.location_id, sowFarmId)).limit(1)
+      : [];
+    const chosen = doseSource({
+      lotNo: lot.lot_no ?? '',
+      quantity,
+      sowFarmId,
+      sowFarmLabel: farm ? `${farm.code} (${farm.name})` : 'her farm',
+      collectionStoreId: lot.warehouse_id!,
+      stock: await Promise.all(held.filter((h) => h.warehouse_id).map(async (h) => ({ warehouse_id: h.warehouse_id!, farm_id: await farmOf(h.warehouse_id), qty: Number(h.qty) }))),
+      farmReceipts: await Promise.all(receipts.map(async (r) => ({ inspection_no: r.inspection_no, status: r.status, posted: !!r.ledger, farm_id: await farmOf(r.warehouse_id) }))),
+    });
+    if ('error' in chosen) throw new BadRequestException(chosen.error);
+    return chosen.warehouseId;
   }
 
   /**

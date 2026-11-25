@@ -11,6 +11,7 @@ export class QueryQcInspectionDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() companyId?: string;
   @ApiPropertyOptional({ enum: ['OPEN', 'PENDING_APPROVAL', 'CLOSED'] }) @IsOptional() @IsIn(['OPEN', 'PENDING_APPROVAL', 'CLOSED']) status?: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() itemId?: string;
+  @ApiPropertyOptional({ description: 'DUE: open inspections with a round due today or overdue' }) @IsOptional() @IsIn(['DUE']) due?: string;
   @ApiPropertyOptional({ description: 'Inspection no., source document no. or PO no.' }) @IsOptional() @IsString() search?: string;
   @ApiPropertyOptional({ default: 50 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) limit?: number;
   @ApiPropertyOptional({ default: 0 }) @IsOptional() @Type(() => Number) @IsInt() @Min(0) offset?: number;
@@ -30,6 +31,15 @@ export class QcLineEntryDto {
   @IsOptional() @IsIn(['PASS', 'FAIL']) result?: 'PASS' | 'FAIL' | null;
 
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(500) remarks?: string | null;
+}
+
+/** The readings of one round of a multi-round inspection (0263). The last round is recorded by completing the inspection. */
+export class RecordQcRoundDto {
+  @ApiProperty({ type: [QcLineEntryDto] })
+  @IsArray() @ArrayMaxSize(200) @ValidateNested({ each: true }) @Type(() => QcLineEntryDto)
+  lines: QcLineEntryDto[];
+
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(500) remarks?: string;
 }
 
 export class CompleteQcInspectionDto {

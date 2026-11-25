@@ -52,16 +52,18 @@ describe("item costing and tracking locks", () => {
   it.each(["is_tracked", "tracking_type", "tracking_series_id"])("%s locks on tracking_locked and says why", (key) => {
     const field = item.fields.find((f) => f.key === key)!;
     expect(field.lockWhenRowFlag).toBe("tracking_locked");
-    expect(field.lockReason?.({ on_hand_qty: 50, uom_primary: "KG", open_documents: 0 })).toBe("50 KG on hand — consume it or adjust it out first");
-    expect(field.lockReason?.({ on_hand_qty: 0, open_documents: 2 })).toBe("2 open documents name this item — post or cancel them first");
+    expect(field.lockReason?.({ on_hand_qty: 50, uom_primary: "KG", open_documents: 0 })).toBe("50 KG on hand. Consume it or adjust it out first");
+    expect(field.lockReason?.({ on_hand_qty: 0, open_documents: 2 })).toBe("2 open documents name this item. Post or cancel them first");
   });
 });
 
 describe("animal register carries RFID only", () => {
   const animal = MASTER_DATA_CONFIGS.find((c) => c.key === "animal")!;
   const keys = animal.fields.map((f) => f.key);
-  it("has no tattoo, serial number, landing cost or status field", () => {
-    for (const gone of ["ear_tag", "serial_number", "landing_cost", "status"]) expect(keys).not.toContain(gone);
+  it("has no tattoo, serial number, landing cost or status field on the form", () => {
+    for (const gone of ["ear_tag", "serial_number", "landing_cost"]) expect(keys).not.toContain(gone);
+    // Status is declared only so the list's Status filter is a dropdown (client, 18 Nov); Dispose and the breeding events set it.
+    expect(animal.fields.find((f) => f.key === "status")?.hideInForm).toBe(true);
     expect(keys).toContain("rfid_tag");
   });
   it("fills the sire and dam serial from the picked parent and then locks it", () => {

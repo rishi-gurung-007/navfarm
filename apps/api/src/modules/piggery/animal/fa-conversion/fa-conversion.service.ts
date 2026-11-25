@@ -5,6 +5,7 @@ import { ClsService } from 'nestjs-cls';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../../../../core/database/schema';
 import { withTenantTransaction } from '../../../../common/tenant-transaction';
+import { animalOnFarm, animalScopeConditions, farmScope, restrictedScopeConditions } from '../../../../common/farm-scope';
 import { isDuplicateEntry } from '../../../../common/filters/http-exception.filter';
 import { AuditLogService } from '../../../system/audit-log/audit-log.service';
 import { AnimalBookValueService } from '../../../inventory/bio-asset-ledger/animal-book-value.service';
@@ -52,7 +53,12 @@ export class FaConversionService {
 
   private async load(id: string, tenantId: string) {
     const T = schema.faInventoryConversion;
-    const [row] = await this.db.select().from(T).where(and(eq(T.conversion_id, id), eq(T.tenant_id, tenantId))).limit(1);
+    // A farm user reaches only the conversions of animals on their farm; Finance, unrestricted, reaches every one in the company.
+    const scope = farmScope(this.cls);
+    const [row] = await this.db.select().from(T).where(and(
+      eq(T.conversion_id, id), eq(T.tenant_id, tenantId),
+      ...(scope.farmId ? [animalOnFarm(T.animal_id, scope.farmId)] : []), ...restrictedScopeConditions(scope, { companyId: T.company_id }),
+    )).limit(1);
     if (!row) throw new NotFoundException('Conversion request not found.');
     return row;
   }
@@ -67,7 +73,7 @@ export class FaConversionService {
     const T = schema.faInventoryConversion;
     return this.db.select({ ...getTableColumns(T), animal_code: schema.animalRegister.animal_code, rfid_tag: schema.animalRegister.rfid_tag }).from(T)
       .innerJoin(schema.animalRegister, eq(schema.animalRegister.animal_id, T.animal_id)).where(and(
-        eq(T.tenant_id, tenantId), ...(companyId ? [eq(T.company_id, companyId)] : []),
+        eq(T.tenant_id, tenantId), ...(companyId ? [eq(T.company_id, companyId)] : []), ...animalScopeConditions(farmScope(this.cls)),
         ...(query.status ? [eq(T.status, query.status)] : []), ...(query.animal_id ? [eq(T.animal_id, query.animal_id)] : []),
       )).orderBy(desc(T.created_at));
   }
@@ -75,8 +81,8 @@ export class FaConversionService {
   /** The farm raises the request, from an animal already taken out of production. One open request per animal. */
   async request(dto: RequestFaConversionDto, tenantId: string, userId?: string) {
     const A = schema.animalRegister;
-    const [animal] = await this.db.select().from(A).where(and(eq(A.animal_id, dto.animal_id), eq(A.tenant_id, tenantId))).limit(1);
-    if (!animal) throw new NotFoundException('Animal not found.');
+    const [animal] = await this.db.select().from(A).where(and(eq(A.animal_id, dto.animal_id), eq(A.tenant_id, tenantId), ...animalScopeConditions(farmScope(this.cls)))).limit(1);
+    if (!animal) throw new NotFoundException('Animal not found on your active farm.');
     assertRequestable({
       animal_code: animal.animal_code, is_active: !!animal.is_active,
       costing_start_date: animal.costing_start_date ? String(animal.costing_start_date).slice(0, 10) : null,

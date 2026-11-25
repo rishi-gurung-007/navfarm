@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { EntryModal, Field, inputStyle } from './breeding-form-parts';
 import { todayIso, type Issue, type Row } from './breeding-rules';
 import { bandNote, cellText, parseTsiPaste } from './boar-selection-rules';
-import { CollectionPlans, PlanDialog } from './collection-plans';
+import { PlanDialog } from './collection-plans';
 
 const unwrap = <T,>(res: any): T => (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 const S = {
@@ -106,10 +106,6 @@ export function BoarSelectionPanel({
     setSelectedBreed(base.size ? breed : '');
   };
   const planned = selectedBreed ? tables[selectedBreed] : null;
-  const rulesFor = (plan: Row) => {
-    const rules = tables[plan.breed_id]?.plan_rules;
-    return { referenceLabel: rules?.reference_label ?? null, poolingAllowed: rules?.pooling_allowed ?? true };
-  };
 
   return (
     <div className="space-y-3">
@@ -184,15 +180,12 @@ export function BoarSelectionPanel({
         </p>
       )}
 
-      <CollectionPlans
-        plans={plans}
-        rulesFor={rulesFor}
-        onCollect={(plan, boarIds, batchId) => onCollect?.(plan, boarIds, batchId)}
-        onChanged={() => {
-          load();
-          loadPlans();
-        }}
-      />
+      {/* The plans themselves are followed on the AI Station's Planned Collections tab. */}
+      {plans.some((p) => p.status === 'PLANNED') && (
+        <p className="text-[11px]" style={S.muted}>
+          {plans.filter((p) => p.status === 'PLANNED').length} collection{plans.filter((p) => p.status === 'PLANNED').length === 1 ? ' is' : 's are'} planned: see the Planned Collections tab.
+        </p>
+      )}
 
       {planning && planned && (
         <PlanDialog

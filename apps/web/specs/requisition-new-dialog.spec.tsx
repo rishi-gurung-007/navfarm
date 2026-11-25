@@ -37,6 +37,7 @@ jest.mock('../src/hooks/useAuth', () => ({
   }),
 }));
 jest.mock('../src/utils/date-short', () => ({
+  ...jest.requireActual('../src/utils/date-short'),
   formatDateShort: (v: string | null) => v ?? '',
 }));
 jest.mock('../src/hooks/useLanguage', () => {

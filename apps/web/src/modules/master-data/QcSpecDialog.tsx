@@ -25,6 +25,8 @@ export type QcSpecRow = {
   max_value: string;
   target_value: string;
   is_mandatory: boolean;
+  /** Where the check applies: the lot's own QC (INCOMING) or when a transfer brings it to a farm (FARM_RECEIPT). */
+  stage: "INCOMING" | "FARM_RECEIPT";
 };
 
 type QcParameter = {
@@ -36,7 +38,7 @@ const unwrap = <T = any,>(res: any): T => (Array.isArray(res) ? res : res?.data 
 const S = { sub: { color: "var(--text-secondary)" }, muted: { color: "var(--text-muted)" }, line: { borderColor: "var(--border)" } };
 const num = (v: unknown) => (v === null || v === undefined || v === "" ? "" : String(Number(v)));
 export const blankQcRow = (): QcSpecRow => ({
-  param_id: "", qc_code: "", description: "", qc_type: "VALUE", uom: "", min_value: "", max_value: "", target_value: "", is_mandatory: true,
+  param_id: "", qc_code: "", description: "", qc_type: "VALUE", uom: "", min_value: "", max_value: "", target_value: "", is_mandatory: true, stage: "INCOMING",
 });
 
 /** A QC parameter as a check: Numeric is judged against Min..Max (a Value check), Yes / No is confirmed by the inspector (a Descriptive check). */
@@ -45,7 +47,7 @@ const rowFromParameter = (p: QcParameter): QcSpecRow => {
   return {
     param_id: p.param_id, qc_code: p.param_code, description: p.param_name, qc_type: value ? "VALUE" : "DESCRIPTIVE",
     uom: value ? p.uom || "" : "", min_value: value ? num(p.min_value) : "", max_value: value ? num(p.max_value) : "",
-    target_value: value ? num(p.target_value) : "", is_mandatory: !!p.is_mandatory,
+    target_value: value ? num(p.target_value) : "", is_mandatory: !!p.is_mandatory, stage: "INCOMING",
   };
 };
 
@@ -61,6 +63,7 @@ export const toApiLines = (rows: QcSpecRow[]) =>
     max_value: r.qc_type === "VALUE" && r.max_value !== "" ? Number(r.max_value) : null,
     target_value: r.qc_type === "VALUE" && r.target_value !== "" ? Number(r.target_value) : null,
     is_mandatory: r.is_mandatory,
+    stage: r.stage,
   }));
 
 /**
@@ -107,6 +110,7 @@ export default function QcSpecDialog({ itemId, itemCode, open, onClose, draft, o
             param_id: l.param_id || "", qc_code: l.measurement_code || "", description: l.measurement_description || l.acceptance_text || "",
             qc_type: l.sampling_type === "DESCRIPTIVE" ? "DESCRIPTIVE" : "VALUE", uom: l.uom || "", min_value: num(l.min_value),
             max_value: num(l.max_value), target_value: num(l.target_value), is_mandatory: l.is_mandatory !== false,
+            stage: String(l.stage || "INCOMING").toUpperCase() === "FARM_RECEIPT" ? "FARM_RECEIPT" : "INCOMING",
           }))
         : [blankQcRow()]);
     } catch (e: any) { setError(e?.message || String(e)); }
@@ -117,7 +121,8 @@ export default function QcSpecDialog({ itemId, itemCode, open, onClose, draft, o
 
   const pick = (i: number, paramId: string) => {
     const p = params.find((x) => x.param_id === paramId);
-    setRows((all) => all.map((r, at) => (at === i ? (p ? rowFromParameter(p) : blankQcRow()) : r)));
+    // A picked parameter keeps the row's Applies at, so the same parameter can be added once for each stage.
+    setRows((all) => all.map((r, at) => (at === i ? { ...(p ? rowFromParameter(p) : blankQcRow()), stage: r.stage } : r)));
   };
   const set = (i: number, patch: Partial<QcSpecRow>) => setRows((all) => all.map((r, at) => (at === i ? { ...r, ...patch } : r)));
   // A blank row left at the bottom is not a check.
@@ -127,8 +132,9 @@ export default function QcSpecDialog({ itemId, itemCode, open, onClose, draft, o
     const seen = new Set<string>();
     for (const r of filled()) {
       const code = r.qc_code.trim();
-      if (seen.has(code.toUpperCase())) return `${tLabel("QC Code used twice:")} ${code}`;
-      seen.add(code.toUpperCase());
+      const key = `${r.stage}|${code.toUpperCase()}`;
+      if (seen.has(key)) return `${tLabel("QC Code used twice:")} ${code}`;
+      seen.add(key);
       if (r.qc_type !== "VALUE") {
         if (!r.description.trim()) return `${code}: ${tLabel("a Yes / No check needs a Description: what the inspector confirms.")}`;
         continue;
@@ -173,7 +179,8 @@ export default function QcSpecDialog({ itemId, itemCode, open, onClose, draft, o
       }>
       <div className="flex flex-col gap-4">
         <p className="text-sm" style={S.sub}>
-          {tLabel("Each received lot of this item is checked against these before it goes into stock. Pick each check from the QC Parameter Master; its values are filled in and can be changed for this item. Numeric is judged against Min and Max, Yes / No is confirmed by the inspector.")}
+          {tLabel("Each received lot of this item is checked against these before it goes into stock. Pick each check from the QC Parameter Master; its values are filled in and can be changed for this item. Numeric is judged against Min and Max, Yes / No is confirmed by the inspector.")}{" "}
+          {tLabel("Applies at: Collection / receipt checks are the lot's own QC (every round); Farm receipt checks are done when a transfer brings the lot to a farm. An item with no Farm receipt checks uses all of them there.")}
           {!itemId && ` ${tLabel("They are saved with the item.")}`}
         </p>
         {!loading && params.length === 0 && (
@@ -190,14 +197,15 @@ export default function QcSpecDialog({ itemId, itemCode, open, onClose, draft, o
             <table className="w-full min-w-[1080px] table-fixed text-sm">
               <thead>
                 <tr style={{ ...S.muted, backgroundColor: "var(--surface-raised)" }}>
-                  <th className={`${head} w-[19%]`}>{tLabel("QC Code")}</th>
-                  <th className={`${head} w-[19%]`}>{tLabel("Description")}</th>
+                  <th className={`${head} w-[17%]`}>{tLabel("QC Code")}</th>
+                  <th className={`${head} w-[15%]`}>{tLabel("Description")}</th>
                   <th className={`${head} w-[8%]`}>{tLabel("QC Type")}</th>
                   <th className={`${head} w-[12%]`}>{tLabel("Unit of Measurement")}</th>
                   <th className={`${head} w-[9%] text-right`}>{tLabel("Min Value")}</th>
                   <th className={`${head} w-[9%] text-right`}>{tLabel("Max Value")}</th>
                   <th className={`${head} w-[9%] text-right`}>{tLabel("Target Value")}</th>
-                  <th className={`${head} w-[11%]`}>{tLabel("Mandatory")}</th>
+                  <th className={`${head} w-[9%]`}>{tLabel("Mandatory")}</th>
+                  <th className={`${head} w-[10%]`}>{tLabel("Applies at")}</th>
                   <th className={`${head} w-[4%]`} />
                 </tr>
               </thead>
@@ -213,7 +221,7 @@ export default function QcSpecDialog({ itemId, itemCode, open, onClose, draft, o
                       disabled={!editable || !isValue}
                       onChange={(e) => set(i, { [key]: e.target.value })} aria-label={tLabel(key === "min_value" ? "Min Value" : key === "max_value" ? "Max Value" : "Target Value")} />
                   );
-                  const taken = new Set(rows.filter((_, at) => at !== i).map((x) => x.param_id).filter(Boolean));
+                  const taken = new Set(rows.filter((x, at) => at !== i && x.stage === r.stage).map((x) => x.param_id).filter(Boolean));
                   return (
                     <tr key={i} className="border-t align-middle" style={S.line}>
                       <td className="px-3 py-2">
@@ -246,6 +254,13 @@ export default function QcSpecDialog({ itemId, itemCode, open, onClose, draft, o
                         <select className={cell} value={r.is_mandatory ? "yes" : "no"} disabled={!editable} onChange={(e) => set(i, { is_mandatory: e.target.value === "yes" })} aria-label={tLabel("Mandatory")}>
                           <option value="yes">{tLabel("Yes")}</option>
                           <option value="no">{tLabel("No")}</option>
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        <select className={cell} value={r.stage} disabled={!canEdit} onChange={(e) => set(i, { stage: e.target.value as QcSpecRow["stage"] })} aria-label={tLabel("Applies at")}
+                          title={tLabel("Collection / receipt: the lot's own QC, every round. Farm receipt: when a transfer brings the lot to a farm.")}>
+                          <option value="INCOMING">{tLabel("Collection / receipt")}</option>
+                          <option value="FARM_RECEIPT">{tLabel("Farm receipt")}</option>
                         </select>
                       </td>
                       <td className="px-3 py-2">

@@ -34,7 +34,7 @@ describe('BreedingController authorization metadata', () => {
 
   it('leaves no route without a permission, so a new route cannot slip in open', () => {
     const routes = handlers.filter((name) => Reflect.getMetadata(PATH_METADATA, handler(name)) !== undefined);
-    expect(routes).toHaveLength(10);
+    expect(routes).toHaveLength(12);
     for (const name of routes) {
       expect(Reflect.getMetadata(REQUIRE_PERMISSION_KEY, handler(name))).toMatchObject({ moduleCode: 'PIGGERY', resource: 'ANIMAL' });
     }

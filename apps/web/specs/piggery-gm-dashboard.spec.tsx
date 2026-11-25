@@ -232,7 +232,7 @@ describe('GM Dashboard', () => {
     ).toContain('2,900 kg · gmdNoTarget');
     const alerts = screen.getByRole('region', { name: 'gmdAlerts' });
     expect(alerts.textContent).toContain(
-      'Farrowing Rate gmdBelowTarget — GRASMERE',
+      'Farrowing Rate gmdBelowTarget, GRASMERE',
     );
   });
 

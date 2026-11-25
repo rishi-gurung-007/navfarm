@@ -1,5 +1,6 @@
 import type { TranslationKeys } from '@/utils/translations';
 import { downloadExcel } from '@/utils/excel-export';
+import { formatDateTime } from '@/utils/date-short';
 import {
   changeTone,
   columnGroups,
@@ -37,7 +38,7 @@ export async function exportFarrowingExcel(
         `${t('rptDateFrom')}: ${report.filters.date_from}   ${t('rptDateTo')}: ${report.filters.date_to}`,
         `${t('rptBatchType')}: ${batchType}   ${t('rptBatch')}: ${report.filters.batch_no ?? t('rptAll')}   ${t('rptParity')}: ${report.filters.parity ?? t('rptAll')}   ${t('rptSow')}: ${report.filters.sow_code ?? t('rptAll')}`,
         t('rptGeneratedAt', {
-          at: new Date(report.generated_at).toLocaleString(),
+          at: formatDateTime(report.generated_at),
         }),
       ],
       lead: [t('rptSowBatch')],

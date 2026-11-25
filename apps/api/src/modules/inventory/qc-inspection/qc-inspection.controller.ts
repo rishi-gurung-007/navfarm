@@ -1,11 +1,11 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, ParseUUIDPipe, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../common/decorators/require-permission.decorator';
 import { FarmScoped } from '../../../common/farm-scope';
 import { QcInspectionService } from './qc-inspection.service';
-import { ApproveQcDeviationDto, CompleteQcInspectionDto, QueryQcInspectionDto, RefuseQcDeviationDto, SettleQcRejectionDto } from './dto/qc-inspection.dto';
+import { ApproveQcDeviationDto, CompleteQcInspectionDto, QueryQcInspectionDto, RecordQcRoundDto, RefuseQcDeviationDto, SettleQcRejectionDto } from './dto/qc-inspection.dto';
 
 @ApiTags('QC Inspection')
 @ApiBearerAuth()
@@ -30,6 +30,20 @@ export class QcInspectionController {
   async findOne(@Param('id', new ParseUUIDPipe()) id: string) {
     const data = await this.service.findOne(id);
     return { success: true, message: 'QC inspection retrieved.', data };
+  }
+
+  @Post(':id/rounds/:roundNo')
+  @RequirePermission('INVENTORY', 'QC_INSPECTION', 'edit')
+  @ApiOperation({ summary: 'Record one dated round of a multi-round inspection. Nothing is posted; the last round is recorded by completing the inspection.' })
+  async recordRound(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('roundNo', new ParseIntPipe()) roundNo: number,
+    @Body() dto: RecordQcRoundDto,
+    @Req() req: any,
+  ) {
+    const tenantId = req.user?.tenantId || req['tenantId'];
+    const data = await this.service.recordRound(id, roundNo, dto, tenantId, req.user);
+    return { success: true, message: 'QC round recorded.', data };
   }
 
   @Post(':id/complete')

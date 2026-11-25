@@ -17,7 +17,7 @@ describe('GL Mapping fields by transaction type', () => {
     // Compared as text, from the first declaration on (only the header comment differs), so the web app takes no dependency on the API project.
     const body = (path: string) => { const t = readFileSync(path, 'utf8'); return t.slice(t.indexOf('export type MappingPath')); };
     expect(body(join(__dirname, '../src/modules/master-data/gl-mapping-fields.ts'))).toBe(body(join(__dirname, '../../api/src/modules/finance/gl-mapping/gl-mapping-fields.ts')));
-    expect(web.GL_MAPPING_TYPE_RULES.length).toBe(40);
+    expect(web.GL_MAPPING_TYPE_RULES.length).toBe(45);
   });
 
   it('shows category, valuation and entry type for an inventory posting, and only NOB, LOB and stage for a batch or animal cost', () => {

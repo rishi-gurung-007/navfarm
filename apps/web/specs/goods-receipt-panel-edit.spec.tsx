@@ -13,7 +13,7 @@ import { api } from '../src/services/api-client';
  */
 jest.mock('../src/services/api-client', () => ({ api: { get: jest.fn(), post: jest.fn(), put: jest.fn() } }));
 jest.mock('../src/hooks/useAuth', () => ({ getActiveCompanyId: () => 'company-id' }));
-jest.mock('../src/hooks/useLanguage', () => ({ useLanguage: () => ({ t: (key: string) => key }) }));
+jest.mock('../src/hooks/useLanguage', () => ({ useLanguage: () => ({ t: (key: string) => key, tLabel: (label: string) => label }) }));
 jest.mock('../src/components/ui/dialog', () => ({
   Dialog: ({ open, title, children, footer }: { open: boolean; title: string; children: React.ReactNode; footer?: React.ReactNode }) =>
     open ? <div role="dialog" aria-label={title}>{children}{footer}</div> : null,

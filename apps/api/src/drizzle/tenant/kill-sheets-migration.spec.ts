@@ -6,10 +6,11 @@ const journal = JSON.parse(readFileSync(join(directory, 'meta/_journal.json'), '
 const statements = readFileSync(join(directory, '0262_kill_sheets.sql'), 'utf8').split('--> statement-breakpoint').map((part) => part.replace(/^--.*$/gm, '').trim()).filter(Boolean);
 
 describe('tenant migration 0262 — Kill Sheets', () => {
-  it('is the next journalled tenant migration and its SQL file is discoverable', () => {
-    const entry = journal.at(-1);
-    expect(entry).toMatchObject({ idx: 259, tag: '0262_kill_sheets' });
-    expect(entry!.when).toBeGreaterThan(journal.at(-2)!.when);
+  it('is journalled after 0261 and its SQL file is discoverable', () => {
+    // Found by tag, not as the last entry: later migrations follow it.
+    const position = journal.findIndex((e) => e.tag === '0262_kill_sheets');
+    expect(journal[position]).toMatchObject({ idx: 259, tag: '0262_kill_sheets' });
+    expect(journal[position].when).toBeGreaterThan(journal[position - 1].when);
   });
 
   it('creates an import root and child records with tenant-safe foreign keys', () => {

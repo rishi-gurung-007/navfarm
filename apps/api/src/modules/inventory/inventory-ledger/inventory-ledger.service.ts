@@ -42,7 +42,7 @@ import {
   QueryAvailableSerialsDto,
 } from './dto/inventory-ledger.dto';
 import { parseSerials } from './serial-utils';
-import { lotBalances, serialsInStock } from './lot-balance';
+import { lotBalances, lotCostLayers, serialsInStock } from './lot-balance';
 import {
   costingMethodOf,
   explainCosting,
@@ -121,6 +121,13 @@ interface WriteNegativeEntryParams {
    * it in, at that receipt's cost. Fails if that receipt does not hold the quantity.
    */
   sourceLedgerId?: string;
+  /**
+   * Cost the draw from the receipts that carry `lotNo` at the location instead of the item's oldest receipts. For stock
+   * whose every lot has its own cost (a semen lot: the boar's costs over his period): a transfer of the lot carries the
+   * lot's cost and lowers the lot's own receipt. Where those receipts no longer hold the quantity (an older draw costed
+   * them away) the draw falls back to the ordinary order.
+   */
+  costFromLot?: boolean;
   batchNo?: string;
   warehouseId?: string;
   locationId?: string;
@@ -540,6 +547,9 @@ export class InventoryLedgerService {
    *   each lot or serial holds (lot-balance.ts) and recorded on the entry (one lot) or on its ledger lines
    *   (several). It does not move cost: a lot picked for its expiry can be costed from an older receipt.
    *
+   *   The exceptions are stock whose every lot has its own cost (a semen lot): `sourceLedgerId` names the receipt,
+   *   or `costFromLot` restricts the draw to the receipts carrying the lot (lotCostLayers).
+   *
    * Called inside the outbound row's own transaction. Receipt layers at the location are locked first, so two
    * concurrent consumptions queue instead of both reading the same remaining quantity. Returns the entry's
    * total cost and the location the stock actually came from.
@@ -556,6 +566,8 @@ export class InventoryLedgerService {
       serialNo?: string;
       // Draw only from this receipt (see WriteNegativeEntryParams.sourceLedgerId) instead of oldest-first.
       sourceLedgerId?: string;
+      // Draw from the receipts carrying lotNo first (see WriteNegativeEntryParams.costFromLot).
+      costFromLot?: boolean;
       applicationDate: string;
       userId?: string;
       // Batch consumption draws from a company-wide pool and never sets this
@@ -649,7 +661,7 @@ export class InventoryLedgerService {
       );
     // Oldest first: posting date, then Entry No. - created_at is only second-precise, so two receipts
     // posted together tied on it and the newer one could be drawn first.
-    const availableLayers = await executor
+    const lockedLayers = await executor
       .select()
       .from(schema.inventoryLedger)
       .where(and(...layerConditions))
@@ -658,6 +670,9 @@ export class InventoryLedgerService {
         asc(schema.inventoryLedger.entry_no),
       )
       .for('update');
+    const availableLayers = params.costFromLot
+      ? lotCostLayers(lockedLayers, params.lotNo, params.quantity)
+      : lockedLayers;
 
     // Lots: what each holds, now that the layers are locked and no other posting can move it.
     let lotExpiry: Map<string, string | null> | undefined;
@@ -1073,6 +1088,7 @@ export class InventoryLedgerService {
             lots: params.lots,
             serialNo: params.serialNo,
             sourceLedgerId: params.sourceLedgerId,
+            costFromLot: params.costFromLot,
             applicationDate: params.postingDate,
             userId: params.userId,
             warehouseId: params.warehouseId,
@@ -1128,6 +1144,8 @@ export class InventoryLedgerService {
     fromWarehouseId: string;
     lotNo?: string;
     serialNo?: string;
+    /** Cost the shipment from the lot's own receipts (see WriteNegativeEntryParams.costFromLot). */
+    costFromLot?: boolean;
     userId?: string;
   }) {
     return this.writeNegativeEntry({
@@ -1143,6 +1161,7 @@ export class InventoryLedgerService {
       uom: params.uom,
       lotNo: params.lotNo,
       serialNo: params.serialNo,
+      costFromLot: params.costFromLot,
       warehouseId: params.fromWarehouseId,
       userId: params.userId,
     });

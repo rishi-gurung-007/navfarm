@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { DateInput } from '@/components/ui/date-input';
 import { api } from '@/services/api-client';
 import { InlineAlert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -324,9 +325,8 @@ function FeedSiloDashboardContent() {
           </div>
         </Field>
         <Field label={t('fsdPlanningDate')} htmlFor="sd-planning-date">
-          <input
+          <DateInput
             id="sd-planning-date"
-            type="date"
             className="nf-input-sm"
             style={inputStyle}
             value={planningDate}
@@ -373,9 +373,8 @@ function FeedSiloDashboardContent() {
             )}
             htmlFor="sd-from"
           >
-            <input
+            <DateInput
               id="sd-from"
-              type="date"
               className="nf-input-sm"
               style={inputStyle}
               value={from}
@@ -385,9 +384,8 @@ function FeedSiloDashboardContent() {
         )}
         {view === 'CUSTOM' && (
           <Field label={t('ffDateTo')} htmlFor="sd-to">
-            <input
+            <DateInput
               id="sd-to"
-              type="date"
               className="nf-input-sm"
               style={inputStyle}
               value={to}

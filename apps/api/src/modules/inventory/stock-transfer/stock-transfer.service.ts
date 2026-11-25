@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Optional,
 } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
@@ -29,6 +30,7 @@ import {
   locationReferenceScopeConditions,
   assertLocationOnActiveFarm,
   restrictedScopeConditions,
+  farmOfLocation,
 } from '../../../common/farm-scope';
 import {
   CreateStockTransferDto,
@@ -184,6 +186,27 @@ export class StockTransferService {
   }
 
   /** Which of these items are QC required: a receipt of them raises an inspection instead of writing the ledger. */
+  /**
+   * Whether a line's lot is a semen lot of the item: such a lot carries its own cost (the boar's costs over his period), so
+   * a shipment of it is costed from the lot's own receipt, not the item's oldest (D3, 24 Nov 2026; as a mating's issue is,
+   * SemenLotService.issueDoses). Any other lot follows the item's costing method (decision of 8 Oct).
+   */
+  private async isSemenLot(itemId: string | null, lotNo: string | null | undefined, tenantId: string): Promise<boolean> {
+    if (!itemId || !lotNo) return false;
+    const [lot] = await this.db
+      .select({ id: schema.semenBatch.semen_batch_id })
+      .from(schema.semenBatch)
+      .where(
+        and(
+          eq(schema.semenBatch.tenant_id, tenantId),
+          eq(schema.semenBatch.lot_no, lotNo),
+          eq(schema.semenBatch.output_item_id, itemId),
+        ),
+      )
+      .limit(1);
+    return !!lot;
+  }
+
   private async qcRequired(itemIds: string[]): Promise<Set<string>> {
     return this.qcInspections ? this.qcInspections.qcRequiredItemIds([...new Set(itemIds)]) : new Set<string>();
   }
@@ -566,18 +589,26 @@ export class StockTransferService {
    * it: through to_warehouse_id a destination-farm manager could rewrite a
    * draft's quantities and post it, draining the source farm's warehouse. So
    * farm, LOB and company sit on from_warehouse_id only.
+   * The one exception is posting a receipt (side 'to'): that is the
+   * destination farm's own act — it takes in what was shipped and moves
+   * nothing out of the source — so it is authorized on to_warehouse_id. Before,
+   * a transfer between two farms could not be received at all by the farm
+   * it went to.
    */
   private async loadForMutation(
     id: string,
     tenantId: string,
     requisitionExecution = false,
+    side: 'from' | 'to' = 'from',
   ) {
     const scope = farmScope(this.cls);
     const locationScope = requisitionExecution
       ? []
       : locationReferenceScopeConditions(
           scope,
-          schema.stockTransfer.from_warehouse_id,
+          side === 'to'
+            ? schema.stockTransfer.to_warehouse_id
+            : schema.stockTransfer.from_warehouse_id,
         );
     const [transfer] = await this.db
       .select()
@@ -596,6 +627,7 @@ export class StockTransferService {
       .for('update');
 
     if (!transfer) {
+      await this.explainWrongFarm(id, tenantId, side);
       throw new NotFoundException(`Transfer Order with ID '${id}' not found.`);
     }
 
@@ -605,6 +637,53 @@ export class StockTransferService {
       .where(eq(schema.stockTransferLine.transfer_id, id));
 
     return { ...transfer, lines };
+  }
+
+  /**
+   * A transfer the caller's company holds but whose acting store is on another farm than the active one: says which farm
+   * acts on it (the source ships and edits, the destination receives) instead of a bare "not found".
+   */
+  private async explainWrongFarm(id: string, tenantId: string, side: 'from' | 'to') {
+    const scope = farmScope(this.cls);
+    if (!scope.farmId) return;
+    const [row] = await this.db
+      .select({
+        transfer_no: schema.stockTransfer.transfer_no,
+        from_id: schema.stockTransfer.from_warehouse_id,
+        to_id: schema.stockTransfer.to_warehouse_id,
+      })
+      .from(schema.stockTransfer)
+      .where(
+        and(
+          eq(schema.stockTransfer.transfer_id, id),
+          eq(schema.stockTransfer.tenant_id, tenantId),
+          isNull(schema.stockTransfer.deleted_at),
+          ...restrictedScopeConditions(scope, {
+            companyId: schema.stockTransfer.company_id,
+          }),
+        ),
+      )
+      .limit(1);
+    if (!row) return;
+    const storeId = side === 'to' ? row.to_id : row.from_id;
+    const farmId = storeId ? await farmOfLocation(this.db, storeId) : null;
+    const ids = [storeId, farmId].filter(Boolean) as string[];
+    const places = ids.length
+      ? await this.db
+          .select({
+            id: schema.locationMaster.location_id,
+            code: schema.locationMaster.location_code,
+          })
+          .from(schema.locationMaster)
+          .where(inArray(schema.locationMaster.location_id, ids))
+      : [];
+    const code = (pid: string | null) =>
+      places.find((p) => p.id === pid)?.code ?? 'another farm';
+    throw new ForbiddenException(
+      side === 'to'
+        ? `${row.transfer_no} goes to ${code(storeId)}: it is received by farm ${code(farmId)}. Switch the active farm to ${code(farmId)} to receive it.`
+        : `${row.transfer_no} is sent from ${code(storeId)}: only farm ${code(farmId)} can change or ship it. Switch the active farm to ${code(farmId)}.`,
+    );
   }
 
   /**
@@ -702,24 +781,28 @@ export class StockTransferService {
   }
 
   /** The same two checks create() applies: source on the active farm, destination in the company and LOB. */
+  /** Side 'from' (the default): the source is on the active farm. Side 'to' (a receipt): the destination is. */
   private async assertWarehouses(
     fromWarehouseId: string,
     toWarehouseId: string,
+    side: 'from' | 'to' = 'from',
   ) {
     if (fromWarehouseId === toWarehouseId) {
       throw new BadRequestException(
         'Source and destination location must be different.',
       );
     }
+    const onFarm = farmScope(this.cls);
+    const inCompany = { ...farmScope(this.cls), farmId: null };
     await assertLocationOnActiveFarm(
       this.db,
-      farmScope(this.cls),
+      side === 'from' ? onFarm : inCompany,
       fromWarehouseId,
       'Source location',
     );
     await assertLocationOnActiveFarm(
       this.db,
-      { ...farmScope(this.cls), farmId: null },
+      side === 'to' ? onFarm : inCompany,
       toWarehouseId,
       'Destination location',
     );
@@ -1103,8 +1186,32 @@ export class StockTransferService {
       transfer.trip_id && this.logisticsTrips
         ? await this.logisticsTrips.assertTripFor(id, transfer.tenant_id)
         : null;
+    // The two stores by code and name: a store on another farm is not in the
+    // caller's warehouse list, so the card names it from here.
+    const places = await this.db
+      .select({
+        id: schema.locationMaster.location_id,
+        code: schema.locationMaster.location_code,
+        name: schema.locationMaster.location_name,
+      })
+      .from(schema.locationMaster)
+      .where(
+        inArray(
+          schema.locationMaster.location_id,
+          [transfer.from_warehouse_id, transfer.to_warehouse_id].filter(
+            Boolean,
+          ) as string[],
+        ),
+      );
+    const place = (pid: string | null) => places.find((p) => p.id === pid);
+    const qcs = await this.receiptQcs([transfer.transfer_no], transfer.tenant_id);
     return {
       ...transfer,
+      qc_inspections: qcs.get(transfer.transfer_no) ?? [],
+      from_warehouse_code: place(transfer.from_warehouse_id)?.code ?? null,
+      from_warehouse_name: place(transfer.from_warehouse_id)?.name ?? null,
+      to_warehouse_code: place(transfer.to_warehouse_id)?.code ?? null,
+      to_warehouse_name: place(transfer.to_warehouse_id)?.name ?? null,
       ...source,
       trip,
       lines: enrichedLines.map((line: any) => ({
@@ -1317,10 +1424,60 @@ export class StockTransferService {
       rows.map((r: any) => r.transfer_id),
       tenantId,
     );
+    // Both ends by code and name, on the row: the page's own store list holds only the farm in view, so a transfer from another
+    // farm (semen sent from the AI Station's farm) would otherwise show its other end as "Not available".
+    const placeIds = [...new Set(rows.flatMap((r: any) => [r.from_warehouse_id, r.to_warehouse_id]).filter(Boolean))] as string[];
+    const places = placeIds.length
+      ? await this.db
+          .select({ id: schema.locationMaster.location_id, code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
+          .from(schema.locationMaster)
+          .where(inArray(schema.locationMaster.location_id, placeIds))
+      : [];
+    const place = (id: string | null) => places.find((p) => p.id === id);
+    const qcs = await this.receiptQcs(rows.map((r: any) => r.transfer_no), tenantId);
     return rows.map((r: any) => ({
       ...r,
+      qc_inspections: qcs.get(r.transfer_no) ?? [],
+      from_warehouse_code: place(r.from_warehouse_id)?.code ?? null,
+      from_warehouse_name: place(r.from_warehouse_id)?.name ?? null,
+      to_warehouse_code: place(r.to_warehouse_id)?.code ?? null,
+      to_warehouse_name: place(r.to_warehouse_id)?.name ?? null,
       ...(links.get(r.transfer_id) ?? EMPTY_SOURCE_LINK),
     }));
+  }
+
+  /**
+   * The QC inspections raised on receiving these transfers (the destination's check of an item with QC on), by transfer number.
+   * What was received is not stock until its inspection accepts it, so the receiver needs to see each one and where it stands.
+   */
+  private async receiptQcs(transferNos: string[], tenantId: string) {
+    const byTransfer = new Map<string, { inspection_id: string; inspection_no: string; status: string; result: string | null; item_id: string; lot_no: string | null; quantity: string }[]>();
+    if (!transferNos.length) return byTransfer;
+    const rows = await this.db
+      .select({
+        parent: schema.qcInspection.parent_doc_no,
+        inspection_id: schema.qcInspection.inspection_id,
+        inspection_no: schema.qcInspection.inspection_no,
+        status: schema.qcInspection.status,
+        result: schema.qcInspection.result,
+        item_id: schema.qcInspection.item_id,
+        lot_no: schema.qcInspection.lot_no,
+        quantity: schema.qcInspection.quantity,
+      })
+      .from(schema.qcInspection)
+      .where(
+        and(
+          eq(schema.qcInspection.tenant_id, tenantId),
+          inArray(schema.qcInspection.source_doc_type, ['TRANSFER_RECEIPT', 'TRANSFER_EVENT']),
+          inArray(schema.qcInspection.parent_doc_no, transferNos),
+        ),
+      )
+      .orderBy(schema.qcInspection.inspection_no);
+    for (const { parent, ...qc } of rows) {
+      if (!parent) continue;
+      byTransfer.set(parent, [...(byTransfer.get(parent) ?? []), qc as any]);
+    }
+    return byTransfer;
   }
 
   /**
@@ -2046,6 +2203,9 @@ export class StockTransferService {
           lot_no?: string | null;
           serial_no?: string | null;
         }> = [];
+        const costFromLot =
+          serials.length === 0 &&
+          (await this.isSemenLot(line.item_id, lotNo, tenantId));
         for (const draw of draws) {
           const shipmentEntry = await this.ledgerService.writeTransferShipment({
             tenantId,
@@ -2059,6 +2219,7 @@ export class StockTransferService {
             fromWarehouseId: transfer.from_warehouse_id,
             lotNo,
             serialNo: draw.serialNo,
+            costFromLot,
             userId: userPayload?.userId,
           });
           await this.glPostingService.postInventoryLedgerEntry(
@@ -2156,16 +2317,19 @@ export class StockTransferService {
     feedControls?: FeedReceiptControls,
   ) {
     return withTenantTransaction(this.cls, async () => {
+      // The receiving farm posts the receipt: authorized on the destination.
       const transfer = await this.loadForMutation(
         id,
         tenantId,
         requisitionExecution,
+        'to',
       );
       this.assertOpen(transfer);
       if (!requisitionExecution)
         await this.assertWarehouses(
           transfer.from_warehouse_id,
           transfer.to_warehouse_id,
+          'to',
         );
 
       const [shipment] = await this.db
@@ -3077,6 +3241,9 @@ export class StockTransferService {
           uom: item.line.uom,
           lotNo: item.lotNo || undefined,
           serialNo: item.serialNo || undefined,
+          costFromLot:
+            !item.serialNo &&
+            (await this.isSemenLot(item.line.item_id, item.lotNo, tenantId)),
           warehouseId: transfer.from_warehouse_id,
           userId: user?.userId,
         });

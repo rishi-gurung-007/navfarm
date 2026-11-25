@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { DateInput } from '@/components/ui/date-input';
 import { NA as NOT_AVAILABLE } from '@/utils/na';
 import { api } from '@/services/api-client';
 import { Button } from '@/components/ui/button';
@@ -291,18 +292,16 @@ export function FeedConsolidationDialog({
           {mode === 'date' && (
             <>
               <Field label={t('fcdFromDate')} htmlFor="consolidation-from">
-                <input
+                <DateInput
                   id="consolidation-from"
-                  type="date"
                   className="nf-input-sm"
                   value={fromDate}
                   onChange={(event) => setFromDate(event.target.value)}
                 />
               </Field>
               <Field label={t('fcdToDate')} htmlFor="consolidation-to">
-                <input
+                <DateInput
                   id="consolidation-to"
-                  type="date"
                   className="nf-input-sm"
                   value={toDate}
                   onChange={(event) => setToDate(event.target.value)}

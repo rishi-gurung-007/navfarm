@@ -3,6 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../../common/guards/roles.guard';
 import { RequirePermission } from '../../../../common/decorators/require-permission.decorator';
+import { FarmScoped } from '../../../../common/farm-scope';
 import { FaConversionService } from './fa-conversion.service';
 import { ApproveFaConversionDto, PostFaConversionDto, QueryFaConversionDto, RejectFaConversionDto, RequestFaConversionDto } from './fa-conversion.dto';
 
@@ -10,6 +11,7 @@ import { ApproveFaConversionDto, PostFaConversionDto, QueryFaConversionDto, Reje
 @ApiTags('FA to Inventory Conversion')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
+@FarmScoped()
 @Controller('fa-conversions')
 export class FaConversionController {
   constructor(private readonly conversions: FaConversionService) {}
