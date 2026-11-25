@@ -1096,7 +1096,16 @@ export default function DashboardPage() {
 
             {can('/finance/journal') && (
               <div
-                onClick={() => router.push('/finance/journal')}
+                onClick={() => {
+                  const farmId = operationalAreas.find(
+                    (a) => a.area_id === filterArea,
+                  )?.farm_id;
+                  router.push(
+                    farmId
+                      ? `/finance/journal?farmId=${farmId}`
+                      : '/finance/journal',
+                  );
+                }}
                 className="nf-press group rounded-[var(--radius-md)] border p-4 transition-all hover:bg-[var(--surface-raised)] cursor-pointer"
                 style={{
                   backgroundColor: 'var(--surface)',

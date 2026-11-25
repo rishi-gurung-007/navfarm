@@ -102,7 +102,7 @@ function StretchedLink({
       href={href}
       aria-label={t('gmdOpenRecords', { name })}
       title={title}
-      className={`absolute -inset-x-1 -inset-y-0.5 hover:bg-(--accent)/5 ${FOCUS_RING}`}
+      className={`absolute -inset-x-1 -inset-y-0.5 rounded-md hover:bg-(--accent)/5 ${FOCUS_RING}`}
     />
   ) : null;
 }
@@ -348,9 +348,9 @@ function FigureBlock({
   const v = figureVariance(figure, lowerIsBetter);
   const full = figure.actual == null ? undefined : fmt(figure.actual, unit);
   return (
-    <div className="relative isolate min-w-0 flex-1">
-      <StretchedLink href={href} name={name} title={full} t={t} />
-      <div className="flex items-start justify-between gap-1">
+    <div className="min-w-0 flex-1">
+      <div className="relative isolate -mx-1 flex items-start justify-between gap-1 rounded-md px-1">
+        <StretchedLink href={href} name={name} title={full} t={t} />
         <div className="min-w-0">
           <p className="text-xs text-(--text-secondary)">{label}</p>
           <p
@@ -417,11 +417,13 @@ function SubLine({
 }) {
   const v = figureVariance(figure, lowerIsBetter);
   return (
-    <div className="relative isolate flex items-center gap-2 text-xs">
-      <StretchedLink href={href} name={name} t={t} />
-      <span className="w-9 text-(--text-secondary)">{label}</span>
-      <span className="font-mono font-semibold tabular-nums">
-        {fig(figure.actual, unit)}
+    <div className="flex items-center gap-2 text-xs">
+      <span className="relative isolate -mx-1 flex items-center gap-2 rounded-md px-1">
+        <StretchedLink href={href} name={name} t={t} />
+        <span className="w-9 text-(--text-secondary)">{label}</span>
+        <span className="font-mono font-semibold tabular-nums">
+          {fig(figure.actual, unit)}
+        </span>
       </span>
       <span className="text-(--text-secondary)">
         {t('gmdBudget')}{' '}
@@ -993,15 +995,17 @@ export function KgMeatCard({
         <Icon className="h-8 w-8 shrink-0 text-(--accent)" />
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold">{title}</h3>
-          <div className="relative isolate flex flex-wrap items-center gap-x-4 gap-y-1">
-            <StretchedLink href={links?.month} name={mainName} t={t} />
-            <span
-              className="font-mono text-2xl font-bold tabular-nums"
-              data-testid="gmd-kg-value"
-            >
-              {fmt(main.actual)}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span className="relative isolate -mx-1 flex items-center gap-2 rounded-md px-1">
+              <StretchedLink href={links?.month} name={mainName} t={t} />
+              <span
+                className="font-mono text-2xl font-bold tabular-nums"
+                data-testid="gmd-kg-value"
+              >
+                {fmt(main.actual)}
+              </span>
+              <TrendArrow v={v} t={t} />
             </span>
-            <TrendArrow v={v} t={t} />
             <span className="text-xs text-(--text-secondary)">
               {t('gmdBudget')}{' '}
               <BudgetValue
@@ -1017,14 +1021,16 @@ export function KgMeatCard({
             </span>
           </div>
           {ytd && (
-            <p className="relative isolate mt-1 text-xs text-(--text-secondary)">
-              <StretchedLink href={links?.ytd} name={ytdName} t={t} />
-              {t('gmdYtd')}{' '}
-              <span
-                className="font-mono tabular-nums text-(--text-primary)"
-                data-testid="gmd-kg-ytd"
-              >
-                {fmt(ytd.actual)}
+            <p className="mt-1 text-xs text-(--text-secondary)">
+              <span className="relative isolate -mx-1 rounded-md px-1">
+                <StretchedLink href={links?.ytd} name={ytdName} t={t} />
+                {t('gmdYtd')}{' '}
+                <span
+                  className="font-mono tabular-nums text-(--text-primary)"
+                  data-testid="gmd-kg-ytd"
+                >
+                  {fmt(ytd.actual)}
+                </span>
               </span>
               {' · '}
               {t('gmdBudget')}{' '}
