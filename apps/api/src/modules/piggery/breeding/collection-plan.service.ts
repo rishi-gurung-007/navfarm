@@ -11,6 +11,7 @@ import { BreedingLineSetupService } from '../../master-data/breeding-line/breedi
 import { BoarSelectionService } from './boar-selection.service';
 import { CreateCollectionPlanDto, QueryCollectionPlansDto } from './collection-plan.dto';
 import { isoWeekOf, PlanSetup, planResult, weekdayOf } from './collection-plan.rules';
+import { SemenRequestService } from './semen-request.service';
 
 type Plan = typeof schema.semenCollectionPlan.$inferSelect;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -22,6 +23,7 @@ export class CollectionPlanService {
     private readonly cls: ClsService,
     private readonly lineSetups: BreedingLineSetupService,
     private readonly selection: BoarSelectionService,
+    private readonly semenRequests: SemenRequestService,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -95,7 +97,9 @@ export class CollectionPlanService {
       .limit(1);
     if (!plan) throw new NotFoundException('Collection plan not found.');
     await this.assertVisible(plan);
-    return (await this.withLines([plan]))[0];
+    const [withLines] = await this.withLines([plan]);
+    // The farms' requests the plan serves, with the lot allocated to each (0265).
+    return { ...withLines, requests: await this.semenRequests.lines(tenantId, { planId: id }) };
   }
 
   /** A restricted user sees a plan only when he may see one of its boars. */
@@ -201,6 +205,11 @@ export class CollectionPlanService {
     if (result.errors.length) throw new BadRequestException(result.errors.join(' '));
     await this.assertFarm(destination, tenantId, company);
     await this.assertCollectors(dto.boars.map((b) => b.collector_id), tenantId, company);
+    // The farms' requests it serves (0265): checked before anything is written; their doses are the plan's target.
+    const requests = dto.requisition_line_ids?.length
+      ? await this.semenRequests.linesForPlan([...new Set(dto.requisition_line_ids)], dto.breed_id, breed.breed_code, tenantId)
+      : [];
+    const targetDoses = requests.length ? requests.reduce((n, r) => n + r.doses, 0) : null;
 
     // The table's own figures for each boar, as they stand when he is chosen.
     const table = await this.selection.selection(dto.breed_id, tenantId, today(), company ?? undefined);
@@ -222,7 +231,9 @@ export class CollectionPlanService {
         collection_date: date, weekday: weekdayOf(date), week_no: week.week, week_year: week.year,
         requested_by: dto.requested_by?.trim() || null, reference: dto.reference?.trim() || null,
         destination_farm_id: destination, notes: dto.notes?.trim() || null, created_by: user?.userId ?? null,
+        target_doses: targetDoses != null ? targetDoses.toFixed(2) : null,
       });
+      await this.semenRequests.linkToPlan(plan_id, requests, tenantId);
       await this.db.insert(schema.semenCollectionPlanLine).values(
         dto.boars.map((b, i) => ({
           plan_id, boar_animal_id: b.boar_animal_id, tenant_id: tenantId, collector_id: b.collector_id ?? null,

@@ -15,6 +15,7 @@ jest.mock('../src/hooks/useAuth', () => ({
   getStoredUser: () => ({ userId: 'u1' }),
 }));
 jest.mock('../src/utils/date-short', () => ({
+  ...jest.requireActual('../src/utils/date-short'),
   formatDateShort: (value: string) => value,
 }));
 let planningDate = '2026-11-02';
@@ -284,9 +285,10 @@ beforeEach(() => {
 it('starts Week of on today when the forecast has no planning date yet', async () => {
   planningDate = '';
   await renderPanel();
+  // The field shows the app's one date style, DD/MM/YY.
   expect(
     (screen.getByLabelText('mplWeekOf') as HTMLInputElement).value,
-  ).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  ).toMatch(/^\d{2}\/\d{2}\/\d{2}$/);
 });
 
 it('does not call the API until Generate is clicked', async () => {
@@ -566,7 +568,7 @@ it('offers Regenerate once a filter differs from the plan on screen', async () =
   expect(screen.getByRole('button', { name: 'mplGenerate' })).toBeTruthy();
 });
 
-it('puts the day under the date in the grid headers', async () => {
+it('puts the date under the day in the grid headers', async () => {
   await renderPanel();
   await generate();
   const head = document.querySelector(
@@ -574,8 +576,8 @@ it('puts the day under the date in the grid headers', async () => {
   ) as HTMLElement;
   // Rishi, 4 Nov: day and month only, so seven days fit; the full date is the header's hover.
   expect([...head.children].map((c) => c.textContent)).toEqual([
-    `${dates[0].slice(8, 10)}/${dates[0].slice(5, 7)}`,
     'Mon',
+    `${dates[0].slice(8, 10)}/${dates[0].slice(5, 7)}`,
   ]);
   expect(head.getAttribute('title')).toBe(dates[0]);
 });

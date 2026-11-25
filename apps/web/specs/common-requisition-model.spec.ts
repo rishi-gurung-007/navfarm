@@ -146,13 +146,13 @@ describe("common requisition payload — FA/Service lines carry no unit", () => 
   });
 });
 
-describe("common requisition payload — no line names a Resource (Rishi, 5 Oct)", () => {
-  it("never sends resource_id, even from a Service line that carried one", () => {
+describe("common requisition payload — only a Service line names a Resource (Rishi, 22 Nov)", () => {
+  it("sends resource_id from a Service line and never from an Item or Fixed Asset line", () => {
     for (const docType of ["ITEM", "FA", "SERVICE"] as const) {
       const v = emptyCommonRequisition("co-1", docType, "PURCHASE", "2026-10-05");
       v.lines = [{ ...emptyLine(), item_id: docType === "ITEM" ? "i1" : null, description: "Electrician", quantity: "1", uom: "EA", resource_id: "r1" }];
       const [line] = toRequisitionPayload(v).lines as Record<string, unknown>[];
-      expect(line).not.toHaveProperty("resource_id");
+      expect(line.resource_id).toBe(docType === "SERVICE" ? "r1" : undefined);
     }
   });
 });

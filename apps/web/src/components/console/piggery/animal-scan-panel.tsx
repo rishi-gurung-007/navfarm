@@ -202,7 +202,7 @@ export default function AnimalScanPanel() {
       const result = await reader.decodeFromImageUrl(url);
       await find(result.getText());
     } catch {
-      setCameraError('No QR code or barcode could be read from that photo. Try a sharper, closer picture of the label.');
+      setCameraError('No barcode could be read from that photo. Try a sharper, closer picture of the label.');
     } finally {
       URL.revokeObjectURL(url);
       setPhotoBusy(false);
@@ -226,7 +226,7 @@ export default function AnimalScanPanel() {
   return (
     <div className="space-y-4">
       <p className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
-        Scan the QR code or barcode on an animal&apos;s label to see who she is. Print labels from the animal&apos;s card in the
+        Scan the barcode on an animal&apos;s label to see who she is. Print labels from the animal&apos;s card in the
         Animal Register.
       </p>
 
@@ -243,7 +243,7 @@ export default function AnimalScanPanel() {
             ) : (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-white/80">
                 <ScanLine className="h-10 w-10" strokeWidth={1.25} />
-                <p className="text-[13px]">Point the camera at the QR code or barcode on the label.</p>
+                <p className="text-[13px]">Point the camera at the barcode on the label.</p>
               </div>
             )}
           </div>

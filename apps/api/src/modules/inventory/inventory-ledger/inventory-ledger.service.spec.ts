@@ -205,6 +205,22 @@ describe('Inventory costing — by the item\'s costing method', () => {
     expect(applications.map((a) => [a.inbound_ledger_id, a.applied_qty])).toEqual([['old', '10']]);
   });
 
+  it('costFromLot draws a semen lot from its own receipt, at its own cost, and lowers that receipt (D3)', async () => {
+    // LOT-00053's and LOT-00057's receipts at MUL100/STORE-001 as they stood on 24 Nov.
+    const layers = [
+      { ledger_id: 'lot53', quantity: '55', remaining_quantity: '51', rate: '11.983664', amount: '659.1015', warehouse_id: 'w', lot_no: 'LOT-00053' },
+      { ledger_id: 'lot57', quantity: '4', remaining_quantity: '4', rate: '299.808425', amount: '1199.2337', warehouse_id: 'w', lot_no: 'LOT-00057' },
+    ];
+    const { db, applications, service } = make({
+      layers,
+      lotBalanceRows: [{ lot_no: 'LOT-00057', quantity: '4', expiry_date: null, receipt_date: '2026-11-24' }],
+    });
+    const result = await service.allocateAndCostOutbound({ ...base, quantity: 4, lotNo: 'LOT-00057', costFromLot: true }, db);
+    expect(result.totalCost).toBe(1199.2337);
+    expect(applications.map((a) => [a.inbound_ledger_id, a.applied_qty])).toEqual([['lot57', '4']]);
+    expect(layers.map((l) => l.remaining_quantity)).toEqual(['51', '0']);
+  });
+
   describe('AVERAGE is a moving average of the ledger', () => {
     const avg = { valuation_method: 'AVG', standard_cost: null };
     const layers = () => [

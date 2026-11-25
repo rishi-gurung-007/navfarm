@@ -5,6 +5,7 @@ import { Check, FileSpreadsheet, Loader2, Play, RefreshCw } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { getActiveCompanyId, getActiveFarmId } from '@/hooks/useAuth';
 import { useLanguage } from '@/hooks/useLanguage';
+import { formatDate, formatDateTime } from '@/utils/date-short';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { SearchableSelect } from '@/components/ui/searchable-select';
@@ -169,7 +170,7 @@ function exportMonthlyOpsExcel(
       info: [
         `${t('rptFarm')}: ${report.farm.farm_code} - ${report.farm.farm_name}   ${t('mopYear')}: ${report.year}`,
         t('rptGeneratedAt', {
-          at: new Date(report.generated_at).toLocaleString(),
+          at: formatDateTime(report.generated_at),
         }),
       ],
       headers: [
@@ -395,7 +396,7 @@ export default function MonthlyOpsPanel() {
                     className="text-[10px]"
                     style={{ color: 'var(--text-muted)' }}
                   >
-                    {r.start_date} – {r.end_date}
+                    {formatDate(r.start_date)} – {formatDate(r.end_date)}
                   </div>
                 </td>
                 <td

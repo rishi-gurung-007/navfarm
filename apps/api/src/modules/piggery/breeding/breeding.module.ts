@@ -17,11 +17,18 @@ import { GiltSelectionModule } from '../gilt-selection/gilt-selection.module';
 import { AnimalBookValueModule } from '../../inventory/bio-asset-ledger/animal-book-value.module';
 import { QcInspectionModule } from '../../inventory/qc-inspection/qc-inspection.module';
 import { BreedingLineModule } from '../../master-data/breeding-line/breeding-line.module';
+import { SemenDisposalController } from './semen-disposal.controller';
+import { SemenDisposalService } from './semen-disposal.service';
+import { SemenRequestController } from './semen-request.controller';
+import { SemenRequestService } from './semen-request.service';
+import { AiStationDashboardController } from './ai-station-dashboard.controller';
+import { AiStationDashboardService } from './ai-station-dashboard.service';
+import { RequisitionModule } from '../../procurement/requisition/requisition.module';
 
 @Module({
-  imports: [BatchModule, InventoryLedgerModule, JournalModule, NumberSeriesModule, QrCodeModule, AnimalModule, AnimalBookValueModule, GiltSelectionModule, LitterCostModule, BreedingLineModule, QcInspectionModule],
-  controllers: [BreedingController, BoarSelectionController, CollectionPlanController],
-  providers: [BreedingService, SemenLotService, BoarSelectionService, CollectionPlanService],
+  imports: [BatchModule, InventoryLedgerModule, JournalModule, NumberSeriesModule, QrCodeModule, AnimalModule, AnimalBookValueModule, GiltSelectionModule, LitterCostModule, BreedingLineModule, QcInspectionModule, RequisitionModule],
+  controllers: [BreedingController, BoarSelectionController, CollectionPlanController, SemenDisposalController, SemenRequestController, AiStationDashboardController],
+  providers: [BreedingService, SemenLotService, BoarSelectionService, CollectionPlanService, SemenDisposalService, SemenRequestService, AiStationDashboardService],
   exports: [BreedingService],
 })
 export class BreedingModule {}

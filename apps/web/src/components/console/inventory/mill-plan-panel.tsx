@@ -22,6 +22,7 @@ import { api } from '@/services/api-client';
 import { showToast } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
+import { DateInput } from '@/components/ui/date-input';
 import { HoverHint } from '@/components/ui/hover-hint';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { StatCard, StatRow } from '@/components/ui/stat-row';
@@ -541,11 +542,9 @@ const BAR_FILL: Record<DayStatus, string> = {
   OVER: 'bg-(--danger)',
   NO_CAPACITY: 'bg-(--text-muted)',
 };
-const weekday = (iso: string) =>
-  new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', {
-    weekday: 'short',
-    timeZone: 'UTC',
-  });
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+// The weekday of a stored date, read as a calendar day (not in the viewer's zone or language).
+const weekday = (iso: string) => WEEKDAYS[new Date(`${iso}T00:00:00Z`).getUTCDay()];
 const CARD_TONE: Record<
   DayStatus,
   'success' | 'warning' | 'danger' | 'default'
@@ -741,9 +740,8 @@ export default function MillPlanPanel() {
     >
       <div className="flex shrink-0 flex-wrap items-end gap-3 [&_.nf-input-sm]:h-11 [&>button]:h-11">
         <Field label={t('mplWeekOf')} htmlFor="mill-plan-week">
-          <input
+          <DateInput
             id="mill-plan-week"
-            type="date"
             className="nf-input-sm"
             value={weekOf}
             onChange={(event) => setWeekOf(event.target.value)}

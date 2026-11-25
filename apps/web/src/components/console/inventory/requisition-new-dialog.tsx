@@ -31,8 +31,7 @@ import {
   Plus,
   Trash2,
   Wheat,
-  Wrench,
-} from 'lucide-react';
+  Wrench, FlaskConical } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
@@ -193,13 +192,19 @@ function feedTypeOfDraft(
   return dest ? feedTypeOfDestination(dest) : null;
 }
 
-export type RequisitionKind = 'FEED' | 'ITEM' | 'FA' | 'SERVICE';
+export type RequisitionKind = 'FEED' | 'SEMEN' | 'ITEM' | 'FA' | 'SERVICE';
 
 const CHOICES = {
   FEED: {
     label: 'rqNewPurposeFeed',
     hint: 'rqNewPurposeFeedHint',
     icon: Wheat,
+  },
+  // A semen request (Phase 4): a Store requisition of a semen item that names the breeding line.
+  SEMEN: {
+    label: 'rqNewPurposeSemen',
+    hint: 'rqNewPurposeSemenHint',
+    icon: FlaskConical,
   },
   ITEM: {
     label: 'rqNewPurposeItem',
@@ -254,6 +259,7 @@ export function RequisitionNewDialog({
   onClose,
   onCreated,
   onCommon,
+  onSemen,
 }: {
   open: boolean;
   farmId?: string;
@@ -264,6 +270,8 @@ export function RequisitionNewDialog({
     docType: 'ITEM' | 'FA' | 'SERVICE';
     purpose: 'STORE' | 'PURCHASE';
   }) => void;
+  /** A semen requisition was chosen: the caller opens the semen request form. */
+  onSemen?: () => void;
 }) {
   const { t } = useLanguage();
   const tRef = useRef(t);
@@ -460,6 +468,7 @@ export function RequisitionNewDialog({
   const pick = (type: RequisitionKind) => {
     if (type === 'FEED') return setStep('FEED');
     if (type === 'ITEM') return setStep('item');
+    if (type === 'SEMEN') return onSemen?.();
     onCommon?.({ docType: type, purpose: 'PURCHASE' }); // decisions 1 Oct: FA and Service use Purchase
   };
 

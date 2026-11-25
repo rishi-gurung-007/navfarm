@@ -83,15 +83,14 @@ describe("semen lots", () => {
 
 describe("checkMating", () => {
   const form = (over: object = {}) => ({
-    batch_id: "b", sow_animal_id: "s1", mating_type: "AI", mating_date: "2026-03-01", semen_dose_qty: "1", semen_lot_id: "", boar_animal_id: "",
+    batch_id: "b", sow_animal_id: "s1", mating_type: "AI", mating_date: "2026-03-01", semen_dose_qty: "1", semen_lot_id: "L1", boar_animal_id: "",
     second_mating_date: "", expected_farrowing_date: "2026-06-25", preg_check_date: "2026-03-29", ...over,
   });
   const run = (over: object = {}, extra: object = {}) => checkMating({ form: form(over), sow, matings: [], gestationDays: 116, ...extra });
 
-  it("is clean for a complete AI service, with only the no-lot warning", () => {
-    const issues = run();
-    expect(errorsOf(issues)).toEqual([]);
-    expect(fields(issues, "warn")).toEqual(["semen_lot_id"]);
+  it("is clean for a complete AI service, and refuses one without a semen lot", () => {
+    expect(errorsOf(run())).toEqual([]);
+    expect(fields(run({ semen_lot_id: "" }))).toEqual(["semen_lot_id"]);
   });
 
   it("needs the batch, the sow and a boar for a natural mating", () => {

@@ -14,7 +14,7 @@ describe('SemenLotService', () => {
   const updates: any[] = [];
   const chain = (result: unknown[]) => {
     const self: any = {};
-    for (const m of ['from', 'where', 'limit', 'orderBy']) self[m] = () => self;
+    for (const m of ['from', 'where', 'limit', 'orderBy', 'groupBy']) self[m] = () => self;
     self.then = (ok: any, err: any) => Promise.resolve(result).then(ok, err);
     return self;
   };
@@ -33,7 +33,7 @@ describe('SemenLotService', () => {
   let service: SemenLotService;
 
   const boar = { animal_id: 'boar-1', animal_code: 'BOAR-1', company_id: 'co-1', current_location_id: 'pen-1' } as any;
-  const item = { item_id: 'item-s', item_name: 'Boar semen dose', is_active: true, uom_primary: 'DOSE', shelf_life_days: 5 };
+  const item = { item_id: 'item-s', item_code: 'ITM-S', item_name: 'Boar semen dose', is_active: true, is_semen: true, uom_primary: 'DOSE', shelf_life_days: 5 };
   const boarBatch = { batch_id: 'b-boar', batch_no: 'BATCH-000001', farm_id: 'farm-1' };
   const collect = (over: object = {}) =>
     service.postCollection({ boar, boarBatchId: 'b-boar', semenBatchId: 'sb-1', collectionDate: '2026-10-09', doses: 40, itemId: 'item-s', ...over }, 'tenant-1', { userId: 'u1' });
@@ -120,6 +120,9 @@ describe('SemenLotService', () => {
       await expect(collect()).rejects.toThrow(NotFoundException);
       queue.push([{ ...item, is_active: false }]);
       await expect(collect()).rejects.toThrow('is not active');
+      // A dose item not marked as semen (a vaccine, an old item) cannot hold a semen lot (0266).
+      queue.push([{ ...item, is_semen: false }]);
+      await expect(collect()).rejects.toThrow('is not marked as a semen item');
       await expect(collect({ doses: 0 })).rejects.toThrow('at least one dose');
       queue.push([item], [boarBatch], []);
       await expect(collect()).rejects.toThrow('has no store to hold the semen');
@@ -184,6 +187,46 @@ describe('SemenLotService', () => {
       ).rejects.toThrow('has 1 dose left; 2 cannot be used');
       expect(ledger.writeNegativeEntry).not.toHaveBeenCalled();
       expect(updates).toHaveLength(0);
+    });
+
+    describe("on the sow's farm (D1: semen is used where it is)", () => {
+      const sowAt = (pen: string) => ({ animal_id: 'sow-9', animal_code: 'PIG-2025-0009', current_location_id: pen }) as any;
+      // farmOfLocation reads the location row: its farm_id when it has a parent.
+      const at = (id: string, farm: string) => [{ location_id: id, parent: farm, farm_id: farm }];
+
+      it("issues from the store on the sow's farm that received the lot, from the receipt's own layer", async () => {
+        queue.push(
+          [{ uom_primary: 'DOSE' }],
+          at('pen-por', 'farm-por'),
+          [{ warehouse_id: 'store-1', qty: '0.0000' }, { warehouse_id: 'store-por', qty: '4.0000' }],
+          [{ inspection_no: 'QC-000006', status: 'CLOSED', ledger: 'led-rcpt', warehouse_id: 'store-por' }],
+          [{ code: 'POR100', name: 'Kintyre' }],
+          at('store-1', 'farm-mul'),
+          at('store-por', 'farm-por'),
+          at('store-por', 'farm-por'),
+          [{ ledger_id: 'rcpt-por', remaining_quantity: '4.0000' }],
+        );
+        await service.issueDoses(lot(), 1, 'breeding-1', '2026-11-24', 'tenant-1', { userId: 'u1' }, { sow: sowAt('pen-por'), batchId: null });
+        expect(ledger.writeNegativeEntry).toHaveBeenCalledWith(expect.objectContaining({ warehouseId: 'store-por', sourceLedgerId: 'rcpt-por', lotNo: 'LOT-00011' }));
+        expect(updates[0]).toEqual({ doses_used_internal: '1' });
+      });
+
+      it("refuses while the farm's receipt QC is open, and issues nothing", async () => {
+        queue.push(
+          [{ uom_primary: 'DOSE' }],
+          at('pen-por', 'farm-por'),
+          [{ warehouse_id: 'store-1', qty: '4.0000' }],
+          [{ inspection_no: 'QC-000006', status: 'OPEN', ledger: null, warehouse_id: 'store-por' }],
+          [{ code: 'POR100', name: 'Kintyre' }],
+          at('store-1', 'farm-mul'),
+          at('store-por', 'farm-por'),
+        );
+        await expect(
+          service.issueDoses(lot(), 1, 'breeding-1', '2026-11-24', 'tenant-1', { userId: 'u1' }, { sow: sowAt('pen-por'), batchId: null }),
+        ).rejects.toThrow(/waiting for its QC inspection at POR100 \(Kintyre\) \(QC-000006\)/);
+        expect(ledger.writeNegativeEntry).not.toHaveBeenCalled();
+        expect(updates).toHaveLength(0);
+      });
     });
 
     describe('charged to the sow', () => {

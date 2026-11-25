@@ -36,7 +36,7 @@ describe("master data page in the tenant workspace (client ruling, 12 Oct)", () 
   it("shows the switch-workspace message instead of the tables, on a deep link too", () => {
     mockScope = "TENANT";
     renderShell("item");
-    expect(screen.getByText("Master data is managed inside a company or operational area — switch workspace.")).toBeTruthy();
+    expect(screen.getByText("Master data is managed inside a company or operational area. Switch workspace to manage it.")).toBeTruthy();
     expect(screen.queryByTestId("master-data-table")).toBeNull();
   });
 

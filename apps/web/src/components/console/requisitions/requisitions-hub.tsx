@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils';
 import { formatDateShort } from '@/utils/date-short';
 import { todayIso, unwrap } from '../inventory/feed-format';
 import { RequisitionNewDialog } from '../inventory/requisition-new-dialog';
+import { NewSemenRequestDialog } from '../piggery/semen-requests-panel';
 import { FeedRequisitionDetail } from '../inventory/feed-requisition-detail';
 import { FeedRequisitionFromRunDialog } from '../inventory/feed-requisition-from-run-dialog';
 import { FeedFarmSelect } from '../inventory/feed-farm-select';
@@ -79,6 +80,8 @@ interface HubRow {
   line_count: number;
   requisition_kind?: 'FEED' | 'COMMON';
   source?: string | null;
+  /** Set on a semen requisition: the breeding line asked for. */
+  breed_id?: string | null;
 }
 
 /** Rishi 4 Oct: a brand-new common requisition's dialog title names its kind (and, for Item, Store or Purchase). */
@@ -146,6 +149,7 @@ export function RequisitionsHub() {
   const [rows, setRows] = useState<HubRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [needsCompany, setNeedsCompany] = useState(false);
+  const [semenOpen, setSemenOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [open, setOpen] = useState<Open>(null);
   const [openFeed, setOpenFeed] = useState<FeedRequisitionView | null>(null);
@@ -478,7 +482,7 @@ export function RequisitionsHub() {
                 onClick={() => openRow(r.requisition_id)}
               >
                 <td className={cn(TD, 'font-medium')}>{r.req_no}</td>
-                <td className={TD}>{labelOf(DOC_TYPE_LABEL, r.doc_type, t)}</td>
+                <td className={TD}>{r.breed_id ? t('rqTypeSemen') : labelOf(DOC_TYPE_LABEL, r.doc_type, t)}</td>
                 <td className={TD}>
                   {labelOf(SOURCE_LABEL, r.source ?? 'MANUAL_ENTRY', t)}
                 </td>
@@ -535,13 +539,22 @@ export function RequisitionsHub() {
       <RequisitionNewDialog
         open={creating}
         farmId={farmId || undefined}
-        types={['FEED', ...TYPES]}
+        types={['FEED', 'SEMEN', ...TYPES]}
         onClose={() => setCreating(false)}
         onCreated={(view) => {
           setCreating(false);
           setDecision(null);
           setOpenFeed(view);
           loadList();
+        }}
+        onSemen={() => {
+          setCreating(false);
+          // A semen requisition belongs to one company, like any Store requisition.
+          if (!companyId) {
+            setNeedsCompany(true);
+            return;
+          }
+          setSemenOpen(true);
         }}
         onCommon={({ docType, purpose }) => {
           setCreating(false);
@@ -564,6 +577,15 @@ export function RequisitionsHub() {
           setOpen(draft);
         }}
       />
+      {semenOpen && (
+        <NewSemenRequestDialog
+          onClose={() => setSemenOpen(false)}
+          onDone={() => {
+            setSemenOpen(false);
+            loadList();
+          }}
+        />
+      )}
       <FeedRequisitionFromRunDialog
         open={fromRunOpen}
         runId={savedRun?.id ?? null}

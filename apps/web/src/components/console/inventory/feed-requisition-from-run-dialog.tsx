@@ -10,6 +10,7 @@
  * itself (runLineEvidence in the API), with each silo's capacity beside it.
  */
 import { useEffect, useRef, useState } from 'react';
+import { DateInput } from '@/components/ui/date-input';
 import { api } from '@/services/api-client';
 import { InlineAlert } from '@/components/ui/alert';
 import { showToast } from '@/components/ui/toast';
@@ -639,9 +640,8 @@ export function FeedRequisitionFromRunDialog({
                             : t('rqNotApplicable')}
                         </td>
                         <td className={TD}>
-                          <input
+                          <DateInput
                             aria-label={t('rqNewDate', { line: index + 1 })}
-                            type="date"
                             className="nf-input-sm"
                             style={inputStyle}
                             value={line.proposed_delivery_date}

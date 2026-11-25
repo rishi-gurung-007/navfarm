@@ -1,4 +1,4 @@
-import { dayAfter, periodCostsOf } from './semen-cost';
+import { dayAfter, periodCostsOf, semenCostPeriodOf } from './semen-cost';
 
 describe('periodCostsOf — the cost behind a semen collection (G7)', () => {
   it('takes his own feed and drugs, his overhead plus his share of the batch\'s, and his amortisation plus his share', () => {
@@ -29,5 +29,31 @@ describe('periodCostsOf — the cost behind a semen collection (G7)', () => {
   it('starts a period the day after the last collection', () => {
     expect(dayAfter('2026-09-30')).toBe('2026-10-01');
     expect(dayAfter('2026-12-31')).toBe('2027-01-01');
+  });
+});
+
+describe('semenCostPeriodOf — the collection closes the boar\'s period (D2)', () => {
+  it('runs from his entry when he has no earlier lot', () => {
+    expect(semenCostPeriodOf({ collectionDate: '2026-11-23', entryDate: '2025-09-14 00:00:00' })).toEqual({ from: '2025-09-14', to: '2026-11-23' });
+  });
+
+  it('runs from the collection date when he has neither a lot nor an entry date', () => {
+    expect(semenCostPeriodOf({ collectionDate: '2026-11-23' })).toEqual({ from: '2026-11-23', to: '2026-11-23' });
+  });
+
+  it('runs from the day after his latest lot', () => {
+    expect(semenCostPeriodOf({ collectionDate: '2026-11-23', latestCollection: '2025-09-13', entryDate: '2024-01-01' })).toEqual({ from: '2025-09-14', to: '2026-11-23' });
+  });
+
+  it('covers no period for a second collection the same day: the first lot already took the costs', () => {
+    expect(semenCostPeriodOf({ collectionDate: '2026-11-23', latestCollection: '2026-11-23' })).toBeNull();
+  });
+
+  it('covers no period for a back-dated collection: a later lot already took the costs up to its date', () => {
+    expect(semenCostPeriodOf({ collectionDate: '2026-11-20', latestCollection: '2026-11-23' })).toBeNull();
+  });
+
+  it('ends on a typed period end', () => {
+    expect(semenCostPeriodOf({ collectionDate: '2026-11-23', periodTo: '2026-11-22', latestCollection: '2026-11-16' })).toEqual({ from: '2026-11-17', to: '2026-11-22' });
   });
 });

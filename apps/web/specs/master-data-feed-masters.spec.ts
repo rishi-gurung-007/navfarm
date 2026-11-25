@@ -178,6 +178,8 @@ describe('Reporting Period configuration and Alert Rules navigation', () => {
       'delivery-zone',
       'driver',
       'freight-rate',
+      // Posting Groups shows its Group Type by name (client, 18 Nov).
+      'gl-posting-group',
       'reporting-period',
       'service-plan',
       'vehicle',

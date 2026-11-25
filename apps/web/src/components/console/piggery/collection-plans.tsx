@@ -2,10 +2,11 @@
 
 import { DateInput } from '@/components/ui/date-input';
 import { formatDate } from '@/utils/date-short';
-import { useEffect, useState } from 'react';
-import { CalendarDays, FlaskConical } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { CalendarDays, FlaskConical, Loader2 } from 'lucide-react';
 import { api } from '@/services/api-client';
 import { Button } from '@/components/ui/button';
+import { StatusBadge } from '@/components/ui/status-badge';
 import { EntryModal, Field, inputStyle } from './breeding-form-parts';
 import { collectorLabel, type Issue, type Row } from './breeding-rules';
 import { planDraftIssues } from './boar-selection-rules';
@@ -185,7 +186,14 @@ function ReasonDialog({ title, onClose, onConfirm }: { title: string; onClose: (
   );
 }
 
-/** The planned collections of a line, with what to do next on each. */
+const PLAN_BADGE: Record<string, { status: string; label: string }> = {
+  PLANNED: { status: 'PENDING', label: 'Planned' },
+  COLLECTED: { status: 'COMPLETED', label: 'Collected' },
+  CANCELLED: { status: 'CANCELLED', label: 'Cancelled' },
+};
+const BOAR_LABEL: Record<string, string> = { PLANNED: 'Planned', COLLECTED: 'Collected', SKIPPED: 'Skipped' };
+
+/** The planned collections as a table, with what to do next on each: record the collection, cancel the plan, or skip a boar. */
 export function CollectionPlans({
   plans,
   rulesFor,
@@ -200,65 +208,193 @@ export function CollectionPlans({
   onChanged: () => void;
 }) {
   const [reasonFor, setReasonFor] = useState<{ title: string; run: (reason: string) => Promise<void> } | null>(null);
-  if (!plans.length) return null;
+  const head = 'whitespace-nowrap px-3 py-2.5 font-semibold';
+  const cell = 'px-3 py-3 align-top';
 
   return (
-    <div className="space-y-2">
-      <h4 className="text-sm font-bold flex items-center gap-2" style={S.primary}>
-        <CalendarDays className="w-4 h-4" style={S.accent} /> Planned collections
-      </h4>
-      {plans.map((p) => {
-        const { referenceLabel, poolingAllowed } = rulesFor(p);
-        const open = p.status === 'PLANNED';
-        const pending: Row[] = p.lines.filter((l: Row) => l.status === 'PLANNED');
-        // A line that is never pooled is collected one boar at a time; a pooled one in one lot, from boars that share a batch.
-        const firstBatch = pending[0]?.batch_id ?? null;
-        const toCollect = (poolingAllowed ? pending.filter((l) => l.batch_id === firstBatch) : pending.slice(0, 1)).map((l) => l.boar_id);
-        return (
-          <div key={p.plan_id} className="rounded-lg border p-3 space-y-2" style={S.surface}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-bold font-mono" style={S.accent}>{p.plan_no}</span>
-                {p.breed_code && <span className="text-[11px] font-semibold rounded-full px-2 py-0.5" style={{ ...S.raised, ...S.muted }}>{p.breed_code}</span>}
-                <span className="text-sm" style={S.primary}>{p.weekday} {formatDate(p.collection_date)}</span>
-                <span className="text-[11px] font-semibold uppercase" style={STATUS_STYLE[p.status] ?? S.muted}>{p.status}</span>
-              </div>
-              {open && (
-                <div className="flex gap-2">
-                  {pending.length > 0 && (
-                    <Button variant="secondary" onClick={() => onCollect(p, toCollect, firstBatch)}>
-                      <FlaskConical className="w-4 h-4 mr-1" /> Record collection
-                    </Button>
+    <div className="overflow-x-auto rounded-[var(--radius-md)] border" style={S.surface}>
+      <table className="w-full min-w-[1040px] border-collapse text-left text-sm">
+        <thead className="text-[11px] uppercase tracking-wider" style={{ ...S.muted, backgroundColor: 'var(--surface-raised)' }}>
+          <tr>
+            <th className={head}>Plan</th>
+            <th className={head}>Line</th>
+            <th className={head}>Collection day</th>
+            <th className={head}>Status</th>
+            <th className={head}>Boars</th>
+            <th className={`${head} text-right`}>Collected</th>
+            <th className={`${head} text-right`}>Target doses</th>
+            <th className={head}>Requested by / for</th>
+            <th className={`${head} text-right`}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {plans.length === 0 ? (
+            <tr>
+              <td colSpan={9} className="py-10 text-center text-sm" style={S.sub}>
+                <CalendarDays className="mx-auto mb-2 h-6 w-6" style={S.muted} />
+                No planned collections. Plan one from Boar Selection or from the farms' Requests.
+              </td>
+            </tr>
+          ) : plans.map((p) => {
+            const { referenceLabel, poolingAllowed } = rulesFor(p);
+            const open = p.status === 'PLANNED';
+            const lines: Row[] = p.lines ?? [];
+            const pending = lines.filter((l) => l.status === 'PLANNED');
+            const collected = lines.filter((l) => l.status === 'COLLECTED').length;
+            // A line that is never pooled is collected one boar at a time; a pooled one in one lot, from boars that share a batch.
+            const firstBatch = pending[0]?.batch_id ?? null;
+            const toCollect = (poolingAllowed ? pending.filter((l) => l.batch_id === firstBatch) : pending.slice(0, 1)).map((l) => l.boar_id);
+            const badge = PLAN_BADGE[p.status] ?? { status: p.status, label: p.status };
+            const details = [
+              p.requested_by && `By ${p.requested_by}`,
+              p.destination_farm_code && `For ${p.destination_farm_code}${p.destination_farm_name ? ` · ${p.destination_farm_name}` : ''}`,
+              p.reference && `${referenceLabel ?? 'Reference'}: ${p.reference}`,
+            ].filter(Boolean) as string[];
+            return (
+              <tr key={p.plan_id} className="border-t transition-colors hover:bg-[var(--surface-raised)]" style={{ borderColor: 'var(--border)', ...S.primary }}>
+                <td className={`${cell} whitespace-nowrap font-mono font-bold`} style={S.accent}>{p.plan_no}</td>
+                <td className={`${cell} whitespace-nowrap`}>{p.breed_code ?? '—'}</td>
+                <td className={`${cell} whitespace-nowrap`}>
+                  {formatDate(p.collection_date)}
+                  <div className="text-[11px]" style={S.muted}>{p.weekday} · week {p.week_no}</div>
+                </td>
+                <td className={`${cell} whitespace-nowrap`}>
+                  <StatusBadge status={badge.status} label={badge.label} />
+                  {p.cancel_reason && <div className="mt-1 max-w-[12rem] truncate text-[11px]" style={S.muted} title={p.cancel_reason}>{p.cancel_reason}</div>}
+                </td>
+                <td className={cell}>
+                  <div className="flex flex-col gap-1">
+                    {lines.map((l) => (
+                      <div key={l.boar_id} className="flex min-w-[15rem] items-center gap-2 whitespace-nowrap text-xs" title={l.skip_reason ?? undefined}>
+                        <span className="font-mono font-semibold">{l.boar_code}</span>
+                        {l.collector_code && <span style={S.muted}>{l.collector_code}</span>}
+                        <span className="text-[10px] font-semibold uppercase" style={STATUS_STYLE[l.status] ?? S.muted}>{BOAR_LABEL[l.status] ?? l.status}</span>
+                        {open && l.status === 'PLANNED' && (
+                          <button type="button" className="cursor-pointer text-[11px] hover:underline" style={S.accent}
+                            onClick={() => setReasonFor({ title: `Skip ${l.boar_code}`, run: async (reason) => { await api.post(`/piggery/collection-plans/${p.plan_id}/boars/${l.boar_id}/skip`, { reason }); setReasonFor(null); onChanged(); } })}>
+                            Skip
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </td>
+                <td className={`${cell} whitespace-nowrap text-right font-mono`}>{collected} / {lines.length}</td>
+                <td className={`${cell} whitespace-nowrap text-right font-mono`}>{p.target_doses != null ? Number(p.target_doses) : '—'}</td>
+                <td className={`${cell} min-w-[16rem] text-xs`} style={details.length ? S.sub : S.muted}>
+                  {details.length ? details.map((d) => <div key={d}>{d}</div>) : '—'}
+                </td>
+                <td className={`${cell} whitespace-nowrap text-right`}>
+                  {open ? (
+                    <div className="flex justify-end gap-2">
+                      {pending.length > 0 && (
+                        <Button size="sm" variant="outline" onClick={() => onCollect(p, toCollect, firstBatch)}>
+                          <FlaskConical className="mr-1 h-3.5 w-3.5" /> Record
+                        </Button>
+                      )}
+                      {!lines.some((l) => l.status === 'COLLECTED') && (
+                        <Button size="sm" variant="ghost"
+                          onClick={() => setReasonFor({ title: `Cancel ${p.plan_no}`, run: async (reason) => { await api.post(`/piggery/collection-plans/${p.plan_id}/cancel`, { reason }); setReasonFor(null); onChanged(); } })}>
+                          Cancel
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <span style={S.muted}>—</span>
                   )}
-                  {!p.lines.some((l: Row) => l.status === 'COLLECTED') && (
-                    <Button variant="secondary" onClick={() => setReasonFor({ title: `Cancel ${p.plan_no}`, run: async (reason) => { await api.post(`/piggery/collection-plans/${p.plan_id}/cancel`, { reason }); setReasonFor(null); onChanged(); } })}>
-                      Cancel plan
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
-            <p className="text-[11px]" style={S.muted}>
-              {[p.requested_by && `Requested by ${p.requested_by}`, p.reference && `${referenceLabel ?? 'Reference'}: ${p.reference}`, p.destination_farm_code && `For ${p.destination_farm_code}${p.destination_farm_name ? ` — ${p.destination_farm_name}` : ''}`, p.cancel_reason && `Cancelled: ${p.cancel_reason}`].filter(Boolean).join(' · ') || 'No request details.'}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {p.lines.map((l: Row) => (
-                <span key={l.boar_id} className="text-xs rounded-md border px-2 py-1 flex items-center gap-2" style={S.raised} title={l.skip_reason ?? undefined}>
-                  <span className="font-mono font-bold" style={S.primary}>{l.boar_code}</span>
-                  {l.collector_code && <span style={S.muted}>{l.collector_code}</span>}
-                  <span className="text-[10px] font-semibold uppercase" style={STATUS_STYLE[l.status] ?? S.muted}>{l.status}</span>
-                  {open && l.status === 'PLANNED' && (
-                    <button type="button" className="text-[11px] cursor-pointer hover:underline" style={S.accent} onClick={() => setReasonFor({ title: `Skip ${l.boar_code}`, run: async (reason) => { await api.post(`/piggery/collection-plans/${p.plan_id}/boars/${l.boar_id}/skip`, { reason }); setReasonFor(null); onChanged(); } })}>
-                      Skip
-                    </button>
-                  )}
-                </span>
-              ))}
-            </div>
-          </div>
-        );
-      })}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
       {reasonFor && <ReasonDialog title={reasonFor.title} onClose={() => setReasonFor(null)} onConfirm={reasonFor.run} />}
+    </div>
+  );
+}
+
+/**
+ * AI Station › Planned Collections: every collection plan in one table, by line and status. Plans are made from Boar Selection (the boars
+ * ticked there) or from the farms' Requests; here they are followed through: record, skip a boar, cancel.
+ */
+export function CollectionPlansPanel({
+  version,
+  onCollect,
+  onChanged,
+}: {
+  /** Changes when a collection was recorded elsewhere, so the plans are read again. */
+  version?: number;
+  onCollect: (plan: Row, boarIds: string[], batchId: string | null) => void;
+  onChanged?: () => void;
+}) {
+  const [lines, setLines] = useState<Row[]>([]);
+  const [rules, setRules] = useState<Record<string, Row>>({});
+  const [plans, setPlans] = useState<Row[] | null>(null);
+  const [breedId, setBreedId] = useState('');
+  const [status, setStatus] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .get('/piggery/boar-selection/lines')
+      .then(async (res) => {
+        const ls = unwrap<Row[]>(res) ?? [];
+        setLines(ls);
+        // Each line's own plan rules: the name of its reference, and whether its lots are pooled.
+        const today = new Date().toISOString().slice(0, 10);
+        const loaded = await Promise.all(
+          ls.map(async (l) => [l.breed_id, unwrap<Row>(await api.get(`/piggery/boar-selection?breed_id=${l.breed_id}&as_of=${today}`).catch(() => null))?.plan_rules ?? {}] as const),
+        );
+        setRules(Object.fromEntries(loaded));
+      })
+      .catch((e) => setError(e?.message || 'Could not load the breeding lines.'));
+  }, []);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      setPlans(unwrap<Row[]>(await api.get(`/piggery/collection-plans${breedId ? `?breed_id=${breedId}` : ''}`)) ?? []);
+    } catch (e: any) {
+      setPlans([]);
+      setError(e?.message || 'Could not load the planned collections.');
+    }
+  }, [breedId]);
+  useEffect(() => { void load(); }, [load, version]);
+
+  const shown = (plans ?? []).filter((p) => !status || p.status === status);
+  const count = (s: string) => (plans ?? []).filter((p) => p.status === s).length;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <select className="nf-input-sm h-9" value={breedId} onChange={(e) => setBreedId(e.target.value)} aria-label="Breeding line">
+          <option value="">All lines</option>
+          {lines.map((l) => <option key={l.breed_id} value={l.breed_id}>{l.breed_code || l.breed_name}</option>)}
+        </select>
+        <div className="inline-flex items-center gap-1 rounded-[var(--radius-md)] border p-1" style={S.surface} role="tablist" aria-label="Status">
+          {[['', `All (${plans?.length ?? 0})`], ['PLANNED', `Planned (${count('PLANNED')})`], ['COLLECTED', `Collected (${count('COLLECTED')})`], ['CANCELLED', `Cancelled (${count('CANCELLED')})`]].map(([v, label]) => (
+            <button key={v || 'all'} type="button" role="tab" aria-selected={status === v} onClick={() => setStatus(v)}
+              className="h-8 cursor-pointer rounded-[var(--radius-sm)] px-3 text-xs font-semibold"
+              style={status === v ? { backgroundColor: 'var(--accent)', color: '#fff' } : S.sub}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {error && <p className="rounded border p-3 text-sm" style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}>{error}</p>}
+      {plans === null ? (
+        <div className="flex justify-center p-8"><Loader2 className="h-5 w-5 animate-spin" style={S.muted} /></div>
+      ) : (
+        <CollectionPlans
+          plans={shown}
+          rulesFor={(p) => ({ referenceLabel: rules[p.breed_id]?.reference_label ?? null, poolingAllowed: rules[p.breed_id]?.pooling_allowed ?? true })}
+          onCollect={onCollect}
+          onChanged={() => {
+            void load();
+            onChanged?.();
+          }}
+        />
+      )}
     </div>
   );
 }

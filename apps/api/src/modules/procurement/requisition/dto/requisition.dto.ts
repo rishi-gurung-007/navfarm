@@ -186,6 +186,11 @@ export class CreateRequisitionDto {
   @IsString()
   justification?: string;
 
+  @ApiPropertyOptional({ description: 'A semen request: the breeding line (breed) whose semen the farm asks for. Store requisitions only; kept when omitted on update.' })
+  @IsOptional()
+  @IsUUID()
+  breed_id?: string;
+
   @ApiProperty({ type: [RequisitionLineInput] })
   @IsArray()
   @ArrayMinSize(1)

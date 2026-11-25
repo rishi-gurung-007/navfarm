@@ -49,3 +49,33 @@ export function dayAfter(date: string): string {
   d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
 }
+
+/**
+ * The period a collection's cost covers, when it is not typed (G7: "over the period since his last collection, or his
+ * entry"). The collection itself closes the boar's period, whatever then happens to the lot: a lot held by QC, or one
+ * that failed it, still took his costs up to its date.
+ *
+ *  - No earlier lot: from his entry (else the collection date) to this collection.
+ *  - His latest lot is before this one: from the day after it.
+ *  - His latest lot is on the same day or later (a second collection that day, or one entered back-dated): his costs
+ *    up to this date were already charged to that lot, so this one covers no period (`null`) and carries no cost.
+ *    Charging the period again counted the same feed, overhead and amortisation twice (D2, 24 Nov 2026: three lots
+ *    collected from one boar on 2026-11-23 each carried 1,199.23 for 2025-09-14 to 2026-11-23).
+ */
+export function semenCostPeriodOf(input: {
+  collectionDate: string;
+  /** The end the user typed (period_to), else the collection date. */
+  periodTo?: string | null;
+  /** The collection date of the boar's latest lot already recorded (primary or pooled), any date. */
+  latestCollection?: string | null;
+  entryDate?: string | null;
+}): { from: string; to: string } | null {
+  const day = (d: string) => String(d).slice(0, 10);
+  const to = day(input.periodTo || input.collectionDate);
+  if (input.latestCollection) {
+    const last = day(input.latestCollection);
+    if (last >= to) return null;
+    return { from: dayAfter(last), to };
+  }
+  return { from: day(input.entryDate || input.collectionDate), to };
+}

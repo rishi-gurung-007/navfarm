@@ -20,13 +20,13 @@
  * requisition.rules.ts projects the states from it on read.
  */
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { farmScope, assertCompanyInScope, assertLocationOnActiveFarm, farmOfLocation, requisitionFarmLobCondition } from '../../../common/farm-scope';
+import { type FarmScope, farmScope, assertCompanyInScope, assertLocationOnActiveFarm, farmOfLocation, requisitionFarmLobCondition } from '../../../common/farm-scope';
 import { userHasPermission } from '../../../common/permissions';
 import { ApprovalService } from '../../production/approval/approval.service';
 import { StockTransferService } from '../../inventory/stock-transfer/stock-transfer.service';
@@ -74,6 +74,15 @@ export const COMMON_REQUISITION_DOC_TYPE = 'REQUISITION';
 
 /** UTC, whole-second — the one timestamp convention approved_at/POSTED use. */
 const nowTs = (): string => new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+/**
+ * The scope a requisition's source store is checked against. A semen requisition (a Store requisition naming a breeding line)
+ * asks another farm — the one that collects the line's semen — so its source is that farm's store: it must be in the
+ * company (and LOB), not on the asking farm. Every other requisition's source stays on the active farm.
+ */
+export function sourceScope(scope: FarmScope, breedId: string | null | undefined, purpose: string): FarmScope {
+  return breedId && purpose === 'STORE' ? { ...scope, farmId: null } : scope;
+}
 
 @Injectable()
 export class RequisitionService {
@@ -134,7 +143,17 @@ export class RequisitionService {
   private scopeConditions(opts: { bypassFarm?: boolean } = {}) {
     const scope = farmScope(this.cls);
     const conditions: SQL[] = [];
-    if (scope.farmId && !opts.bypassFarm) conditions.push(eq(schema.requisition.farm_id, scope.farmId));
+    if (scope.farmId && !opts.bypassFarm) {
+      // A semen requisition (a Store requisition naming a breeding line) is the asking farm's and also the sending farm's:
+      // the farm whose store it ships from releases, ships and allocates the lot to it. Every other requisition is its farm's only.
+      const R = schema.requisition;
+      conditions.push(or(
+        eq(R.farm_id, scope.farmId),
+        and(isNotNull(R.breed_id), eq(R.purpose, 'STORE'), sql`${R.from_location_id} IN (
+          SELECT sf.location_id FROM location_master sf
+          WHERE sf.location_id = ${scope.farmId} OR sf.farm_id = ${scope.farmId} OR sf.parent_location_id = ${scope.farmId})`),
+      )!);
+    }
     // A selected company is a boundary for company admins as well as restricted
     // users (farm-scope.ts batchReferenceScopeConditions): every list, read and
     // change of a requisition stays inside it. Task 13 fix round 1 — mounting
@@ -273,13 +292,14 @@ export class RequisitionService {
     // farm made the read-back below miss the row through scopeConditions()).
     const farmId = (mainLocationId ? await farmOfLocation(this.db, mainLocationId) : null) ?? dto.farm_id ?? scope.farmId ?? null;
     if (dto.from_location_id) {
-      await assertLocationOnActiveFarm(this.db, scope, dto.from_location_id, 'Requisition source location');
+      await assertLocationOnActiveFarm(this.db, sourceScope(scope, dto.breed_id, purpose), dto.from_location_id, 'Requisition source location');
     }
     if (dto.to_location_id) {
       await assertLocationOnActiveFarm(this.db, scope, dto.to_location_id, 'Requisition destination location');
     }
 
     await this.assertLineReferences(tenantId, dto.company_id, docType, dto.lines);
+    await this.assertSemenBreed(dto.breed_id, purpose, tenantId, dto.lines);
 
     return withTenantTransaction(this.cls, async () => {
       const reqNo = await this.nextReqNo(dto.company_id, tenantId);
@@ -318,11 +338,36 @@ export class RequisitionService {
         remarks: dto.remarks ?? null,
         required_date: dto.required_date ?? null,
         justification: dto.justification ?? null,
+        breed_id: dto.breed_id ?? null,
         created_by: userPayload?.userId ?? null,
       });
       await this.db.insert(schema.requisitionLine).values(this.lineValues(requisitionId, purpose, dto.lines, dto));
       return this.findOne(requisitionId, tenantId, { caller: userPayload });
     });
+  }
+
+  /** A semen request (0265) names a breeding line of this tenant, and only a Store requisition can be one. */
+  private async assertSemenBreed(breedId: string | null | undefined, purpose: string, tenantId: string, lines: { item_id?: string | null }[] = []) {
+    if (!breedId) return;
+    // A semen requisition asks for one semen item: one line.
+    if (lines.length > 1) throw new BadRequestException('A semen requisition has one line: one semen item and its doses.');
+    // Its lines ask for semen items only (0266): items marked as semen.
+    const itemIds = [...new Set(lines.map((l) => l.item_id).filter((v): v is string => !!v))];
+    if (itemIds.length) {
+      const items = await this.db
+        .select({ item_id: schema.itemMaster.item_id, code: schema.itemMaster.item_code, is_semen: schema.itemMaster.is_semen })
+        .from(schema.itemMaster)
+        .where(and(eq(schema.itemMaster.tenant_id, tenantId), inArray(schema.itemMaster.item_id, itemIds)));
+      const notSemen = items.filter((i) => !i.is_semen).map((i) => i.code);
+      if (notSemen.length) throw new BadRequestException(`A semen request asks for semen items only: ${notSemen.join(', ')} is not marked as a semen item.`);
+    }
+    if (purpose !== 'STORE') throw new BadRequestException('Only a Store requisition can be a semen request (breeding line).');
+    const [breed] = await this.db
+      .select({ breed_id: schema.breedMaster.breed_id })
+      .from(schema.breedMaster)
+      .where(and(eq(schema.breedMaster.breed_id, breedId), eq(schema.breedMaster.tenant_id, tenantId)))
+      .limit(1);
+    if (!breed) throw new BadRequestException('The breeding line of this semen request was not found.');
   }
 
   /**
@@ -455,6 +500,7 @@ export class RequisitionService {
       const fromLocationId = purpose === 'STORE' ? (dto.from_location_id ?? null) : null;
       const toLocationId = purpose === 'STORE' ? (dto.to_location_id ?? null) : null;
       assertPurposeLocations(purpose, fromLocationId, toLocationId);
+      await this.assertSemenBreed(dto.breed_id !== undefined ? dto.breed_id : row.breed_id, purpose, tenantId, dto.lines);
       const directTransfer = Boolean(dto.direct_transfer);
       if (directTransfer) {
         assertDirectTransferEligible({ docType, purpose, fromLocationId, toLocationId });
@@ -473,8 +519,12 @@ export class RequisitionService {
         if (id) await assertDepartmentIdentity(this.db, { tenantId, companyId: row.company_id, departmentId: id, label });
       }
       const scope = farmScope(this.cls);
-      for (const [id, label] of [[dto.main_location_id, 'Requisition main location'], [fromLocationId, 'Requisition source location'], [toLocationId, 'Requisition destination location']] as const) {
+      for (const [id, label] of [[dto.main_location_id, 'Requisition main location'], [toLocationId, 'Requisition destination location']] as const) {
         if (id) await assertLocationOnActiveFarm(this.db, scope, id, label);
+      }
+      if (fromLocationId) {
+        const breedId = dto.breed_id !== undefined ? dto.breed_id : row.breed_id;
+        await assertLocationOnActiveFarm(this.db, sourceScope(scope, breedId, purpose), fromLocationId, 'Requisition source location');
       }
       await this.assertLineReferences(tenantId, row.company_id, docType, dto.lines);
       // P1 follow-up item 5: the farm follows the Main / Farm Location (shared
@@ -497,6 +547,7 @@ export class RequisitionService {
           remarks: dto.remarks ?? null,
           required_date: dto.required_date ?? null,
           justification: dto.justification ?? null,
+          ...(dto.breed_id !== undefined ? { breed_id: dto.breed_id ?? null } : {}),
           updated_by: userPayload?.userId ?? null,
         })
         .where(eq(schema.requisition.requisition_id, requisitionId));
@@ -835,6 +886,7 @@ export class RequisitionService {
         farm_id: schema.requisition.farm_id,
         farm_code: schema.locationMaster.location_code,
         required_date: schema.requisition.required_date,
+        breed_id: schema.requisition.breed_id,
         approval_request_id: schema.requisition.approval_request_id,
         linked_po_no: schema.requisition.linked_po_no,
         requisition_date: schema.requisition.requisition_date,

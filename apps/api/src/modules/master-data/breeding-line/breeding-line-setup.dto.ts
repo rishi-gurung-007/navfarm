@@ -40,6 +40,9 @@ export class CreateBreedingLineSetupDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) min_boars_per_lot?: number | null;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) max_boars_per_lot?: number | null;
 
+  /** The semen item the line's collections and requests use: an item marked as semen (0266). */
+  @IsOptional() @IsUUID() semen_item_id?: string | null;
+
   @IsOptional() @IsString() @MaxLength(50) colorant_name?: string | null;
 
   @IsOptional() @IsString() @MaxLength(100) label_template?: string | null;

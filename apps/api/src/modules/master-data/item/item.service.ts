@@ -476,6 +476,9 @@ export class ItemService {
     const bioTerms: BioCostingTerms = { ...this.bioTermsOf(dto), is_biological_asset: dto.is_biological_asset || false };
     this.assertBioCosting(bioTerms);
     await this.assertBioGlAccounts(bioTerms, tenantId, companyId);
+    if (dto.is_semen && dto.is_biological_asset) {
+      throw new BadRequestException('An animal item cannot be a semen item.');
+    }
     if (dto.is_qc_required && dto.is_biological_asset) {
       throw new BadRequestException('A biological asset cannot be QC required: animals are registered, not received into stock.');
     }
@@ -517,6 +520,8 @@ export class ItemService {
       ...this.bioColumnsToWrite(bioTerms),
       is_inventoriable: dto.is_inventoriable ?? true,
       is_qc_required: dto.is_qc_required ?? false,
+      qc_rounds: dto.qc_rounds ?? 1,
+      is_semen: dto.is_semen ?? false,
       min_stock_level: dto.min_stock_level?.toString() || null,
       max_stock_level: dto.max_stock_level?.toString() || null,
       reorder_level: dto.reorder_level?.toString() || null,
@@ -836,6 +841,9 @@ export class ItemService {
       const activeVal =
         String(query.isActive) === 'true' || query.isActive === true;
       conditions.push(eq(schema.itemMaster.is_active, activeVal));
+    }
+    if (query.isSemen !== undefined) {
+      conditions.push(eq(schema.itemMaster.is_semen, String(query.isSemen) === 'true' || query.isSemen === true));
     }
     if (query.isBlocked !== undefined) {
       const blockedVal =
@@ -1467,6 +1475,15 @@ export class ItemService {
       );
     if (dto.is_qc_required !== undefined)
       updates.is_qc_required = dto.is_qc_required;
+    if (dto.qc_rounds !== undefined && dto.qc_rounds !== null)
+      updates.qc_rounds = dto.qc_rounds;
+    if (
+      (dto.is_semen ?? item.is_semen) &&
+      (dto.is_biological_asset ?? item.is_biological_asset)
+    )
+      throw new BadRequestException('An animal item cannot be a semen item.');
+    if (dto.is_semen !== undefined && dto.is_semen !== null)
+      updates.is_semen = dto.is_semen;
     if (dto.min_stock_level !== undefined)
       updates.min_stock_level = dto.min_stock_level?.toString() || null;
     if (dto.max_stock_level !== undefined)

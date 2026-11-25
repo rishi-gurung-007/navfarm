@@ -34,6 +34,7 @@ const EXPECTED: Record<string, string> = {
   resource: 'Resource',
   'gl-account': 'GL Account',
   'gl-mapping': 'GL Mapping',
+  'gl-posting-group': 'Posting Group',
   'cost-center': 'Cost Centre',
   reason: 'Reason',
   'alert-rule': 'Alert Rule',

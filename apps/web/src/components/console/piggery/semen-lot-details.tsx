@@ -1,7 +1,11 @@
 'use client';
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { Dialog } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { DateInput } from '@/components/ui/date-input';
+import { showToast } from '@/components/ui/toast';
+import { getStoredUser, hasPermission } from '@/hooks/useAuth';
 import { api } from '@/services/api-client';
 import { useCompanyCurrency } from '@/hooks/useCompanyCurrency';
 import type { Row } from './breeding-rules';
@@ -15,6 +19,114 @@ const primary: CSSProperties = { color: 'var(--text-primary)' };
 const unwrap = <T,>(res: any): T => (Array.isArray(res) ? res : (res?.data ?? res)) as T;
 const day = (v: unknown) => (v ? formatDate(v as string) : null);
 const num = (v: unknown, digits = 2) => (v == null || v === '' ? null : Number(v).toFixed(digits));
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const REASONS: Array<[string, string]> = [
+  ['EXPIRED', 'Expired'],
+  ['DAMAGED', 'Damaged or spoiled'],
+  ['QC_FAILED', 'Failed QC'],
+  ['OTHER', 'Other'],
+];
+const reasonLabel = (v: string) => REASONS.find(([k]) => k === v)?.[1] ?? v;
+
+/**
+ * Destroy doses of a lot where they are (Phase 3): written off from that store's stock with its journal, counted as destroyed on the lot
+ * and in the AI Station report. The store is asked for only when the lot is in more than one.
+ */
+function DestroyDosesDialog({ lotId, lotNo, onClose, onDone }: { lotId: string; lotNo: string; onClose: () => void; onDone: () => void }) {
+  const [stock, setStock] = useState<Row[] | null>(null);
+  const [store, setStore] = useState('');
+  const [doses, setDoses] = useState('');
+  const [date, setDate] = useState(todayStr());
+  const [reason, setReason] = useState('EXPIRED');
+  const [remarks, setRemarks] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api
+      .get(`/piggery/semen-disposal/stock/${lotId}`)
+      .then((res) => {
+        const rows = unwrap<Row[]>(res) || [];
+        setStock(rows);
+        if (rows.length === 1) setStore(rows[0].warehouse_id);
+      })
+      .catch((e) => setError(e?.message || 'Could not read where the doses are.'));
+  }, [lotId]);
+  const held = stock?.find((s) => s.warehouse_id === store)?.qty;
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.post(`/piggery/semen-disposal/${lotId}`, {
+        doses: Number(doses),
+        disposal_date: date,
+        reason_type: reason,
+        ...(store ? { warehouse_id: store } : {}),
+        ...(remarks.trim() ? { remarks: remarks.trim() } : {}),
+      });
+      showToast.success(`${doses} dose${Number(doses) === 1 ? '' : 's'} of ${lotNo} destroyed.`);
+      onDone();
+    } catch (e: any) {
+      setError(e?.message || 'Could not destroy the doses.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const field = 'nf-input-sm h-9 w-full';
+  return (
+    <Dialog open onClose={onClose} title={`Destroy doses · ${lotNo}`}
+      footer={
+        <div className="flex w-full justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" disabled={busy || !(Number(doses) > 0) || (stock !== null && stock.length > 1 && !store) || (reason === 'OTHER' && !remarks.trim())} onClick={save}>
+            {busy ? 'Saving...' : 'Destroy doses'}
+          </Button>
+        </div>
+      }>
+      <div className="space-y-3 text-sm">
+        <p className="text-xs" style={sub}>
+          The doses are written off from the store they are at, at the lot's cost, and counted as destroyed in the AI Station report. This cannot be undone.
+        </p>
+        {stock !== null && stock.length > 1 && (
+          <label className="flex flex-col gap-1 text-xs font-semibold" style={sub}>
+            Store
+            <select className={field} value={store} onChange={(e) => setStore(e.target.value)}>
+              <option value="">Select...</option>
+              {stock.map((s) => (
+                <option key={s.warehouse_id} value={s.warehouse_id}>{`${s.code ?? s.warehouse_id} · ${Number(s.qty)} doses`}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {stock !== null && stock.length === 1 && (
+          <p className="text-xs" style={muted}>At {stock[0].code}: {Number(stock[0].qty)} doses.</p>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <label className="flex flex-col gap-1 text-xs font-semibold" style={sub}>
+            Doses
+            <input className={`${field} text-right font-mono`} type="number" min={0} step="1" value={doses} onChange={(e) => setDoses(e.target.value)} />
+            {held != null && <span className="font-normal" style={muted}>{Number(held)} at this store</span>}
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold" style={sub}>
+            Date
+            <DateInput value={date} className="nf-input-sm h-9" onChange={(e) => setDate(e.target.value)} />
+          </label>
+        </div>
+        <label className="flex flex-col gap-1 text-xs font-semibold" style={sub}>
+          Reason
+          <select className={field} value={reason} onChange={(e) => setReason(e.target.value)}>
+            {REASONS.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-xs font-semibold" style={sub}>
+          {reason === 'OTHER' ? 'Remarks *' : 'Remarks'}
+          <input className={field} value={remarks} maxLength={500} onChange={(e) => setRemarks(e.target.value)} />
+        </label>
+        {error && <p className="text-xs" role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}
+      </div>
+    </Dialog>
+  );
+}
+
 const named = (x?: { code?: string | null; name?: string | null } | null) =>
   x ? [x.code, x.name].filter(Boolean).join(' · ') : null;
 
@@ -65,20 +177,32 @@ export function SemenLotDetails({
   const { formatMoney } = useCompanyCurrency();
   const [lot, setLot] = useState<Row | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [disposals, setDisposals] = useState<Row[]>([]);
+  const [destroying, setDestroying] = useState(false);
+  const canDestroy = hasPermission(getStoredUser(), 'PIGGERY', 'ANIMAL', 'can_edit');
 
-  useEffect(() => {
-    setLot(null);
-    setError(null);
-    if (!lotId) return;
+  const load = useCallback(() => {
+    if (!lotId) return () => undefined;
     let current = true;
     api
       .get(`/piggery/breeding/semen-collection/${lotId}`)
       .then((res) => current && setLot(unwrap<Row>(res)))
       .catch((e) => current && setError(e?.message || 'Could not load the lot.'));
+    api
+      .get(`/piggery/semen-disposal?semen_batch_id=${lotId}`)
+      .then((res) => current && setDisposals(unwrap<Row[]>(res) || []))
+      .catch(() => current && setDisposals([]));
     return () => {
       current = false;
     };
   }, [lotId]);
+
+  useEffect(() => {
+    setLot(null);
+    setError(null);
+    setDisposals([]);
+    return load();
+  }, [load]);
 
   const money = (v: unknown) => formatMoney(Number(v || 0));
   const boarLink = (id?: string | null, code?: string | null) =>
@@ -217,6 +341,7 @@ export function SemenLotDetails({
               rows={[
                 ['Used inside the company', num(lot.doses_used_internal)],
                 ['Sold', num(lot.doses_sold)],
+                ['Destroyed', num(lot.doses_destroyed)],
                 ['Remaining', num(lot.doses_remaining)],
               ]}
             />
@@ -249,6 +374,38 @@ export function SemenLotDetails({
             )}
           </Section>
 
+          <Section title="Destroyed doses">
+            {disposals.length ? (
+              <table className="w-full text-left text-xs border-collapse">
+                <thead style={muted}>
+                  <tr>
+                    {['No.', 'Date', 'Where', 'Doses', 'Reason', 'Cost', 'Note'].map((h) => (
+                      <th key={h} className="py-1.5 pr-3 font-semibold">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {disposals.map((d: Row) => (
+                    <tr key={d.disposal_id} className="border-t" style={{ borderColor: 'var(--border)', ...primary }}>
+                      <td className="py-1.5 pr-3 font-mono">{d.disposal_no}</td>
+                      <td className="py-1.5 pr-3">{day(d.disposal_date)}</td>
+                      <td className="py-1.5 pr-3">{d.store_code ?? '—'}</td>
+                      <td className="py-1.5 pr-3">{num(d.doses, 0)}</td>
+                      <td className="py-1.5 pr-3">{reasonLabel(d.reason_type)}{d.source === 'QC_REJECTION' && d.inspection_no ? ` (${d.inspection_no})` : ''}</td>
+                      <td className="py-1.5 pr-3">{d.amount != null ? money(d.amount) : '—'}</td>
+                      <td className="py-1.5 pr-3" style={sub}>{d.remarks ?? ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-xs" style={muted}>No doses of this lot have been destroyed.</p>
+            )}
+            {canDestroy && lot.inventory_posted && Number(lot.doses_remaining) > 0 && (
+              <Button size="sm" variant="outline" onClick={() => setDestroying(true)}>Destroy doses</Button>
+            )}
+          </Section>
+
           <Section title="QR code">
             {lot.qr ? (
               <>
@@ -264,6 +421,17 @@ export function SemenLotDetails({
             )}
           </Section>
         </div>
+      )}
+      {destroying && lotId && lot && (
+        <DestroyDosesDialog
+          lotId={lotId}
+          lotNo={lot.lot_no ?? ''}
+          onClose={() => setDestroying(false)}
+          onDone={() => {
+            setDestroying(false);
+            load();
+          }}
+        />
       )}
     </Dialog>
   );

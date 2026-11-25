@@ -515,6 +515,20 @@ describe('Part E Task 4 — one ledger leg per event (cp. 46: received KG posted
     expect(ledger.writeTransferShipment).toHaveBeenCalledWith(expect.objectContaining({ fromWarehouseId: 'wh-store', quantity: 6, documentLineId: 'line-1', lotNo: 'LOT-9' }));
   });
 
+  it('a semen lot ships at its own cost: the draw is restricted to the lot\'s receipts (D3)', async () => {
+    const queues = baseQueues();
+    queues.set(schema.semenBatch, [[{ id: 'sb-57' }]]);
+    const { service, as, ledger } = setup(queues);
+    await as(() => service.postShipment('tr-1', { posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 4 }] }, 'tenant-1', ADMIN));
+    expect(ledger.writeTransferShipment).toHaveBeenCalledWith(expect.objectContaining({ lotNo: 'LOT-9', costFromLot: true }));
+  });
+
+  it('any other lot ships by the item\'s costing method (8 Oct decision)', async () => {
+    const { service, as, ledger } = setup(baseQueues());
+    await as(() => service.postShipment('tr-1', { posting_date: '2026-10-02', lines: [{ line_id: 'line-1', quantity: 4 }] }, 'tenant-1', ADMIN));
+    expect(ledger.writeTransferShipment).toHaveBeenCalledWith(expect.objectContaining({ lotNo: 'LOT-9', costFromLot: false }));
+  });
+
   it('a receipt puts the quantity into the destination only, at the shipment rate', async () => {
     const queues = baseQueues();
     queues.set(schema.transferShipment, [[{ ...SHIPMENT }]]);

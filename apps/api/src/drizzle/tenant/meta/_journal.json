@@ -1821,6 +1821,34 @@
       "when": 1794873600000,
       "tag": "0262_kill_sheets",
       "breakpoints": true
+    },
+    {
+      "idx": 260,
+      "version": "5",
+      "when": 1794960000000,
+      "tag": "0263_qc_inspection_rounds",
+      "breakpoints": true
+    },
+    {
+      "idx": 261,
+      "version": "5",
+      "when": 1795046400000,
+      "tag": "0264_semen_dose_disposal",
+      "breakpoints": true
+    },
+    {
+      "idx": 262,
+      "version": "5",
+      "when": 1795132800000,
+      "tag": "0265_semen_requisition",
+      "breakpoints": true
+    },
+    {
+      "idx": 263,
+      "version": "5",
+      "when": 1795219200000,
+      "tag": "0266_semen_item",
+      "breakpoints": true
     }
   ]
 }
