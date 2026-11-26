@@ -1,11 +1,11 @@
 import { withTenantTransaction } from '../../../common/tenant-transaction';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { and, asc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
-import { farmOfLocation } from '../../../common/farm-scope';
+import { farmOfLocation, farmOfLocationLookup } from '../../../common/farm-scope';
 import { farmStoreOf } from '../../../common/farm-store';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { InventoryLedgerService } from '../../inventory/inventory-ledger/inventory-ledger.service';
@@ -246,23 +246,10 @@ export class SemenLotService {
 
       // Semen is used on the sow's farm: the doses come out of the store there that holds the lot, once that farm's receipt QC has accepted it (D1).
       const warehouseId = await this.doseStore(lot, quantity, use?.sow);
-      // The doses cost what THIS lot cost, whatever else is in the store: they are drawn from the lot's own receipt layer (its collection OUTPUT in the
-      // collection store, its transfer receipt in a farm's store). Where that layer no longer holds them they are drawn the ordinary way, from the oldest receipt.
-      const L = schema.inventoryLedger;
-      const [lotReceipt] = await this.db
-        .select({ ledger_id: L.ledger_id, remaining_quantity: L.remaining_quantity })
-        .from(L)
-        .where(and(
-          eq(L.item_id, lot.output_item_id),
-          eq(L.warehouse_id, warehouseId),
-          eq(L.lot_no, lot.lot_no),
-          ...(warehouseId === lot.warehouse_id
-            ? [eq(L.transaction_type, 'OUTPUT'), eq(L.document_type, 'BREEDING')]
-            : [eq(L.transaction_type, 'TRANSFER_RECEIPT'), gte(L.remaining_quantity, String(quantity))]),
-        ))
-        .orderBy(asc(L.posting_date), asc(L.entry_no))
-        .limit(1);
-      const sourceLedgerId = lotReceipt && Number(lotReceipt.remaining_quantity ?? 0) >= quantity - 1e-9 ? lotReceipt.ledger_id : undefined;
+      // The doses cost what THIS lot cost, whatever else is in the store: they are drawn from the lot's own receipt layers at that store (its
+      // collection OUTPUT in the collection store, the transfer receipts that brought it to a farm's store), oldest first, across as many of them
+      // as it takes (costFromLot, lotCostLayers). Before 26 Nov one single layer had to hold the whole quantity, and a lot received in two
+      // transfers, or a use spanning two layers, was costed oldest-first from whatever lot was in the store.
 
       // The sow's batch, when the cost can go onto her: a bio-asset batch with a carrying value.
       const [sowBatch] = use?.batchId
@@ -297,7 +284,7 @@ export class SemenLotService {
         quantity,
         uom: item?.uom_primary ?? 'DOSE',
         lotNo: lot.lot_no,
-        sourceLedgerId,
+        costFromLot: true,
         batchNo: sowBatch?.batch_no,
         warehouseId,
         userId: userPayload?.userId,
@@ -335,7 +322,8 @@ export class SemenLotService {
       .select({ inspection_no: Q.inspection_no, status: Q.status, ledger: Q.ledger_entry_id, warehouse_id: Q.warehouse_id })
       .from(Q)
       .where(and(eq(Q.item_id, lot.output_item_id!), eq(Q.lot_no, lot.lot_no!), inArray(Q.source_doc_type, ['TRANSFER_RECEIPT', 'TRANSFER_EVENT'])));
-    const farmOf = async (id: string | null) => (id ? farmOfLocation(this.db, id) : null);
+    // Several held rows and receipts name the same store: each store's farm is read once.
+    const farmOf = farmOfLocationLookup(this.db);
     const [farm] = sowFarmId
       ? await this.db.select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name }).from(schema.locationMaster).where(eq(schema.locationMaster.location_id, sowFarmId)).limit(1)
       : [];

@@ -405,6 +405,26 @@ export async function farmOfLocation(
   return row.parent === null ? row.location_id : row.farm_id;
 }
 
+/**
+ * farmOfLocation remembered for the life of the returned function — one request or one list. A list that names the farm of
+ * every row reads each location once, not once per row (or twice, as semen-request lines() did). The promise is what is
+ * kept, so lookups started together in a Promise.all share one query.
+ */
+export function farmOfLocationLookup(
+  db: Db,
+): (locationId: string | null | undefined) => Promise<string | null> {
+  const known = new Map<string, Promise<string | null>>();
+  return (locationId) => {
+    if (!locationId) return Promise.resolve(null);
+    let farm = known.get(locationId);
+    if (!farm) {
+      farm = farmOfLocation(db, locationId);
+      known.set(locationId, farm);
+    }
+    return farm;
+  };
+}
+
 /** A create or update naming a location must stay on the active farm. Locations are visible masters, so this is a 403, not a 404. */
 export async function assertLocationOnActiveFarm(
   db: Db,

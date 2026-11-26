@@ -1,4 +1,4 @@
-import { allocationPlan, planRequestProblems, type RequestLine } from './semen-request.rules';
+import { allocationPlan, lineMismatch, owedDoses, planRequestProblems, type RequestLine } from './semen-request.rules';
 
 const line = (over: Partial<RequestLine>): RequestLine => ({
   line_id: 'l1', requisition_id: 'r1', req_no: 'RQ-1', breed_id: 'zl', approval_status: 'APPROVED', document_status: 'APPROVED',
@@ -49,5 +49,42 @@ describe('allocationPlan', () => {
     ], lot);
     expect(r.allocate).toEqual([]);
     expect(r.skipped.map((s) => s.reason)).toEqual([expect.stringMatching(/not released/), expect.stringMatching(/another store/), 'already has lot LOT-1']);
+  });
+});
+
+describe('allocationPlan and a request that will not ship', () => {
+  it('skips a cancelled or a not approved request instead of putting the lot on it', () => {
+    const r = allocationPlan([
+      line({ req_no: 'RQ-A', document_status: 'CANCELLED' }),
+      line({ req_no: 'RQ-B', approval_status: 'REJECTED' }),
+      line({ line_id: 'ok', req_no: 'RQ-C' }),
+    ], { lot_no: 'LOT-9', store_id: 'store-mul', doses: 25 });
+    expect(r.allocate.map((a) => a.line_id)).toEqual(['ok']);
+    expect(r.skipped).toEqual([{ req_no: 'RQ-A', reason: 'is cancelled' }, { req_no: 'RQ-B', reason: 'is not approved' }]);
+  });
+});
+
+describe('lineMismatch', () => {
+  it('takes a request of the lot\'s own line', () => {
+    expect(lineMismatch('zl', { breed_id: 'zl', breed_code: 'Z-LINE' })).toBeNull();
+  });
+  it('refuses a request of another line', () => {
+    expect(lineMismatch('zl', { breed_id: 'll', breed_code: 'L-LINE' })).toBe("asks for L-LINE, not this lot's line");
+  });
+  it('refuses every request for a lot with no breeding line (it used to take any)', () => {
+    expect(lineMismatch(null, { breed_id: 'zl', breed_code: 'Z-LINE' })).toBe('asks for Z-LINE; this lot has no breeding line');
+  });
+});
+
+describe('owedDoses', () => {
+  const p = (over: object = {}) => ({ doses: 10, shipped: 0, approval_status: 'APPROVED', document_status: 'RELEASED', ...over });
+  it('counts what each promised request has not shipped yet', () => {
+    expect(owedDoses([p(), p({ doses: 8, shipped: 3 }), p({ shipped: 10 })])).toBe(15);
+  });
+  it('gives back the doses of a cancelled or rejected request (they used to stay promised for good)', () => {
+    expect(owedDoses([p(), p({ document_status: 'CANCELLED' }), p({ approval_status: 'REJECTED' })])).toBe(10);
+  });
+  it('never counts a request shipped beyond its doses as negative', () => {
+    expect(owedDoses([p({ doses: 5, shipped: 6 }), p()])).toBe(10);
   });
 });

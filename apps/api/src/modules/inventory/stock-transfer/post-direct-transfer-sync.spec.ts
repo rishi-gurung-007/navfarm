@@ -107,7 +107,7 @@ function directQueues(): Map<unknown, unknown[][]> {
   return queues;
 }
 
-function setup(queues: Map<unknown, unknown[][]>) {
+function setup(queues: Map<unknown, unknown[][]>, scope: FarmScope = SCOPE) {
   const ref = {} as { cls: ClsService };
   const { db } = recordingDb(queues);
   const cls = (ref.cls = transactionCls(db));
@@ -125,7 +125,7 @@ function setup(queues: Map<unknown, unknown[][]>) {
     { resolveConversionFactor: jest.fn().mockResolvedValue(1) } as unknown as UomService,
     { assertCanReceive: jest.fn().mockResolvedValue(undefined) } as unknown as SiloFeedService,
   );
-  const as = <T>(work: () => Promise<T>) => cls.run(async () => { cls.set(FARM_SCOPE_KEY, SCOPE); return work(); });
+  const as = <T>(work: () => Promise<T>) => cls.run(async () => { cls.set(FARM_SCOPE_KEY, scope); return work(); });
   return { service, as };
 }
 
@@ -138,5 +138,37 @@ describe('postDirectTransfer — does the sync actually run (fix round 1, Import
     expect(mockedSync).toHaveBeenCalledTimes(2);
     expect(mockedSync.mock.calls[0][1]).toBe('tr-1');
     expect(mockedSync.mock.calls[1][1]).toBe('tr-1');
+  });
+});
+
+/**
+ * A farm-scoped user on the source farm posting a transfer to ANOTHER farm. wh-store sits on farm-a (the active farm); wh-farm is a farm
+ * root of its own. Before 26 Nov the Direct Transfer's nested receipt re-authorized on the destination with the source farm's scope, so
+ * assertWarehouses refused the destination as "not on your active farm" and the whole post — shipment included — rolled back with a 403.
+ */
+describe('postDirectTransfer — a farm-scoped user sending to another farm', () => {
+  const FARM_A: FarmScope = { farmId: 'farm-a', companyId: 'co-1', restricted: true, farmBound: true, lobId: null };
+
+  it('ships and receives in one step, authorized on the source farm throughout', async () => {
+    const mockedSync = syncRequisitionFulfilment as jest.MockedFunction<typeof syncRequisitionFulfilment>;
+    mockedSync.mockClear();
+    const { service, as } = setup(directQueues(), FARM_A);
+    await expect(
+      as(() => service.postDirectTransfer('tr-1', { posting_date: '2026-10-02', lines: [] }, 'tenant-1', ADMIN)),
+    ).resolves.toBeDefined();
+    // both halves ran: the shipment and the receipt each synced
+    expect(mockedSync).toHaveBeenCalledTimes(2);
+  });
+
+  it('still cannot post a staged receipt for the destination farm: that stays the receiving farm\'s act', async () => {
+    const queues = new Map<unknown, unknown[][]>([
+      [schema.stockTransfer, [[{ ...TRANSFER, status: 'IN_TRANSIT' }]]],
+      [schema.stockTransferLine, [[{ ...LINE }]]],
+      [schema.locationMaster, [LOCATIONS[0], LOCATIONS[1]]],
+    ]);
+    const { service, as } = setup(queues, FARM_A);
+    await expect(
+      as(() => service.postReceipt('tr-1', { posting_date: '2026-10-02', shipment_id: 'sh-1', lines: [{ line_id: 'line-1', quantity: 10 }] }, 'tenant-1', ADMIN)),
+    ).rejects.toThrow('Destination location is not on your active farm.');
   });
 });

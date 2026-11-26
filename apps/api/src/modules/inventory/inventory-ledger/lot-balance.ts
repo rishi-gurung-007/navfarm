@@ -166,9 +166,12 @@ export async function serialsInStock(
 
 /**
  * The receipt layers a lot's own cost is drawn from (D3, 24 Nov 2026): of the layers at the location, oldest first, the
- * ones carrying the lot — when they still hold the whole quantity. Otherwise all the layers, in the ordinary order, so stock
- * whose lot receipt was already costed away by an older draw still moves. A shipment of semen lot LOT-00057 was valued at
- * 47.93 from LOT-00053's receipt instead of the lot's own 1,199.23, and the lot's receipt was left showing 4 remaining.
+ * ones carrying the lot — when they still hold the whole quantity. Otherwise the lot's layers first and then every other
+ * layer in the ordinary order, so stock whose lot receipt was partly costed away by an older draw still moves, and takes
+ * the lot's own cost for as much as its receipts still hold. A shipment of semen lot LOT-00057 was valued at 47.93 from
+ * LOT-00053's receipt instead of the lot's own 1,199.23, and the lot's receipt was left showing 4 remaining. Before
+ * 26 Nov the fallback was the plain oldest-first order, which repeated exactly that for any draw the lot's receipts
+ * could not cover in full: the older lot's receipt was drawn first and the lot's own remainder left behind.
  */
 export function lotCostLayers<T extends { lot_no: string | null; remaining_quantity: string | number | null }>(
   layers: T[],
@@ -178,5 +181,5 @@ export function lotCostLayers<T extends { lot_no: string | null; remaining_quant
   if (!lotNo) return layers;
   const own = layers.filter((l) => l.lot_no === lotNo);
   const held = own.reduce((n, l) => n + Math.max(0, Number(l.remaining_quantity ?? 0)), 0);
-  return held + 0.00005 >= quantity ? own : layers;
+  return held + 0.00005 >= quantity ? own : [...own, ...layers.filter((l) => l.lot_no !== lotNo)];
 }

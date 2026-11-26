@@ -47,7 +47,7 @@ export class CreateGlMappingDto {
       'Optional Nature of Business UUID — narrows this mapping to one NOB, omit for all NOBs',
     required: false,
   })
-  @IsUUID()
+  @IsString()
   @IsOptional()
   nob_id?: string;
 
@@ -56,7 +56,7 @@ export class CreateGlMappingDto {
       'Optional Line of Business UUID — narrows this mapping to one LOB, omit for all LOBs',
     required: false,
   })
-  @IsUUID()
+  @IsString()
   @IsOptional()
   lob_id?: string;
 
@@ -132,12 +132,12 @@ export class UpdateGlMappingDto {
   item_category_id?: string;
 
   @ApiProperty({ required: false })
-  @IsUUID()
+  @IsString()
   @IsOptional()
   nob_id?: string;
 
   @ApiProperty({ required: false })
-  @IsUUID()
+  @IsString()
   @IsOptional()
   lob_id?: string;
 
@@ -214,7 +214,7 @@ export class QueryGlMappingDto extends MasterListQueryDto {
     required: false,
   })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   nobId?: string;
 
   @ApiProperty({
@@ -222,7 +222,7 @@ export class QueryGlMappingDto extends MasterListQueryDto {
     required: false,
   })
   @IsOptional()
-  @IsUUID()
+  @IsString()
   lobId?: string;
 
   @ApiProperty({
