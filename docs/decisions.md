@@ -5171,3 +5171,36 @@ needs no count. Otherwise the first order of a new diet could never be sent.
 
 **Reason.** Ordering follows a weekly cycle anchored to a verified count. Spec:
 `docs/superpowers/specs/2026-11-25-feed-requisition-stock-count-sunday-gate-design.md`.
+
+## 26 Nov 2026 — Rishi's five 25 Nov asks, live-verified against the running app
+
+Posted through the API and clicked through the browser, not read from the code. All five tie to the 25 Nov commits.
+
+1. **GM Dashboard clickable items (691e5dad, 5e46778f).** On `nf_ccc` (the only local tenant with GM Dashboard data —
+   `nf_triplec` is masters-only), clicking the Pigs to Slaughter month figure navigated to
+   `/batches/kill-sheets?status=IMPORTED&from=2026-09-27&to=2026-10-24`, matching the dashboard's own period. Clicking
+   a Farrowing Rate figure in the Breeding & Farrowing matrix did not navigate — matches the commit's own "stage 2,
+   not linked yet" for Farrowing Rate and the Weaner-Grower measures.
+2. **Average animal age on the Animals Fed card (0609b132).** Grasmere Farm Norton → shed MUDSW 1-1 → silo MDSW1-S1
+   showed "ANIMALS FED: 6 head, Average Age: 946 days", matching the `feed-forecast/silo-status` API's
+   `averageAgeDays: 946.2`.
+3. **Daily Need per Animal, new card (0609b132).** Same silo showed a separate "DAILY NEED PER ANIMAL: 2.5 kg" card,
+   matching the API's `dailyNeedPerAnimalKg: 2.5`.
+4. **Feed requisition Sunday gate (7c7b6db7).** Created a real draft requisition on `nf_devco` (farm POR100) and
+   called `submit`: refused with "Feed requisitions can be sent only on Sunday. It is Thursday on this farm." and
+   MySQL confirmed the requisition was left untouched (still DRAFT). The allowed path (submitting on an actual
+   Sunday with a posted count) could not be tested — no farm's local day is Sunday today.
+5. **Mill Consolidation column order (414ffe71).** On the new-consolidation review dialog, columns now run Silo →
+   Item → Requested → Recommended → Mill approved KG → Adjustment reason → Mill Capacity → Priority No. → Notes,
+   then the day-by-day columns. The saved sheet (`CONS-202644-001`) shows Requested KG beside Approved KG, followed
+   by the reason and the release links (Transfer order, Loading sheet), with capacity, diet total and loading BIN
+   last — both exactly as the commit describes.
+
+**Found and fixed along the way, unrelated to the five asks:** 6 of 8 local tenant databases (`system`, `triplec`,
+`tcdemo`, `portatestnavfarm`, `devco`, `frtest`) were silently 8-9 migrations behind main (stuck at 0257) from a
+MySQL DDL-auto-commit-vs-transaction-rollback drift — several `ALTER`/`CREATE TABLE` statements had physically landed
+while `__drizzle_migrations` never recorded them, which meant `requisition.breed_id` (yesterday's semen-requisition
+migration, 0265) didn't exist locally and creating any requisition 500'd. Backed up all 6 databases, verified via
+`information_schema` that the physically-applied schema matched each pending migration exactly, backfilled the
+missing journal rows one at a time, and let the real migrator apply the genuinely-pending ones. All 8 local tenants
+are now at migration 0266. Recipe and root cause: memory `navfarm-migration-drift-0258-0262-fixed`.
