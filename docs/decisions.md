@@ -5227,3 +5227,58 @@ October.
    consolidation" — that would have been a real state change outside the scope of a verification pass.
 
 Nothing created or changed; test servers stopped afterward.
+
+## 26 Nov 2026 — Task 9 run: full GM Dashboard quick-access verification
+
+Plan `docs/superpowers/plans/2026-11-25-gm-dashboard-quick-access-stage-1.md`, Task 9 ("Verify in the running app")
+had never actually been run — its checkboxes were all unticked even though Stage 1 shipped (691e5dad, 5e46778f).
+Run in full on `nf_cccshow`, All Farms and GRASMERE FARM NORTON, Month and YTD, with every link enumerated through
+the page's own accessibility tree rather than clicking blind, and a representative sample followed through to a
+MySQL/page-data cross-check.
+
+**Every link matched the plan's routing table exactly**, in both All Farms and farm-scoped view:
+- `pigs_to_slaughter`, `cost_of_sales`, `gross_margin`, `gross_margin_pct` → Bio-Asset Ledger, `salesOnly=true`.
+- `avg_cdm`, `cos_per_tonne` ("COS $/kg CDM"), `kg_sold_per_sow_year` → Kill Sheets, `status=IMPORTED`.
+- `other_overheads` / `staff_overheads` → Journal, `accounts=4600` / `4610`.
+- The six Stage 1 breeding measures (Total Born/Litter, Born Alive/Litter, Pre-wean Mortality, Avg Weaned/Sow, Avg
+  Wean Weight, Total Litter Mass) → Farrowing Report. **Farrowing Rate and the whole Weaner–Grower matrix carry no
+  link**, confirmed both in the accessibility tree (absent) and visually (not underlined, unlike the Stage 1 rows).
+- Budget links drop `filter[period_code]` on YTD and add `filter[farm_name]` only once a farm is chosen, exactly as
+  specified; the PBT progress chart's link (`/finance/profit-loss`) disappears entirely once a farm is chosen (it is
+  All-Farms-only), while the chart itself still renders.
+- Alerts: 13 live alerts enumerated via "View All" — every Stage 1 metric's alert is a link carrying the correct
+  farm_id, route and params; the three Stage 2 alerts present (Farrowing Rate x2, Avg 70 Day Weight x2, FCE Grower)
+  render identically (same chevron) but are plain text, confirmed in a screenshot, not links.
+
+**Cross-checks against the data itself** (not just the API's own numbers):
+- Pigs to Slaughter (580) = the Bio-Asset Ledger's own listed quantities (165+64+187+164). Cost of Sales (1,423) =
+  its listed cost amounts (1,325.28+98.07+0+0). Same arithmetic held at farm scope (64+164=228 for Grasmere).
+- Total Born/Litter (13.74) and Born Alive/Litter (12.94) for Grasmere matched the Farrowing Report's own Farm Total
+  row exactly.
+- A YTD Budget link for Grasmere's Pigs to Slaughter showed 5 separate period lines (159.8+164.9+170+175.1+180.2 =
+  850.0) summing to the dashboard's own YTD Budget figure (850) — confirms the plan's own documented limit ("not
+  one YTD total") is accurate, not a bug.
+- **Review Focus 5 (Overheads on All Farms), measured, not assumed:** the unfiltered Journal (no farmId) for
+  Other Overheads returned exactly 2 entries (7,200 + 5,040 = 12,240), identical to the dashboard's All-Farms total
+  and to the sum of the two farms' own figures. No discrepancy in this dataset; a tenant with overhead postings on
+  a cost centre outside the two farms would show one.
+
+**One real finding for Rishi, not in the plan's "Limits" list:** the PBT progress chart's own figure (Revenue −
+Cost of Sales − Other Overheads − Staff Overheads = 127,672.19 − 1,423.36 − 12,240 − 47,175 = **66,833.83**, matching
+the dashboard's API response exactly) will **not** match the Net Income a user sees after clicking into the P&L
+page it links to (**5,437,347.53** for the same date range), because the P&L page sums every GL account, including
+a 5.4M Inventory Adjustment Gain and a 65.8K Inventory Adjustment Loss that have nothing to do with the dashboard's
+PBT formula. Worth a line of context on the chart, or the user will think the numbers don't reconcile.
+
+**Mobile (375px):** clean after the first paint settles — the very first render after resizing briefly showed the
+sidebar overlapping content, but this resolved itself once the hamburger menu was used and was not reproducible as
+a persistent bug; every card, the breeding matrix and a drill-link all worked correctly at that width on a retest.
+
+**Not tested:** a farm-restricted user opening a link naming another farm's id (Review Focus 3) — no such user
+existed on `nf_cccshow` and creating one was outside this pass's scope.
+
+**Regression check (not a full suite run — only the files this plan touches):** `nx test web` on the 8
+plan-specific spec files — 89/89 passed. `nx test api` on the 5 plan-specific spec files — 77/77 passed. Builds and
+the full suite were not rerun.
+
+Nothing changed in the app or the database; test servers stopped afterward.

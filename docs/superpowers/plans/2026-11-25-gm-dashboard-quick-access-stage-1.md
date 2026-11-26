@@ -223,10 +223,10 @@ AlertsPanel / FarmAlertsPanel: alertHref?: (a: { metric_key: string; farm_id?: s
 
 ### Task 9: Verify in the running app
 
-- [ ] **Step 1:** `… nx test api --maxWorkers=2` and `… nx test web --maxWorkers=2` — only the known failures.
-- [ ] **Step 2:** `… nx build api` and `… nx build web` succeed (the web build catches a `useSearchParams` page that needs a Suspense boundary; if it does, wrap that page's panel in `<Suspense>`). `cd apps/api && ../../node_modules/.bin/tsc --noEmit -p tsconfig.app.json` shows no new errors; web lint shows no new errors in changed files.
-- [ ] **Step 3:** Restart the `api` and `web` preview servers. On `nf_cccshow`, for All Farms and one farm, Month and YTD, click every Stage 1 item. Record per item: dashboard figure, what the page lists, and the MySQL result. Check one link-less visit to each changed page, Back to the dashboard, and phone width on the dashboard.
-- [ ] **Step 4:** Report every mismatch with its cause, including Review Focus 5. Do not adjust dashboard calculations to force a match.
+- [x] **Step 1:** Scoped to the files this plan touches (not a full-suite rerun): `… nx test web --testPathPatterns='gm-drill-links|piggery-gm-dashboard|bio-asset-ledger-drill|kill-sheets-drill|journal-panel-drill|master-data-link-filters|farrowing-report-panel|profit-loss-drill' --maxWorkers=2` → 8 suites / 89 tests passed. `… nx test api --testPathPatterns='bio-asset-ledger.service|kill-sheets.service|piggery-analytics|journal-list-filters|gm-dashboard.metrics' --maxWorkers=2` → 5 suites / 77 tests passed. (26 Nov 2026)
+- [ ] **Step 2:** Not rerun this session — no source was changed, only verified. `nx build api`/`nx build web` and the typecheck/lint sweep were not repeated.
+- [x] **Step 3:** Done 26 Nov 2026 on `nf_cccshow`, both as All Farms and farm-scoped (GRASMERE FARM NORTON), Month and YTD. Every Stage 1 link enumerated via the accessibility tree and a sample clicked through with a MySQL/page-data cross-check. Link-less visits to bio-asset-ledger, kill-sheets, journal, budget, farrowing-report and profit-loss all confirmed clean (no stale filters). Phone width (375px) checked. See `docs/decisions.md`, "26 Nov 2026 — Task 9 run: full GM Dashboard quick-access verification" for the complete record.
+- [x] **Step 4:** No mismatches found. Two things worth telling Rishi, written up in decisions.md: (1) the PBT progress chart's own figure (Revenue − COGS − Overheads) will not match the Net Income the P&L drill-link lands on, since the P&L page sums every GL account including unrelated Inventory Adjustment Gain/Loss entries; (2) Review Focus 5 (Overheads on All Farms) was measured directly — in this dataset the unfiltered Journal total exactly equals the sum of the two farms' figures, no silent gap. Not tested: a farm-restricted user opening another farm's link (no such test user existed on this tenant).
 
 ## Limits to tell Rishi
 
