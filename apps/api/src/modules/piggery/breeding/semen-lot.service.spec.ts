@@ -194,20 +194,20 @@ describe('SemenLotService', () => {
       // farmOfLocation reads the location row: its farm_id when it has a parent.
       const at = (id: string, farm: string) => [{ location_id: id, parent: farm, farm_id: farm }];
 
-      it("issues from the store on the sow's farm that received the lot, from the receipt's own layer", async () => {
+      it("issues from the store on the sow's farm that received the lot, costed from the lot's own receipts there", async () => {
         queue.push(
           [{ uom_primary: 'DOSE' }],
           at('pen-por', 'farm-por'),
           [{ warehouse_id: 'store-1', qty: '0.0000' }, { warehouse_id: 'store-por', qty: '4.0000' }],
           [{ inspection_no: 'QC-000006', status: 'CLOSED', ledger: 'led-rcpt', warehouse_id: 'store-por' }],
           [{ code: 'POR100', name: 'Kintyre' }],
+          // store-por is named by a held row and by its receipt QC: its farm is read once (farmOfLocationLookup)
           at('store-1', 'farm-mul'),
           at('store-por', 'farm-por'),
-          at('store-por', 'farm-por'),
-          [{ ledger_id: 'rcpt-por', remaining_quantity: '4.0000' }],
         );
         await service.issueDoses(lot(), 1, 'breeding-1', '2026-11-24', 'tenant-1', { userId: 'u1' }, { sow: sowAt('pen-por'), batchId: null });
-        expect(ledger.writeNegativeEntry).toHaveBeenCalledWith(expect.objectContaining({ warehouseId: 'store-por', sourceLedgerId: 'rcpt-por', lotNo: 'LOT-00011' }));
+        expect(ledger.writeNegativeEntry).toHaveBeenCalledWith(expect.objectContaining({ warehouseId: 'store-por', costFromLot: true, lotNo: 'LOT-00011' }));
+        expect(queue).toHaveLength(0);
         expect(updates[0]).toEqual({ doses_used_internal: '1' });
       });
 
@@ -234,7 +234,7 @@ describe('SemenLotService', () => {
       const batch = { batch_id: 'b-sow', batch_no: 'BATCH-000003', company_id: 'co-1', costing_method: 'BIO_ASSET', nob_id: 'nob-1', lob_id: 'lob-1' };
 
       it('files the issue under her batch, named for her, and puts its cost on her, on her batch and on the batch as a consumption', async () => {
-        queue.push([{ uom_primary: 'DOSE' }], [{ ledger_id: 'rcpt-1', remaining_quantity: '40.0000' }], [batch], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }]);
+        queue.push([{ uom_primary: 'DOSE' }], [batch], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }]);
         gl.hasMapping.mockResolvedValue(true);
         ledger.writeNegativeEntry.mockResolvedValue({ ledger_id: 'led-2', amount: '-24.5922' });
 
@@ -242,7 +242,7 @@ describe('SemenLotService', () => {
 
         expect(gl.hasMapping).toHaveBeenCalledWith('tenant-1', 'co-1', 'BIO_SEMEN_USE', { nobId: 'nob-1', lobId: 'lob-1' });
         expect(ledger.writeNegativeEntry).toHaveBeenCalledWith(
-          expect.objectContaining({ documentNo: 'AI PIG-2024-0004', documentLineId: 'breeding-1', batchNo: 'BATCH-000003', glMappingType: 'BIO_SEMEN_USE', lotNo: 'LOT-00011', sourceLedgerId: 'rcpt-1' }),
+          expect.objectContaining({ documentNo: 'AI PIG-2024-0004', documentLineId: 'breeding-1', batchNo: 'BATCH-000003', glMappingType: 'BIO_SEMEN_USE', lotNo: 'LOT-00011', costFromLot: true }),
         );
         const [bioRow, batchTx] = inserts;
         expect(bioRow).toMatchObject({
@@ -256,7 +256,7 @@ describe('SemenLotService', () => {
       });
 
       it('expenses it once her costing has begun, as her feed is: the BIO_SEMEN_EXPENSE rule, a consumption on her batch against her, nothing added to her value', async () => {
-        queue.push([{ uom_primary: 'DOSE' }], [{ ledger_id: 'rcpt-1', remaining_quantity: '40.0000' }], [batch], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }]);
+        queue.push([{ uom_primary: 'DOSE' }], [batch], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }]);
         gl.hasMapping.mockResolvedValue(true);
         ledger.writeNegativeEntry.mockResolvedValue({ ledger_id: 'led-2', amount: '-24.5922' });
         const started = { ...sow, costing_start_date: '2026-05-25' };
@@ -272,7 +272,7 @@ describe('SemenLotService', () => {
       });
 
       it('capitalises it only while her costing has not begun on the mating date', async () => {
-        queue.push([{ uom_primary: 'DOSE' }], [{ ledger_id: 'rcpt-1', remaining_quantity: '40.0000' }], [batch], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }]);
+        queue.push([{ uom_primary: 'DOSE' }], [batch], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }]);
         gl.hasMapping.mockResolvedValue(true);
         ledger.writeNegativeEntry.mockResolvedValue({ ledger_id: 'led-2', amount: '-24.5922' });
         // her costing starts the day after the mating
@@ -282,7 +282,7 @@ describe('SemenLotService', () => {
       });
 
       it('leaves the cost off the sow, and posts the issue by the ordinary consumption mapping, when no BIO_SEMEN_USE mapping is set up', async () => {
-        queue.push([{ uom_primary: 'DOSE' }], [{ ledger_id: 'rcpt-1', remaining_quantity: '40.0000' }], [batch], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }]);
+        queue.push([{ uom_primary: 'DOSE' }], [batch], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }]);
         gl.hasMapping.mockResolvedValue(false);
         ledger.writeNegativeEntry.mockResolvedValue({ ledger_id: 'led-2', amount: '-24.5922' });
 
@@ -292,17 +292,21 @@ describe('SemenLotService', () => {
         expect(inserts).toHaveLength(0);
       });
 
-      it('draws the doses the ordinary way (oldest receipt) when the lot\'s own receipt no longer holds them', async () => {
+      it('costs the doses from the lot\'s own receipts however many it takes, never from one receipt that must hold them all', async () => {
+        // A lot received in two transfers (2 + 2) used 3 at once: the ledger draws them across the lot's receipts (costFromLot, lotCostLayers).
+        // Before 26 Nov one receipt had to hold all 3, and otherwise the issue was costed oldest-first from any lot in the store.
         queue.length = 0;
-        queue.push([{ uom_primary: 'DOSE' }], [{ ledger_id: 'rcpt-1', remaining_quantity: '1.0000' }], [batch], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }]);
+        queue.push([{ uom_primary: 'DOSE' }], [batch], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }]);
         gl.hasMapping.mockResolvedValue(true);
         ledger.writeNegativeEntry.mockResolvedValue({ ledger_id: 'led-2', amount: '-24.5922' });
-        await service.issueDoses(lot(), 2, 'breeding-1', '2026-10-09', 'tenant-1', undefined, { sow, batchId: 'b-sow' });
-        expect(ledger.writeNegativeEntry).toHaveBeenCalledWith(expect.objectContaining({ sourceLedgerId: undefined }));
+        await service.issueDoses(lot(), 3, 'breeding-1', '2026-10-09', 'tenant-1', undefined, { sow, batchId: 'b-sow' });
+        const call = ledger.writeNegativeEntry.mock.calls[0][0];
+        expect(call).toMatchObject({ lotNo: 'LOT-00011', quantity: 3, costFromLot: true });
+        expect(call).not.toHaveProperty('sourceLedgerId');
       });
 
       it('does not charge a sow whose batch is not a bio-asset batch', async () => {
-        queue.push([{ uom_primary: 'DOSE' }], [{ ledger_id: 'rcpt-1', remaining_quantity: '40.0000' }], [{ ...batch, costing_method: 'FIFO' }], []);
+        queue.push([{ uom_primary: 'DOSE' }], [{ ...batch, costing_method: 'FIFO' }], []);
         ledger.writeNegativeEntry.mockResolvedValue({ ledger_id: 'led-2', amount: '-24.5922' });
         await service.issueDoses(lot(), 2, 'breeding-1', '2026-10-09', 'tenant-1', undefined, { sow, batchId: 'b-sow' });
         expect(gl.hasMapping).not.toHaveBeenCalled();
@@ -310,7 +314,7 @@ describe('SemenLotService', () => {
       });
 
       it('charges nothing when the doses are at no value', async () => {
-        queue.push([{ uom_primary: 'DOSE' }], [{ ledger_id: 'rcpt-1', remaining_quantity: '40.0000' }], [batch], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }]);
+        queue.push([{ uom_primary: 'DOSE' }], [batch], [{ nca_book_value: '100.0000', stage: 'PREMATURE' }]);
         gl.hasMapping.mockResolvedValue(true);
         ledger.writeNegativeEntry.mockResolvedValue({ ledger_id: 'led-2', amount: '0.0000' });
         await service.issueDoses(lot(), 2, 'breeding-1', '2026-10-09', 'tenant-1', undefined, { sow, batchId: 'b-sow' });

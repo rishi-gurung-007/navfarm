@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { MySql2Database } from 'drizzle-orm/mysql2';
-import { and, asc, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
@@ -18,8 +18,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 /**
  * Destroyed semen doses (Phase 3, 24 Nov 2026). Doses in stock are written off where they are (a VARIANCE_NEGATIVE entry on the store, costed
- * from the lot's own layer there, with its journal) and counted on the lot. QC rejections that were scrapped are recorded by the QC
- * inspection itself (semen-disposal.record.ts). Both are listed here: the AI Station report's "Destroyed".
+ * from the lot's own layers there, with its journal) and counted on the lot. QC rejections that were scrapped are recorded when the QC
+ * inspection tells its source (semen-qc-source.ts, which writes through semen-disposal.record.ts). Both are listed here: the AI Station report's "Destroyed".
  */
 @Injectable()
 export class SemenDisposalService {
@@ -81,6 +81,7 @@ export class SemenDisposalService {
       }
 
       let warehouseId: string | null = null;
+      let warehouseFarmId: string | null = null;
       let available = counterLeft;
       let where = 'the lot';
       if (inStock) {
@@ -91,6 +92,7 @@ export class SemenDisposalService {
         const here = stock.find((s) => s.warehouse_id === warehouseId);
         available = Math.min(here?.qty ?? 0, counterLeft);
         where = here?.code ?? 'that store';
+        warehouseFarmId = here?.farm_id ?? null;
         await assertLocationOnActiveFarm(this.db, farmScope(this.cls), warehouseId, 'Store');
       }
       const problem = disposalProblem({
@@ -104,17 +106,9 @@ export class SemenDisposalService {
       let ledgerEntryId: string | null = null;
       let amount: string | null = null;
       if (inStock && warehouseId) {
-        // Costed from the lot's own layer at that store (its collection OUTPUT, or the transfer receipt that brought it there), as a mating's issue is.
-        const L = schema.inventoryLedger;
-        const [layer] = await this.db
-          .select({ ledger_id: L.ledger_id })
-          .from(L)
-          .where(and(
-            eq(L.item_id, lot.output_item_id!), eq(L.warehouse_id, warehouseId), eq(L.lot_no, lot.lot_no!),
-            gte(L.remaining_quantity, String(dto.doses)), sql`${L.quantity} > 0`,
-          ))
-          .orderBy(asc(L.posting_date), asc(L.entry_no))
-          .limit(1);
+        // Costed from the lot's own layers at that store (its collection OUTPUT, the transfer receipts that brought it there), oldest first and
+        // across as many as it takes (costFromLot), as a mating's issue is. Before 26 Nov one single layer had to hold every dose written off;
+        // otherwise the write-off was costed oldest-first from whatever lot was in the store.
         const [item] = await this.db.select({ uom: schema.itemMaster.uom_primary }).from(schema.itemMaster).where(eq(schema.itemMaster.item_id, lot.output_item_id!)).limit(1);
         const entry = await this.ledgerService.writeNegativeEntry({
           tenantId,
@@ -127,7 +121,7 @@ export class SemenDisposalService {
           quantity: dto.doses,
           uom: item?.uom ?? 'DOSE',
           lotNo: lot.lot_no!,
-          sourceLedgerId: layer?.ledger_id,
+          costFromLot: true,
           warehouseId,
           userId: user?.userId,
         });
@@ -146,7 +140,7 @@ export class SemenDisposalService {
         lot_no: lot.lot_no,
         item_id: lot.output_item_id,
         warehouse_id: warehouseId,
-        farm_id: warehouseId ? await farmOfLocation(this.db, warehouseId) : null,
+        farm_id: warehouseFarmId,
         doses: dto.doses.toFixed(2),
         disposal_date: dto.disposal_date,
         reason_type: dto.reason_type,

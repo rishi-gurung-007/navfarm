@@ -74,8 +74,14 @@ describe('lotCostLayers — a lot drawn at its own cost (D3)', () => {
     expect(lotCostLayers(two, 'L1', 4).map((l) => l.id)).toEqual(['a', 'c']);
   });
 
-  it('falls back to every layer when the lot\'s receipts were already costed away', () => {
-    expect(lotCostLayers([layer('older', 'LOT-00053', 51), layer('own', 'LOT-00057', 0)], 'LOT-00057', 4).map((l) => l.id)).toEqual(['older', 'own']);
+  it('falls back to every layer when the lot\'s receipts were already costed away, the lot\'s own first', () => {
+    expect(lotCostLayers([layer('older', 'LOT-00053', 51), layer('own', 'LOT-00057', 0)], 'LOT-00057', 4).map((l) => l.id)).toEqual(['own', 'older']);
+  });
+
+  it('draws what the lot\'s receipts still hold before any other lot\'s, when they hold only part of the quantity', () => {
+    // 4 wanted, the lot's receipt holds 2: the 2 come from it at the lot's cost, only the other 2 from the older lot's receipt.
+    const partly = [layer('older', 'LOT-00053', 51), layer('other', 'LOT-00054', 12), layer('own', 'LOT-00057', 2)];
+    expect(lotCostLayers(partly, 'LOT-00057', 4).map((l) => l.id)).toEqual(['own', 'older', 'other']);
   });
 
   it('is the ordinary order without a lot', () => {

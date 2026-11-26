@@ -19,6 +19,7 @@ import { QcInspectionModule } from '../../inventory/qc-inspection/qc-inspection.
 import { BreedingLineModule } from '../../master-data/breeding-line/breeding-line.module';
 import { SemenDisposalController } from './semen-disposal.controller';
 import { SemenDisposalService } from './semen-disposal.service';
+import { SemenQcSource } from './semen-qc-source';
 import { SemenRequestController } from './semen-request.controller';
 import { SemenRequestService } from './semen-request.service';
 import { AiStationDashboardController } from './ai-station-dashboard.controller';
@@ -28,7 +29,7 @@ import { RequisitionModule } from '../../procurement/requisition/requisition.mod
 @Module({
   imports: [BatchModule, InventoryLedgerModule, JournalModule, NumberSeriesModule, QrCodeModule, AnimalModule, AnimalBookValueModule, GiltSelectionModule, LitterCostModule, BreedingLineModule, QcInspectionModule, RequisitionModule],
   controllers: [BreedingController, BoarSelectionController, CollectionPlanController, SemenDisposalController, SemenRequestController, AiStationDashboardController],
-  providers: [BreedingService, SemenLotService, BoarSelectionService, CollectionPlanService, SemenDisposalService, SemenRequestService, AiStationDashboardService],
+  providers: [BreedingService, SemenLotService, BoarSelectionService, CollectionPlanService, SemenDisposalService, SemenQcSource, SemenRequestService, AiStationDashboardService],
   exports: [BreedingService],
 })
 export class BreedingModule {}

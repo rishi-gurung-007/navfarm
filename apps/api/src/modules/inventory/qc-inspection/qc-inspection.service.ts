@@ -9,7 +9,7 @@ import { assertCompanyInScope, farmScope, locationReferenceScopeConditions, rest
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { NumberSeriesService } from '../../system/number-series/number-series.service';
 import { InventoryLedgerService } from '../inventory-ledger/inventory-ledger.service';
-import { recordQcScrap } from '../../piggery/breeding/semen-disposal.record';
+import { QcSourceHandlers, type QcSettledInspection } from './qc-source-handlers';
 import { GlPostingService } from '../../finance/journal/gl-posting.service';
 import { ApproveQcDeviationDto, CompleteQcInspectionDto, QueryQcInspectionDto, RecordQcRoundDto, RefuseQcDeviationDto, SettleQcRejectionDto } from './dto/qc-inspection.dto';
 import {
@@ -101,6 +101,7 @@ export class QcInspectionService {
     private readonly ledgerService: InventoryLedgerService,
     private readonly glPostingService: GlPostingService,
     private readonly numberSeriesService: NumberSeriesService,
+    private readonly sourceHandlers: QcSourceHandlers,
   ) {}
 
   private get db(): MySql2Database<typeof schema> {
@@ -502,10 +503,8 @@ export class QcInspectionService {
       // A deviation is settled when it is approved; everything else is settled now.
       if (outcome.status === 'CLOSED') await this.settleSource(inspection, outcome.postNow, !!ledgerEntryId);
       if (outcome.status === 'CLOSED') await this.returnRejected(inspection, quantity - outcome.postNow, postingDate, user?.userId);
-      // Semen doses a collection's QC rejected and scrapped are recorded as destroyed (the AI Station report).
-      if (outcome.status === 'CLOSED') {
-        await recordQcScrap(this.db, this.numberSeriesService, { inspection, disposition: rejection.disposition, doses: quantity - outcome.postNow, date: postingDate, userId: user?.userId });
-      }
+      // A rejected quantity that was scrapped is told to its source (a semen collection records it as destroyed: the AI Station report).
+      if (outcome.status === 'CLOSED') await this.scrapped(inspection, rejection.disposition, quantity - outcome.postNow, postingDate, user?.userId);
 
       await this.db
         .update(schema.qcInspection)
@@ -627,7 +626,7 @@ export class QcInspectionService {
       if (claim.affectedRows === 0) throw new BadRequestException('This inspection was already decided by someone else.');
       await this.settleSource(inspection, 0, false);
       await this.returnRejected(inspection, Number(inspection.quantity), today(), user?.userId);
-      await recordQcScrap(this.db, this.numberSeriesService, { inspection, disposition: rejection.disposition, doses: Number(inspection.quantity), date: today(), userId: user?.userId });
+      await this.scrapped(inspection, rejection.disposition, Number(inspection.quantity), today(), user?.userId);
       await this.auditService.log({
         tenantId,
         companyId: inspection.company_id,
@@ -667,8 +666,8 @@ export class QcInspectionService {
             : isNull(schema.qcInspection.rejection_disposition),
         ));
       if (claim.affectedRows === 0) throw new BadRequestException('This rejected quantity was settled by someone else.');
-      // A held semen rejection settled as scrapped is recorded as destroyed now.
-      await recordQcScrap(this.db, this.numberSeriesService, { inspection, disposition: dto.rejection_disposition, doses: Number(inspection.rejected_qty ?? 0), date: today(), userId: user?.userId });
+      // A held rejection settled as scrapped is told to its source now (a semen collection records it as destroyed).
+      await this.scrapped(inspection, dto.rejection_disposition, Number(inspection.rejected_qty ?? 0), today(), user?.userId);
 
       await this.auditService.log({
         tenantId,
@@ -724,36 +723,18 @@ export class QcInspectionService {
   }
 
   /**
-   * Tells the source what became of its quantity. A semen lot is held as stock only once its inspection has put it there; a lot that passed
-   * only in part has only the accepted doses to use, and one that failed has none.
+   * Tells the source what became of its quantity, through the handler its module registered (QcSourceHandlers). A semen lot, for one,
+   * is held as stock only once its inspection has put it there; a lot that passed only in part has only the accepted doses to use, and
+   * one that failed has none. A source with no handler (a goods receipt, a transfer receipt) keeps no state of its own and is not told.
    */
-  private async settleSource(
-    inspection: { tenant_id: string; source_doc_type: string; source_line_id: string; inspection_no: string; quantity: string; lot_no: string | null },
-    acceptedQty: number,
-    posted: boolean,
-  ) {
-    if (inspection.source_doc_type !== 'SEMEN_COLLECTION') return;
-    const collected = Number(inspection.quantity);
-    const note = acceptedQty + 1e-9 < collected ? `QC ${inspection.inspection_no}: ${acceptedQty} of ${collected} doses accepted.` : null;
-    await this.db
-      .update(schema.semenBatch)
-      .set({
-        inventory_posted: posted,
-        ...(acceptedQty + 1e-9 < collected ? { doses_collected: String(acceptedQty) } : {}),
-        ...(note ? { notes: sql`concat(coalesce(${schema.semenBatch.notes}, ''), ${note}, ' ')` } : {}),
-      })
-      .where(eq(schema.semenBatch.semen_batch_id, inspection.source_line_id));
-    // The lot's QR pack carries the doses that were collected; it follows what QC accepted, and names the inspection (Traceability's QC link).
-    if (inspection.lot_no) {
-      const result = !posted ? 'Rejected' : acceptedQty + 1e-9 < collected ? 'Partly accepted' : 'Accepted';
-      await this.db
-        .update(schema.qrCodeMaster)
-        .set({
-          net_weight: String(acceptedQty),
-          qr_data: sql`json_set(${schema.qrCodeMaster.qr_data}, '$.doses', ${acceptedQty}, '$.qc_inspection', json_object('inspection_no', ${inspection.inspection_no}, 'result', ${result}, 'accepted', ${acceptedQty}, 'collected', ${collected}))`,
-        })
-        .where(and(eq(schema.qrCodeMaster.tenant_id, inspection.tenant_id), eq(schema.qrCodeMaster.lot_no, inspection.lot_no), eq(schema.qrCodeMaster.pack_uom, 'DOSE')));
-    }
+  private async settleSource(inspection: QcSettledInspection, acceptedQty: number, posted: boolean) {
+    await this.sourceHandlers.settled(this.db, inspection, acceptedQty, posted);
+  }
+
+  /** A rejected quantity was scrapped: its source is told. Any other disposition (hold, return to supplier, return to source) is not a scrap. */
+  private async scrapped(inspection: QcSettledInspection, disposition: string | null | undefined, quantity: number, date: string, userId?: string) {
+    if (disposition !== 'SCRAP') return;
+    await this.sourceHandlers.scrapped(this.db, { inspection, quantity, date, userId });
   }
 
   // ---------------------------------------------------------------- the ledger entry

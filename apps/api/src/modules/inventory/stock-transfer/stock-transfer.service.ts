@@ -593,7 +593,8 @@ export class StockTransferService {
    * destination farm's own act — it takes in what was shipped and moves
    * nothing out of the source — so it is authorized on to_warehouse_id. Before,
    * a transfer between two farms could not be received at all by the farm
-   * it went to.
+   * it went to. A Direct Transfer's own receipt is not that exception: it is
+   * the source farm's one-step post, so it stays on 'from' (receiveShipment).
    */
   private async loadForMutation(
     id: string,
@@ -2316,20 +2317,50 @@ export class StockTransferService {
     requisitionExecution = false,
     feedControls?: FeedReceiptControls,
   ) {
+    // The receiving farm posts the receipt: authorized on the destination.
+    return this.receiveShipment(
+      'to',
+      id,
+      dto,
+      tenantId,
+      userPayload,
+      requisitionExecution,
+      feedControls,
+    );
+  }
+
+  /**
+   * postReceipt's body, authorized on `side`. A staged receipt is the
+   * destination farm's act ('to'). Inside a Direct Transfer the shipping farm
+   * has already been authorized on the source for the whole document, and the
+   * receipt is the second half of its own one-step post, so it is authorized
+   * on the source again ('from'). Before, the nested receipt re-checked the
+   * destination against the source farm's scope, so a farm-scoped user could
+   * not post a Direct Transfer (nor post() a draft) to another farm at all:
+   * the receipt threw 403 and rolled the shipment back with it.
+   */
+  private async receiveShipment(
+    side: 'from' | 'to',
+    id: string,
+    dto: PostReceiptDto,
+    tenantId: string,
+    userPayload?: any,
+    requisitionExecution = false,
+    feedControls?: FeedReceiptControls,
+  ) {
     return withTenantTransaction(this.cls, async () => {
-      // The receiving farm posts the receipt: authorized on the destination.
       const transfer = await this.loadForMutation(
         id,
         tenantId,
         requisitionExecution,
-        'to',
+        side,
       );
       this.assertOpen(transfer);
       if (!requisitionExecution)
         await this.assertWarehouses(
           transfer.from_warehouse_id,
           transfer.to_warehouse_id,
-          'to',
+          side,
         );
 
       const [shipment] = await this.db
@@ -2782,7 +2813,10 @@ export class StockTransferService {
         tenantId,
         userPayload,
       );
-      const receipt = await this.postReceipt(
+      // Authorized on the source, as the shipment and this whole post were:
+      // see receiveShipment.
+      const receipt = await this.receiveShipment(
+        'from',
         id,
         {
           posting_date: dto.posting_date,

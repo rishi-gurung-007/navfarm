@@ -5,11 +5,17 @@ import { randomUUID } from 'crypto';
 import { ClsService } from 'nestjs-cls';
 import * as schema from '../../../core/database/schema';
 import { withTenantTransaction } from '../../../common/tenant-transaction';
-import { farmOfLocation, farmScope } from '../../../common/farm-scope';
+import {
+  farmOfLocationLookup,
+  farmScope,
+  locationReferenceScopeConditions,
+  requisitionFarmLobCondition,
+  restrictedScopeConditions,
+} from '../../../common/farm-scope';
 import { AuditLogService } from '../../system/audit-log/audit-log.service';
 import { RequisitionService } from '../../procurement/requisition/requisition.service';
 import { AllocateSemenLotDto, QuerySemenRequestDto } from './dto/semen-request.dto';
-import { allocationPlan, planRequestProblems, type RequestLine } from './semen-request.rules';
+import { allocationPlan, lineMismatch, owedDoses, planRequestProblems, type RequestLine } from './semen-request.rules';
 
 const nowTs = () => new Date().toISOString().slice(0, 19).replace('T', ' ');
 
@@ -36,10 +42,13 @@ export class SemenRequestService {
   /**
    * What a farm needs to ask another farm for semen: every farm and store of the company and the breeding lines that have live
    * boars anywhere in it. The farm a user works in is not the farm that sends, so this list is not cut to the active farm;
-   * it names places and lines only, no animals or stock.
+   * it names places and lines only, no animals or stock. It is cut to the company and line of business by the shared scope
+   * helpers, with the farm left out as assertWarehouses does; before 26 Nov it hand-rolled the company filter and a restricted
+   * user saw the farms, stores and boar lines of every line of business.
    */
   async sources(tenantId: string) {
-    const companyId = farmScope(this.cls).companyId;
+    const scope = farmScope(this.cls);
+    const companyWide = { ...scope, farmId: null };
     const L = schema.locationMaster;
     const places = await this.db
       .select({
@@ -56,7 +65,7 @@ export class SemenRequestService {
         inArray(L.location_type, ['FARM', 'STORE']),
         sql`${L.is_active} = true`,
         isNull(L.deleted_at),
-        ...(companyId ? [eq(L.company_id, companyId)] : []),
+        ...locationReferenceScopeConditions(companyWide, L.location_id),
       ))
       .orderBy(asc(L.location_code));
     const A = schema.animalRegister;
@@ -74,7 +83,7 @@ export class SemenRequestService {
         eq(A.animal_type, 'BOAR'),
         eq(A.gender, 'M'),
         eq(A.is_active, true),
-        ...(companyId ? [eq(A.company_id, companyId)] : []),
+        ...restrictedScopeConditions(scope, { companyId: A.company_id, lobId: A.lob_id }),
       ))
       .groupBy(schema.breedMaster.breed_id, schema.breedMaster.breed_code, schema.breedMaster.breed_name)
       .orderBy(schema.breedMaster.breed_code);
@@ -85,12 +94,23 @@ export class SemenRequestService {
     };
   }
 
-  /** The semen request lines, with their requisition, line, plan and lot. */
+  /**
+   * The semen request lines, with their requisition, line, plan and lot. Every farm's requests in the caller's company (the AI Station
+   * serves them all), never another company's: before 26 Nov this read the whole tenant.
+   */
   async lines(tenantId: string, filter: { lineIds?: string[]; breedId?: string; planId?: string } = {}) {
     const R = schema.requisition;
     const RL = schema.requisitionLine;
     const P = schema.semenPlanRequisition;
-    const conditions = [eq(R.tenant_id, tenantId), isNotNull(R.breed_id), isNull(R.deleted_at)];
+    const scope = farmScope(this.cls);
+    const lob = requisitionFarmLobCondition(scope, R.farm_id);
+    const conditions = [
+      eq(R.tenant_id, tenantId),
+      isNotNull(R.breed_id),
+      isNull(R.deleted_at),
+      ...restrictedScopeConditions(scope, { companyId: R.company_id }),
+      ...(lob ? [lob] : []),
+    ];
     if (filter.lineIds) conditions.push(inArray(RL.line_id, filter.lineIds.length ? filter.lineIds : ['-']));
     if (filter.breedId) conditions.push(eq(R.breed_id, filter.breedId));
     if (filter.planId) conditions.push(eq(P.plan_id, filter.planId));
@@ -126,28 +146,40 @@ export class SemenRequestService {
       .leftJoin(schema.semenCollectionPlan, eq(schema.semenCollectionPlan.plan_id, P.plan_id))
       .where(and(...conditions))
       .orderBy(asc(R.required_date), asc(R.req_no), asc(RL.line_seq));
-    const place = async (id: string | null) => {
-      if (!id) return null;
-      const [l] = await this.db
-        .select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
-        .from(schema.locationMaster)
-        .where(eq(schema.locationMaster.location_id, id))
-        .limit(1);
-      return l ?? null;
+    // Many lines name the same stores and farms: each place, and each store's farm, is read once per call (it was read again for
+    // every line, and a line's farm twice).
+    const farmOf = farmOfLocationLookup(this.db);
+    const places = new Map<string, Promise<{ code: string; name: string } | null>>();
+    const place = (id: string | null) => {
+      if (!id) return Promise.resolve(null);
+      let found = places.get(id);
+      if (!found) {
+        found = this.db
+          .select({ code: schema.locationMaster.location_code, name: schema.locationMaster.location_name })
+          .from(schema.locationMaster)
+          .where(eq(schema.locationMaster.location_id, id))
+          .limit(1)
+          .then(([l]) => l ?? null);
+        places.set(id, found);
+      }
+      return found;
     };
     return Promise.all(
-      rows.map(async (r) => ({
-        ...r,
+      rows.map(async (r) => {
         // A request with no farm recorded belongs to the farm of the store it asks the doses to go to.
-        farm_id: r.farm_id ?? (r.to_location_id ? await farmOfLocation(this.db, r.to_location_id) : null),
-        doses: Number(r.doses),
-        qty_shipped: Number(r.qty_shipped ?? 0),
-        qty_received: Number(r.qty_received ?? 0),
-        released: !!r.linked_transfer_id,
-        from_store: await place(r.from_location_id),
-        to_store: await place(r.to_location_id),
-        farm: await place(r.farm_id ?? (r.to_location_id ? await farmOfLocation(this.db, r.to_location_id) : null)),
-      })),
+        const farmId = r.farm_id ?? (await farmOf(r.to_location_id));
+        return {
+          ...r,
+          farm_id: farmId,
+          doses: Number(r.doses),
+          qty_shipped: Number(r.qty_shipped ?? 0),
+          qty_received: Number(r.qty_received ?? 0),
+          released: !!r.linked_transfer_id,
+          from_store: await place(r.from_location_id),
+          to_store: await place(r.to_location_id),
+          farm: await place(farmId),
+        };
+      }),
     );
   }
 
@@ -192,7 +224,11 @@ export class SemenRequestService {
       const [lot] = await this.db
         .select()
         .from(schema.semenBatch)
-        .where(and(eq(schema.semenBatch.semen_batch_id, dto.semen_batch_id), eq(schema.semenBatch.tenant_id, tenantId)))
+        .where(and(
+          eq(schema.semenBatch.semen_batch_id, dto.semen_batch_id),
+          eq(schema.semenBatch.tenant_id, tenantId),
+          ...restrictedScopeConditions(farmScope(this.cls), { companyId: schema.semenBatch.company_id }),
+        ))
         .limit(1);
       if (!lot) throw new NotFoundException('Semen lot not found.');
       if (!lot.inventory_posted || !lot.lot_no || !lot.output_item_id || !lot.warehouse_id) {
@@ -202,7 +238,7 @@ export class SemenRequestService {
       if (dto.requisition_line_ids?.length) lines = await this.lines(tenantId, { lineIds: dto.requisition_line_ids });
       else if (lot.plan_id) lines = await this.lines(tenantId, { planId: lot.plan_id });
       else throw new BadRequestException(`Lot ${lot.lot_no} was collected without a plan: name the requests to allocate it to.`);
-      const otherLine = lines.filter((l) => lot.breed_id && l.breed_id !== lot.breed_id);
+      const otherLine = lines.filter((l) => lineMismatch(lot.breed_id, l) !== null);
       const wrongItem = lines.filter((l) => l.item_id !== lot.output_item_id);
       const usable = lines.filter((l) => !otherLine.includes(l) && !wrongItem.includes(l));
 
@@ -211,13 +247,20 @@ export class SemenRequestService {
         .select({ qty: sql<string>`COALESCE(SUM(${L.quantity}), 0)` })
         .from(L)
         .where(and(eq(L.item_id, lot.output_item_id), eq(L.lot_no, lot.lot_no), eq(L.warehouse_id, lot.warehouse_id)));
-      // Doses already given to a request but not shipped yet are still in the store: they are promised, not free.
+      // Doses already given to a request but not shipped yet are still in the store: they are promised, not free — unless the request
+      // was cancelled, rejected or deleted (owedDoses).
       const promised = await this.db
-        .select({ doses: schema.requisitionLine.quantity, shipped: schema.requisitionLine.qty_shipped })
+        .select({
+          doses: schema.requisitionLine.quantity,
+          shipped: schema.requisitionLine.qty_shipped,
+          approval_status: schema.requisition.approval_status,
+          document_status: schema.requisition.document_status,
+        })
         .from(schema.semenPlanRequisition)
         .innerJoin(schema.requisitionLine, eq(schema.requisitionLine.line_id, schema.semenPlanRequisition.requisition_line_id))
-        .where(eq(schema.semenPlanRequisition.semen_batch_id, lot.semen_batch_id));
-      const owed = promised.reduce((n, p) => n + Math.max(0, Number(p.doses) - Number(p.shipped ?? 0)), 0);
+        .innerJoin(schema.requisition, eq(schema.requisition.requisition_id, schema.requisitionLine.requisition_id))
+        .where(and(eq(schema.semenPlanRequisition.semen_batch_id, lot.semen_batch_id), isNull(schema.requisition.deleted_at)));
+      const owed = owedDoses(promised.map((p) => ({ ...p, doses: Number(p.doses), shipped: Number(p.shipped ?? 0) })));
       const free = Math.max(0, Number(held?.qty ?? 0) - owed);
 
       const plan = allocationPlan(usable.map(this.asRule), { lot_no: lot.lot_no, store_id: lot.warehouse_id, doses: free });
@@ -236,7 +279,7 @@ export class SemenRequestService {
         }
       }
       const skipped = [
-        ...otherLine.map((l) => ({ req_no: l.req_no, reason: `asks for ${l.breed_code ?? 'another line'}, not this lot's line` })),
+        ...otherLine.map((l) => ({ req_no: l.req_no, reason: lineMismatch(lot.breed_id, l)! })),
         ...wrongItem.map((l) => ({ req_no: l.req_no, reason: "asks for another item than this lot's" })),
         ...plan.skipped,
       ];
