@@ -5204,3 +5204,26 @@ migration, 0265) didn't exist locally and creating any requisition 500'd. Backed
 `information_schema` that the physically-applied schema matched each pending migration exactly, backfilled the
 missing journal rows one at a time, and let the real migrator apply the genuinely-pending ones. All 8 local tenants
 are now at migration 0266. Recipe and root cause: memory `navfarm-migration-drift-0258-0262-fixed`.
+
+## 26 Nov 2026 — same five items re-verified against `nf_cccshow` (the "CCC Showcase" tenant)
+
+Rishi pointed at `tenant.admin@cccshow.local` / `company.admin@cccshow.local` (password `12345678`) instead of
+`nf_ccc`. One company "Triple C" (company_id intentionally the zero UUID, per the known signup pattern), 1,481
+locations, 1,828 animal records, 3,062 head of live population across 75 active batches on 2 farms (Grasmere Farm
+Norton, Porta Farm) — more activity than `nf_ccc` (894 head / 42 batches), and its GM Dashboard carries real figures
+for the *current* reporting period (2026-11, "2 of 2 farms reporting"), where `nf_ccc` was only complete through
+October.
+
+1. **GM Dashboard clickable items.** Clicking the Pigs to Slaughter month figure navigated to
+   `/inventory/bio-asset-ledger?salesOnly=true&from=2026-10-25&to=2026-11-21`, a real, populated Assets Ledger (4
+   SLAUGHTER DISPATCH entries) — same behaviour as on `nf_ccc`.
+2. **Average animal age.** Grasmere Farm Norton → Weaner House → silo MWH1 (454 head) showed "ANIMALS FED: 454 head,
+   Average Age: 77 days **(estimated)**" — this tenant's data happens to trigger the estimated-age fallback label,
+   which `nf_ccc`'s data never did, so that path is now covered too.
+3. **Daily Need per Animal.** Same silo: "DAILY NEED PER ANIMAL: 1.7 kg", matching the API's `dailyNeedPerAnimalKg`.
+4. **Mill Consolidation column order.** Opened `CONS-202647-001` (status **Reviewed**, not yet finalized — a
+   different lifecycle stage than the `CONS-202644-001` sheet checked on `nf_ccc`): same order, Requisition → Farm
+   → Destination → Feed item → Requested KG → Approved KG → Adjustment reason. Did not click "Finalize
+   consolidation" — that would have been a real state change outside the scope of a verification pass.
+
+Nothing created or changed; test servers stopped afterward.
